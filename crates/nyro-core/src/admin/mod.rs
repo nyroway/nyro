@@ -2598,7 +2598,8 @@ fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
 
     let base = provider.base_url.trim_end_matches('/');
     match provider.protocol.as_str() {
-        "openai" | "openai-compatible" | "openai-compat" | "openai-responses" | "openai-resps" | "anthropic" | "anthropic-messages" | "anthropic-msgs" => {
+        "openai" | "openai-compatible" | "openai-compat" | "openai-responses" | "openai-resps"
+        | "anthropic" | "anthropic-messages" | "anthropic-msgs" => {
             let has_base_path = reqwest::Url::parse(base)
                 .ok()
                 .map(|url| {

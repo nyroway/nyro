@@ -97,9 +97,10 @@ fn vertex_vendor_is_registered_with_native_and_openai_channels() {
         "vertex must expose native google-gemini endpoint"
     );
     assert!(
-        meta.channels
+        meta.channels.iter().any(|c| c
+            .base_urls
             .iter()
-            .any(|c| c.base_urls.iter().any(|b| b.protocol == "openai-compatible")),
+            .any(|b| b.protocol == "openai-compatible")),
         "vertex must expose OpenAI-compatible endpoint"
     );
 }

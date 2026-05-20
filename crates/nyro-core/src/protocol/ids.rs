@@ -277,7 +277,10 @@ mod tests {
             OPENAI_CHAT_COMPLETIONS_V1.to_string(),
             "openai-compatible/chat-completions/v1"
         );
-        assert_eq!(OPENAI_RESPONSES_V1.to_string(), "openai-responses/responses/v1");
+        assert_eq!(
+            OPENAI_RESPONSES_V1.to_string(),
+            "openai-responses/responses/v1"
+        );
         assert_eq!(
             ANTHROPIC_MESSAGES_2023_06_01.to_string(),
             "anthropic-messages/messages/2023-06-01"
