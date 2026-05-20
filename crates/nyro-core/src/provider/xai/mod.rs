@@ -68,8 +68,8 @@ impl Vendor for XaiVendor {
         "xai"
     }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
-        use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
-        &[OPENAI_CHAT_COMPLETIONS_V1]
+        use crate::protocol::ids::OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1;
+        &[OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1]
     }
     fn declared_request_mutations(&self) -> bool {
         false

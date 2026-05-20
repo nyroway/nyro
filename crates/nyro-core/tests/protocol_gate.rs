@@ -13,7 +13,7 @@
 
 use nyro_core::db::models::Provider;
 use nyro_core::protocol::ProviderProtocols;
-use nyro_core::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1};
+use nyro_core::protocol::ids::{OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1};
 
 fn provider(protocol: &str) -> Provider {
     Provider {
@@ -45,11 +45,11 @@ fn openai_compat_protocol_suite_includes_embeddings() {
     let pp = ProviderProtocols::from_provider(&p);
 
     assert!(
-        pp.supports(OPENAI_CHAT_COMPLETIONS_V1),
+        pp.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1),
         "chat-completions must be included in openai-compatible suite"
     );
     assert!(
-        pp.supports(OPENAI_EMBEDDINGS_V1),
+        pp.supports(OPENAI_COMPATIBLE_EMBEDDINGS_V1),
         "embeddings must be included in openai-compatible suite"
     );
 }
@@ -63,15 +63,15 @@ fn endpoint_keyed_format_expands_to_full_protocol_suite() {
     let pp = ProviderProtocols::from_provider(&p);
 
     // parse_protocol("openai/chat/v1") → Protocol::OpenAICompatible → suite expansion
-    assert!(pp.supports(OPENAI_CHAT_COMPLETIONS_V1));
+    assert!(pp.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1));
     assert!(
-        pp.supports(OPENAI_EMBEDDINGS_V1),
+        pp.supports(OPENAI_COMPATIBLE_EMBEDDINGS_V1),
         "endpoint-keyed key triggers suite expansion; embeddings included"
     );
 
     // Embeddings resolves directly (Tier 1 — exact match after expansion).
-    let resolved = pp.resolve_egress(OPENAI_EMBEDDINGS_V1);
-    assert_eq!(resolved.protocol, OPENAI_EMBEDDINGS_V1);
+    let resolved = pp.resolve_egress(OPENAI_COMPATIBLE_EMBEDDINGS_V1);
+    assert_eq!(resolved.protocol, OPENAI_COMPATIBLE_EMBEDDINGS_V1);
     assert!(!resolved.needs_conversion);
     assert_eq!(resolved.base_url, "https://a.example/v1");
 }
@@ -83,14 +83,14 @@ fn embeddings_endpoint_key_also_expands_to_full_openai_compat_suite() {
     let pp = ProviderProtocols::from_provider(&p);
 
     // Both chat and embeddings present after suite expansion.
-    assert!(pp.supports(OPENAI_EMBEDDINGS_V1));
+    assert!(pp.supports(OPENAI_COMPATIBLE_EMBEDDINGS_V1));
     assert!(
-        pp.supports(OPENAI_CHAT_COMPLETIONS_V1),
+        pp.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1),
         "chat-completions included via OpenAICompatible suite expansion"
     );
 
     // Chat resolves directly with no conversion needed.
-    let resolved = pp.resolve_egress(OPENAI_CHAT_COMPLETIONS_V1);
-    assert_eq!(resolved.protocol, OPENAI_CHAT_COMPLETIONS_V1);
+    let resolved = pp.resolve_egress(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
+    assert_eq!(resolved.protocol, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     assert!(!resolved.needs_conversion);
 }

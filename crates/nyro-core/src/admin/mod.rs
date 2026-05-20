@@ -17,8 +17,8 @@ use crate::auth::types::{
 };
 use crate::db::models::*;
 use crate::protocol::ProviderProtocols;
-use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
-use crate::protocol::ids::OPENAI_EMBEDDINGS_V1;
+use crate::protocol::ids::OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1;
+use crate::protocol::ids::OPENAI_COMPATIBLE_EMBEDDINGS_V1;
 use crate::provider::metadata::CapabilitiesSource;
 use crate::provider::{VendorCtx, VendorRegistry, vertexai};
 use crate::proxy::client::ProxyClient;
@@ -1006,7 +1006,7 @@ impl AdminService {
             } else {
                 target.model.clone()
             };
-            let extension = match VendorRegistry::global().resolve(&provider, OPENAI_EMBEDDINGS_V1)
+            let extension = match VendorRegistry::global().resolve(&provider, OPENAI_COMPATIBLE_EMBEDDINGS_V1)
             {
                 Some(ext) => ext.clone(),
                 None => continue,
@@ -1017,7 +1017,7 @@ impl AdminService {
             {
                 let ctx = VendorCtx {
                     provider: &provider,
-                    protocol_id: OPENAI_EMBEDDINGS_V1,
+                    protocol_id: OPENAI_COMPATIBLE_EMBEDDINGS_V1,
                     api_key: &credential,
                     actual_model: &actual_model,
                     credential: None,
@@ -2620,10 +2620,10 @@ fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
 
 fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     let protocols = ProviderProtocols::from_provider(provider);
-    if !protocols.supports(OPENAI_CHAT_COMPLETIONS_V1) {
+    if !protocols.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1) {
         return None;
     }
-    let resolved = protocols.resolve_egress(OPENAI_CHAT_COMPLETIONS_V1);
+    let resolved = protocols.resolve_egress(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     let trimmed = resolved.base_url.trim();
     if trimmed.is_empty() {
         return None;

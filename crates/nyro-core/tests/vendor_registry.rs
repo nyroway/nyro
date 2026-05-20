@@ -8,7 +8,7 @@
 use nyro_core::auth::types::StoredCredential;
 use nyro_core::db::models::Provider;
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
     OPENAI_RESPONSES_V1, ProtocolId,
 };
 use nyro_core::provider::{VendorCtx, VendorRegistry, VendorScope};
@@ -75,7 +75,7 @@ fn resolve_falls_back_to_vendor_when_channel_unknown() {
     let reg = VendorRegistry::global();
     let p = make_provider(Some("openai"), Some("unknown-channel"));
     let ext = reg
-        .resolve(&p, OPENAI_CHAT_COMPLETIONS_V1)
+        .resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         .expect("openai vendor ext");
     assert!(matches!(
         ext.scope(),
@@ -113,11 +113,11 @@ fn vertex_build_url_rewrites_google_generate_content_to_vertex_resource() {
     p.base_url = "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global".into();
     p.api_key = r#"{"project_id":"demo-project"}"#.into();
     let ext = reg
-        .resolve(&p, GOOGLE_GENERATE_CONTENT_V1BETA)
+        .resolve(&p, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
         .expect("vertex vendor ext");
     let ctx = ctx(
         &p,
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
         &p.api_key,
         "gemini-2.5-flash",
         None,
@@ -143,11 +143,11 @@ fn vertex_build_url_rewrites_openai_compat_path_without_double_version() {
     p.base_url = "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi".into();
     p.api_key = r#"{"project_id":"demo-project"}"#.into();
     let ext = reg
-        .resolve(&p, OPENAI_CHAT_COMPLETIONS_V1)
+        .resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         .expect("vertex vendor ext");
     let ctx = ctx(
         &p,
-        OPENAI_CHAT_COMPLETIONS_V1,
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         &p.api_key,
         "google/gemini-2.5-flash",
         None,
@@ -166,13 +166,13 @@ fn resolve_falls_back_to_protocol_default_vendor_when_vendor_unknown() {
     let reg = VendorRegistry::global();
     let p = make_provider(Some("unmapped-vendor"), None);
     let openai = reg
-        .resolve(&p, OPENAI_CHAT_COMPLETIONS_V1)
+        .resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         .expect("openai protocol default");
     let anthropic = reg
         .resolve(&p, ANTHROPIC_MESSAGES_2023_06_01)
         .expect("anthropic protocol default");
     let google = reg
-        .resolve(&p, GOOGLE_GENERATE_CONTENT_V1BETA)
+        .resolve(&p, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
         .expect("google protocol default");
 
     // Resolves to the default vendor for each protocol suite
@@ -216,7 +216,7 @@ fn ollama_vendor_resolves_even_without_channel() {
     let reg = VendorRegistry::global();
     let p = make_provider(Some("ollama"), None);
     let ext = reg
-        .resolve(&p, OPENAI_CHAT_COMPLETIONS_V1)
+        .resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         .expect("ollama vendor");
     assert!(matches!(
         ext.scope(),
@@ -232,10 +232,10 @@ fn ollama_vendor_resolves_even_without_channel() {
 fn openai_family_default_emits_bearer() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
-    let ext = reg.resolve(&p, OPENAI_CHAT_COMPLETIONS_V1).unwrap();
+    let ext = reg.resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1).unwrap();
     let h = ext.auth_headers(&ctx(
         &p,
-        OPENAI_CHAT_COMPLETIONS_V1,
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         "sk-abc",
         "gpt-4",
         None,
@@ -263,10 +263,10 @@ fn anthropic_family_default_emits_x_api_key_and_version() {
 fn google_family_default_appends_key_query_param() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
-    let ext = reg.resolve(&p, GOOGLE_GENERATE_CONTENT_V1BETA).unwrap();
+    let ext = reg.resolve(&p, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA).unwrap();
     let c = ctx(
         &p,
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
         "AIzaXYZ",
         "gemini-1.5",
         None,
@@ -297,8 +297,8 @@ fn google_family_default_appends_key_query_param() {
 fn openai_compat_strips_v1_when_base_already_has_path() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
-    let ext = reg.resolve(&p, OPENAI_CHAT_COMPLETIONS_V1).unwrap();
-    let c = ctx(&p, OPENAI_CHAT_COMPLETIONS_V1, "k", "m", None);
+    let ext = reg.resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1).unwrap();
+    let c = ctx(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, "k", "m", None);
 
     let stripped = ext.build_url(&c, "https://api.deepseek.com/v1", "/v1/chat/completions");
     assert_eq!(stripped, "https://api.deepseek.com/v1/chat/completions");

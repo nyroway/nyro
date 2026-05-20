@@ -12,7 +12,7 @@
 use nyro_core::db::models::Provider;
 use nyro_core::protocol::ProviderProtocols;
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
     OPENAI_RESPONSES_V1,
 };
 use nyro_core::protocol::registry::ProtocolRegistry;
@@ -44,11 +44,11 @@ fn parses_legacy_protocol_keys() {
     let provider = provider_with_protocol("openai", "https://a.example/v1");
     let pp = ProviderProtocols::from_provider(&provider);
 
-    assert!(pp.supports(OPENAI_CHAT_COMPLETIONS_V1));
+    assert!(pp.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1));
     assert!(!pp.supports(ANTHROPIC_MESSAGES_2023_06_01));
-    assert!(!pp.supports(GOOGLE_GENERATE_CONTENT_V1BETA));
+    assert!(!pp.supports(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA));
     assert!(!pp.supports(OPENAI_RESPONSES_V1));
-    assert_eq!(pp.default, OPENAI_CHAT_COMPLETIONS_V1);
+    assert_eq!(pp.default, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     assert_eq!(pp.base_url, "https://a.example/v1");
 }
 
@@ -57,8 +57,8 @@ fn parses_canonical_protocol_id() {
     let provider = provider_with_protocol("openai/chat/v1", "https://a.example/v1");
     let pp = ProviderProtocols::from_provider(&provider);
 
-    assert!(pp.supports(OPENAI_CHAT_COMPLETIONS_V1));
-    assert_eq!(pp.default, OPENAI_CHAT_COMPLETIONS_V1);
+    assert!(pp.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1));
+    assert_eq!(pp.default, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
 }
 
 #[test]
@@ -66,17 +66,17 @@ fn parses_short_name_aliases() {
     let provider = provider_with_protocol("openai-chat", "https://a.example/v1");
     let pp = ProviderProtocols::from_provider(&provider);
 
-    assert!(pp.supports(OPENAI_CHAT_COMPLETIONS_V1));
-    assert_eq!(pp.default, OPENAI_CHAT_COMPLETIONS_V1);
+    assert!(pp.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1));
+    assert_eq!(pp.default, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
 }
 
 #[test]
 fn resolve_egress_exact_match_skips_conversion() {
     let provider = provider_with_protocol("openai", "https://a.example/v1");
     let pp = ProviderProtocols::from_provider(&provider);
-    let r = pp.resolve_egress(OPENAI_CHAT_COMPLETIONS_V1);
+    let r = pp.resolve_egress(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
 
-    assert_eq!(r.protocol, OPENAI_CHAT_COMPLETIONS_V1);
+    assert_eq!(r.protocol, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     assert_eq!(r.base_url, "https://a.example/v1");
     assert!(!r.needs_conversion);
 }
@@ -91,8 +91,8 @@ fn resolve_egress_responses_falls_back_to_provider_default() {
     let r = pp.resolve_egress(OPENAI_RESPONSES_V1);
 
     // No exact match, no same-protocol match (OpenAIResponses ≠ OpenAICompatible).
-    // Tier 3: provider default = OPENAI_CHAT_COMPLETIONS_V1.
-    assert_eq!(r.protocol, OPENAI_CHAT_COMPLETIONS_V1);
+    // Tier 3: provider default = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1.
+    assert_eq!(r.protocol, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     assert_eq!(r.base_url, "https://a.example/v1");
     assert!(r.needs_conversion);
 }
@@ -104,7 +104,7 @@ fn resolve_egress_falls_back_to_global_default_when_family_missing() {
     // Anthropic ingress, no Anthropic endpoint → fall back to default.
     let r = pp.resolve_egress(ANTHROPIC_MESSAGES_2023_06_01);
 
-    assert_eq!(r.protocol, OPENAI_CHAT_COMPLETIONS_V1);
+    assert_eq!(r.protocol, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     assert!(r.needs_conversion);
 }
 
@@ -113,10 +113,10 @@ fn protocol_handler_resolves_for_every_canonical_id() {
     let reg = ProtocolRegistry::global();
 
     for id in [
-        OPENAI_CHAT_COMPLETIONS_V1,
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
     ] {
         assert!(reg.get(&id).is_some(), "no handler registered for {id}");
         assert_eq!(id.handler().id(), id);

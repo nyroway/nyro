@@ -281,13 +281,13 @@ impl Drop for StreamBridge<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
+    use crate::protocol::ids::OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1;
     use crate::proxy::context::RequestContext;
     use std::sync::Arc;
     use std::time::Duration;
 
     fn ctx() -> RequestContext {
-        RequestContext::new(OPENAI_CHAT_COMPLETIONS_V1, Duration::from_secs(30))
+        RequestContext::new(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, Duration::from_secs(30))
     }
 
     // ── Fault 1: read interrupt ───────────────────────────────────────────────
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn fault_timeout_detected_in_push_chunk() {
-        let c = RequestContext::new(OPENAI_CHAT_COMPLETIONS_V1, Duration::from_nanos(1));
+        let c = RequestContext::new(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, Duration::from_nanos(1));
         std::thread::sleep(std::time::Duration::from_millis(1));
         let mut b = StreamBridge::new(&c);
         b.on_connected();

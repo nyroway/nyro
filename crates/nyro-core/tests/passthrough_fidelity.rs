@@ -25,7 +25,7 @@ use nyro_core::db::models::Provider;
 use nyro_core::error::GatewayError;
 use nyro_core::protocol::ProviderProtocols;
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
     OPENAI_RESPONSES_V1, ProtocolId,
 };
 use nyro_core::protocol::ir::{AiRequest, AiResponse};
@@ -83,7 +83,7 @@ impl Vendor for BearerVendor {
         self.0
     }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
-        &[OPENAI_CHAT_COMPLETIONS_V1]
+        &[OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1]
     }
     fn declared_request_mutations(&self) -> bool {
         false
@@ -136,11 +136,11 @@ fn fake_provider(api_key: &str) -> Provider {
 
 #[test]
 fn diagonal_chat_chat_is_native() {
-    let decl = single_decl(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com");
-    let mut ctx = req_ctx(OPENAI_CHAT_COMPLETIONS_V1);
-    let plan = negotiate(OPENAI_CHAT_COMPLETIONS_V1, None, Some(&decl), &mut ctx).unwrap();
+    let decl = single_decl(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, "https://api.openai.com");
+    let mut ctx = req_ctx(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
+    let plan = negotiate(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, None, Some(&decl), &mut ctx).unwrap();
     assert_eq!(plan.mode, ProtocolMode::Native, "chat→chat must be Native");
-    assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
+    assert_eq!(plan.egress, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     assert!(!plan.needs_conversion);
 }
 
@@ -175,17 +175,17 @@ fn diagonal_messages_messages_is_native() {
 #[test]
 fn diagonal_generate_generate_is_native() {
     let decl = single_decl(
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
         "https://generativelanguage.googleapis.com",
     );
-    let mut ctx = req_ctx(GOOGLE_GENERATE_CONTENT_V1BETA);
-    let plan = negotiate(GOOGLE_GENERATE_CONTENT_V1BETA, None, Some(&decl), &mut ctx).unwrap();
+    let mut ctx = req_ctx(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
+    let plan = negotiate(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, None, Some(&decl), &mut ctx).unwrap();
     assert_eq!(
         plan.mode,
         ProtocolMode::Native,
         "generate→generate must be Native"
     );
-    assert_eq!(plan.egress, GOOGLE_GENERATE_CONTENT_V1BETA);
+    assert_eq!(plan.egress, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
     assert!(!plan.needs_conversion);
 }
 
@@ -216,24 +216,24 @@ macro_rules! off_diagonal_test {
 
 off_diagonal_test!(
     chat_to_responses_is_transform,
-    ingress = OPENAI_CHAT_COMPLETIONS_V1,
+    ingress = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
     egress = OPENAI_RESPONSES_V1
 );
 off_diagonal_test!(
     chat_to_messages_is_transform,
-    ingress = OPENAI_CHAT_COMPLETIONS_V1,
+    ingress = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
     egress = ANTHROPIC_MESSAGES_2023_06_01
 );
 off_diagonal_test!(
     chat_to_generate_is_transform,
-    ingress = OPENAI_CHAT_COMPLETIONS_V1,
-    egress = GOOGLE_GENERATE_CONTENT_V1BETA
+    ingress = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+    egress = GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA
 );
 
 off_diagonal_test!(
     responses_to_chat_is_transform,
     ingress = OPENAI_RESPONSES_V1,
-    egress = OPENAI_CHAT_COMPLETIONS_V1
+    egress = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1
 );
 off_diagonal_test!(
     responses_to_messages_is_transform,
@@ -243,13 +243,13 @@ off_diagonal_test!(
 off_diagonal_test!(
     responses_to_generate_is_transform,
     ingress = OPENAI_RESPONSES_V1,
-    egress = GOOGLE_GENERATE_CONTENT_V1BETA
+    egress = GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA
 );
 
 off_diagonal_test!(
     messages_to_chat_is_transform,
     ingress = ANTHROPIC_MESSAGES_2023_06_01,
-    egress = OPENAI_CHAT_COMPLETIONS_V1
+    egress = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1
 );
 off_diagonal_test!(
     messages_to_responses_is_transform,
@@ -259,22 +259,22 @@ off_diagonal_test!(
 off_diagonal_test!(
     messages_to_generate_is_transform,
     ingress = ANTHROPIC_MESSAGES_2023_06_01,
-    egress = GOOGLE_GENERATE_CONTENT_V1BETA
+    egress = GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA
 );
 
 off_diagonal_test!(
     generate_to_chat_is_transform,
-    ingress = GOOGLE_GENERATE_CONTENT_V1BETA,
-    egress = OPENAI_CHAT_COMPLETIONS_V1
+    ingress = GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+    egress = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1
 );
 off_diagonal_test!(
     generate_to_responses_is_transform,
-    ingress = GOOGLE_GENERATE_CONTENT_V1BETA,
+    ingress = GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
     egress = OPENAI_RESPONSES_V1
 );
 off_diagonal_test!(
     generate_to_messages_is_transform,
-    ingress = GOOGLE_GENERATE_CONTENT_V1BETA,
+    ingress = GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
     egress = ANTHROPIC_MESSAGES_2023_06_01
 );
 
@@ -297,7 +297,7 @@ async fn passthrough_run_preserves_vendor_specific_fields() {
 
     let ctx = ProviderCtx {
         provider: &provider,
-        protocol: OPENAI_CHAT_COMPLETIONS_V1,
+        protocol: OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         egress_base_url: "https://api.openai.com",
         api_key: &provider.api_key,
         actual_model: "gpt-4o",
@@ -350,7 +350,7 @@ async fn passthrough_run_rewrites_model_to_actual_model() {
 
     let ctx = ProviderCtx {
         provider: &provider,
-        protocol: OPENAI_CHAT_COMPLETIONS_V1,
+        protocol: OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         egress_base_url: "https://api.openai.com",
         api_key: &provider.api_key,
         actual_model: "glm-4-flash",
@@ -378,7 +378,7 @@ async fn passthrough_run_sets_stream_path_for_streaming_body() {
 
     let ctx = ProviderCtx {
         provider: &provider,
-        protocol: OPENAI_CHAT_COMPLETIONS_V1,
+        protocol: OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         egress_base_url: "https://api.openai.com",
         api_key: &provider.api_key,
         actual_model: "gpt-4o",
@@ -415,7 +415,7 @@ fn vendor_declared_mutations_defaults_are_conservative() {
             "default"
         }
         fn supported_protocols(&self) -> &'static [ProtocolId] {
-            &[OPENAI_CHAT_COMPLETIONS_V1]
+            &[OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1]
         }
         async fn build_request(
             &self,
@@ -451,10 +451,10 @@ fn vendor_declared_mutations_defaults_are_conservative() {
 #[test]
 fn each_protocol_provider_selects_own_native() {
     for proto in [
-        OPENAI_CHAT_COMPLETIONS_V1,
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
     ] {
         let decl = single_decl(proto, "https://upstream.example.com");
         let mut ctx = req_ctx(proto);

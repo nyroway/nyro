@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::Gateway;
 use crate::protocol::codec::google_generative::decoder::GoogleDecoder;
-use crate::protocol::ids::GOOGLE_GENERATE_CONTENT_V1BETA;
+use crate::protocol::ids::GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA;
 use crate::protocol::ir::RawEnvelope;
 use crate::proxy::context::RequestContext;
 use crate::proxy::dispatcher::{dispatch_pipeline, log_decode_error};
@@ -20,7 +20,7 @@ pub async fn handler(
     Path(model_action): Path<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    ctx.ingress_protocol = GOOGLE_GENERATE_CONTENT_V1BETA;
+    ctx.ingress_protocol = GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA;
     let (model, action) = match model_action.rsplit_once(':') {
         Some((m, a)) => (m.to_string(), a.to_string()),
         None => (model_action.clone(), "generateContent".to_string()),
@@ -42,7 +42,7 @@ pub async fn handler(
             return log_decode_error(
                 &gw,
                 &envelope,
-                GOOGLE_GENERATE_CONTENT_V1BETA,
+                GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
                 format!("Gemini decode error: {e}"),
             );
         }
@@ -52,7 +52,7 @@ pub async fn handler(
         headers,
         envelope,
         request,
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
     )
     .await
 }

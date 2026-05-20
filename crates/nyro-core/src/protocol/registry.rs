@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use crate::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
-    OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1, Protocol, ProtocolEndpoint,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+    OPENAI_COMPATIBLE_EMBEDDINGS_V1, OPENAI_RESPONSES_V1, Protocol, ProtocolEndpoint,
 };
 use crate::protocol::traits::EndpointHandler;
 
@@ -221,32 +221,32 @@ fn default_endpoint_aliases() -> HashMap<&'static str, ProtocolEndpoint> {
     let mut m = HashMap::new();
 
     // ── Tier 1: Old canonical (backward compat) ───────────────────────────────
-    m.insert("openai/chat/v1", OPENAI_CHAT_COMPLETIONS_V1);
-    m.insert("openai/embeddings/v1", OPENAI_EMBEDDINGS_V1);
+    m.insert("openai/chat/v1", OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
+    m.insert("openai/embeddings/v1", OPENAI_COMPATIBLE_EMBEDDINGS_V1);
     m.insert("openai/responses/v1", OPENAI_RESPONSES_V1);
     m.insert(
         "anthropic/messages/2023-06-01",
         ANTHROPIC_MESSAGES_2023_06_01,
     );
-    m.insert("google/generate/v1beta", GOOGLE_GENERATE_CONTENT_V1BETA);
+    m.insert("google/generate/v1beta", GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
 
     // ── Tier 2: Canonical short names ─────────────────────────────────────────
-    m.insert("openai-chat", OPENAI_CHAT_COMPLETIONS_V1);
-    m.insert("openai-chat-completions", OPENAI_CHAT_COMPLETIONS_V1);
+    m.insert("openai-chat", OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
+    m.insert("openai-chat-completions", OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     m.insert("openai-responses", OPENAI_RESPONSES_V1);
-    m.insert("openai-embeddings", OPENAI_EMBEDDINGS_V1);
+    m.insert("openai-embeddings", OPENAI_COMPATIBLE_EMBEDDINGS_V1);
     m.insert("anthropic-messages", ANTHROPIC_MESSAGES_2023_06_01);
-    m.insert("google-generate", GOOGLE_GENERATE_CONTENT_V1BETA);
-    m.insert("google-generate-content", GOOGLE_GENERATE_CONTENT_V1BETA);
+    m.insert("google-generate", GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
+    m.insert("google-generate-content", GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
 
     // ── Tier 3: Legacy brand / friendly aliases ────────────────────────────────
-    m.insert("openai", OPENAI_CHAT_COMPLETIONS_V1);
+    m.insert("openai", OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     m.insert("openai_responses", OPENAI_RESPONSES_V1);
     m.insert("responses", OPENAI_RESPONSES_V1);
-    m.insert("embeddings", OPENAI_EMBEDDINGS_V1);
+    m.insert("embeddings", OPENAI_COMPATIBLE_EMBEDDINGS_V1);
     m.insert("anthropic", ANTHROPIC_MESSAGES_2023_06_01);
     m.insert("claude", ANTHROPIC_MESSAGES_2023_06_01);
-    m.insert("gemini", GOOGLE_GENERATE_CONTENT_V1BETA);
+    m.insert("gemini", GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
 
     m
 }
@@ -259,21 +259,21 @@ fn default_protocol_aliases() -> HashMap<&'static str, Protocol> {
     m.insert("openai-compatible", Protocol::OpenAICompatible);
     m.insert("openai-responses", Protocol::OpenAIResponses);
     m.insert("anthropic-messages", Protocol::AnthropicMessages);
-    m.insert("google-gemini", Protocol::GoogleGenerativeAI);
+    m.insert("google-gemini", Protocol::GoogleGemini);
 
     // Short names
     m.insert("openai", Protocol::OpenAICompatible);
     m.insert("anthropic", Protocol::AnthropicMessages);
     m.insert("claude", Protocol::AnthropicMessages);
-    m.insert("gemini", Protocol::GoogleGenerativeAI);
-    m.insert("google", Protocol::GoogleGenerativeAI);
+    m.insert("gemini", Protocol::GoogleGemini);
+    m.insert("google", Protocol::GoogleGemini);
 
     // Deprecated aliases (old canonical slugs, backward compat only)
     m.insert("openai-compat", Protocol::OpenAICompatible);
     m.insert("openai-resps", Protocol::OpenAIResponses);
     m.insert("anthropic-msgs", Protocol::AnthropicMessages);
-    m.insert("google-genai", Protocol::GoogleGenerativeAI);
-    m.insert("google-generative-ai", Protocol::GoogleGenerativeAI);
+    m.insert("google-genai", Protocol::GoogleGemini);
+    m.insert("google-generative-ai", Protocol::GoogleGemini);
 
     m
 }
@@ -285,11 +285,11 @@ mod tests {
     #[test]
     fn registers_five_handlers() {
         let reg = ProtocolRegistry::global();
-        assert!(reg.get(&OPENAI_CHAT_COMPLETIONS_V1).is_some());
+        assert!(reg.get(&OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1).is_some());
         assert!(reg.get(&OPENAI_RESPONSES_V1).is_some());
-        assert!(reg.get(&OPENAI_EMBEDDINGS_V1).is_some());
+        assert!(reg.get(&OPENAI_COMPATIBLE_EMBEDDINGS_V1).is_some());
         assert!(reg.get(&ANTHROPIC_MESSAGES_2023_06_01).is_some());
-        assert!(reg.get(&GOOGLE_GENERATE_CONTENT_V1BETA).is_some());
+        assert!(reg.get(&GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA).is_some());
         assert_eq!(reg.list().len(), 5);
     }
 
@@ -299,7 +299,7 @@ mod tests {
         // New canonical form
         assert_eq!(
             reg.resolve_alias("openai-compatible/chat-completions/v1"),
-            Some(OPENAI_CHAT_COMPLETIONS_V1)
+            Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
             reg.resolve_alias("openai-responses/responses/v1"),
@@ -311,7 +311,7 @@ mod tests {
         );
         assert_eq!(
             reg.resolve_alias("google-gemini/generate-content/v1beta"),
-            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+            Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
         );
     }
 
@@ -321,7 +321,7 @@ mod tests {
         // Old canonical (tier 1)
         assert_eq!(
             reg.resolve_alias("openai/chat/v1"),
-            Some(OPENAI_CHAT_COMPLETIONS_V1)
+            Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
             reg.resolve_alias("anthropic/messages/2023-06-01"),
@@ -329,13 +329,13 @@ mod tests {
         );
         assert_eq!(
             reg.resolve_alias("google/generate/v1beta"),
-            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+            Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
         );
 
         // Deprecated canonical (still resolves via FromStr)
         assert_eq!(
             reg.resolve_alias("openai-compat/chat-completions/v1"),
-            Some(OPENAI_CHAT_COMPLETIONS_V1)
+            Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
             reg.resolve_alias("openai-resps/responses/v1"),
@@ -347,17 +347,17 @@ mod tests {
         );
         assert_eq!(
             reg.resolve_alias("google-genai/generate-content/v1beta"),
-            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+            Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
         );
 
         // Canonical short (tier 2)
         assert_eq!(
             reg.resolve_alias("openai-chat"),
-            Some(OPENAI_CHAT_COMPLETIONS_V1)
+            Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
             reg.resolve_alias("openai-chat-completions"),
-            Some(OPENAI_CHAT_COMPLETIONS_V1)
+            Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
             reg.resolve_alias("anthropic-messages"),
@@ -365,17 +365,17 @@ mod tests {
         );
         assert_eq!(
             reg.resolve_alias("google-generate"),
-            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+            Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
         );
         assert_eq!(
             reg.resolve_alias("google-generate-content"),
-            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+            Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
         );
 
         // Legacy brand (tier 3)
         assert_eq!(
             reg.resolve_alias("openai"),
-            Some(OPENAI_CHAT_COMPLETIONS_V1)
+            Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
             reg.resolve_alias("anthropic"),
@@ -387,7 +387,7 @@ mod tests {
         );
         assert_eq!(
             reg.resolve_alias("gemini"),
-            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+            Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
         );
     }
 
@@ -396,11 +396,11 @@ mod tests {
         let reg = ProtocolRegistry::global();
         assert_eq!(
             reg.resolve_alias("  OpenAI  "),
-            Some(OPENAI_CHAT_COMPLETIONS_V1)
+            Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
             reg.resolve_alias("GEMINI"),
-            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+            Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
         );
     }
 
@@ -420,13 +420,13 @@ mod tests {
         assert!(
             openai_compat
                 .iter()
-                .any(|h| h.id() == OPENAI_CHAT_COMPLETIONS_V1)
+                .any(|h| h.id() == OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
-        assert!(openai_compat.iter().any(|h| h.id() == OPENAI_EMBEDDINGS_V1));
+        assert!(openai_compat.iter().any(|h| h.id() == OPENAI_COMPATIBLE_EMBEDDINGS_V1));
 
         assert_eq!(reg.list_by_protocol(Protocol::OpenAIResponses).len(), 1);
         assert_eq!(reg.list_by_protocol(Protocol::AnthropicMessages).len(), 1);
-        assert_eq!(reg.list_by_protocol(Protocol::GoogleGenerativeAI).len(), 1);
+        assert_eq!(reg.list_by_protocol(Protocol::GoogleGemini).len(), 1);
     }
 
     #[test]
@@ -446,11 +446,11 @@ mod tests {
         );
         assert_eq!(
             reg.parse_protocol("gemini"),
-            Some(Protocol::GoogleGenerativeAI)
+            Some(Protocol::GoogleGemini)
         );
         assert_eq!(
             reg.parse_protocol("google-gemini"),
-            Some(Protocol::GoogleGenerativeAI)
+            Some(Protocol::GoogleGemini)
         );
         // Deprecated aliases still resolve
         assert_eq!(
@@ -463,7 +463,7 @@ mod tests {
         );
         assert_eq!(
             reg.parse_protocol("google-genai"),
-            Some(Protocol::GoogleGenerativeAI)
+            Some(Protocol::GoogleGemini)
         );
     }
 
@@ -475,7 +475,7 @@ mod tests {
         assert!(protocols.contains(&Protocol::OpenAICompatible));
         assert!(protocols.contains(&Protocol::OpenAIResponses));
         assert!(protocols.contains(&Protocol::AnthropicMessages));
-        assert!(protocols.contains(&Protocol::GoogleGenerativeAI));
+        assert!(protocols.contains(&Protocol::GoogleGemini));
     }
 
     #[test]
@@ -484,7 +484,7 @@ mod tests {
         assert_eq!(
             reg.find_by_ingress_route("POST", "/v1/chat/completions")
                 .map(|h| h.id()),
-            Some(OPENAI_CHAT_COMPLETIONS_V1)
+            Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
             reg.find_by_ingress_route("POST", "/v1/responses")
@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(
             reg.find_by_ingress_route("POST", "/v1/embeddings")
                 .map(|h| h.id()),
-            Some(OPENAI_EMBEDDINGS_V1)
+            Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1)
         );
         assert!(
             reg.find_by_ingress_route("GET", "/v1/chat/completions")
@@ -510,9 +510,9 @@ mod tests {
     #[test]
     fn capabilities_match_legacy_special_cases() {
         let reg = ProtocolRegistry::global();
-        let chat = reg.get(&OPENAI_CHAT_COMPLETIONS_V1).unwrap();
+        let chat = reg.get(&OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1).unwrap();
         let responses = reg.get(&OPENAI_RESPONSES_V1).unwrap();
-        let google = reg.get(&GOOGLE_GENERATE_CONTENT_V1BETA).unwrap();
+        let google = reg.get(&GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA).unwrap();
 
         assert!(!chat.capabilities().force_upstream_stream);
         assert!(responses.capabilities().force_upstream_stream);

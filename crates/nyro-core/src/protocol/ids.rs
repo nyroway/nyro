@@ -27,7 +27,7 @@ pub enum Protocol {
     /// Anthropic Messages protocol (`/v1/messages`).
     AnthropicMessages,
     /// Google Generative AI (Gemini) protocol.
-    GoogleGenerativeAI,
+    GoogleGemini,
 }
 
 impl Protocol {
@@ -36,7 +36,7 @@ impl Protocol {
             Self::OpenAICompatible => "openai-compatible",
             Self::OpenAIResponses => "openai-responses",
             Self::AnthropicMessages => "anthropic-messages",
-            Self::GoogleGenerativeAI => "google-gemini",
+            Self::GoogleGemini => "google-gemini",
         }
     }
 
@@ -45,7 +45,7 @@ impl Protocol {
             Self::OpenAICompatible => "OpenAI Compatible",
             Self::OpenAIResponses => "OpenAI Responses",
             Self::AnthropicMessages => "Anthropic Messages",
-            Self::GoogleGenerativeAI => "Google Gemini",
+            Self::GoogleGemini => "Google Gemini",
         }
     }
 }
@@ -67,7 +67,7 @@ impl FromStr for Protocol {
                 Ok(Self::AnthropicMessages)
             }
             "google-gemini" | "google-genai" | "google-generative-ai" | "gemini" | "google" => {
-                Ok(Self::GoogleGenerativeAI)
+                Ok(Self::GoogleGemini)
             }
             other => anyhow::bail!("unknown protocol: {other}"),
         }
@@ -114,13 +114,10 @@ impl fmt::Display for ProtocolEndpoint {
 
 // ── Canonical const `ProtocolEndpoint` values ────────────────────────────────
 
-pub const OPENAI_CHAT_COMPLETIONS_V1: ProtocolEndpoint =
+pub const OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1: ProtocolEndpoint =
     ProtocolEndpoint::new(Protocol::OpenAICompatible, "chat-completions", "v1");
 
-#[deprecated(since = "0.1.0", note = "use `OPENAI_CHAT_COMPLETIONS_V1` instead")]
-pub const OPENAI_CHAT_V1: ProtocolEndpoint = OPENAI_CHAT_COMPLETIONS_V1;
-
-pub const OPENAI_EMBEDDINGS_V1: ProtocolEndpoint =
+pub const OPENAI_COMPATIBLE_EMBEDDINGS_V1: ProtocolEndpoint =
     ProtocolEndpoint::new(Protocol::OpenAICompatible, "embeddings", "v1");
 
 pub const OPENAI_RESPONSES_V1: ProtocolEndpoint =
@@ -129,11 +126,8 @@ pub const OPENAI_RESPONSES_V1: ProtocolEndpoint =
 pub const ANTHROPIC_MESSAGES_2023_06_01: ProtocolEndpoint =
     ProtocolEndpoint::new(Protocol::AnthropicMessages, "messages", "2023-06-01");
 
-pub const GOOGLE_GENERATE_CONTENT_V1BETA: ProtocolEndpoint =
-    ProtocolEndpoint::new(Protocol::GoogleGenerativeAI, "generate-content", "v1beta");
-
-#[deprecated(since = "0.1.0", note = "use `GOOGLE_GENERATE_CONTENT_V1BETA` instead")]
-pub const GOOGLE_GENERATE_V1BETA: ProtocolEndpoint = GOOGLE_GENERATE_CONTENT_V1BETA;
+pub const GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA: ProtocolEndpoint =
+    ProtocolEndpoint::new(Protocol::GoogleGemini, "generate-content", "v1beta");
 
 // ── Backward-compat type alias ────────────────────────────────────────────────
 
@@ -274,7 +268,7 @@ mod tests {
     #[test]
     fn display_canonical_form() {
         assert_eq!(
-            OPENAI_CHAT_COMPLETIONS_V1.to_string(),
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1.to_string(),
             "openai-compatible/chat-completions/v1"
         );
         assert_eq!(
@@ -286,11 +280,11 @@ mod tests {
             "anthropic-messages/messages/2023-06-01"
         );
         assert_eq!(
-            GOOGLE_GENERATE_CONTENT_V1BETA.to_string(),
+            GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA.to_string(),
             "google-gemini/generate-content/v1beta"
         );
         assert_eq!(
-            OPENAI_EMBEDDINGS_V1.to_string(),
+            OPENAI_COMPATIBLE_EMBEDDINGS_V1.to_string(),
             "openai-compatible/embeddings/v1"
         );
     }
@@ -301,7 +295,7 @@ mod tests {
             Protocol::OpenAICompatible,
             Protocol::OpenAIResponses,
             Protocol::AnthropicMessages,
-            Protocol::GoogleGenerativeAI,
+            Protocol::GoogleGemini,
         ] {
             assert_eq!(p.as_str().parse::<Protocol>().unwrap(), p);
         }
@@ -310,18 +304,11 @@ mod tests {
     #[test]
     fn protocol_endpoint_is_copy_and_hashable() {
         use std::collections::HashSet;
-        let id = OPENAI_CHAT_COMPLETIONS_V1;
+        let id = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1;
         let copied = id;
         let mut set = HashSet::new();
         set.insert(id);
         set.insert(copied);
         assert_eq!(set.len(), 1);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn backward_compat_aliases() {
-        assert_eq!(OPENAI_CHAT_V1, OPENAI_CHAT_COMPLETIONS_V1);
-        assert_eq!(GOOGLE_GENERATE_V1BETA, GOOGLE_GENERATE_CONTENT_V1BETA);
     }
 }

@@ -50,7 +50,7 @@ use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::db::models::Provider;
 use crate::error::{AuthFailure, GatewayError};
 use crate::protocol::ProviderProtocols;
-use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1, ProtocolId};
+use crate::protocol::ids::{OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1, ProtocolId};
 use crate::protocol::ir::Usage;
 use crate::protocol::ir::{AiRequest, AiResponse, RawEnvelope};
 use crate::provider::vendor::ProviderCtx;
@@ -1352,7 +1352,7 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
         } else {
             target.model.clone()
         };
-        let extension = match VendorRegistry::global().resolve(&provider, OPENAI_EMBEDDINGS_V1) {
+        let extension = match VendorRegistry::global().resolve(&provider, OPENAI_COMPATIBLE_EMBEDDINGS_V1) {
             Some(ext) => ext.clone(),
             None => continue,
         };
@@ -1362,7 +1362,7 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
         {
             let ctx = VendorCtx {
                 provider: &provider,
-                protocol_id: OPENAI_EMBEDDINGS_V1,
+                protocol_id: OPENAI_COMPATIBLE_EMBEDDINGS_V1,
                 api_key: &credential,
                 actual_model: &actual_model,
                 credential: None,
@@ -1416,10 +1416,10 @@ fn parse_embedding_vector(payload: &Value) -> Option<Vec<f32>> {
 
 fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     let protocols = ProviderProtocols::from_provider(provider);
-    if !protocols.supports(OPENAI_CHAT_COMPLETIONS_V1) {
+    if !protocols.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1) {
         return None;
     }
-    let resolved = protocols.resolve_egress(OPENAI_CHAT_COMPLETIONS_V1);
+    let resolved = protocols.resolve_egress(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     let trimmed = resolved.base_url.trim();
     if trimmed.is_empty() {
         None

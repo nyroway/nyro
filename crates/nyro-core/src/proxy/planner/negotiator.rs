@@ -198,7 +198,7 @@ pub fn negotiate(
 mod tests {
     use super::*;
     use crate::protocol::ids::{
-        ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1,
+        ANTHROPIC_MESSAGES_2023_06_01, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1,
     };
     use std::time::Duration;
 
@@ -210,57 +210,57 @@ mod tests {
     }
 
     fn ctx() -> RequestContext {
-        RequestContext::new(OPENAI_CHAT_COMPLETIONS_V1, Duration::from_secs(30))
+        RequestContext::new(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, Duration::from_secs(30))
     }
 
     #[test]
     fn native_when_ingress_exact_match() {
-        let decl = make_decl(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com");
+        let decl = make_decl(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, "https://api.openai.com");
         let mut c = ctx();
-        let plan = negotiate(OPENAI_CHAT_COMPLETIONS_V1, None, Some(&decl), &mut c).unwrap();
+        let plan = negotiate(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, None, Some(&decl), &mut c).unwrap();
         assert_eq!(plan.mode, ProtocolMode::Native);
-        assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
+        assert_eq!(plan.egress, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
         assert!(!plan.needs_conversion);
     }
 
     #[test]
     fn native_when_same_protocol_family() {
-        let decl = make_decl(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com");
+        let decl = make_decl(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, "https://api.openai.com");
         let mut c = ctx();
-        let plan = negotiate(OPENAI_EMBEDDINGS_V1, None, Some(&decl), &mut c).unwrap();
+        let plan = negotiate(OPENAI_COMPATIBLE_EMBEDDINGS_V1, None, Some(&decl), &mut c).unwrap();
         assert_eq!(plan.mode, ProtocolMode::Native);
-        assert_eq!(plan.egress, OPENAI_EMBEDDINGS_V1);
+        assert_eq!(plan.egress, OPENAI_COMPATIBLE_EMBEDDINGS_V1);
         assert!(!plan.needs_conversion);
     }
 
     #[test]
     fn route_pref_in_same_protocol_wins_over_ingress_match() {
-        let decl = make_decl(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com");
+        let decl = make_decl(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, "https://api.openai.com");
         let mut c = ctx();
         let plan = negotiate(
-            OPENAI_CHAT_COMPLETIONS_V1,
-            Some(OPENAI_EMBEDDINGS_V1),
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1),
             Some(&decl),
             &mut c,
         )
         .unwrap();
-        assert_eq!(plan.egress, OPENAI_EMBEDDINGS_V1);
+        assert_eq!(plan.egress, OPENAI_COMPATIBLE_EMBEDDINGS_V1);
     }
 
     #[test]
     fn no_decl_returns_native() {
         let mut c = ctx();
-        let plan = negotiate(OPENAI_CHAT_COMPLETIONS_V1, None, None, &mut c).unwrap();
+        let plan = negotiate(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, None, None, &mut c).unwrap();
         assert_eq!(plan.mode, ProtocolMode::Native);
-        assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
+        assert_eq!(plan.egress, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     }
 
     #[test]
     fn different_protocol_falls_back_to_default() {
-        let decl = make_decl(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com");
+        let decl = make_decl(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, "https://api.openai.com");
         let mut c = ctx();
         let plan = negotiate(ANTHROPIC_MESSAGES_2023_06_01, None, Some(&decl), &mut c).unwrap();
-        assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
+        assert_eq!(plan.egress, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
         assert_eq!(plan.mode, ProtocolMode::Transform);
         assert!(plan.needs_conversion);
     }

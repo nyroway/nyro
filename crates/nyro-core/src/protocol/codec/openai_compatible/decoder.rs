@@ -8,7 +8,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::protocol::RequestDecoder;
-use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
+use crate::protocol::ids::OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1;
 use crate::protocol::ir::{
     AiRequest, ContentBlock, GenerationConfig, MediaSource, Message, MessageContent, OpenAIChatExt,
     ProtocolExt, ReasoningConfig, ReasoningEffort, ResponseFormat, Role, StreamConfig, ToolCall,
@@ -206,7 +206,7 @@ impl RequestDecoder for OpenAIDecoder {
         ai_req.reasoning = reasoning;
         ai_req.response_format = response_format;
         ai_req.ext = Some(ProtocolExt::OpenAiChat(oai_ext));
-        ai_req.meta.source_protocol = Some(OPENAI_CHAT_COMPLETIONS_V1);
+        ai_req.meta.source_protocol = Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
         ai_req.meta.vendor.ingress = ingress;
 
         Ok(ai_req)

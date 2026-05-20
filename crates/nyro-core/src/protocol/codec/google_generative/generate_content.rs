@@ -6,7 +6,7 @@
 //! in the request body / URL path rather than a top-level `model` field.
 
 use crate::protocol::ids::{
-    EndpointCapabilities, GOOGLE_GENERATE_CONTENT_V1BETA, ProtocolEndpoint,
+    EndpointCapabilities, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, ProtocolEndpoint,
 };
 use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
@@ -26,7 +26,7 @@ const CAPS: EndpointCapabilities = EndpointCapabilities {
 
 impl EndpointHandler for GoogleGenerateContentV1Beta {
     fn id(&self) -> ProtocolEndpoint {
-        GOOGLE_GENERATE_CONTENT_V1BETA
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA
     }
     fn capabilities(&self) -> &'static EndpointCapabilities {
         &CAPS

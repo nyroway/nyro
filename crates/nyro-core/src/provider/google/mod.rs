@@ -74,8 +74,8 @@ impl Vendor for GoogleVendor {
         "google"
     }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
-        use crate::protocol::ids::GOOGLE_GENERATE_CONTENT_V1BETA;
-        &[GOOGLE_GENERATE_CONTENT_V1BETA]
+        use crate::protocol::ids::GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA;
+        &[GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA]
     }
     fn declared_request_mutations(&self) -> bool {
         false

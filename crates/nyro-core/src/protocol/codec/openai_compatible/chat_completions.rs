@@ -3,7 +3,7 @@
 //! `EndpointHandler` registration shell — wraps
 //! [`super::decoder`], [`super::encoder`], and [`super::stream`] codecs.
 
-use crate::protocol::ids::{EndpointCapabilities, OPENAI_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
+use crate::protocol::ids::{EndpointCapabilities, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
 use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
 
@@ -22,7 +22,7 @@ const CAPS: EndpointCapabilities = EndpointCapabilities {
 
 impl EndpointHandler for OpenAIChatCompletionsV1 {
     fn id(&self) -> ProtocolEndpoint {
-        OPENAI_CHAT_COMPLETIONS_V1
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1
     }
     fn capabilities(&self) -> &'static EndpointCapabilities {
         &CAPS

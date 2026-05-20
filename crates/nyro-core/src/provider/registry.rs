@@ -44,7 +44,7 @@ pub fn protocol_default_vendor(protocol: Protocol) -> &'static str {
     match protocol {
         Protocol::OpenAICompatible | Protocol::OpenAIResponses => "openai",
         Protocol::AnthropicMessages => "anthropic",
-        Protocol::GoogleGenerativeAI => "google",
+        Protocol::GoogleGemini => "google",
     }
 }
 

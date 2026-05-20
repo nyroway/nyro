@@ -32,7 +32,7 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::protocol::SseEvent;
-use crate::protocol::ids::{EndpointCapabilities, OPENAI_EMBEDDINGS_V1, ProtocolEndpoint};
+use crate::protocol::ids::{EndpointCapabilities, OPENAI_COMPATIBLE_EMBEDDINGS_V1, ProtocolEndpoint};
 use crate::protocol::ir::Usage;
 use crate::protocol::ir::{AiRequest, GenerationConfig, Message, StreamConfig};
 use crate::protocol::registry::EndpointRegistration;
@@ -69,7 +69,7 @@ pub struct OpenAIEmbeddingsV1;
 
 impl EndpointHandler for OpenAIEmbeddingsV1 {
     fn id(&self) -> ProtocolEndpoint {
-        OPENAI_EMBEDDINGS_V1
+        OPENAI_COMPATIBLE_EMBEDDINGS_V1
     }
     fn capabilities(&self) -> &'static EndpointCapabilities {
         &CAPS
@@ -152,7 +152,7 @@ impl RequestDecoder for EmbeddingsDecoder {
             enabled: false,
             include_usage: false,
         };
-        ai_req.meta.source_protocol = Some(OPENAI_EMBEDDINGS_V1);
+        ai_req.meta.source_protocol = Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1);
         ai_req.meta.vendor.ingress = ingress;
 
         Ok(ai_req)

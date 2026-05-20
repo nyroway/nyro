@@ -8,7 +8,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::protocol::RequestDecoder;
-use crate::protocol::ids::GOOGLE_GENERATE_CONTENT_V1BETA;
+use crate::protocol::ids::GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA;
 use crate::protocol::ir::{
     AiRequest, ContentBlock, GenerationConfig, GoogleExt, MediaSource, Message, MessageContent,
     ProtocolExt, ReasoningConfig, Role, SafetySettings, StreamConfig, ToolCall, ToolSpec,
@@ -233,7 +233,7 @@ impl GoogleDecoder {
         ai_req.reasoning = reasoning;
         ai_req.safety_settings = safety_settings;
         ai_req.ext = Some(ProtocolExt::Google(google_ext));
-        ai_req.meta.source_protocol = Some(GOOGLE_GENERATE_CONTENT_V1BETA);
+        ai_req.meta.source_protocol = Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
         ai_req.meta.vendor.ingress = ingress;
 
         Ok(ai_req)

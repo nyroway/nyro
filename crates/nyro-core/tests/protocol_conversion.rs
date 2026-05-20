@@ -14,7 +14,7 @@ use nyro_core::protocol::codec::openai_responses::parser::{
 use nyro_core::protocol::codec::reasoning::normalize_response_reasoning;
 use nyro_core::protocol::codec::tool_correlation::normalize_request_tool_results;
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
     OPENAI_RESPONSES_V1,
 };
 use nyro_core::protocol::ir::usage::Usage;
@@ -224,7 +224,7 @@ fn gemini_tool_result_correlation_success() {
         enabled: false,
         include_usage: false,
     };
-    ai_req.meta.source_protocol = Some(GOOGLE_GENERATE_CONTENT_V1BETA);
+    ai_req.meta.source_protocol = Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
 
     normalize_request_tool_results(&mut ai_req);
     assert_eq!(
@@ -285,7 +285,7 @@ fn gemini_tool_result_id_hint_matches_out_of_order_calls() {
         enabled: false,
         include_usage: false,
     };
-    ai_req.meta.source_protocol = Some(GOOGLE_GENERATE_CONTENT_V1BETA);
+    ai_req.meta.source_protocol = Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
 
     normalize_request_tool_results(&mut ai_req);
     assert_eq!(ai_req.messages[1].tool_call_id.as_deref(), Some("call_b"));
@@ -907,7 +907,7 @@ fn anthropic_encoder_normalizes_tool_use_ids_for_tool_and_result() {
     };
     req.generation.max_tokens = Some(256);
     req.tools = tools;
-    req.meta.source_protocol = Some(GOOGLE_GENERATE_CONTENT_V1BETA);
+    req.meta.source_protocol = Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
 
     let (body, _) = AnthropicEncoder
         .encode_request(&req)
@@ -1009,7 +1009,7 @@ fn openai_encoder_remaps_reused_tool_result_id_with_synthetic_adjacent_call() {
         include_usage: false,
     };
     req.tools = tools;
-    req.meta.source_protocol = Some(OPENAI_CHAT_COMPLETIONS_V1);
+    req.meta.source_protocol = Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
 
     let (body, _) = OpenAIEncoder.encode_request(&req).expect("encode");
     let msgs = body
@@ -1197,7 +1197,7 @@ fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
         include_usage: false,
     };
     req.tools = tools;
-    req.meta.source_protocol = Some(OPENAI_CHAT_COMPLETIONS_V1);
+    req.meta.source_protocol = Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
 
     let (body, _) = OpenAIEncoder
         .encode_request(&req)
@@ -1416,7 +1416,7 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
         include_usage: false,
     };
     req.tools = tools;
-    req.meta.source_protocol = Some(GOOGLE_GENERATE_CONTENT_V1BETA);
+    req.meta.source_protocol = Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
 
     let (body, _) = OpenAIEncoder.encode_request(&req).expect("encode");
     let msgs = body
@@ -1586,7 +1586,7 @@ fn gemini_encoder_sanitizes_unsupported_json_schema_fields() {
         include_usage: false,
     };
     req.tools = tools;
-    req.meta.source_protocol = Some(OPENAI_CHAT_COMPLETIONS_V1);
+    req.meta.source_protocol = Some(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
 
     let (body, _) = GoogleEncoder.encode_request(&req).expect("encode");
     let params = body

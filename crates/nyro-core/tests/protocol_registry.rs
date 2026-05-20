@@ -8,8 +8,8 @@
 //!   request pipeline still bypasses its codec)
 
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
-    OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1, Protocol, ProtocolId,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+    OPENAI_COMPATIBLE_EMBEDDINGS_V1, OPENAI_RESPONSES_V1, Protocol, ProtocolId,
 };
 use nyro_core::protocol::ir::Role;
 use nyro_core::protocol::registry::ProtocolRegistry;
@@ -21,11 +21,11 @@ fn registers_all_handlers_with_correct_ids() {
     assert_eq!(reg.list().len(), 5);
 
     for id in [
-        OPENAI_CHAT_COMPLETIONS_V1,
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
-        OPENAI_EMBEDDINGS_V1,
+        OPENAI_COMPATIBLE_EMBEDDINGS_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
     ] {
         let h = reg.get(&id).unwrap_or_else(|| panic!("missing {id}"));
         assert_eq!(h.id(), id);
@@ -38,7 +38,7 @@ fn list_by_protocol_segments() {
     assert_eq!(reg.list_by_protocol(Protocol::OpenAICompatible).len(), 2);
     assert_eq!(reg.list_by_protocol(Protocol::OpenAIResponses).len(), 1);
     assert_eq!(reg.list_by_protocol(Protocol::AnthropicMessages).len(), 1);
-    assert_eq!(reg.list_by_protocol(Protocol::GoogleGenerativeAI).len(), 1);
+    assert_eq!(reg.list_by_protocol(Protocol::GoogleGemini).len(), 1);
 }
 
 #[test]
@@ -46,13 +46,13 @@ fn ingress_routes_match_axum_router() {
     let reg = ProtocolRegistry::global();
 
     let cases: &[(&str, &str, ProtocolId)] = &[
-        ("POST", "/v1/chat/completions", OPENAI_CHAT_COMPLETIONS_V1),
+        ("POST", "/v1/chat/completions", OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1),
         ("POST", "/v1/responses", OPENAI_RESPONSES_V1),
         ("POST", "/v1/messages", ANTHROPIC_MESSAGES_2023_06_01),
         (
             "POST",
             "/v1beta/models/:model_action",
-            GOOGLE_GENERATE_CONTENT_V1BETA,
+            GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
         ),
     ];
 
@@ -75,13 +75,13 @@ fn capabilities_match_dialect_special_cases() {
         "Responses must force upstream streaming"
     );
     assert!(
-        !reg.get(&OPENAI_CHAT_COMPLETIONS_V1)
+        !reg.get(&OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
             .unwrap()
             .capabilities()
             .force_upstream_stream
     );
     assert!(
-        reg.get(&GOOGLE_GENERATE_CONTENT_V1BETA)
+        reg.get(&GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
             .unwrap()
             .capabilities()
             .override_model_in_body,
@@ -92,7 +92,7 @@ fn capabilities_match_dialect_special_cases() {
 // ── Decoder / encoder smoke ──
 
 fn sample_body(id: ProtocolId) -> serde_json::Value {
-    if id == OPENAI_CHAT_COMPLETIONS_V1 {
+    if id == OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1 {
         json!({
             "model": "gpt-4o-mini",
             "messages": [
@@ -122,7 +122,7 @@ fn sample_body(id: ProtocolId) -> serde_json::Value {
             "max_tokens": 256,
             "stream": false
         })
-    } else if id == GOOGLE_GENERATE_CONTENT_V1BETA {
+    } else if id == GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA {
         json!({
             "system_instruction": {"parts": [{"text": "be helpful"}]},
             "contents": [
@@ -138,10 +138,10 @@ fn sample_body(id: ProtocolId) -> serde_json::Value {
 fn decoder_preserves_role_sequence_and_source_protocol() {
     let reg = ProtocolRegistry::global();
     for id in [
-        OPENAI_CHAT_COMPLETIONS_V1,
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
     ] {
         let body = sample_body(id);
         let req = reg
@@ -165,10 +165,10 @@ fn decoder_preserves_role_sequence_and_source_protocol() {
 fn encoder_round_trips_body_for_every_handler() {
     let reg = ProtocolRegistry::global();
     for id in [
-        OPENAI_CHAT_COMPLETIONS_V1,
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
     ] {
         let body = sample_body(id);
         let h = reg.get(&id).unwrap();
@@ -193,10 +193,10 @@ fn encoder_round_trips_body_for_every_handler() {
 fn parser_and_formatter_factories_construct() {
     let reg = ProtocolRegistry::global();
     for id in [
-        OPENAI_CHAT_COMPLETIONS_V1,
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_CONTENT_V1BETA,
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
     ] {
         let h = reg.get(&id).unwrap();
         let _ = h.make_response_decoder();
@@ -211,7 +211,7 @@ fn parser_and_formatter_factories_construct() {
 #[test]
 fn embeddings_handler_advertises_passthrough_capabilities() {
     let reg = ProtocolRegistry::global();
-    let caps = reg.get(&OPENAI_EMBEDDINGS_V1).unwrap().capabilities();
+    let caps = reg.get(&OPENAI_COMPATIBLE_EMBEDDINGS_V1).unwrap().capabilities();
     assert!(caps.embeddings);
     assert!(!caps.streaming);
     assert!(!caps.tools);
@@ -226,7 +226,7 @@ fn embeddings_routes_resolve_to_handler() {
         let h = reg
             .find_by_ingress_route("POST", path)
             .unwrap_or_else(|| panic!("no handler for POST {path}"));
-        assert_eq!(h.id(), OPENAI_EMBEDDINGS_V1);
+        assert_eq!(h.id(), OPENAI_COMPATIBLE_EMBEDDINGS_V1);
     }
 }
 
@@ -235,12 +235,12 @@ fn embeddings_aliases_resolve() {
     let reg = ProtocolRegistry::global();
     assert_eq!(
         reg.resolve_alias("openai-embeddings"),
-        Some(OPENAI_EMBEDDINGS_V1)
+        Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1)
     );
-    assert_eq!(reg.resolve_alias("embeddings"), Some(OPENAI_EMBEDDINGS_V1));
+    assert_eq!(reg.resolve_alias("embeddings"), Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1));
     assert_eq!(
         reg.resolve_alias("openai/embeddings/v1"),
-        Some(OPENAI_EMBEDDINGS_V1)
+        Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1)
     );
 }
 
@@ -253,7 +253,7 @@ fn embeddings_decoder_round_trips_body() {
         "encoding_format": "float"
     });
     let internal = reg
-        .get(&OPENAI_EMBEDDINGS_V1)
+        .get(&OPENAI_COMPATIBLE_EMBEDDINGS_V1)
         .unwrap()
         .make_request_decoder()
         .decode_request(body.clone())
@@ -262,7 +262,7 @@ fn embeddings_decoder_round_trips_body() {
     assert!(!internal.stream.enabled);
 
     let (encoded, _headers) = reg
-        .get(&OPENAI_EMBEDDINGS_V1)
+        .get(&OPENAI_COMPATIBLE_EMBEDDINGS_V1)
         .unwrap()
         .make_request_encoder()
         .encode_request(&internal)

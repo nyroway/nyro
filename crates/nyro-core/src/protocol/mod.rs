@@ -39,7 +39,7 @@ pub mod traits;
 use reqwest::header::HeaderMap;
 
 use crate::db::models::Provider;
-use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
+use crate::protocol::ids::{OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
 
 // ── Client → Gateway ──
 
@@ -140,7 +140,7 @@ impl ProviderProtocols {
     /// Build from a provider DB row.
     pub fn from_provider(provider: &Provider) -> Self {
         let default = Self::parse_protocol_key(provider.protocol.trim())
-            .unwrap_or(OPENAI_CHAT_COMPLETIONS_V1);
+            .unwrap_or(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
 
         Self {
             default,

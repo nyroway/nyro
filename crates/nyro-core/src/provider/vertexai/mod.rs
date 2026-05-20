@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::GatewayError;
 use crate::protocol::ids::{
-    GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1, Protocol,
+    GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1, Protocol,
     ProtocolId,
 };
 use crate::protocol::ir::{AiRequest, AiResponse};
@@ -128,9 +128,9 @@ impl Vendor for VertexVendor {
 
     fn supported_protocols(&self) -> &'static [ProtocolId] {
         &[
-            GOOGLE_GENERATE_CONTENT_V1BETA,
-            OPENAI_CHAT_COMPLETIONS_V1,
-            OPENAI_EMBEDDINGS_V1,
+            GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            OPENAI_COMPATIBLE_EMBEDDINGS_V1,
         ]
     }
 
@@ -218,7 +218,7 @@ pub fn expand_vertex_base_url(base_url: &str, service_account_json: &str) -> Str
 fn vertex_build_url(ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
     let base = expand_vertex_base_url(base_url, ctx.api_key);
     match ctx.protocol_id.protocol {
-        Protocol::GoogleGenerativeAI => vertex_google_generate_url(&base, path),
+        Protocol::GoogleGemini => vertex_google_generate_url(&base, path),
         Protocol::OpenAICompatible => vertex_openai_url(&base, path),
         _ => format!("{}{}", base.trim_end_matches('/'), path),
     }
@@ -338,7 +338,7 @@ mod tests {
         };
         let ctx = VendorCtx {
             provider: &provider,
-            protocol_id: OPENAI_CHAT_COMPLETIONS_V1,
+            protocol_id: OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
             api_key: "ya29.test-token",
             actual_model: "google/gemini-2.5-flash",
             credential: None,
