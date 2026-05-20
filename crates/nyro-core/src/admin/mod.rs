@@ -3345,7 +3345,7 @@ mod tests {
         let copied = gw.admin().copy_provider(&original.id).await?;
         let copied_credential = gw.storage.oauth_credentials().get(&copied.id).await?;
 
-        assert_eq!(copied.name, format!("{}_复制", original.name));
+        assert_eq!(copied.name, format!("{}_Copy", original.name));
         assert_eq!(copied.auth_mode, "oauth");
         assert!(copied.api_key.is_empty());
         assert_eq!(
