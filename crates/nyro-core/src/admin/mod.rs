@@ -2598,7 +2598,7 @@ fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
 
     let base = provider.base_url.trim_end_matches('/');
     match provider.protocol.as_str() {
-        "openai" | "openai-compat" | "openai-resps" | "anthropic" | "anthropic-msgs" => {
+        "openai" | "openai-compatible" | "openai-compat" | "openai-responses" | "openai-resps" | "anthropic" | "anthropic-messages" | "anthropic-msgs" => {
             let has_base_path = reqwest::Url::parse(base)
                 .ok()
                 .map(|url| {
@@ -2612,7 +2612,7 @@ fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
                 Some(format!("{base}/v1/models"))
             }
         }
-        "gemini" | "google-genai" => Some(format!("{base}/v1beta/models")),
+        "gemini" | "google-gemini" | "google-genai" => Some(format!("{base}/v1beta/models")),
         _ => None,
     }
 }
@@ -3589,7 +3589,7 @@ mod tests {
         CreateProvider {
             name: name.to_string(),
             vendor: Some("openai".to_string()),
-            protocol: "openai-compat".to_string(),
+            protocol: "openai-compatible".to_string(),
             base_url: "https://api.openai.com/v1".to_string(),
             preset_key: Some("openai".to_string()),
             channel: Some("default".to_string()),

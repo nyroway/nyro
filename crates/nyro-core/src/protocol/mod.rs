@@ -4,7 +4,7 @@
 //!
 //! Canonical form: `{protocol}/{name}/{version}`.
 //!
-//! - `protocol`: closed `Protocol` enum (`openai-compat` / `openai-resps` / `anthropic-msgs` / `google-genai`).
+//! - `protocol`: closed `Protocol` enum (`openai-compatible` / `openai-responses` / `anthropic-messages` / `google-gemini`).
 //! - `name`: wire-format endpoint name (`chat-completions`, `responses`, `messages`, `generate-content`).
 //! - `version`: schema version as the vendor labels it (`v1`, `2023-06-01`, `v1beta`).
 //!

@@ -5,7 +5,7 @@
 //! exists at the DB / protocol-negotiation layer. These tests document the new
 //! invariants:
 //!
-//! 1. A provider declaring the `openai-compat` *protocol* suite automatically
+//! 1. A provider declaring the `openai-compatible` *protocol* suite automatically
 //!    exposes **all** endpoints in that suite — including embeddings — without
 //!    any subset filtering.
 //! 2. Endpoint-keyed legacy protocol values are still resolved to their parent
@@ -37,20 +37,20 @@ fn provider(protocol: &str) -> Provider {
     }
 }
 
-/// A provider declaring the `openai-compat` protocol *suite* must expose every
+/// A provider declaring the `openai-compatible` protocol *suite* must expose every
 /// endpoint registered under that suite, including embeddings.
 #[test]
 fn openai_compat_protocol_suite_includes_embeddings() {
-    let p = provider("openai-compat");
+    let p = provider("openai-compatible");
     let pp = ProviderProtocols::from_provider(&p);
 
     assert!(
         pp.supports(OPENAI_CHAT_COMPLETIONS_V1),
-        "chat-completions must be included in openai-compat suite"
+        "chat-completions must be included in openai-compatible suite"
     );
     assert!(
         pp.supports(OPENAI_EMBEDDINGS_V1),
-        "embeddings must be included in openai-compat suite"
+        "embeddings must be included in openai-compatible suite"
     );
 }
 

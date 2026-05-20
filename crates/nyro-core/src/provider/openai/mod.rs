@@ -30,7 +30,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "OpenAI",
     },
     icon: "openai",
-    default_protocol: "openai-compat",
+    default_protocol: "openai-compatible",
     channels: &[
         ChannelDef {
             id: "default",
@@ -39,7 +39,7 @@ const METADATA: VendorMetadata = VendorMetadata {
                 en: "Default",
             },
             base_urls: &[ProtocolBaseUrl {
-                protocol: "openai-compat",
+                protocol: "openai-compatible",
                 base_url: "https://api.openai.com/v1",
             }],
             api_key: None,
@@ -57,7 +57,7 @@ const METADATA: VendorMetadata = VendorMetadata {
                 en: "Codex",
             },
             base_urls: &[ProtocolBaseUrl {
-                protocol: "openai-resps",
+                protocol: "openai-responses",
                 base_url: "https://chatgpt.com/backend-api/codex",
             }],
             api_key: None,

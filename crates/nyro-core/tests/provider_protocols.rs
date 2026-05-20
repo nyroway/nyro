@@ -83,7 +83,7 @@ fn resolve_egress_exact_match_skips_conversion() {
 
 #[test]
 fn resolve_egress_responses_falls_back_to_provider_default() {
-    // OpenAI Responses (openai-resps) and OpenAI Compatible (openai-compat) are
+    // OpenAI Responses (`openai-responses`) and OpenAI Compatible (`openai-compatible`) are
     // separate protocols; there is no same-protocol Tier-2 fallback between them.
     // A client speaking Responses API falls through to Tier 3 (provider default).
     let provider = provider_with_protocol("openai", "https://a.example/v1");

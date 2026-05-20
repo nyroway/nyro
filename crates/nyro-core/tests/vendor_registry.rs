@@ -89,17 +89,17 @@ fn resolve_falls_back_to_vendor_when_channel_unknown() {
 fn vertex_vendor_is_registered_with_native_and_openai_channels() {
     let reg = VendorRegistry::global();
     let meta = reg.metadata("vertexai").expect("vertex metadata");
-    assert_eq!(meta.default_protocol, "google-genai");
+    assert_eq!(meta.default_protocol, "google-gemini");
     assert!(
         meta.channels
             .iter()
-            .any(|c| c.base_urls.iter().any(|b| b.protocol == "google-genai")),
-        "vertex must expose native google-genai endpoint"
+            .any(|c| c.base_urls.iter().any(|b| b.protocol == "google-gemini")),
+        "vertex must expose native google-gemini endpoint"
     );
     assert!(
         meta.channels
             .iter()
-            .any(|c| c.base_urls.iter().any(|b| b.protocol == "openai-compat")),
+            .any(|c| c.base_urls.iter().any(|b| b.protocol == "openai-compatible")),
         "vertex must expose OpenAI-compatible endpoint"
     );
 }
@@ -108,7 +108,7 @@ fn vertex_vendor_is_registered_with_native_and_openai_channels() {
 fn vertex_build_url_rewrites_google_generate_content_to_vertex_resource() {
     let reg = VendorRegistry::global();
     let mut p = make_provider(Some("vertexai"), None);
-    p.protocol = "google-genai".into();
+    p.protocol = "google-gemini".into();
     p.base_url = "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global".into();
     p.api_key = r#"{"project_id":"demo-project"}"#.into();
     let ext = reg
@@ -138,7 +138,7 @@ fn vertex_build_url_rewrites_google_generate_content_to_vertex_resource() {
 fn vertex_build_url_rewrites_openai_compat_path_without_double_version() {
     let reg = VendorRegistry::global();
     let mut p = make_provider(Some("vertexai"), None);
-    p.protocol = "openai-compat".into();
+    p.protocol = "openai-compatible".into();
     p.base_url = "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi".into();
     p.api_key = r#"{"project_id":"demo-project"}"#.into();
     let ext = reg

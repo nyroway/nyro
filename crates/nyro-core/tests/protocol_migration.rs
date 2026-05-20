@@ -42,7 +42,7 @@ async fn migration_collapses_legacy_columns_and_is_idempotent() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(row.get::<String, _>("protocol"), "anthropic-msgs");
+    assert_eq!(row.get::<String, _>("protocol"), "anthropic-messages");
     assert_eq!(row.get::<String, _>("base_url"), "https://b.example/v1");
 
     let columns = sqlx::query("PRAGMA table_info(providers)")

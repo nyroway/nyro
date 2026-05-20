@@ -21,7 +21,7 @@ use crate::provider::VendorRegistry;
 
 const ANTHROPIC_PRESET_ID: &str = "anthropic";
 const CLAUDE_CODE_CHANNEL_ID: &str = "claude-code";
-const ANTHROPIC_PROTOCOL_ID: &str = "anthropic-msgs";
+const ANTHROPIC_PROTOCOL_ID: &str = "anthropic-messages";
 
 /// User-Agent the official `claude` CLI sends; mirrored on both the
 /// OAuth token endpoint and the inference runtime. **Bump this** when
@@ -367,7 +367,7 @@ mod tests {
             id: "test".into(),
             name: "test".into(),
             vendor: Some("anthropic".into()),
-            protocol: "anthropic-msgs".into(),
+            protocol: "anthropic-messages".into(),
             base_url: String::new(),
             preset_key: Some("anthropic".into()),
             channel: Some("claude-code".into()),

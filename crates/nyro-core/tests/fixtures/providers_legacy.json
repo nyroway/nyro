@@ -6,7 +6,7 @@
       "en": "Custom"
     },
     "icon": "custom",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -25,7 +25,7 @@
       "en": "OpenAI"
     },
     "icon": "openai",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -34,7 +34,7 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://api.openai.com/v1"
+          "openai-compatible": "https://api.openai.com/v1"
         },
         "modelsSource": "https://api.openai.com/v1/models",
         "authMode": "apikey"
@@ -46,7 +46,7 @@
           "en": "Codex"
         },
         "baseUrls": {
-          "openai-resps": "https://chatgpt.com/backend-api/codex"
+          "openai-responses": "https://chatgpt.com/backend-api/codex"
         },
         "modelsSource": "https://chatgpt.com/backend-api/codex/models",
         "authMode": "oauth",
@@ -73,7 +73,7 @@
       "en": "Anthropic"
     },
     "icon": "anthropic",
-    "defaultProtocol": "anthropic-msgs",
+    "defaultProtocol": "anthropic-messages",
     "channels": [
       {
         "id": "default",
@@ -82,7 +82,7 @@
           "en": "Default"
         },
         "baseUrls": {
-          "anthropic-msgs": "https://api.anthropic.com"
+          "anthropic-messages": "https://api.anthropic.com"
         },
         "modelsSource": "https://api.anthropic.com/v1/models",
         "authMode": "apikey"
@@ -94,7 +94,7 @@
           "en": "Claude Code"
         },
         "baseUrls": {
-          "anthropic-msgs": "https://api.anthropic.com"
+          "anthropic-messages": "https://api.anthropic.com"
         },
         "modelsSource": "ai://models.dev/anthropic",
         "staticModels": [
@@ -127,7 +127,7 @@
       "en": "Google"
     },
     "icon": "google",
-    "defaultProtocol": "google-genai",
+    "defaultProtocol": "google-gemini",
     "channels": [
       {
         "id": "default",
@@ -136,8 +136,8 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://generativelanguage.googleapis.com/v1beta/openai",
-          "google-genai": "https://generativelanguage.googleapis.com"
+          "openai-compatible": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "google-gemini": "https://generativelanguage.googleapis.com"
         },
         "modelsSource": "https://generativelanguage.googleapis.com/v1beta/openai/models",
         "authMode": "apikey"
@@ -151,7 +151,7 @@
       "en": "Vertex AI"
     },
     "icon": "googlecloud",
-    "defaultProtocol": "google-genai",
+    "defaultProtocol": "google-gemini",
     "channels": [
       {
         "id": "native",
@@ -160,7 +160,7 @@
           "en": "Native Gemini"
         },
         "baseUrls": {
-          "google-genai": "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global"
+          "google-gemini": "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global"
         },
         "staticModels": [
           "gemini-2.5-pro",
@@ -178,7 +178,7 @@
           "en": "OpenAI Compatible"
         },
         "baseUrls": {
-          "openai-compat": "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi"
+          "openai-compatible": "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi"
         },
         "staticModels": [
           "google/gemini-2.5-pro",
@@ -196,7 +196,7 @@
       "en": "xAI"
     },
     "icon": "xai",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -205,7 +205,7 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://api.x.ai/v1"
+          "openai-compatible": "https://api.x.ai/v1"
         },
         "modelsSource": "https://api.x.ai/v1/models",
         "authMode": "apikey"
@@ -219,7 +219,7 @@
       "en": "DeepSeek"
     },
     "icon": "deepseek",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -228,8 +228,8 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://api.deepseek.com/v1",
-          "anthropic-msgs": "https://api.deepseek.com/anthropic"
+          "openai-compatible": "https://api.deepseek.com/v1",
+          "anthropic-messages": "https://api.deepseek.com/anthropic"
         },
         "modelsSource": "https://api.deepseek.com/v1/models",
         "authMode": "apikey"
@@ -243,7 +243,7 @@
       "en": "Moonshot AI"
     },
     "icon": "kimi",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -252,8 +252,8 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://api.moonshot.ai/v1",
-          "anthropic-msgs": "https://api.moonshot.ai/anthropic"
+          "openai-compatible": "https://api.moonshot.ai/v1",
+          "anthropic-messages": "https://api.moonshot.ai/anthropic"
         },
         "modelsSource": "https://api.moonshot.ai/v1/models",
         "authMode": "apikey"
@@ -265,8 +265,8 @@
           "en": "China"
         },
         "baseUrls": {
-          "openai-compat": "https://api.moonshot.cn/v1",
-          "anthropic-msgs": "https://api.moonshot.cn/anthropic"
+          "openai-compatible": "https://api.moonshot.cn/v1",
+          "anthropic-messages": "https://api.moonshot.cn/anthropic"
         },
         "modelsSource": "https://api.moonshot.cn/v1/models",
         "authMode": "apikey"
@@ -280,7 +280,7 @@
       "en": "MiniMax"
     },
     "icon": "minimax",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -289,8 +289,8 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://api.minimax.io/v1",
-          "anthropic-msgs": "https://api.minimax.io/anthropic"
+          "openai-compatible": "https://api.minimax.io/v1",
+          "anthropic-messages": "https://api.minimax.io/anthropic"
         },
         "modelsSource": "ai://models.dev/minimax",
         "staticModels": [],
@@ -303,8 +303,8 @@
           "en": "China"
         },
         "baseUrls": {
-          "openai-compat": "https://api.minimaxi.com/v1",
-          "anthropic-msgs": "https://api.minimaxi.com/anthropic"
+          "openai-compatible": "https://api.minimaxi.com/v1",
+          "anthropic-messages": "https://api.minimaxi.com/anthropic"
         },
         "modelsSource": "ai://models.dev/minimax",
         "staticModels": [],
@@ -319,7 +319,7 @@
       "en": "Zhipu AI"
     },
     "icon": "zhipu",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -328,8 +328,8 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://open.bigmodel.cn/api/paas/v4",
-          "anthropic-msgs": "https://open.bigmodel.cn/api/anthropic"
+          "openai-compatible": "https://open.bigmodel.cn/api/paas/v4",
+          "anthropic-messages": "https://open.bigmodel.cn/api/anthropic"
         },
         "modelsSource": "https://open.bigmodel.cn/api/paas/v4/models",
         "authMode": "apikey"
@@ -341,8 +341,8 @@
           "en": "Coding Plan"
         },
         "baseUrls": {
-          "openai-compat": "https://open.bigmodel.cn/api/coding/paas/v4",
-          "anthropic-msgs": "https://open.bigmodel.cn/api/anthropic"
+          "openai-compatible": "https://open.bigmodel.cn/api/coding/paas/v4",
+          "anthropic-messages": "https://open.bigmodel.cn/api/anthropic"
         },
         "modelsSource": "https://open.bigmodel.cn/api/coding/paas/v4/models",
         "authMode": "apikey"
@@ -356,7 +356,7 @@
       "en": "Z.ai"
     },
     "icon": "zai",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -365,8 +365,8 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://api.z.ai/api/paas/v4",
-          "anthropic-msgs": "https://api.z.ai/api/anthropic"
+          "openai-compatible": "https://api.z.ai/api/paas/v4",
+          "anthropic-messages": "https://api.z.ai/api/anthropic"
         },
         "modelsSource": "https://api.z.ai/api/paas/v4/models",
         "authMode": "apikey"
@@ -378,8 +378,8 @@
           "en": "Coding Plan"
         },
         "baseUrls": {
-          "openai-compat": "https://api.z.ai/api/coding/paas/v4",
-          "anthropic-msgs": "https://api.z.ai/api/anthropic"
+          "openai-compatible": "https://api.z.ai/api/coding/paas/v4",
+          "anthropic-messages": "https://api.z.ai/api/anthropic"
         },
         "modelsSource": "https://api.z.ai/api/coding/paas/v4/models",
         "authMode": "apikey"
@@ -393,7 +393,7 @@
       "en": "NVIDIA"
     },
     "icon": "nvidia",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -402,7 +402,7 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://integrate.api.nvidia.com/v1"
+          "openai-compatible": "https://integrate.api.nvidia.com/v1"
         },
         "modelsSource": "https://integrate.api.nvidia.com/v1/models",
         "authMode": "apikey"
@@ -416,7 +416,7 @@
       "en": "OpenRouter"
     },
     "icon": "openrouter",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -425,8 +425,8 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "https://openrouter.ai/api/v1",
-          "anthropic-msgs": "https://openrouter.ai/api"
+          "openai-compatible": "https://openrouter.ai/api/v1",
+          "anthropic-messages": "https://openrouter.ai/api"
         },
         "modelsSource": "https://openrouter.ai/api/v1/models",
         "authMode": "apikey"
@@ -440,7 +440,7 @@
       "en": "Ollama"
     },
     "icon": "ollama",
-    "defaultProtocol": "openai-compat",
+    "defaultProtocol": "openai-compatible",
     "channels": [
       {
         "id": "default",
@@ -449,8 +449,8 @@
           "en": "Default"
         },
         "baseUrls": {
-          "openai-compat": "http://127.0.0.1:11434/v1",
-          "anthropic-msgs": "http://127.0.0.1:11434"
+          "openai-compatible": "http://127.0.0.1:11434/v1",
+          "anthropic-messages": "http://127.0.0.1:11434"
         },
         "apiKey": "sk-ollama",
         "modelsSource": "http://127.0.0.1:11434/v1/models",

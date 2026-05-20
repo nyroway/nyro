@@ -31,7 +31,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "Ollama",
     },
     icon: "ollama",
-    default_protocol: "openai-compat",
+    default_protocol: "openai-compatible",
     channels: &[ChannelDef {
         id: "default",
         label: Label {
@@ -40,11 +40,11 @@ const METADATA: VendorMetadata = VendorMetadata {
         },
         base_urls: &[
             ProtocolBaseUrl {
-                protocol: "openai-compat",
+                protocol: "openai-compatible",
                 base_url: "http://127.0.0.1:11434/v1",
             },
             ProtocolBaseUrl {
-                protocol: "anthropic-msgs",
+                protocol: "anthropic-messages",
                 base_url: "http://127.0.0.1:11434",
             },
         ],

@@ -27,7 +27,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "Moonshot AI",
     },
     icon: "kimi",
-    default_protocol: "openai-compat",
+    default_protocol: "openai-compatible",
     channels: &[
         ChannelDef {
             id: "default",
@@ -37,11 +37,11 @@ const METADATA: VendorMetadata = VendorMetadata {
             },
             base_urls: &[
                 ProtocolBaseUrl {
-                    protocol: "openai-compat",
+                    protocol: "openai-compatible",
                     base_url: "https://api.moonshot.ai/v1",
                 },
                 ProtocolBaseUrl {
-                    protocol: "anthropic-msgs",
+                    protocol: "anthropic-messages",
                     base_url: "https://api.moonshot.ai/anthropic",
                 },
             ],
@@ -61,11 +61,11 @@ const METADATA: VendorMetadata = VendorMetadata {
             },
             base_urls: &[
                 ProtocolBaseUrl {
-                    protocol: "openai-compat",
+                    protocol: "openai-compatible",
                     base_url: "https://api.moonshot.cn/v1",
                 },
                 ProtocolBaseUrl {
-                    protocol: "anthropic-msgs",
+                    protocol: "anthropic-messages",
                     base_url: "https://api.moonshot.cn/anthropic",
                 },
             ],

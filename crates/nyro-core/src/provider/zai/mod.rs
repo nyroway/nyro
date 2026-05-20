@@ -27,7 +27,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "Z.ai",
     },
     icon: "zai",
-    default_protocol: "openai-compat",
+    default_protocol: "openai-compatible",
     channels: &[
         ChannelDef {
             id: "default",
@@ -37,11 +37,11 @@ const METADATA: VendorMetadata = VendorMetadata {
             },
             base_urls: &[
                 ProtocolBaseUrl {
-                    protocol: "openai-compat",
+                    protocol: "openai-compatible",
                     base_url: "https://api.z.ai/api/paas/v4",
                 },
                 ProtocolBaseUrl {
-                    protocol: "anthropic-msgs",
+                    protocol: "anthropic-messages",
                     base_url: "https://api.z.ai/api/anthropic",
                 },
             ],
@@ -61,11 +61,11 @@ const METADATA: VendorMetadata = VendorMetadata {
             },
             base_urls: &[
                 ProtocolBaseUrl {
-                    protocol: "openai-compat",
+                    protocol: "openai-compatible",
                     base_url: "https://api.z.ai/api/coding/paas/v4",
                 },
                 ProtocolBaseUrl {
-                    protocol: "anthropic-msgs",
+                    protocol: "anthropic-messages",
                     base_url: "https://api.z.ai/api/anthropic",
                 },
             ],

@@ -72,7 +72,7 @@ where
     // `ctx.disable_default_auth`. Skipping unconditionally would break
     // every API-key path; gating here keeps the OAuth invariant
     // ("no leaked empty x-api-key") in a single seam shared by every
-    // openai-compat adapter.
+    // openai-compatible adapter.
     let mut headers = if ctx.disable_default_auth {
         HeaderMap::new()
     } else {

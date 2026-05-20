@@ -591,7 +591,7 @@ providers:
         let providers = build_providers(&cfg);
         assert_eq!(providers.len(), 1);
         let p = &providers[0];
-        assert_eq!(p.protocol, "openai-compat");
+        assert_eq!(p.protocol, "openai-compatible");
         assert_eq!(p.base_url, "https://a.example/v1");
     }
 

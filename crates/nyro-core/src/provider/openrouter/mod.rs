@@ -27,7 +27,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "OpenRouter",
     },
     icon: "openrouter",
-    default_protocol: "openai-compat",
+    default_protocol: "openai-compatible",
     channels: &[ChannelDef {
         id: "default",
         label: Label {
@@ -36,11 +36,11 @@ const METADATA: VendorMetadata = VendorMetadata {
         },
         base_urls: &[
             ProtocolBaseUrl {
-                protocol: "openai-compat",
+                protocol: "openai-compatible",
                 base_url: "https://openrouter.ai/api/v1",
             },
             ProtocolBaseUrl {
-                protocol: "anthropic-msgs",
+                protocol: "anthropic-messages",
                 base_url: "https://openrouter.ai/api",
             },
         ],

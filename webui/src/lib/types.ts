@@ -169,10 +169,10 @@ export interface ModelCapabilities {
 }
 
 export type ProviderProtocol =
-  | "openai-compat"
-  | "openai-resps"
-  | "anthropic-msgs"
-  | "google-genai";
+  | "openai-compatible"
+  | "openai-responses"
+  | "anthropic-messages"
+  | "google-gemini";
 
 export interface ProviderChannelPreset {
   id: string;

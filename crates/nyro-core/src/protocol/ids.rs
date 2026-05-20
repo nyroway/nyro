@@ -2,7 +2,7 @@
 //!
 //! Canonical string form: `{protocol}/{name}/{version}`.
 //!
-//! - `protocol`: closed enum of protocol suites (`openai-compat` / `openai-resps` / `anthropic-msgs` / `google-genai`).
+//! - `protocol`: closed enum of protocol suites (`openai-compatible` / `openai-responses` / `anthropic-messages` / `google-gemini`).
 //! - `name`: wire-format endpoint name (`chat-completions` / `responses` / `messages` / `generate-content` / `embeddings`).
 //! - `version`: schema version as the vendor labels it (`v1`, `2023-06-01`, `v1beta`).
 //!
@@ -33,10 +33,10 @@ pub enum Protocol {
 impl Protocol {
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::OpenAICompatible => "openai-compat",
-            Self::OpenAIResponses => "openai-resps",
-            Self::AnthropicMessages => "anthropic-msgs",
-            Self::GoogleGenerativeAI => "google-genai",
+            Self::OpenAICompatible => "openai-compatible",
+            Self::OpenAIResponses => "openai-responses",
+            Self::AnthropicMessages => "anthropic-messages",
+            Self::GoogleGenerativeAI => "google-gemini",
         }
     }
 
@@ -45,7 +45,7 @@ impl Protocol {
             Self::OpenAICompatible => "OpenAI Compatible",
             Self::OpenAIResponses => "OpenAI Responses",
             Self::AnthropicMessages => "Anthropic Messages",
-            Self::GoogleGenerativeAI => "Google Generative AI",
+            Self::GoogleGenerativeAI => "Google Gemini",
         }
     }
 }
@@ -61,12 +61,12 @@ impl FromStr for Protocol {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "openai-compat" | "openai-compatible" | "openai" => Ok(Self::OpenAICompatible),
-            "openai-resps" | "openai-responses" => Ok(Self::OpenAIResponses),
-            "anthropic-msgs" | "anthropic-messages" | "anthropic" | "claude" => {
+            "openai-compatible" | "openai-compat" | "openai" => Ok(Self::OpenAICompatible),
+            "openai-responses" | "openai-resps" | "responses" => Ok(Self::OpenAIResponses),
+            "anthropic-messages" | "anthropic-msgs" | "anthropic" | "claude" => {
                 Ok(Self::AnthropicMessages)
             }
-            "google-genai" | "google-generative-ai" | "gemini" | "google" => {
+            "google-gemini" | "google-genai" | "google-generative-ai" | "gemini" | "google" => {
                 Ok(Self::GoogleGenerativeAI)
             }
             other => anyhow::bail!("unknown protocol: {other}"),
@@ -76,7 +76,7 @@ impl FromStr for Protocol {
 
 /// Specific API endpoint within a `Protocol`.
 ///
-/// Canonical display: `{protocol}/{name}/{version}` (e.g. `openai-compat/chat-completions/v1`).
+/// Canonical display: `{protocol}/{name}/{version}` (e.g. `openai-compatible/chat-completions/v1`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProtocolEndpoint {
     pub protocol: Protocol,
@@ -275,20 +275,20 @@ mod tests {
     fn display_canonical_form() {
         assert_eq!(
             OPENAI_CHAT_COMPLETIONS_V1.to_string(),
-            "openai-compat/chat-completions/v1"
+            "openai-compatible/chat-completions/v1"
         );
-        assert_eq!(OPENAI_RESPONSES_V1.to_string(), "openai-resps/responses/v1");
+        assert_eq!(OPENAI_RESPONSES_V1.to_string(), "openai-responses/responses/v1");
         assert_eq!(
             ANTHROPIC_MESSAGES_2023_06_01.to_string(),
-            "anthropic-msgs/messages/2023-06-01"
+            "anthropic-messages/messages/2023-06-01"
         );
         assert_eq!(
             GOOGLE_GENERATE_CONTENT_V1BETA.to_string(),
-            "google-genai/generate-content/v1beta"
+            "google-gemini/generate-content/v1beta"
         );
         assert_eq!(
             OPENAI_EMBEDDINGS_V1.to_string(),
-            "openai-compat/embeddings/v1"
+            "openai-compatible/embeddings/v1"
         );
     }
 

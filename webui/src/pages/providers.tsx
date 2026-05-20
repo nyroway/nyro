@@ -69,7 +69,7 @@ function protocolUrl(protocol: string) {
 const emptyCreate: CreateProvider = {
   name: "",
   vendor: undefined,
-  protocol: "openai-compat",
+  protocol: "openai-compatible",
   base_url: "https://api.openai.com/v1",
   use_proxy: false,
   auth_mode: "apikey",
@@ -82,10 +82,10 @@ const emptyCreate: CreateProvider = {
 const PAGE_SIZE = 7;
 const DEFAULT_PRESET_ID = "nyro";
 const protocolOptions = [
-  { label: "OpenAI Compatible", value: "openai-compat" },
-  { label: "OpenAI Responses",  value: "openai-resps"  },
-  { label: "Anthropic Messages", value: "anthropic-msgs" },
-  { label: "Google Generative AI", value: "google-genai" },
+  { label: "OpenAI Compatible", value: "openai-compatible" },
+  { label: "OpenAI Responses",  value: "openai-responses"  },
+  { label: "Anthropic Messages", value: "anthropic-messages" },
+  { label: "Google Gemini", value: "google-gemini" },
 ] as const satisfies ReadonlyArray<{ label: string; value: ProviderProtocol }>;
 
 function validateProviderEndpoint(
@@ -141,7 +141,7 @@ function resolvePresetProtocol(
   preferred?: ProviderProtocol,
 ): ProviderProtocol {
   const available = availableProtocolsForPreset(preset, channelId);
-  const canonicalDefault = (resolveProtocol(preset.defaultProtocol) ?? "openai-compat") as ProviderProtocol;
+  const canonicalDefault = (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol;
   if (preferred && available.includes(preferred)) return preferred;
   if (available.includes(canonicalDefault)) return canonicalDefault;
   return available[0] ?? canonicalDefault;
@@ -176,7 +176,7 @@ function defaultModelsEndpoint(baseUrl: string, protocol: ProviderProtocol) {
     parsed = null;
   }
 
-  if (protocol === "openai-compat" || protocol === "openai-resps" || protocol === "anthropic-msgs") {
+  if (protocol === "openai-compatible" || protocol === "openai-responses" || protocol === "anthropic-messages") {
     // OpenRouter model discovery endpoint should be /api/v1/models.
     if (parsed?.host === "openrouter.ai") {
       const pathname = parsed.pathname.replace(/\/+$/, "");
@@ -193,7 +193,7 @@ function defaultModelsEndpoint(baseUrl: string, protocol: ProviderProtocol) {
     }
   }
 
-  if (protocol === "google-genai") {
+  if (protocol === "google-gemini") {
     return `${normalized}/v1beta/models`;
   }
 
@@ -208,7 +208,7 @@ function isVertexProviderSelection(value?: Pick<CreateProvider, "vendor" | "pres
 
 function defaultVertexBaseUrl(protocol: ProviderProtocol | string) {
   const base = "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global";
-  return protocol === "openai-compat" ? `${base}/endpoints/openapi` : base;
+  return protocol === "openai-compatible" ? `${base}/endpoints/openapi` : base;
 }
 
 function joinStaticModels(models?: string[]) {
@@ -227,7 +227,7 @@ function fallbackProviderPreset(): ProviderPreset {
   return {
     id: DEFAULT_PRESET_ID,
     label: { zh: "自定义", en: "Custom" },
-    defaultProtocol: "openai-compat",
+    defaultProtocol: "openai-compatible",
     channels: [],
   };
 }
@@ -992,7 +992,7 @@ export default function ProvidersPage() {
     };
 
     try {
-      const protocol = (resolveProtocol(provider.protocol || "openai") ?? "openai-compat") as ProviderProtocol;
+      const protocol = (resolveProtocol(provider.protocol || "openai") ?? "openai-compatible") as ProviderProtocol;
       const baseUrl = provider.base_url?.trim() ?? "";
 
       appendTestLog("info", isZh ? `开始测试 ${provider.name}...` : `Start testing ${provider.name}...`);
@@ -1087,7 +1087,7 @@ export default function ProvidersPage() {
       (item) => item.id === (p.preset_key || DEFAULT_PRESET_ID),
     );
     const channel = p.channel || "default";
-    const savedProtocol = (resolveProtocol(p.protocol) ?? "openai-compat") as ProviderProtocol;
+    const savedProtocol = (resolveProtocol(p.protocol) ?? "openai-compatible") as ProviderProtocol;
     const safeProtocol = presetForEdit
       ? resolvePresetProtocol(presetForEdit, channel, savedProtocol)
       : savedProtocol;
@@ -1115,7 +1115,7 @@ export default function ProvidersPage() {
     if (!preset) return;
 
     const nextChannelId = preset.channels?.[0]?.id ?? "";
-    const nextProtocol = resolvePresetProtocol(preset, nextChannelId, (resolveProtocol(preset.defaultProtocol) ?? "openai-compat") as ProviderProtocol);
+    const nextProtocol = resolvePresetProtocol(preset, nextChannelId, (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol);
     const config = resolvePresetConfig(preset, nextProtocol, nextChannelId);
     const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
 
@@ -1184,7 +1184,7 @@ export default function ProvidersPage() {
             const nextProtocol = resolvePresetProtocol(
               preset,
               nextChannelId,
-              (prev.protocol as ProviderProtocol) || (resolveProtocol(preset.defaultProtocol) ?? "openai-compat") as ProviderProtocol,
+              (prev.protocol as ProviderProtocol) || (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol,
             );
             const config = resolvePresetConfig(preset, nextProtocol, nextChannelId);
             const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
@@ -1726,7 +1726,7 @@ export default function ProvidersPage() {
               <div className="flex gap-3">
                 <Button
                   onClick={() => {
-                    const protocol = form.protocol || "openai-compat";
+                    const protocol = form.protocol || "openai-compatible";
                     const baseUrl = toGatewayBaseUrl(form.base_url ?? "");
                     const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                     if (validation) {
@@ -1790,7 +1790,7 @@ export default function ProvidersPage() {
             const editingPresetId = editForm.preset_key || DEFAULT_PRESET_ID;
             const editingPreset =
               providerPresets.find((preset) => preset.id === editingPresetId) ?? providerPresets[0] ?? null;
-            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-compat") as ProviderProtocol];
+            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-compatible") as ProviderProtocol];
             const selectedPreset = providerPresets.find((preset) => preset.id === (p.preset_key || p.vendor || ""));
             const selectedProviderName = selectedPreset
               ? presetLabel(selectedPreset, isZh)
@@ -1894,7 +1894,7 @@ export default function ProvidersPage() {
                           const resolvedProtocol = resolvePresetProtocol(
                             editingPreset,
                             value,
-                            (editForm.protocol as ProviderProtocol) || (resolveProtocol(editingPreset.defaultProtocol) ?? "openai-compat") as ProviderProtocol,
+                            (editForm.protocol as ProviderProtocol) || (resolveProtocol(editingPreset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol,
                           );
                           const config = resolvePresetConfig(
                             editingPreset,
@@ -2253,7 +2253,7 @@ export default function ProvidersPage() {
                     <Button
                       onClick={() => {
                         setEditError(null);
-                        const protocol = editForm.protocol || "openai-compat";
+                        const protocol = editForm.protocol || "openai-compatible";
                         const baseUrl = toGatewayBaseUrl(editForm.base_url ?? "");
                         const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                         if (validation) {
@@ -2323,13 +2323,13 @@ export default function ProvidersPage() {
                           <Badge
                             key={`${p.id}-${protocol}`}
                             variant={
-                              protocol === "anthropic-msgs"
+                              protocol === "anthropic-messages"
                                 ? "warning"
-                                : protocol === "google-genai"
+                                : protocol === "google-gemini"
                                   ? "secondary"
                                   : "success"
                             }
-                            className={`connect-label-badge ${protocol === "google-genai" ? "bg-violet-50 text-violet-700" : ""}`}
+                            className={`connect-label-badge ${protocol === "google-gemini" ? "bg-violet-50 text-violet-700" : ""}`}
                           >
                             {PROTOCOL_TABLE.find((pt) => pt.id === protocol)?.displayName ?? protocol}
                           </Badge>

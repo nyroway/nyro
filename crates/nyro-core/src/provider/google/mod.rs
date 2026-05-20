@@ -23,7 +23,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "Google",
     },
     icon: "google",
-    default_protocol: "google-genai",
+    default_protocol: "google-gemini",
     channels: &[ChannelDef {
         id: "default",
         label: Label {
@@ -32,11 +32,11 @@ const METADATA: VendorMetadata = VendorMetadata {
         },
         base_urls: &[
             ProtocolBaseUrl {
-                protocol: "openai-compat",
+                protocol: "openai-compatible",
                 base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
             },
             ProtocolBaseUrl {
-                protocol: "google-genai",
+                protocol: "google-gemini",
                 base_url: "https://generativelanguage.googleapis.com",
             },
         ],

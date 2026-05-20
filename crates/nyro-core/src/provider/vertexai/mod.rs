@@ -41,7 +41,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "Vertex AI",
     },
     icon: "googlecloud",
-    default_protocol: "google-genai",
+    default_protocol: "google-gemini",
     channels: &[
         ChannelDef {
             id: "native",
@@ -50,7 +50,7 @@ const METADATA: VendorMetadata = VendorMetadata {
                 en: "Native Gemini",
             },
             base_urls: &[ProtocolBaseUrl {
-                protocol: "google-genai",
+                protocol: "google-gemini",
                 base_url: "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global",
             }],
             api_key: None,
@@ -74,7 +74,7 @@ const METADATA: VendorMetadata = VendorMetadata {
                 en: "OpenAI Compatible",
             },
             base_urls: &[ProtocolBaseUrl {
-                protocol: "openai-compat",
+                protocol: "openai-compatible",
                 base_url: "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi",
             }],
             api_key: None,
@@ -321,7 +321,7 @@ mod tests {
             id: "test".into(),
             name: "test".into(),
             vendor: Some("vertexai".into()),
-            protocol: "openai-compat".into(),
+            protocol: "openai-compatible".into(),
             base_url: "https://aiplatform.googleapis.com/v1/projects/demo/locations/global/endpoints/openapi".into(),
             preset_key: None,
             channel: None,

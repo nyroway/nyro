@@ -255,24 +255,25 @@ fn default_endpoint_aliases() -> HashMap<&'static str, ProtocolEndpoint> {
 fn default_protocol_aliases() -> HashMap<&'static str, Protocol> {
     let mut m = HashMap::new();
 
-    // Canonical short names
-    m.insert("openai-compat", Protocol::OpenAICompatible);
-    m.insert("openai-resps", Protocol::OpenAIResponses);
-    m.insert("anthropic-msgs", Protocol::AnthropicMessages);
-    m.insert("google-genai", Protocol::GoogleGenerativeAI);
-
-    // Full names
+    // Canonical (new)
     m.insert("openai-compatible", Protocol::OpenAICompatible);
     m.insert("openai-responses", Protocol::OpenAIResponses);
     m.insert("anthropic-messages", Protocol::AnthropicMessages);
-    m.insert("google-generative-ai", Protocol::GoogleGenerativeAI);
+    m.insert("google-gemini", Protocol::GoogleGenerativeAI);
 
-    // Legacy brand names
+    // Short names
     m.insert("openai", Protocol::OpenAICompatible);
     m.insert("anthropic", Protocol::AnthropicMessages);
     m.insert("claude", Protocol::AnthropicMessages);
     m.insert("gemini", Protocol::GoogleGenerativeAI);
     m.insert("google", Protocol::GoogleGenerativeAI);
+
+    // Deprecated aliases (old canonical slugs, backward compat only)
+    m.insert("openai-compat", Protocol::OpenAICompatible);
+    m.insert("openai-resps", Protocol::OpenAIResponses);
+    m.insert("anthropic-msgs", Protocol::AnthropicMessages);
+    m.insert("google-genai", Protocol::GoogleGenerativeAI);
+    m.insert("google-generative-ai", Protocol::GoogleGenerativeAI);
 
     m
 }
@@ -297,19 +298,19 @@ mod tests {
         let reg = ProtocolRegistry::global();
         // New canonical form
         assert_eq!(
-            reg.resolve_alias("openai-compat/chat-completions/v1"),
+            reg.resolve_alias("openai-compatible/chat-completions/v1"),
             Some(OPENAI_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
-            reg.resolve_alias("openai-resps/responses/v1"),
+            reg.resolve_alias("openai-responses/responses/v1"),
             Some(OPENAI_RESPONSES_V1)
         );
         assert_eq!(
-            reg.resolve_alias("anthropic-msgs/messages/2023-06-01"),
+            reg.resolve_alias("anthropic-messages/messages/2023-06-01"),
             Some(ANTHROPIC_MESSAGES_2023_06_01)
         );
         assert_eq!(
-            reg.resolve_alias("google-genai/generate-content/v1beta"),
+            reg.resolve_alias("google-gemini/generate-content/v1beta"),
             Some(GOOGLE_GENERATE_CONTENT_V1BETA)
         );
     }
@@ -328,6 +329,24 @@ mod tests {
         );
         assert_eq!(
             reg.resolve_alias("google/generate/v1beta"),
+            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+        );
+
+        // Deprecated canonical (still resolves via FromStr)
+        assert_eq!(
+            reg.resolve_alias("openai-compat/chat-completions/v1"),
+            Some(OPENAI_CHAT_COMPLETIONS_V1)
+        );
+        assert_eq!(
+            reg.resolve_alias("openai-resps/responses/v1"),
+            Some(OPENAI_RESPONSES_V1)
+        );
+        assert_eq!(
+            reg.resolve_alias("anthropic-msgs/messages/2023-06-01"),
+            Some(ANTHROPIC_MESSAGES_2023_06_01)
+        );
+        assert_eq!(
+            reg.resolve_alias("google-genai/generate-content/v1beta"),
             Some(GOOGLE_GENERATE_CONTENT_V1BETA)
         );
 
@@ -414,7 +433,7 @@ mod tests {
     fn parse_protocol_resolves_aliases() {
         let reg = ProtocolRegistry::global();
         assert_eq!(
-            reg.parse_protocol("openai-compat"),
+            reg.parse_protocol("openai-compatible"),
             Some(Protocol::OpenAICompatible)
         );
         assert_eq!(
@@ -428,6 +447,19 @@ mod tests {
         assert_eq!(
             reg.parse_protocol("gemini"),
             Some(Protocol::GoogleGenerativeAI)
+        );
+        assert_eq!(
+            reg.parse_protocol("google-gemini"),
+            Some(Protocol::GoogleGenerativeAI)
+        );
+        // Deprecated aliases still resolve
+        assert_eq!(
+            reg.parse_protocol("openai-compat"),
+            Some(Protocol::OpenAICompatible)
+        );
+        assert_eq!(
+            reg.parse_protocol("anthropic-msgs"),
+            Some(Protocol::AnthropicMessages)
         );
         assert_eq!(
             reg.parse_protocol("google-genai"),

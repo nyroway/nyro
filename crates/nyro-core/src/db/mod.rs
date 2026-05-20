@@ -109,7 +109,7 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
 }
 
 /// Rewrites legacy / alias protocol identifiers in `providers.protocol` into
-/// canonical protocol-suite strings (for example, `openai` -> `openai-compat`).
+/// canonical protocol-suite strings (for example, `openai` -> `openai-compatible`).
 async fn normalize_provider_protocols(pool: &SqlitePool) -> anyhow::Result<()> {
     let reg = ProtocolRegistry::global();
     let rows = sqlx::query("SELECT id, protocol FROM providers")

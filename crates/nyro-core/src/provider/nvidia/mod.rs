@@ -27,7 +27,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "NVIDIA",
     },
     icon: "nvidia",
-    default_protocol: "openai-compat",
+    default_protocol: "openai-compatible",
     channels: &[ChannelDef {
         id: "default",
         label: Label {
@@ -35,7 +35,7 @@ const METADATA: VendorMetadata = VendorMetadata {
             en: "Default",
         },
         base_urls: &[ProtocolBaseUrl {
-            protocol: "openai-compat",
+            protocol: "openai-compatible",
             base_url: "https://integrate.api.nvidia.com/v1",
         }],
         api_key: None,

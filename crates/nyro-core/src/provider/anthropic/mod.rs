@@ -26,7 +26,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "Anthropic",
     },
     icon: "anthropic",
-    default_protocol: "anthropic-msgs",
+    default_protocol: "anthropic-messages",
     channels: &[
         ChannelDef {
             id: "default",
@@ -35,7 +35,7 @@ const METADATA: VendorMetadata = VendorMetadata {
                 en: "Default",
             },
             base_urls: &[ProtocolBaseUrl {
-                protocol: "anthropic-msgs",
+                protocol: "anthropic-messages",
                 base_url: "https://api.anthropic.com",
             }],
             api_key: None,
@@ -53,7 +53,7 @@ const METADATA: VendorMetadata = VendorMetadata {
                 en: "Claude Code",
             },
             base_urls: &[ProtocolBaseUrl {
-                protocol: "anthropic-msgs",
+                protocol: "anthropic-messages",
                 base_url: "https://api.anthropic.com",
             }],
             api_key: None,

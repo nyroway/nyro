@@ -2,7 +2,7 @@
  * Protocol utilities — mirrors the backend three-layer identity model.
  *
  * Three orthogonal concepts:
- *   Protocol  — suite / wire-format family  (e.g. "openai-compat")
+ *   Protocol  — suite / wire-format family  (e.g. "openai-compatible")
  *   Endpoint  — specific API path           (e.g. "chat-completions")
  *   Vendor    — provider organisation       (e.g. "openai")
  *
@@ -13,13 +13,13 @@
  *   crates/nyro-core/src/protocol/registry.rs::default_protocol_aliases
  */
 
-// ── Protocol enum (canonical short names) ─────────────────────────────────
+// ── Protocol enum (canonical identifiers) ──────────────────────────────────
 
 export type Protocol =
-  | "openai-compat"
-  | "openai-resps"
-  | "anthropic-msgs"
-  | "google-genai";
+  | "openai-compatible"
+  | "openai-responses"
+  | "anthropic-messages"
+  | "google-gemini";
 
 export interface ProtocolMeta {
   id: Protocol;
@@ -31,23 +31,23 @@ export interface ProtocolMeta {
 
 export const PROTOCOL_TABLE: ProtocolMeta[] = [
   {
-    id: "openai-compat",
+    id: "openai-compatible",
     displayName: "OpenAI Compatible",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
-    id: "openai-resps",
+    id: "openai-responses",
     displayName: "OpenAI Responses",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
-    id: "anthropic-msgs",
+    id: "anthropic-messages",
     displayName: "Anthropic Messages",
     defaultBaseUrl: "https://api.anthropic.com",
   },
   {
-    id: "google-genai",
-    displayName: "Google Generative AI",
+    id: "google-gemini",
+    displayName: "Google Gemini",
     defaultBaseUrl: "https://generativelanguage.googleapis.com",
   },
 ];
@@ -56,48 +56,56 @@ export const PROTOCOL_TABLE: ProtocolMeta[] = [
 
 /** Maps any known string (old canonical, short alias, legacy brand) → Protocol. */
 const PROTOCOL_ALIASES: Record<string, Protocol> = {
-  // New canonical short names (idempotent)
-  "openai-compat": "openai-compat",
-  "openai-resps": "openai-resps",
-  "anthropic-msgs": "anthropic-msgs",
-  "google-genai": "google-genai",
+  // Canonical (new)
+  "openai-compatible": "openai-compatible",
+  "openai-responses": "openai-responses",
+  "anthropic-messages": "anthropic-messages",
+  "google-gemini": "google-gemini",
 
-  // Full names
-  "openai-compatible": "openai-compat",
-  "openai-responses": "openai-resps",
-  "anthropic-messages": "anthropic-msgs",
-  "google-generative-ai": "google-genai",
+  // Short names
+  openai: "openai-compatible",
+  openai_responses: "openai-responses",
+  responses: "openai-responses",
+  anthropic: "anthropic-messages",
+  claude: "anthropic-messages",
+  gemini: "google-gemini",
+  google: "google-gemini",
 
-  // Legacy brand names
-  openai: "openai-compat",
-  openai_responses: "openai-resps",
-  responses: "openai-resps",
-  anthropic: "anthropic-msgs",
-  claude: "anthropic-msgs",
-  gemini: "google-genai",
-  google: "google-genai",
+  // Deprecated aliases (old canonical slugs)
+  "openai-compat": "openai-compatible",
+  "openai-resps": "openai-responses",
+  "anthropic-msgs": "anthropic-messages",
+  "google-genai": "google-gemini",
+  "google-generative-ai": "google-gemini",
 
   // Old canonical endpoint strings (Tier-1 backward compat)
-  "openai/chat/v1": "openai-compat",
-  "openai/embeddings/v1": "openai-compat",
-  "openai/responses/v1": "openai-resps",
-  "anthropic/messages/2023-06-01": "anthropic-msgs",
-  "google/generate/v1beta": "google-genai",
+  "openai/chat/v1": "openai-compatible",
+  "openai/embeddings/v1": "openai-compatible",
+  "openai/responses/v1": "openai-responses",
+  "anthropic/messages/2023-06-01": "anthropic-messages",
+  "google/generate/v1beta": "google-gemini",
+
+  // Deprecated canonical endpoint strings
+  "openai-compat/chat-completions/v1": "openai-compatible",
+  "openai-compat/embeddings/v1": "openai-compatible",
+  "openai-resps/responses/v1": "openai-responses",
+  "anthropic-msgs/messages/2023-06-01": "anthropic-messages",
+  "google-genai/generate-content/v1beta": "google-gemini",
 
   // New canonical endpoint strings
-  "openai-compat/chat-completions/v1": "openai-compat",
-  "openai-compat/embeddings/v1": "openai-compat",
-  "openai-resps/responses/v1": "openai-resps",
-  "anthropic-msgs/messages/2023-06-01": "anthropic-msgs",
-  "google-genai/generate-content/v1beta": "google-genai",
+  "openai-compatible/chat-completions/v1": "openai-compatible",
+  "openai-compatible/embeddings/v1": "openai-compatible",
+  "openai-responses/responses/v1": "openai-responses",
+  "anthropic-messages/messages/2023-06-01": "anthropic-messages",
+  "google-gemini/generate-content/v1beta": "google-gemini",
 };
 
 /**
  * Resolve any raw protocol string to a canonical `Protocol`, or `null` if unknown.
  *
- * Accepts: new canonical keys (`"openai-compat"`), legacy aliases (`"openai"`),
+ * Accepts: new canonical keys (`"openai-compatible"`), legacy aliases (`"openai"`),
  * old endpoint canonical strings (`"openai/chat/v1"`), and new endpoint
- * canonical strings (`"openai-compat/chat-completions/v1"`).
+ * canonical strings (`"openai-compatible/chat-completions/v1"`).
  */
 export function resolveProtocol(raw: string | null | undefined): Protocol | null {
   if (!raw) return null;
@@ -147,7 +155,7 @@ export function parseProtocolEndpoint(raw: string | null | undefined): ProtocolE
 /** Returns true when the raw string resolves to an OpenAI-family protocol. */
 export function isOpenAiProtocol(raw: string | null | undefined): boolean {
   const p = resolveProtocol(raw);
-  return p === "openai-compat" || p === "openai-resps";
+  return p === "openai-compatible" || p === "openai-responses";
 }
 
 /**
