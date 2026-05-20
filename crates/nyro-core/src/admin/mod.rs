@@ -3313,7 +3313,7 @@ mod tests {
 
         let second_copy = gw.admin().copy_provider(&original.id).await?;
 
-        assert_eq!(second_copy.name, "source-provider_复制2");
+        assert_eq!(second_copy.name, "source-provider_Copy2");
 
         Ok(())
     }
