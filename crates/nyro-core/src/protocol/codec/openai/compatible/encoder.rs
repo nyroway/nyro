@@ -447,7 +447,7 @@ fn encode_message(msg: &Message) -> Result<Value> {
         MessageContent::Blocks(blocks) => {
             // Strip Thinking blocks for assistant messages — they are surfaced
             // via the top-level `reasoning_content` field carried in `meta`
-            // (see anthropic_messages decoder). Emitting them as plain text
+            // (see anthropic::messages decoder). Emitting them as plain text
             // would duplicate reasoning into the visible content and break
             // upstreams like Xiaomi Mimo that require strict thinking-mode
             // round-tripping via `reasoning_content`.

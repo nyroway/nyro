@@ -98,7 +98,7 @@ pub(super) async fn handle_non_stream(
 
     // Embeddings: passthrough response (parse_response is not implemented for codec).
     if egress.handler().capabilities().embeddings {
-        let usage = crate::protocol::codec::openai_compatible::embeddings::parse_usage(&resp);
+        let usage = crate::protocol::codec::openai::compatible::embeddings::parse_usage(&resp);
         let resp_str = serde_json::to_string(&resp).ok();
         log.status(status)
             .usage(usage)

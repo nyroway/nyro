@@ -1435,7 +1435,7 @@ fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
 mod tests {
     use super::ai_response_to_deltas;
     use crate::protocol::StreamResponseEncoder;
-    use crate::protocol::codec::google_generative::stream::GoogleStreamFormatter;
+    use crate::protocol::codec::google::gemini::stream::GoogleStreamFormatter;
     use crate::protocol::ir::response::ResponseItem;
     use crate::protocol::ir::{AiResponse, Usage};
     use serde_json::Value;

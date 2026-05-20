@@ -12,14 +12,14 @@
 //!
 //! ## Codec layout
 //!
-//! Each `codec/<protocol>/` directory co-locates the wire codecs **and** the
+//! Each `codec/<vendor>/<protocol>/` directory co-locates the wire codecs **and** the
 //! thin `EndpointHandler` registration shell for every endpoint:
 //!
-//! - `codec/openai_compatible/chat_completions.rs` — `OpenAIChatCompletionsV1`
-//! - `codec/openai_compatible/embeddings.rs` — `OpenAIEmbeddingsV1`
-//! - `codec/openai_responses/responses.rs` — `OpenAIResponsesV1`
-//! - `codec/anthropic_messages/messages.rs` — `AnthropicMessages2023`
-//! - `codec/google_generative/generate_content.rs` — `GoogleGenerateContentV1Beta`
+//! - `codec/openai/compatible/chat_completions.rs` — `OpenAICompatibleChatCompletionsV1`
+//! - `codec/openai/compatible/embeddings.rs` — `OpenAICompatibleEmbeddingsV1`
+//! - `codec/openai/responses/responses.rs` — `OpenAIResponsesV1`
+//! - `codec/anthropic/messages/messages.rs` — `AnthropicMessages2023`
+//! - `codec/google/gemini/generate_content.rs` — `GoogleGeminiGenerateContentV1Beta`
 //!
 //! Shared semantic utilities live in `codec/reasoning.rs` and
 //! `codec/tool_correlation.rs`.

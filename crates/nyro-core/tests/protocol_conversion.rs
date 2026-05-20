@@ -1,14 +1,14 @@
-use nyro_core::protocol::codec::anthropic_messages::decoder::AnthropicDecoder;
-use nyro_core::protocol::codec::anthropic_messages::encoder::AnthropicEncoder;
-use nyro_core::protocol::codec::anthropic_messages::stream::AnthropicResponseFormatter;
-use nyro_core::protocol::codec::google_generative::encoder::GoogleEncoder;
-use nyro_core::protocol::codec::google_generative::stream::GoogleStreamFormatter;
-use nyro_core::protocol::codec::openai_compatible::encoder::OpenAIEncoder;
-use nyro_core::protocol::codec::openai_compatible::stream::OpenAIStreamFormatter;
-use nyro_core::protocol::codec::openai_responses::decoder::ResponsesDecoder;
-use nyro_core::protocol::codec::openai_responses::encoder::ResponsesEncoder;
-use nyro_core::protocol::codec::openai_responses::formatter::ResponsesResponseFormatter;
-use nyro_core::protocol::codec::openai_responses::parser::{
+use nyro_core::protocol::codec::anthropic::messages::decoder::AnthropicDecoder;
+use nyro_core::protocol::codec::anthropic::messages::encoder::AnthropicEncoder;
+use nyro_core::protocol::codec::anthropic::messages::stream::AnthropicResponseFormatter;
+use nyro_core::protocol::codec::google::gemini::encoder::GoogleEncoder;
+use nyro_core::protocol::codec::google::gemini::stream::GoogleStreamFormatter;
+use nyro_core::protocol::codec::openai::compatible::encoder::OpenAIEncoder;
+use nyro_core::protocol::codec::openai::compatible::stream::OpenAIStreamFormatter;
+use nyro_core::protocol::codec::openai::responses::decoder::ResponsesDecoder;
+use nyro_core::protocol::codec::openai::responses::encoder::ResponsesEncoder;
+use nyro_core::protocol::codec::openai::responses::formatter::ResponsesResponseFormatter;
+use nyro_core::protocol::codec::openai::responses::parser::{
     ResponsesResponseParser, ResponsesStreamParser,
 };
 use nyro_core::protocol::codec::reasoning::normalize_response_reasoning;
@@ -145,7 +145,7 @@ fn openai_formatter_sets_tool_calls_finish_reason_when_tool_calls_present() {
         ..Usage::default()
     };
 
-    let out = nyro_core::protocol::codec::openai_compatible::stream::OpenAIResponseFormatter
+    let out = nyro_core::protocol::codec::openai::compatible::stream::OpenAIResponseFormatter
         .format_response(&resp);
     let finish_reason = out
         .get("choices")
