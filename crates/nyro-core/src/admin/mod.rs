@@ -1634,7 +1634,7 @@ impl AdminService {
     }
 
     async fn next_provider_copy_name(&self, original_name: &str) -> anyhow::Result<String> {
-        let base = format!("{}_复制", normalize_name(original_name, "provider name")?);
+        let base = format!("{}_Copy", normalize_name(original_name, "provider name")?);
         if !self
             .gw
             .storage
