@@ -12,7 +12,7 @@
 3. [OpenAI Chat 字段归属](#3-openai-chat-字段归属)
 4. [OpenAI Responses 字段归属](#4-openai-responses-字段归属)
 5. [Anthropic Messages 字段归属](#5-anthropic-messages-字段归属)
-6. [Google GenAI 字段归属](#6-google-genai-字段归属)
+6. [Google Gemini 字段归属](#6-google-gemini-字段归属)
 7. [ContentBlock 跨协议映射](#7-contentblock-跨协议映射)
 8. [响应字段归属](#8-响应字段归属)
 9. [错误规范化映射](#9-错误规范化映射)
@@ -48,7 +48,7 @@
 | `OAIChat` | OpenAI Chat Ext | `OpenAIChatExt::field` |
 | `OAIResp` | OpenAI Responses Ext | `OpenAIResponsesExt::field` |
 | `ANT` | Anthropic Ext | `AnthropicExt::field` |
-| `GGL` | Google GenAI Ext | `GoogleExt::field` |
+| `GGL` | Google Gemini Ext | `GoogleExt::field` |
 | `BAG↓pass` | 透传 bag（egress 原样注入） | `VendorExtensions::passthrough_safe` |
 | `BAG↓ing` | 入口 bag（Decoder 专用，不透传） | `VendorExtensions::ingress` |
 | `DROP` | SDK 专有字段，不进 IR | — |
@@ -238,7 +238,7 @@ Anthropic 的 server tool 规范（`ToolBash`, `WebSearchTool`, `CodeExecutionTo
 
 ---
 
-## 6. Google GenAI 字段归属
+## 6. Google Gemini 字段归属
 
 **Wire**: `POST /v1beta/{model}:generateContent` · SDK: @google/genai@2.2.0  
 注：SDK `config: GenerateContentConfig` 是 wrapper；wire 层字段嵌套在 `generationConfig` 对象中。

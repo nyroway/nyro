@@ -531,7 +531,7 @@ CREATE TABLE providers (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     vendor       TEXT,              -- canonical vendor_id（custom / openai / ...）
-    protocol     TEXT NOT NULL,     -- canonical protocol suite（openai-compat / ...）
+    protocol     TEXT NOT NULL,     -- canonical protocol suite（openai-compatible / ...）
     base_url     TEXT NOT NULL,
     api_key      TEXT NOT NULL      -- AES-256-GCM 加密存储
 );
