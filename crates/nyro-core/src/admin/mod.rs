@@ -576,6 +576,70 @@ impl AdminService {
             .await
     }
 
+    pub async fn copy_provider(&self, id: &str) -> anyhow::Result<Provider> {
+        let original = self.get_provider(id).await?;
+        let name = self.next_provider_copy_name(&original.name).await?;
+        let copied = self
+            .create_provider(CreateProvider {
+                name,
+                vendor: original.vendor.clone(),
+                protocol: original.protocol.clone(),
+                base_url: original.base_url.clone(),
+                preset_key: original.preset_key.clone(),
+                channel: original.channel.clone(),
+                models_source: original.models_source.clone(),
+                static_models: original.static_models.clone(),
+                api_key: original.api_key.clone(),
+                auth_mode: original.auth_mode.clone(),
+                use_proxy: original.use_proxy,
+            })
+            .await?;
+
+        let copied = if original.effective_auth_mode() == "oauth" {
+            match self
+                .gw
+                .storage
+                .oauth_credentials()
+                .get(&original.id)
+                .await?
+            {
+                Some(credential) => {
+                    let credential_input = upsert_credential_from_oauth(&credential);
+                    let provisioned = async {
+                        self.gw
+                            .storage
+                            .oauth_credentials()
+                            .upsert(&copied.id, credential_input)
+                            .await?;
+                        let driver_key = credential.driver_key.clone();
+                        let stored = stored_credential_from_oauth(&credential, &driver_key);
+                        self.sync_provider_runtime_fields(&copied, &stored).await
+                    }
+                    .await;
+
+                    match provisioned {
+                        Ok(provider) => provider,
+                        Err(error) => {
+                            if let Err(cleanup_error) = self.delete_provider(&copied.id).await {
+                                tracing::warn!(
+                                    "failed to rollback copied oauth provider {} after provisioning error: {}",
+                                    copied.id,
+                                    cleanup_error
+                                );
+                            }
+                            return Err(error.context("copy oauth provider"));
+                        }
+                    }
+                }
+                None => copied,
+            }
+        } else {
+            copied
+        };
+
+        Ok(copied)
+    }
+
     pub async fn update_provider(
         &self,
         id: &str,
@@ -1569,6 +1633,34 @@ impl AdminService {
         Ok(())
     }
 
+    async fn next_provider_copy_name(&self, original_name: &str) -> anyhow::Result<String> {
+        let base = format!("{}_复制", normalize_name(original_name, "provider name")?);
+        if !self
+            .gw
+            .storage
+            .providers()
+            .exists_by_name(&base, None)
+            .await?
+        {
+            return Ok(base);
+        }
+
+        for index in 2.. {
+            let candidate = format!("{base}{index}");
+            if !self
+                .gw
+                .storage
+                .providers()
+                .exists_by_name(&candidate, None)
+                .await?
+            {
+                return Ok(candidate);
+            }
+        }
+
+        unreachable!("unbounded provider copy name search must return");
+    }
+
     async fn ensure_route_name_unique(
         &self,
         exclude_id: Option<&str>,
@@ -2111,6 +2203,20 @@ fn upsert_credential_from_bundle(
         subject_id: bundle.subject_id.clone(),
         scopes: Some(scopes_json),
         meta: Some(meta_json),
+    }
+}
+
+fn upsert_credential_from_oauth(oauth: &OAuthCredential) -> UpsertOAuthCredential {
+    UpsertOAuthCredential {
+        driver_key: oauth.driver_key.clone(),
+        scheme: oauth.scheme.clone(),
+        access_token: oauth.access_token.clone(),
+        refresh_token: oauth.refresh_token.clone(),
+        expires_at: oauth.expires_at.clone(),
+        resource_url: oauth.resource_url.clone(),
+        subject_id: oauth.subject_id.clone(),
+        scopes: Some(oauth.scopes.clone()),
+        meta: Some(oauth.meta.clone()),
     }
 }
 
@@ -3170,6 +3276,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn copy_provider_creates_provider_with_copy_suffix() -> anyhow::Result<()> {
+        let gw = build_gateway().await?;
+        let original = gw
+            .admin()
+            .create_provider(api_key_provider_input("source-provider"))
+            .await?;
+
+        let copied = gw.admin().copy_provider(&original.id).await?;
+
+        assert_ne!(copied.id, original.id);
+        assert_eq!(copied.name, "source-provider_复制");
+        assert_eq!(copied.vendor, original.vendor);
+        assert_eq!(copied.protocol, original.protocol);
+        assert_eq!(copied.base_url, original.base_url);
+        assert_eq!(copied.preset_key, original.preset_key);
+        assert_eq!(copied.channel, original.channel);
+        assert_eq!(copied.models_source, original.models_source);
+        assert_eq!(copied.static_models, original.static_models);
+        assert_eq!(copied.api_key, original.api_key);
+        assert_eq!(copied.auth_mode, original.auth_mode);
+        assert_eq!(copied.use_proxy, original.use_proxy);
+        assert_eq!(copied.is_enabled, original.is_enabled);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn copy_provider_uses_numbered_suffix_when_copy_name_exists() -> anyhow::Result<()> {
+        let gw = build_gateway().await?;
+        let original = gw
+            .admin()
+            .create_provider(api_key_provider_input("source-provider"))
+            .await?;
+        gw.admin().copy_provider(&original.id).await?;
+
+        let second_copy = gw.admin().copy_provider(&original.id).await?;
+
+        assert_eq!(second_copy.name, "source-provider_复制2");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn copy_oauth_provider_copies_credential_binding() -> anyhow::Result<()> {
+        let gw = build_gateway().await?;
+
+        let init = gw.admin().init_oauth_session("codex", false).await?;
+        seed_ready_session(
+            &gw.admin(),
+            &init.session_id,
+            CredentialBundle {
+                access_token: Some("copy-access-token".to_string()),
+                refresh_token: Some("copy-refresh-token".to_string()),
+                expires_at: Some(FAR_FUTURE_RFC3339.to_string()),
+                resource_url: Some(CODEX_RUNTIME_URL.to_string()),
+                subject_id: Some("acct_copy".to_string()),
+                scopes: vec!["openid".to_string(), "offline_access".to_string()],
+                raw: json!({ "access_token": "copy-access-token" }),
+            },
+        )
+        .await?;
+        let original = gw
+            .admin()
+            .create_provider_with_oauth_session(&init.session_id, oauth_provider_input())
+            .await?;
+
+        let copied = gw.admin().copy_provider(&original.id).await?;
+        let copied_credential = gw.storage.oauth_credentials().get(&copied.id).await?;
+
+        assert_eq!(copied.name, format!("{}_复制", original.name));
+        assert_eq!(copied.auth_mode, "oauth");
+        assert!(copied.api_key.is_empty());
+        assert_eq!(
+            copied_credential
+                .as_ref()
+                .map(|cred| cred.access_token.as_str()),
+            Some("copy-access-token"),
+        );
+
+        let runtime = gw.admin().resolve_provider_runtime(&copied).await?;
+        assert_eq!(runtime.access_token, "copy-access-token");
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn failed_complete_deletes_session() -> anyhow::Result<()> {
         let gw = build_gateway().await?;
 
@@ -3390,6 +3582,22 @@ mod tests {
             api_key: String::new(),
             auth_mode: "oauth".to_string(),
             use_proxy: false,
+        }
+    }
+
+    fn api_key_provider_input(name: &str) -> CreateProvider {
+        CreateProvider {
+            name: name.to_string(),
+            vendor: Some("openai".to_string()),
+            protocol: "openai-compat".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            preset_key: Some("openai".to_string()),
+            channel: Some("default".to_string()),
+            models_source: Some("https://api.openai.com/v1/models".to_string()),
+            static_models: Some("gpt-test\ntext-test".to_string()),
+            api_key: "sk-test".to_string(),
+            auth_mode: "apikey".to_string(),
+            use_proxy: true,
         }
     }
 

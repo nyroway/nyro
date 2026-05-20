@@ -71,6 +71,7 @@ pub fn run() {
             commands::get_provider,
             commands::get_provider_presets,
             commands::create_provider,
+            commands::copy_provider,
             commands::update_provider,
             commands::delete_provider,
             commands::test_provider,

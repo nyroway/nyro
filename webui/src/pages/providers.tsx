@@ -31,6 +31,7 @@ import {
   Info,
   ToggleRight,
   ToggleLeft,
+  Copy,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
@@ -263,6 +264,17 @@ function mergeProviderOAuthStatus(provider: Provider, status: ProviderOAuthStatu
   };
 }
 
+function nextProviderCopyName(providers: Provider[], originalName: string) {
+  const base = `${originalName}_复制`;
+  const existingNames = new Set(providers.map((provider) => provider.name));
+  if (!existingNames.has(base)) return base;
+
+  for (let index = 2; ; index += 1) {
+    const candidate = `${base}${index}`;
+    if (!existingNames.has(candidate)) return candidate;
+  }
+}
+
 function resolvePresetConfig(
   preset: ProviderPreset,
   protocol: ProviderProtocol,
@@ -376,6 +388,7 @@ export default function ProvidersPage() {
   const [isTestRunning, setIsTestRunning] = useState(false);
   const [testTarget, setTestTarget] = useState<Provider | null>(null);
   const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
+  const [providerToCopy, setProviderToCopy] = useState<Provider | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState(DEFAULT_PRESET_ID);
   const [showCreateApiKey, setShowCreateApiKey] = useState(true);
   const [showEditApiKey, setShowEditApiKey] = useState(false);
@@ -538,6 +551,16 @@ export default function ProvidersPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["providers"] }),
     onError: (error: unknown) => {
       showErrorDialog("删除提供商失败", "Failed to delete provider", error);
+    },
+  });
+
+  const copyMut = useMutation({
+    mutationFn: (id: string) => backend<Provider>("copy_provider", { id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["providers"] });
+    },
+    onError: (error: unknown) => {
+      showErrorDialog("复制提供商失败", "Failed to copy provider", error);
     },
   });
 
@@ -2372,12 +2395,26 @@ export default function ProvidersPage() {
                     </button>
                     <button
                       onClick={() => startEdit(p)}
+                      title={isZh ? "编辑" : "Edit"}
                       className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500 cursor-pointer"
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
                     <button
+                      onClick={() => setProviderToCopy(p)}
+                      disabled={copyMut.isPending}
+                      title={isZh ? "复制" : "Copy"}
+                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-emerald-50 hover:text-emerald-500 cursor-pointer disabled:opacity-50"
+                    >
+                      {copyMut.isPending && providerToCopy?.id === p.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </button>
+                    <button
                       onClick={() => setProviderToDelete(p)}
+                      title={isZh ? "删除" : "Delete"}
                       className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 cursor-pointer"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -2481,6 +2518,29 @@ export default function ProvidersPage() {
           if (!providerToDisable) return;
           toggleEnabledMut.mutate({ id: providerToDisable.id, is_enabled: false });
           setProviderToDisable(null);
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(providerToCopy)}
+        onOpenChange={(open) => {
+          if (!open && !copyMut.isPending) setProviderToCopy(null);
+        }}
+        title={isZh ? "确认复制提供商" : "Confirm provider copy"}
+        description={
+          providerToCopy
+            ? (isZh
+              ? `确认复制「${providerToCopy.name}」吗？新提供商名称将为「${nextProviderCopyName(providers, providerToCopy.name)}」。`
+              : `Copy "${providerToCopy.name}"? The new provider name will be "${nextProviderCopyName(providers, providerToCopy.name)}".`)
+            : undefined
+        }
+        cancelText={isZh ? "取消" : "Cancel"}
+        confirmText={copyMut.isPending ? (isZh ? "复制中..." : "Copying...") : (isZh ? "确认复制" : "Copy")}
+        confirmClassName="bg-slate-900 text-white hover:bg-slate-800"
+        onConfirm={() => {
+          if (!providerToCopy || copyMut.isPending) return;
+          copyMut.mutate(providerToCopy.id, {
+            onSuccess: () => setProviderToCopy(null),
+          });
         }}
       />
       <ConfirmDialog

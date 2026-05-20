@@ -46,6 +46,14 @@ pub async fn create_provider(
 }
 
 #[tauri::command]
+pub async fn copy_provider(gw: State<'_, Gateway>, id: String) -> Result<Provider, String> {
+    gw.admin()
+        .copy_provider(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn update_provider(
     gw: State<'_, Gateway>,
     id: String,

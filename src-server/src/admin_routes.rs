@@ -56,6 +56,7 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
             "/providers",
             get(list_providers).post(create_provider_handler),
         )
+        .route("/providers/:id/copy", post(copy_provider_handler))
         .route("/providers/:id", providers_item)
         .route("/providers/:id/test", get(test_provider_handler))
         .route(
@@ -172,6 +173,16 @@ async fn create_provider_handler(
     Json(input): Json<CreateProvider>,
 ) -> impl IntoResponse {
     match gw.admin().create_provider(input).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn copy_provider_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().copy_provider(&id).await {
         Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
         Err(e) => err(e),
     }
