@@ -461,10 +461,28 @@ impl ProviderStore for PostgresProviderStore {
     }
 
     async fn delete(&self, id: &str) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            "DELETE FROM route_targets
+             WHERE provider_id = $1
+                OR route_id IN (SELECT id FROM routes WHERE target_provider = $1)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM routes WHERE target_provider = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
         sqlx::query("DELETE FROM providers WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 

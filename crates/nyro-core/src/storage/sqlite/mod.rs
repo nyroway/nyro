@@ -406,10 +406,29 @@ impl ProviderStore for SqliteProviderStore {
     }
 
     async fn delete(&self, id: &str) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            "DELETE FROM route_targets
+             WHERE provider_id = ?
+                OR route_id IN (SELECT id FROM routes WHERE target_provider = ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query("DELETE FROM routes WHERE target_provider = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
         sqlx::query("DELETE FROM providers WHERE id = ?")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 

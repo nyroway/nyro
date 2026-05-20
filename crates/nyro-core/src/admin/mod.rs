@@ -708,6 +708,7 @@ impl AdminService {
 
     pub async fn delete_provider(&self, id: &str) -> anyhow::Result<()> {
         self.gw.storage.providers().delete(id).await?;
+        self.reload_route_cache().await?;
         self.gw.clear_ollama_capability_cache_for_provider(id).await;
         Ok(())
     }
@@ -3316,6 +3317,96 @@ mod tests {
         let second_copy = gw.admin().copy_provider(&original.id).await?;
 
         assert_eq!(second_copy.name, "source-provider_Copy2");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_provider_removes_route_associations_before_provider() -> anyhow::Result<()> {
+        let gw = build_gateway().await?;
+        let removed_provider = gw
+            .admin()
+            .create_provider(api_key_provider_input("route-delete-provider"))
+            .await?;
+        let kept_provider = gw
+            .admin()
+            .create_provider(api_key_provider_input("route-keep-provider"))
+            .await?;
+
+        let removed_route = gw
+            .admin()
+            .create_route(CreateRoute {
+                name: "route-owned-by-deleted-provider".to_string(),
+                virtual_model: "route-owned-model".to_string(),
+                strategy: None,
+                target_provider: removed_provider.id.clone(),
+                target_model: "gpt-delete".to_string(),
+                targets: vec![],
+                access_control: None,
+                cache: None,
+                cache_exact_ttl: None,
+                cache_semantic_ttl: None,
+                cache_semantic_threshold: None,
+            })
+            .await?;
+        let kept_route = gw
+            .admin()
+            .create_route(CreateRoute {
+                name: "route-with-secondary-deleted-provider".to_string(),
+                virtual_model: "route-kept-model".to_string(),
+                strategy: None,
+                target_provider: kept_provider.id.clone(),
+                target_model: "gpt-keep".to_string(),
+                targets: vec![
+                    CreateRouteTarget {
+                        provider_id: kept_provider.id.clone(),
+                        model: "gpt-keep".to_string(),
+                        weight: Some(100),
+                        priority: Some(1),
+                    },
+                    CreateRouteTarget {
+                        provider_id: removed_provider.id.clone(),
+                        model: "gpt-delete-secondary".to_string(),
+                        weight: Some(50),
+                        priority: Some(2),
+                    },
+                ],
+                access_control: None,
+                cache: None,
+                cache_exact_ttl: None,
+                cache_semantic_ttl: None,
+                cache_semantic_threshold: None,
+            })
+            .await?;
+
+        gw.admin().delete_provider(&removed_provider.id).await?;
+
+        assert!(
+            gw.admin().get_provider(&removed_provider.id).await.is_err(),
+            "provider should be deleted after dependent route rows are removed"
+        );
+
+        let routes = gw.admin().list_routes().await?;
+        assert!(
+            !routes.iter().any(|route| route.id == removed_route.id),
+            "routes whose primary provider was deleted should be removed"
+        );
+        let kept_route = routes
+            .iter()
+            .find(|route| route.id == kept_route.id)
+            .expect("route with a different primary provider should remain");
+        assert_eq!(kept_route.target_provider, kept_provider.id);
+        assert!(
+            kept_route
+                .targets
+                .iter()
+                .all(|target| target.provider_id != removed_provider.id),
+            "secondary route target associations for the deleted provider should be removed"
+        );
+
+        let route_cache = gw.route_cache.read().await;
+        assert!(route_cache.match_route("route-owned-model").is_none());
+        assert!(route_cache.match_route("route-kept-model").is_some());
 
         Ok(())
     }
