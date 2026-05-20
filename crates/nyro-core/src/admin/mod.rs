@@ -3286,7 +3286,7 @@ mod tests {
         let copied = gw.admin().copy_provider(&original.id).await?;
 
         assert_ne!(copied.id, original.id);
-        assert_eq!(copied.name, "source-provider_复制");
+        assert_eq!(copied.name, "source-provider_Copy");
         assert_eq!(copied.vendor, original.vendor);
         assert_eq!(copied.protocol, original.protocol);
         assert_eq!(copied.base_url, original.base_url);
