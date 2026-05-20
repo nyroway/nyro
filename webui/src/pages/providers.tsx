@@ -265,7 +265,7 @@ function mergeProviderOAuthStatus(provider: Provider, status: ProviderOAuthStatu
 }
 
 function nextProviderCopyName(providers: Provider[], originalName: string) {
-  const base = `${originalName}_复制`;
+  const base = `${originalName}_Copy`;
   const existingNames = new Set(providers.map((provider) => provider.name));
   if (!existingNames.has(base)) return base;
 
