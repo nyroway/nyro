@@ -3,7 +3,9 @@
 //! `EndpointHandler` registration shell — wraps
 //! [`super::decoder`], [`super::encoder`], and [`super::stream`] codecs.
 
-use crate::protocol::ids::{EndpointCapabilities, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
+use crate::protocol::ids::{
+    EndpointCapabilities, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, ProtocolEndpoint,
+};
 use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
 

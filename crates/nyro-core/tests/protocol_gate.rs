@@ -13,7 +13,9 @@
 
 use nyro_core::db::models::Provider;
 use nyro_core::protocol::ProviderProtocols;
-use nyro_core::protocol::ids::{OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1};
+use nyro_core::protocol::ids::{
+    OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1,
+};
 
 fn provider(protocol: &str) -> Provider {
     Provider {

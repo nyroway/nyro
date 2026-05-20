@@ -105,7 +105,8 @@ impl Vendor for OpenAiVendor {
     }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
         use crate::protocol::ids::{
-            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1, OPENAI_RESPONSES_V1,
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1,
+            OPENAI_RESPONSES_V1,
         };
         &[
             OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,

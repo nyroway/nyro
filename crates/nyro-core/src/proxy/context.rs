@@ -281,7 +281,10 @@ pub async fn inject_context(mut request: Request, next: Next) -> Response {
     // overwritten by the ingress handler via `inject_context_with_protocol`.
     // Use a sentinel until then.
     use crate::protocol::ids::OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1;
-    let ctx = RequestContext::new(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, Duration::from_secs(300));
+    let ctx = RequestContext::new(
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+        Duration::from_secs(300),
+    );
     request.extensions_mut().insert(ctx);
     next.run(request).await
 }
@@ -301,15 +304,24 @@ mod tests {
 
     #[test]
     fn request_id_is_unique() {
-        let a = RequestContext::new(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, Duration::from_secs(30));
-        let b = RequestContext::new(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, Duration::from_secs(30));
+        let a = RequestContext::new(
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            Duration::from_secs(30),
+        );
+        let b = RequestContext::new(
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            Duration::from_secs(30),
+        );
         assert_ne!(a.request_id, b.request_id);
         assert!(a.request_id.starts_with("req-"));
     }
 
     #[test]
     fn outcome_write_once() {
-        let ctx = RequestContext::new(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, Duration::from_secs(30));
+        let ctx = RequestContext::new(
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            Duration::from_secs(30),
+        );
         ctx.set_outcome(RequestOutcome::Success);
         ctx.set_outcome(RequestOutcome::ClientCancelled); // second write ignored
         assert_eq!(ctx.get_outcome(), Some(&RequestOutcome::Success));
@@ -317,7 +329,10 @@ mod tests {
 
     #[test]
     fn cancellation_token_shared() {
-        let ctx = RequestContext::new(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, Duration::from_secs(30));
+        let ctx = RequestContext::new(
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            Duration::from_secs(30),
+        );
         let token = ctx.cancellation.clone();
         assert!(!token.is_cancelled());
         ctx.cancellation.cancel();
@@ -333,7 +348,10 @@ mod tests {
 
     #[test]
     fn trace_sink_push_snapshot() {
-        let ctx = RequestContext::new(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, Duration::from_secs(30));
+        let ctx = RequestContext::new(
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            Duration::from_secs(30),
+        );
         ctx.trace("intake", "body parsed");
         ctx.trace("security", "api_key validated");
         let events = ctx.trace.snapshot();

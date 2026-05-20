@@ -8,8 +8,9 @@
 //!   request pipeline still bypasses its codec)
 
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
-    OPENAI_COMPATIBLE_EMBEDDINGS_V1, OPENAI_RESPONSES_V1, Protocol, ProtocolId,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+    OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1, OPENAI_RESPONSES_V1,
+    Protocol, ProtocolId,
 };
 use nyro_core::protocol::ir::Role;
 use nyro_core::protocol::registry::ProtocolRegistry;
@@ -46,7 +47,11 @@ fn ingress_routes_match_axum_router() {
     let reg = ProtocolRegistry::global();
 
     let cases: &[(&str, &str, ProtocolId)] = &[
-        ("POST", "/v1/chat/completions", OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1),
+        (
+            "POST",
+            "/v1/chat/completions",
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+        ),
         ("POST", "/v1/responses", OPENAI_RESPONSES_V1),
         ("POST", "/v1/messages", ANTHROPIC_MESSAGES_2023_06_01),
         (
@@ -211,7 +216,10 @@ fn parser_and_formatter_factories_construct() {
 #[test]
 fn embeddings_handler_advertises_passthrough_capabilities() {
     let reg = ProtocolRegistry::global();
-    let caps = reg.get(&OPENAI_COMPATIBLE_EMBEDDINGS_V1).unwrap().capabilities();
+    let caps = reg
+        .get(&OPENAI_COMPATIBLE_EMBEDDINGS_V1)
+        .unwrap()
+        .capabilities();
     assert!(caps.embeddings);
     assert!(!caps.streaming);
     assert!(!caps.tools);
@@ -237,7 +245,10 @@ fn embeddings_aliases_resolve() {
         reg.resolve_alias("openai-embeddings"),
         Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1)
     );
-    assert_eq!(reg.resolve_alias("embeddings"), Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1));
+    assert_eq!(
+        reg.resolve_alias("embeddings"),
+        Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1)
+    );
     assert_eq!(
         reg.resolve_alias("openai/embeddings/v1"),
         Some(OPENAI_COMPATIBLE_EMBEDDINGS_V1)

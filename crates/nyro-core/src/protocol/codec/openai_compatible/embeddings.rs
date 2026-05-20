@@ -32,7 +32,9 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::protocol::SseEvent;
-use crate::protocol::ids::{EndpointCapabilities, OPENAI_COMPATIBLE_EMBEDDINGS_V1, ProtocolEndpoint};
+use crate::protocol::ids::{
+    EndpointCapabilities, OPENAI_COMPATIBLE_EMBEDDINGS_V1, ProtocolEndpoint,
+};
 use crate::protocol::ir::Usage;
 use crate::protocol::ir::{AiRequest, GenerationConfig, Message, StreamConfig};
 use crate::protocol::registry::EndpointRegistration;

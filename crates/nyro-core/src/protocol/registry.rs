@@ -9,8 +9,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use crate::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
-    OPENAI_COMPATIBLE_EMBEDDINGS_V1, OPENAI_RESPONSES_V1, Protocol, ProtocolEndpoint,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+    OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1, OPENAI_RESPONSES_V1,
+    Protocol, ProtocolEndpoint,
 };
 use crate::protocol::traits::EndpointHandler;
 
@@ -228,16 +229,25 @@ fn default_endpoint_aliases() -> HashMap<&'static str, ProtocolEndpoint> {
         "anthropic/messages/2023-06-01",
         ANTHROPIC_MESSAGES_2023_06_01,
     );
-    m.insert("google/generate/v1beta", GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
+    m.insert(
+        "google/generate/v1beta",
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+    );
 
     // ── Tier 2: Canonical short names ─────────────────────────────────────────
     m.insert("openai-chat", OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
-    m.insert("openai-chat-completions", OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
+    m.insert(
+        "openai-chat-completions",
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+    );
     m.insert("openai-responses", OPENAI_RESPONSES_V1);
     m.insert("openai-embeddings", OPENAI_COMPATIBLE_EMBEDDINGS_V1);
     m.insert("anthropic-messages", ANTHROPIC_MESSAGES_2023_06_01);
     m.insert("google-generate", GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
-    m.insert("google-generate-content", GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
+    m.insert(
+        "google-generate-content",
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+    );
 
     // ── Tier 3: Legacy brand / friendly aliases ────────────────────────────────
     m.insert("openai", OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
@@ -422,7 +432,11 @@ mod tests {
                 .iter()
                 .any(|h| h.id() == OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
         );
-        assert!(openai_compat.iter().any(|h| h.id() == OPENAI_COMPATIBLE_EMBEDDINGS_V1));
+        assert!(
+            openai_compat
+                .iter()
+                .any(|h| h.id() == OPENAI_COMPATIBLE_EMBEDDINGS_V1)
+        );
 
         assert_eq!(reg.list_by_protocol(Protocol::OpenAIResponses).len(), 1);
         assert_eq!(reg.list_by_protocol(Protocol::AnthropicMessages).len(), 1);
@@ -444,10 +458,7 @@ mod tests {
             reg.parse_protocol("claude"),
             Some(Protocol::AnthropicMessages)
         );
-        assert_eq!(
-            reg.parse_protocol("gemini"),
-            Some(Protocol::GoogleGemini)
-        );
+        assert_eq!(reg.parse_protocol("gemini"), Some(Protocol::GoogleGemini));
         assert_eq!(
             reg.parse_protocol("google-gemini"),
             Some(Protocol::GoogleGemini)

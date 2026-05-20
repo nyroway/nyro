@@ -25,8 +25,8 @@ use nyro_core::db::models::Provider;
 use nyro_core::error::GatewayError;
 use nyro_core::protocol::ProviderProtocols;
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
-    OPENAI_RESPONSES_V1, ProtocolId,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+    OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_RESPONSES_V1, ProtocolId,
 };
 use nyro_core::protocol::ir::{AiRequest, AiResponse};
 use nyro_core::provider::inbound::InboundResponse;
@@ -136,9 +136,18 @@ fn fake_provider(api_key: &str) -> Provider {
 
 #[test]
 fn diagonal_chat_chat_is_native() {
-    let decl = single_decl(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, "https://api.openai.com");
+    let decl = single_decl(
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+        "https://api.openai.com",
+    );
     let mut ctx = req_ctx(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
-    let plan = negotiate(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, None, Some(&decl), &mut ctx).unwrap();
+    let plan = negotiate(
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+        None,
+        Some(&decl),
+        &mut ctx,
+    )
+    .unwrap();
     assert_eq!(plan.mode, ProtocolMode::Native, "chat→chat must be Native");
     assert_eq!(plan.egress, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
     assert!(!plan.needs_conversion);
@@ -179,7 +188,13 @@ fn diagonal_generate_generate_is_native() {
         "https://generativelanguage.googleapis.com",
     );
     let mut ctx = req_ctx(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
-    let plan = negotiate(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, None, Some(&decl), &mut ctx).unwrap();
+    let plan = negotiate(
+        GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+        None,
+        Some(&decl),
+        &mut ctx,
+    )
+    .unwrap();
     assert_eq!(
         plan.mode,
         ProtocolMode::Native,

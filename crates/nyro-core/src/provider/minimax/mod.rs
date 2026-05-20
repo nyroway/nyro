@@ -102,8 +102,13 @@ impl Vendor for MinimaxVendor {
         "minimax"
     }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
-        use crate::protocol::ids::{ANTHROPIC_MESSAGES_2023_06_01, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1};
-        &[ANTHROPIC_MESSAGES_2023_06_01, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1]
+        use crate::protocol::ids::{
+            ANTHROPIC_MESSAGES_2023_06_01, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+        };
+        &[
+            ANTHROPIC_MESSAGES_2023_06_01,
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+        ]
     }
     fn declared_request_mutations(&self) -> bool {
         false

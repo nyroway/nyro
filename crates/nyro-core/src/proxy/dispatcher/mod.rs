@@ -50,7 +50,9 @@ use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::db::models::Provider;
 use crate::error::{AuthFailure, GatewayError};
 use crate::protocol::ProviderProtocols;
-use crate::protocol::ids::{OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1, ProtocolId};
+use crate::protocol::ids::{
+    OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1, ProtocolId,
+};
 use crate::protocol::ir::Usage;
 use crate::protocol::ir::{AiRequest, AiResponse, RawEnvelope};
 use crate::provider::vendor::ProviderCtx;
@@ -1352,10 +1354,11 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
         } else {
             target.model.clone()
         };
-        let extension = match VendorRegistry::global().resolve(&provider, OPENAI_COMPATIBLE_EMBEDDINGS_V1) {
-            Some(ext) => ext.clone(),
-            None => continue,
-        };
+        let extension =
+            match VendorRegistry::global().resolve(&provider, OPENAI_COMPATIBLE_EMBEDDINGS_V1) {
+                Some(ext) => ext.clone(),
+                None => continue,
+            };
         let credential = provider_runtime.access_token.clone();
         let upstream_url;
         let mut request_headers;

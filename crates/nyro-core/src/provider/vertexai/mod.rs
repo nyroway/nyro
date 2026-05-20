@@ -17,8 +17,8 @@ use sha2::{Digest, Sha256};
 
 use crate::error::GatewayError;
 use crate::protocol::ids::{
-    GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1, Protocol,
-    ProtocolId,
+    GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+    OPENAI_COMPATIBLE_EMBEDDINGS_V1, Protocol, ProtocolId,
 };
 use crate::protocol::ir::{AiRequest, AiResponse};
 use crate::provider::common::{openai::openai_map_error, pipeline};

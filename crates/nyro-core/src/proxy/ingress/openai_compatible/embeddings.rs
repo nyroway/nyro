@@ -28,10 +28,19 @@ pub async fn handler(
         })
         .collect();
     let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, "POST", "/v1/embeddings");
-    let decoder = OPENAI_COMPATIBLE_EMBEDDINGS_V1.handler().make_request_decoder();
+    let decoder = OPENAI_COMPATIBLE_EMBEDDINGS_V1
+        .handler()
+        .make_request_decoder();
     let request = match decoder.decode_request(body) {
         Ok(r) => r,
         Err(e) => return log_decode_error(&gw, &envelope, OPENAI_COMPATIBLE_EMBEDDINGS_V1, e),
     };
-    dispatch_pipeline(gw, headers, envelope, request, OPENAI_COMPATIBLE_EMBEDDINGS_V1).await
+    dispatch_pipeline(
+        gw,
+        headers,
+        envelope,
+        request,
+        OPENAI_COMPATIBLE_EMBEDDINGS_V1,
+    )
+    .await
 }

@@ -12,8 +12,8 @@
 use nyro_core::db::models::Provider;
 use nyro_core::protocol::ProviderProtocols;
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
-    OPENAI_RESPONSES_V1,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+    OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_RESPONSES_V1,
 };
 use nyro_core::protocol::registry::ProtocolRegistry;
 

@@ -33,10 +33,21 @@ pub async fn handler(
         "POST",
         "/v1/chat/completions",
     );
-    let decoder = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1.handler().make_request_decoder();
+    let decoder = OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1
+        .handler()
+        .make_request_decoder();
     let request = match decoder.decode_request(body) {
         Ok(r) => r,
-        Err(e) => return log_decode_error(&gw, &envelope, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, e),
+        Err(e) => {
+            return log_decode_error(&gw, &envelope, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, e);
+        }
     };
-    dispatch_pipeline(gw, headers, envelope, request, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1).await
+    dispatch_pipeline(
+        gw,
+        headers,
+        envelope,
+        request,
+        OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+    )
+    .await
 }

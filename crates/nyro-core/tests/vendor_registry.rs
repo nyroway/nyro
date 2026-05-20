@@ -8,8 +8,8 @@
 use nyro_core::auth::types::StoredCredential;
 use nyro_core::db::models::Provider;
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
-    OPENAI_RESPONSES_V1, ProtocolId,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+    OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_RESPONSES_V1, ProtocolId,
 };
 use nyro_core::provider::{VendorCtx, VendorRegistry, VendorScope};
 use serde_json::Value;
@@ -232,7 +232,9 @@ fn ollama_vendor_resolves_even_without_channel() {
 fn openai_family_default_emits_bearer() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
-    let ext = reg.resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1).unwrap();
+    let ext = reg
+        .resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
+        .unwrap();
     let h = ext.auth_headers(&ctx(
         &p,
         OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
@@ -263,7 +265,9 @@ fn anthropic_family_default_emits_x_api_key_and_version() {
 fn google_family_default_appends_key_query_param() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
-    let ext = reg.resolve(&p, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA).unwrap();
+    let ext = reg
+        .resolve(&p, GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA)
+        .unwrap();
     let c = ctx(
         &p,
         GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
@@ -297,7 +301,9 @@ fn google_family_default_appends_key_query_param() {
 fn openai_compat_strips_v1_when_base_already_has_path() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
-    let ext = reg.resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1).unwrap();
+    let ext = reg
+        .resolve(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1)
+        .unwrap();
     let c = ctx(&p, OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, "k", "m", None);
 
     let stripped = ext.build_url(&c, "https://api.deepseek.com/v1", "/v1/chat/completions");

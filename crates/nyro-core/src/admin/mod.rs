@@ -1006,7 +1006,8 @@ impl AdminService {
             } else {
                 target.model.clone()
             };
-            let extension = match VendorRegistry::global().resolve(&provider, OPENAI_COMPATIBLE_EMBEDDINGS_V1)
+            let extension = match VendorRegistry::global()
+                .resolve(&provider, OPENAI_COMPATIBLE_EMBEDDINGS_V1)
             {
                 Some(ext) => ext.clone(),
                 None => continue,
