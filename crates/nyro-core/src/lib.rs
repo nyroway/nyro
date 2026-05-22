@@ -89,10 +89,7 @@ impl Gateway {
             }
             StorageBackendKind::Postgres => {
                 let backend_config = to_sql_backend_config(&config.storage.postgres, "postgres")?;
-                let postgres_storage = PostgresStorage::connect(
-                    backend_config,
-                )
-                .await?;
+                let postgres_storage = PostgresStorage::connect(backend_config).await?;
                 let pool = postgres_storage.pool().clone();
                 (
                     RuntimeStorageKind::Postgres,

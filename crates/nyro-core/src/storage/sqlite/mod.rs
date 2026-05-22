@@ -52,9 +52,7 @@ impl SqliteStorage {
         let auth_store = Arc::new(SqliteAuthAccessStore { pool: pool.clone() });
         let oauth_credential_store = Arc::new(SqliteOAuthCredentialStore { pool: pool.clone() });
         let log_store = Arc::new(SqliteLogStore { pool: pool.clone() });
-        let bootstrap = Arc::new(SqliteBootstrap {
-            pool: pool.clone(),
-        });
+        let bootstrap = Arc::new(SqliteBootstrap { pool: pool.clone() });
         Self {
             pool,
             provider_store,

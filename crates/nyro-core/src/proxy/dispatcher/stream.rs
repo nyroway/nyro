@@ -23,8 +23,8 @@ use crate::proxy::client::ProxyClient;
 use crate::proxy::observability::headers_to_json;
 
 use super::{
-    CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator,
-    ai_response_to_deltas, error_response,
+    CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator, ai_response_to_deltas,
+    error_response,
 };
 
 // ── Streaming response handler ────────────────────────────────────────────────
