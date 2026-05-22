@@ -221,7 +221,6 @@ async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
         proxy_cors_origins,
         data_dir: PathBuf::from(data_dir),
         storage: GatewayStorageConfig::default(),
-        cache: yaml.cache.to_cache_config(),
         ..Default::default()
     };
 

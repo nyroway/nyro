@@ -5,9 +5,7 @@ import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon,
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
-  CacheSettings,
   CreateRoute,
-  RouteCacheConfig,
   CreateRouteTarget,
   ModelCapabilities,
   Provider,
@@ -40,9 +38,6 @@ type RouteForm = {
   strategy: RouteStrategy;
   targets: RouteTargetForm[];
   access_control: boolean;
-  cache_exact_enabled: boolean;
-  cache_semantic_enabled: boolean;
-  cache_semantic_threshold: string;
 };
 
 type RouteTargetForm = {
@@ -59,9 +54,6 @@ const emptyCreate: RouteForm = {
   strategy: "weighted",
   targets: [{ provider_id: "", model: "", weight: 100, priority: 1 }],
   access_control: false,
-  cache_exact_enabled: false,
-  cache_semantic_enabled: false,
-  cache_semantic_threshold: "",
 };
 
 function FieldLabel({ children }: { children: string }) {
@@ -82,10 +74,6 @@ function withCurrentModel(options: string[], current?: string) {
   return [current, ...options];
 }
 
-function defaultThresholdInput(value: number) {
-  if (!Number.isFinite(value)) return "0.92";
-  return String(value);
-}
 
 function ToggleStatusLabel({ enabled, isZh }: { enabled: boolean; isZh: boolean }) {
   return (
@@ -356,13 +344,6 @@ export default function RoutesPage() {
     queryKey: ["providers"],
     queryFn: () => backend("get_providers"),
   });
-  const { data: cacheSettings } = useQuery<CacheSettings>({
-    queryKey: ["cache-settings"],
-    queryFn: () => backend("get_cache_settings"),
-  });
-  const globalSemanticThreshold = cacheSettings?.semantic?.similarity_threshold ?? 0.92;
-  const globalExactCacheEnabled = cacheSettings?.exact?.enabled ?? false;
-  const globalSemanticCacheEnabled = cacheSettings?.semantic?.enabled ?? false;
 
   const createMut = useMutation({
     mutationFn: (input: CreateRoute) => backend("create_route", { input }),
@@ -439,12 +420,6 @@ export default function RoutesPage() {
       strategy: route.strategy ?? "weighted",
       targets,
       access_control: route.access_control,
-      cache_exact_enabled: Boolean(route.cache?.exact),
-      cache_semantic_enabled: Boolean(route.cache?.semantic),
-      cache_semantic_threshold:
-        route.cache?.semantic?.threshold != null
-          ? String(route.cache.semantic.threshold)
-          : (route.cache?.semantic ? defaultThresholdInput(globalSemanticThreshold) : ""),
     });
   }
 
@@ -465,27 +440,6 @@ export default function RoutesPage() {
     });
   }
 
-  function updateCreateSemanticEnabled(enabled: boolean) {
-    setCreateForm((prev) => ({
-      ...prev,
-      cache_semantic_enabled: enabled,
-      cache_semantic_threshold: enabled
-        ? (prev.cache_semantic_threshold.trim() || defaultThresholdInput(globalSemanticThreshold))
-        : prev.cache_semantic_threshold,
-    }));
-  }
-
-  function updateEditSemanticEnabled(enabled: boolean) {
-    setEditForm((prev) => (prev
-      ? {
-        ...prev,
-        cache_semantic_enabled: enabled,
-        cache_semantic_threshold: enabled
-          ? (prev.cache_semantic_threshold.trim() || defaultThresholdInput(globalSemanticThreshold))
-          : prev.cache_semantic_threshold,
-      }
-      : prev));
-  }
 
   function addCreateTarget() {
     setCreateForm((prev) => ({
@@ -616,42 +570,6 @@ export default function RoutesPage() {
               switchId="create-route-access-control"
               onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, access_control: checked }))}
             />
-            <>
-              {globalExactCacheEnabled && (
-                <RouteToggleControl
-                  title={isZh ? "精确匹配缓存" : "Exact Cache"}
-                  isZh={isZh}
-                  checked={createForm.cache_exact_enabled}
-                  onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, cache_exact_enabled: checked }))}
-                />
-              )}
-              {globalSemanticCacheEnabled && (
-                <>
-                    <RouteToggleControl
-                      title={isZh ? "语义相似缓存" : "Semantic Cache"}
-                      isZh={isZh}
-                      checked={createForm.cache_semantic_enabled}
-                      onCheckedChange={(checked) => updateCreateSemanticEnabled(checked)}
-                    />
-                    {createForm.cache_semantic_enabled && (
-                      <div className="space-y-2">
-                        <FieldLabel>{isZh ? "语义相似度" : "Semantic Threshold"}</FieldLabel>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          max={1}
-                          value={createForm.cache_semantic_threshold}
-                          onChange={(e) =>
-                            setCreateForm((prev) => ({ ...prev, cache_semantic_threshold: e.target.value }))
-                          }
-                          placeholder={defaultThresholdInput(globalSemanticThreshold)}
-                        />
-                      </div>
-                    )}
-                  </>
-                )}
-            </>
           </div>
           <div className="flex gap-3">
             <Button
@@ -786,46 +704,6 @@ export default function RoutesPage() {
                         setEditForm((prev) => (prev ? { ...prev, access_control: checked } : prev))
                       }
                     />
-                    <>
-                      {globalExactCacheEnabled && (
-                        <RouteToggleControl
-                          title={isZh ? "精确匹配缓存" : "Exact Cache"}
-                          isZh={isZh}
-                          checked={editForm.cache_exact_enabled}
-                          onCheckedChange={(checked) =>
-                            setEditForm((prev) => (prev ? { ...prev, cache_exact_enabled: checked } : prev))
-                          }
-                        />
-                      )}
-                      {globalSemanticCacheEnabled && (
-                        <>
-                          <RouteToggleControl
-                            title={isZh ? "语义相似缓存" : "Semantic Cache"}
-                            isZh={isZh}
-                            checked={editForm.cache_semantic_enabled}
-                            onCheckedChange={(checked) => updateEditSemanticEnabled(checked)}
-                          />
-                          {editForm.cache_semantic_enabled && (
-                            <div className="space-y-2">
-                              <FieldLabel>{isZh ? "语义相似度" : "Semantic Threshold"}</FieldLabel>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                min={0}
-                                max={1}
-                                value={editForm.cache_semantic_threshold}
-                                onChange={(e) =>
-                                  setEditForm((prev) =>
-                                    prev ? { ...prev, cache_semantic_threshold: e.target.value } : prev
-                                  )
-                                }
-                                placeholder={defaultThresholdInput(globalSemanticThreshold)}
-                              />
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </>
                   </div>
                   <div className="flex gap-3">
                     <Button
@@ -883,16 +761,6 @@ export default function RoutesPage() {
                     {route.access_control && (
                       <Badge variant="success" className="connect-label-badge">
                         {isZh ? "鉴权" : "Auth"}
-                      </Badge>
-                    )}
-                    {globalExactCacheEnabled && route.cache?.exact && (
-                      <Badge variant="success" className="connect-label-badge">
-                        {isZh ? "精确匹配缓存" : "Exact Cache"}
-                      </Badge>
-                    )}
-                    {globalSemanticCacheEnabled && route.cache?.semantic && (
-                      <Badge variant="success" className="connect-label-badge">
-                        {isZh ? "语义相似缓存" : "Semantic Cache"}
                       </Badge>
                     )}
                     {!route.is_enabled && (
@@ -1033,7 +901,6 @@ function buildCreatePayload(form: RouteForm): CreateRoute {
     target_provider: primary.provider_id,
     target_model: primary.model,
     access_control: form.access_control,
-    cache: buildRouteCacheConfig(form),
   };
 }
 
@@ -1054,29 +921,5 @@ function buildUpdatePayload(form: RouteForm & { id: string }): UpdateRoute {
     target_provider: primary.provider_id,
     target_model: primary.model,
     access_control: form.access_control,
-    cache: buildRouteCacheConfig(form),
   };
-}
-
-function buildRouteCacheConfig(form: RouteForm): RouteCacheConfig {
-  const cache: RouteCacheConfig = {};
-  const semanticThreshold = parseOptionalFloat(form.cache_semantic_threshold);
-
-  if (form.cache_exact_enabled) {
-    cache.exact = {};
-  }
-  if (form.cache_semantic_enabled) {
-    cache.semantic = {
-      threshold: semanticThreshold ?? undefined,
-    };
-  }
-  return cache;
-}
-
-function parseOptionalFloat(raw: string): number | null {
-  const value = raw.trim();
-  if (!value) return null;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return null;
-  return parsed;
 }

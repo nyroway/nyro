@@ -15,12 +15,10 @@ use crate::logging::LogEntry;
 use crate::storage::sql::config::SqlBackendConfig;
 use crate::storage::sql::pool::RelationalPool;
 use crate::storage::traits::{
-    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, CacheStore, LogStore, OAuthCredentialStore,
+    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, LogStore, OAuthCredentialStore,
     ProviderStore, ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore,
     SettingsStore, Storage, StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
 };
-
-const VECTOR_DIMENSIONS_SETTING_KEY: &str = "vector_embedding_dimensions";
 
 #[derive(Clone)]
 pub struct PostgresAdapter {
@@ -87,13 +85,6 @@ pub struct PostgresStorage {
 
 impl PostgresStorage {
     pub async fn connect(config: SqlBackendConfig) -> anyhow::Result<Self> {
-        Self::connect_with_vector_dimensions(config, 1536).await
-    }
-
-    pub async fn connect_with_vector_dimensions(
-        config: SqlBackendConfig,
-        vector_dimensions: usize,
-    ) -> anyhow::Result<Self> {
         let adapter = PostgresAdapter::connect(config).await?;
         let pool = adapter.pool().clone();
         let provider_store = Arc::new(PostgresProviderStore { pool: pool.clone() });
@@ -104,10 +95,7 @@ impl PostgresStorage {
         let auth_store = Arc::new(PostgresAuthAccessStore { pool: pool.clone() });
         let oauth_credential_store = Arc::new(PostgresOAuthCredentialStore { pool: pool.clone() });
         let log_store = Arc::new(PostgresLogStore { pool: pool.clone() });
-        let bootstrap = Arc::new(PostgresBootstrap {
-            adapter,
-            vector_dimensions: vector_dimensions.max(1),
-        });
+        let bootstrap = Arc::new(PostgresBootstrap { adapter });
         Ok(Self {
             pool,
             provider_store,
@@ -124,69 +112,6 @@ impl PostgresStorage {
 
     pub fn pool(&self) -> &Pool<Postgres> {
         &self.pool
-    }
-}
-
-pub async fn recreate_pg_vector_table(
-    pool: &Pool<Postgres>,
-    vector_dimensions: usize,
-) -> anyhow::Result<()> {
-    let dimensions = vector_dimensions.max(1);
-    let mut tx = pool.begin().await?;
-    let result: anyhow::Result<()> = async {
-        sqlx::query("DROP TABLE IF EXISTS semantic_cache_vectors")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(&semantic_cache_vectors_table_ddl(dimensions))
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(
-            "CREATE UNIQUE INDEX idx_semantic_cache_vectors_partition_key
-             ON semantic_cache_vectors(partition, cache_key)",
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(
-            "CREATE INDEX idx_semantic_cache_vectors_partition_created_at
-             ON semantic_cache_vectors(partition, created_at)",
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(
-            "CREATE INDEX idx_semantic_cache_vectors_hnsw
-             ON semantic_cache_vectors USING hnsw (embedding vector_cosine_ops)",
-        )
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(
-            "INSERT INTO settings(key, value, updated_at)
-             VALUES($1, $2, CURRENT_TIMESTAMP)
-             ON CONFLICT(key) DO UPDATE
-             SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP",
-        )
-        .bind(VECTOR_DIMENSIONS_SETTING_KEY)
-        .bind(dimensions.to_string())
-        .execute(&mut *tx)
-        .await?;
-        Ok(())
-    }
-    .await;
-
-    match result {
-        Ok(()) => {
-            tx.commit().await?;
-            Ok(())
-        }
-        Err(error) => {
-            let _ = tx.rollback().await;
-            if is_pg_permission_error(&error) {
-                anyhow::bail!(
-                    "insufficient database privileges to rebuild semantic_cache_vectors automatically. ask your DBA to run:\n\n{}",
-                    rebuild_guidance_sql(dimensions)
-                );
-            }
-            Err(error)
-        }
     }
 }
 
@@ -221,10 +146,6 @@ impl Storage for PostgresStorage {
 
     fn logs(&self) -> &dyn LogStore {
         self.log_store.as_ref()
-    }
-
-    fn cache(&self) -> Option<&dyn CacheStore> {
-        Some(self.log_store.as_ref())
     }
 
     fn oauth_credentials(&self) -> &dyn OAuthCredentialStore {
@@ -550,7 +471,7 @@ impl RouteStore for PostgresRouteStore {
         let id = uuid::Uuid::new_v4().to_string();
         let virtual_model = input.virtual_model.trim().to_string();
         sqlx::query(
-            "INSERT INTO routes (id, name, virtual_model, strategy, target_provider, target_model, access_control, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO routes (id, name, virtual_model, strategy, target_provider, target_model, access_control) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&id)
         .bind(input.name.trim())
@@ -559,9 +480,6 @@ impl RouteStore for PostgresRouteStore {
         .bind(input.target_provider.trim())
         .bind(input.target_model.trim())
         .bind(input.access_control.unwrap_or(false))
-        .bind(input.cache_exact_ttl)
-        .bind(input.cache_semantic_ttl)
-        .bind(input.cache_semantic_threshold)
         .execute(&self.pool)
         .await?;
         self.get(&id).await?.context("route missing after create")
@@ -579,13 +497,10 @@ impl RouteStore for PostgresRouteStore {
         let target_provider = input.target_provider.unwrap_or(current.target_provider);
         let target_model = input.target_model.unwrap_or(current.target_model);
         let access_control = input.access_control.unwrap_or(current.access_control);
-        let cache_exact_ttl = input.cache_exact_ttl;
-        let cache_semantic_ttl = input.cache_semantic_ttl;
-        let cache_semantic_threshold = input.cache_semantic_threshold;
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE routes SET name=$1, virtual_model=$2, strategy=$3, target_provider=$4, target_model=$5, access_control=$6, cache_exact_ttl=$7, cache_semantic_ttl=$8, cache_semantic_threshold=$9, is_enabled=$10 WHERE id=$11",
+            "UPDATE routes SET name=$1, virtual_model=$2, strategy=$3, target_provider=$4, target_model=$5, access_control=$6, is_enabled=$7 WHERE id=$8",
         )
         .bind(name.trim())
         .bind(&virtual_model)
@@ -593,9 +508,6 @@ impl RouteStore for PostgresRouteStore {
         .bind(target_provider.trim())
         .bind(target_model.trim())
         .bind(access_control)
-        .bind(cache_exact_ttl)
-        .bind(cache_semantic_ttl)
-        .bind(cache_semantic_threshold)
         .bind(is_enabled)
         .bind(id)
         .execute(&self.pool)
@@ -1171,59 +1083,9 @@ impl LogStore for PostgresLogStore {
     }
 }
 
-#[async_trait]
-impl CacheStore for PostgresLogStore {
-    async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
-        let row = sqlx::query_as::<_, (Vec<u8>,)>(
-            "SELECT data FROM cache_entries WHERE key = $1 AND expires_at > CURRENT_TIMESTAMP",
-        )
-        .bind(key)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(|v| v.0))
-    }
-
-    async fn set(&self, key: &str, data: &[u8], ttl: Option<Duration>) -> anyhow::Result<()> {
-        let ttl_secs = ttl.unwrap_or_else(|| Duration::from_secs(3600)).as_secs() as i64;
-        sqlx::query(
-            "INSERT INTO cache_entries (key, data, expires_at, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP + ($3 * INTERVAL '1 second'), CURRENT_TIMESTAMP) \
-             ON CONFLICT(key) DO UPDATE SET data = EXCLUDED.data, expires_at = EXCLUDED.expires_at",
-        )
-        .bind(key)
-        .bind(data)
-        .bind(ttl_secs)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    async fn delete(&self, key: &str) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM cache_entries WHERE key = $1")
-            .bind(key)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn flush(&self) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM cache_entries")
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn cleanup_expired(&self) -> anyhow::Result<u64> {
-        let result = sqlx::query("DELETE FROM cache_entries WHERE expires_at <= CURRENT_TIMESTAMP")
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected())
-    }
-}
-
 #[derive(Clone)]
 struct PostgresBootstrap {
     adapter: PostgresAdapter,
-    vector_dimensions: usize,
 }
 
 #[async_trait]
@@ -1239,36 +1101,9 @@ impl StorageBootstrap for PostgresBootstrap {
         sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS strategy TEXT DEFAULT 'weighted'")
             .execute(self.adapter.pool())
             .await?;
-        sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS cache_exact_ttl BIGINT")
-            .execute(self.adapter.pool())
-            .await?;
-        sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS cache_semantic_ttl BIGINT")
-            .execute(self.adapter.pool())
-            .await?;
-        sqlx::query(
-            "ALTER TABLE routes ADD COLUMN IF NOT EXISTS cache_semantic_threshold DOUBLE PRECISION",
-        )
-        .execute(self.adapter.pool())
-        .await?;
         sqlx::query("UPDATE routes SET strategy = 'weighted' WHERE strategy IS NULL OR btrim(strategy) = ''")
             .execute(self.adapter.pool())
             .await?;
-        sqlx::query(
-            "UPDATE routes SET cache_exact_ttl = cache_ttl WHERE cache_exact_ttl IS NULL AND cache_ttl IS NOT NULL",
-        )
-        .execute(self.adapter.pool())
-        .await
-        .ok();
-        sqlx::query(
-            "UPDATE routes SET cache_exact_ttl = 3600 WHERE cache_enabled = true AND cache_exact_ttl IS NULL",
-        )
-        .execute(self.adapter.pool())
-        .await
-        .ok();
-        sqlx::query("UPDATE routes SET cache_exact_ttl = NULL WHERE cache_enabled = false")
-            .execute(self.adapter.pool())
-            .await
-            .ok();
         sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS use_proxy BOOLEAN NOT NULL DEFAULT FALSE")
             .execute(self.adapter.pool())
             .await?;
@@ -1319,9 +1154,6 @@ END $$;"#,
         )
         .execute(self.adapter.pool())
         .await?;
-        sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
-            .execute(self.adapter.pool())
-            .await?;
         // Migrate: providers/routes is_active -> is_enabled
         sqlx::query(
             "ALTER TABLE providers ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN DEFAULT TRUE",
@@ -1369,7 +1201,6 @@ END $$;"#,
         )
         .execute(self.adapter.pool())
         .await?;
-        ensure_semantic_cache_vectors_table(self.adapter.pool(), self.vector_dimensions).await?;
         // PR2B → PR13: vendor name migrations. Idempotent.
         // `nyro → custom` (PR13 reversal), `zhipu → zhipuai` (PR2B).
         for (from, to) in [("nyro", "custom"), ("zhipu", "zhipuai")] {
@@ -1573,84 +1404,6 @@ fn normalize_provider_protocol_value(
     }
 }
 
-async fn ensure_semantic_cache_vectors_table(
-    pool: &Pool<Postgres>,
-    vector_dimensions: usize,
-) -> anyhow::Result<()> {
-    let dimensions = vector_dimensions.max(1);
-    let stored_dimension =
-        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = $1")
-            .bind(VECTOR_DIMENSIONS_SETTING_KEY)
-            .fetch_optional(pool)
-            .await?
-            .and_then(|raw| raw.trim().parse::<usize>().ok());
-    let table_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (
-            SELECT 1
-            FROM information_schema.tables
-            WHERE table_schema = current_schema()
-              AND table_name = 'semantic_cache_vectors'
-        )",
-    )
-    .fetch_one(pool)
-    .await?;
-    if !table_exists || stored_dimension != Some(dimensions) {
-        recreate_pg_vector_table(pool, dimensions).await?;
-    }
-    Ok(())
-}
-
-fn semantic_cache_vectors_table_ddl(vector_dimensions: usize) -> String {
-    let dimensions = vector_dimensions.max(1);
-    format!(
-        "CREATE TABLE semantic_cache_vectors (
-            id BIGSERIAL PRIMARY KEY,
-            partition TEXT NOT NULL,
-            cache_key TEXT NOT NULL,
-            dimensions INTEGER NOT NULL,
-            embedding vector({dimensions}) NOT NULL,
-            data BYTEA NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        )"
-    )
-}
-
-fn rebuild_guidance_sql(vector_dimensions: usize) -> String {
-    let dimensions = vector_dimensions.max(1);
-    format!(
-        "BEGIN;
-DROP TABLE IF EXISTS semantic_cache_vectors;
-CREATE TABLE semantic_cache_vectors (
-    id BIGSERIAL PRIMARY KEY,
-    partition TEXT NOT NULL,
-    cache_key TEXT NOT NULL,
-    dimensions INTEGER NOT NULL,
-    embedding vector({dimensions}) NOT NULL,
-    data BYTEA NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-CREATE UNIQUE INDEX idx_semantic_cache_vectors_partition_key ON semantic_cache_vectors(partition, cache_key);
-CREATE INDEX idx_semantic_cache_vectors_partition_created_at ON semantic_cache_vectors(partition, created_at);
-CREATE INDEX idx_semantic_cache_vectors_hnsw ON semantic_cache_vectors USING hnsw (embedding vector_cosine_ops);
-INSERT INTO settings(key, value, updated_at)
-VALUES('{VECTOR_DIMENSIONS_SETTING_KEY}', '{dimensions}', CURRENT_TIMESTAMP)
-ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP;
-COMMIT;"
-    )
-}
-
-fn is_pg_permission_error(error: &anyhow::Error) -> bool {
-    for cause in error.chain() {
-        if let Some(sqlx_error) = cause.downcast_ref::<sqlx::Error>()
-            && let sqlx::Error::Database(db_error) = sqlx_error
-            && db_error.code().as_deref() == Some("42501")
-        {
-            return true;
-        }
-    }
-    false
-}
-
 fn provider_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
         "SELECT id, name, vendor, protocol, base_url, preset_key, channel, models_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
@@ -1666,7 +1419,7 @@ fn provider_select(suffix: Option<&str>) -> String {
 
 fn route_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, false) AS access_control, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM routes",
+        "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM routes",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1788,9 +1541,6 @@ CREATE TABLE IF NOT EXISTS routes (
     strategy TEXT DEFAULT 'weighted',
     target_provider TEXT NOT NULL REFERENCES providers(id),
     target_model TEXT NOT NULL,
-    cache_exact_ttl BIGINT,
-    cache_semantic_ttl BIGINT,
-    cache_semantic_threshold DOUBLE PRECISION,
     access_control BOOLEAN DEFAULT FALSE,
     is_enabled BOOLEAN DEFAULT TRUE,
     priority INTEGER DEFAULT 0,
@@ -1856,15 +1606,6 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE TABLE IF NOT EXISTS cache_entries (
-    key TEXT PRIMARY KEY,
-    data BYTEA NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at);
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY,

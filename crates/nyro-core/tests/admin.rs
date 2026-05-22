@@ -89,16 +89,6 @@ async fn copy_provider_can_copy_matching_route_targets_to_copied_provider() -> a
                 },
             ],
             access_control: Some(true),
-            cache: Some(RouteCacheConfig {
-                exact: Some(RouteExactCacheConfig { ttl: Some(60) }),
-                semantic: Some(RouteSemanticCacheConfig {
-                    ttl: Some(120),
-                    threshold: Some(0.8),
-                }),
-            }),
-            cache_exact_ttl: None,
-            cache_semantic_ttl: None,
-            cache_semantic_threshold: None,
         })
         .await?;
 
@@ -134,9 +124,6 @@ async fn copy_provider_can_copy_matching_route_targets_to_copied_provider() -> a
     assert_eq!(updated_route.virtual_model, "source-model");
     assert_eq!(updated_route.strategy, "priority");
     assert!(updated_route.access_control);
-    assert_eq!(updated_route.cache_exact_ttl, Some(60));
-    assert_eq!(updated_route.cache_semantic_ttl, Some(120));
-    assert_eq!(updated_route.cache_semantic_threshold, Some(0.8));
     assert_eq!(updated_route.target_provider, original.id);
     assert_eq!(updated_route.target_model, "source-upstream-model");
     assert_eq!(updated_route.targets.len(), 3);
@@ -179,10 +166,6 @@ async fn copy_provider_does_not_append_targets_by_default() -> anyhow::Result<()
             target_model: "source-upstream-model".to_string(),
             targets: vec![],
             access_control: None,
-            cache: None,
-            cache_exact_ttl: None,
-            cache_semantic_ttl: None,
-            cache_semantic_threshold: None,
         })
         .await?;
 
@@ -218,10 +201,6 @@ async fn delete_provider_removes_route_associations_before_provider() -> anyhow:
             target_model: "gpt-delete".to_string(),
             targets: vec![],
             access_control: None,
-            cache: None,
-            cache_exact_ttl: None,
-            cache_semantic_ttl: None,
-            cache_semantic_threshold: None,
         })
         .await?;
     let kept_route = gw
@@ -247,10 +226,6 @@ async fn delete_provider_removes_route_associations_before_provider() -> anyhow:
                 },
             ],
             access_control: None,
-            cache: None,
-            cache_exact_ttl: None,
-            cache_semantic_ttl: None,
-            cache_semantic_threshold: None,
         })
         .await?;
 

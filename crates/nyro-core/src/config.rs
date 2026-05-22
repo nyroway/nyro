@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::cache::config::CacheConfig;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StorageBackendKind {
     #[default]
@@ -81,7 +79,6 @@ pub struct GatewayConfig {
     pub data_dir: PathBuf,
     pub auth_key: Option<String>,
     pub storage: GatewayStorageConfig,
-    pub cache: CacheConfig,
 }
 
 impl Default for GatewayConfig {
@@ -93,7 +90,6 @@ impl Default for GatewayConfig {
             data_dir: default_data_dir(),
             auth_key: None,
             storage: GatewayStorageConfig::default(),
-            cache: CacheConfig::default(),
         }
     }
 }

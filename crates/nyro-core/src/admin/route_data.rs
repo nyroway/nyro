@@ -1,39 +1,5 @@
 use super::*;
 
-pub(super) fn flatten_route_cache_columns(
-    cache: Option<&RouteCacheConfig>,
-) -> (Option<i64>, Option<i64>, Option<f64>) {
-    let Some(cache) = cache else {
-        return (None, None, None);
-    };
-    let exact_ttl = cache.exact.as_ref().map(|exact| exact.ttl.unwrap_or(0));
-    let semantic_ttl = cache
-        .semantic
-        .as_ref()
-        .map(|semantic| semantic.ttl.unwrap_or(0));
-    let semantic_threshold = cache
-        .semantic
-        .as_ref()
-        .and_then(|semantic| semantic.threshold);
-    (exact_ttl, semantic_ttl, semantic_threshold)
-}
-
-pub(super) fn resolve_route_cache(route: &Route) -> Option<RouteCacheConfig> {
-    let exact = route.cache_exact_ttl.map(|ttl| RouteExactCacheConfig {
-        ttl: if ttl > 0 { Some(ttl) } else { None },
-    });
-    let semantic = route
-        .cache_semantic_ttl
-        .map(|ttl| RouteSemanticCacheConfig {
-            ttl: if ttl > 0 { Some(ttl) } else { None },
-            threshold: route.cache_semantic_threshold,
-        });
-    if exact.is_none() && semantic.is_none() {
-        None
-    } else {
-        Some(RouteCacheConfig { exact, semantic })
-    }
-}
 pub(super) fn ensure_virtual_model(model: &str) -> anyhow::Result<()> {
     if model.trim().is_empty() {
         anyhow::bail!("virtual_model cannot be empty");

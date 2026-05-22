@@ -138,15 +138,6 @@ pub trait LogStore: Send + Sync {
 }
 
 #[async_trait]
-pub trait CacheStore: Send + Sync {
-    async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>>;
-    async fn set(&self, key: &str, data: &[u8], ttl: Option<Duration>) -> anyhow::Result<()>;
-    async fn delete(&self, key: &str) -> anyhow::Result<()>;
-    async fn flush(&self) -> anyhow::Result<()>;
-    async fn cleanup_expired(&self) -> anyhow::Result<u64>;
-}
-
-#[async_trait]
 pub trait OAuthCredentialStore: Send + Sync {
     async fn get(&self, provider_id: &str) -> anyhow::Result<Option<OAuthCredential>>;
     async fn upsert(
@@ -192,9 +183,6 @@ pub trait Storage: Send + Sync {
         None
     }
     fn logs(&self) -> &dyn LogStore;
-    fn cache(&self) -> Option<&dyn CacheStore> {
-        None
-    }
     fn oauth_credentials(&self) -> &dyn OAuthCredentialStore;
     fn bootstrap(&self) -> &dyn StorageBootstrap;
 }

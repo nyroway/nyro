@@ -36,7 +36,7 @@ async fn migration_collapses_legacy_columns_and_is_idempotent() {
     .await
     .unwrap();
 
-    migrate(&pool, 8).await.unwrap();
+    migrate(&pool).await.unwrap();
 
     let row = sqlx::query("SELECT protocol, base_url FROM providers WHERE id = 'p1'")
         .fetch_one(&pool)
@@ -69,7 +69,7 @@ async fn migration_collapses_legacy_columns_and_is_idempotent() {
         })
         .collect::<Vec<_>>();
 
-    migrate(&pool, 8).await.unwrap();
+    migrate(&pool).await.unwrap();
 
     let snapshot_after = sqlx::query("SELECT id, protocol, base_url FROM providers ORDER BY id")
         .fetch_all(&pool)
@@ -122,7 +122,7 @@ async fn migration_preserves_existing_base_url_when_legacy_json_disagrees() {
     .await
     .unwrap();
 
-    migrate(&pool, 8).await.unwrap();
+    migrate(&pool).await.unwrap();
 
     let base_url: String = sqlx::query_scalar("SELECT base_url FROM providers WHERE id = 'p2'")
         .fetch_one(&pool)

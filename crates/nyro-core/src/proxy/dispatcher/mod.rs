@@ -7,9 +7,8 @@
 //! Pipeline:
 //!   1. Route lookup + type gate (embedding vs chat).
 //!   2. `authorize_route_access` (API-key auth + quota).
-//!   3. Exact-cache check → singleflight dedup.
-//!   4. Semantic-cache check.
-//!   5. Target iteration (health-aware): for each live target →
+//!   3. Request hooks.
+//!   4. Target iteration (health-aware): for each live target →
 //!      a. Resolve `Provider` + `ProviderRuntime`.
 //!      b. Resolve egress protocol + base URL via `negotiate()`.
 //!      c. Look up `Vendor` from `VendorRegistry`.
@@ -18,7 +17,7 @@
 //!      e. Merge `runtime_binding` extra-headers.
 //!      f. HTTP call → `handle_non_stream` / `handle_stream`.
 //!      g. On success: record health, return; on retryable error: continue.
-//!   6. Finalize singleflight; return last error or 502.
+//!   5. Return last error or 502.
 
 mod accumulator;
 mod auth;
@@ -31,32 +30,21 @@ use self::non_stream::{handle_non_stream, handle_non_stream_via_upstream_stream}
 use self::stream::handle_stream;
 use self::util::*;
 
-use std::convert::Infallible;
 use std::time::Instant;
 
-use axum::Json;
-use axum::body::Body;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
-use dashmap::mapref::entry::Entry as DashEntry;
+use axum::http::HeaderMap;
+use axum::response::Response;
 use serde_json::Value;
-use tokio::sync::broadcast;
-use tokio::time::{Duration, timeout};
-use tokio_stream::wrappers::ReceiverStream;
 
 use crate::Gateway;
-use crate::cache::entry::CacheEntry;
-use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::db::models::Provider;
 use crate::error::{AuthFailure, GatewayError};
 use crate::protocol::ProviderProtocols;
-use crate::protocol::ids::{
-    OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1, OPENAI_COMPATIBLE_EMBEDDINGS_V1, ProtocolId,
-};
+use crate::protocol::ids::ProtocolId;
 use crate::protocol::ir::Usage;
 use crate::protocol::ir::{AiRequest, AiResponse, RawEnvelope};
 use crate::provider::vendor::ProviderCtx;
-use crate::provider::{VendorCtx, VendorRegistry};
+use crate::provider::VendorRegistry;
 use crate::proxy::client::ProxyClient;
 use crate::proxy::context::RequestContext;
 use crate::proxy::observability::{LogExtras, send_log};
@@ -72,7 +60,7 @@ use crate::router::TargetSelector;
 ///
 /// Pipeline:
 ///   a. Resolve egress protocol + base URL via `negotiate()`.
-///   b. Auth + cache check.
+///   b. Auth.
 ///   c. Look up `Vendor` from `VendorRegistry`.
 ///   d. Build outbound: `ProtocolMode::Native` + no mutations → `passthrough_run`;
 ///      else full 7-step `adapter.build_request`.
@@ -144,211 +132,6 @@ pub async fn dispatch_pipeline(
         }
     };
 
-    // ── Cache setup ───────────────────────────────────────────────────────────
-
-    let cache_config = gw.effective_cache_config();
-    let cache_backend = (**gw.cache_backend.load()).clone();
-    let vector_store = (**gw.vector_store.load()).clone();
-    let route_cache = resolve_route_cache(&route);
-    let request_has_image = request_has_image_input(&request);
-    let exact_enabled_for_route = cache_config.exact.enabled
-        && cache_backend.is_some()
-        && route_cache.exact.is_some()
-        && !request_has_image;
-    let semantic_enabled_for_route = cache_config.semantic.enabled
-        && vector_store.is_some()
-        && route_cache.semantic.is_some()
-        && !request_has_image;
-    let semantic_write_temp_allowed = request.generation.temperature.unwrap_or(0.0) <= 0.0;
-    let request_cache_key = if exact_enabled_for_route || semantic_enabled_for_route {
-        Some(build_cache_key(&request, ingress))
-    } else {
-        None
-    };
-
-    let exact_ttl = route_exact_ttl(&route_cache, cache_config.exact.default_ttl);
-    let semantic_ttl = route_semantic_ttl(&route_cache, cache_config.semantic.default_ttl);
-    let semantic_threshold =
-        route_semantic_threshold(&route_cache, cache_config.semantic.similarity_threshold);
-    let semantic_entry_key = request_cache_key
-        .clone()
-        .unwrap_or_else(|| build_cache_key(&request, ingress));
-    let semantic_embedding = extract_semantic_embedding_input(&request);
-    let semantic_partition = semantic_embedding
-        .as_ref()
-        .map(|(system_prompt, _)| build_semantic_partition(&request.model, system_prompt));
-
-    // ── Exact cache read ──────────────────────────────────────────────────────
-
-    if let (Some(cache_backend), Some(key)) = (cache_backend.as_ref(), request_cache_key.as_deref())
-        && exact_enabled_for_route
-        && let Ok(Some(bytes)) = cache_backend.get(key).await
-        && let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&bytes)
-    {
-        let response = cached_entry_to_response(
-            ingress,
-            &cached_entry,
-            is_stream,
-            Some(key),
-            "EXACT",
-            None,
-            cache_config.exact.stream_replay_tps,
-            cache_config.exact.expose_headers,
-        );
-        let cached_usage = cached_entry.usage.clone();
-        LogBuilder::from_dispatch(
-            &gw,
-            &ingress_str,
-            &request_model,
-            auth_key.id.as_deref(),
-            start,
-        )
-        .stream_flag(is_stream)
-        .upstream_model_str(
-            cached_entry
-                .actual_model
-                .as_deref()
-                .unwrap_or(&request_model),
-        )
-        .provider_id_str(&cached_entry.provider_name)
-        .status_i32(cached_entry.status_code as i32)
-        .usage(cached_usage)
-        .with_req_extras(&req_extras)
-        .resp_body(serde_json::to_string(&cached_entry.payload).ok())
-        .emit();
-        return response;
-    }
-
-    // ── Singleflight ─────────────────────────────────────────────────────────
-
-    let mut singleflight_leader: Option<(String, broadcast::Sender<Vec<u8>>)> = None;
-    if exact_enabled_for_route && let Some(key) = request_cache_key.as_ref() {
-        match gw.cache_in_flight.entry(key.clone()) {
-            DashEntry::Occupied(entry) => {
-                let mut rx = entry.get().subscribe();
-                drop(entry);
-                if let Ok(Ok(bytes)) = timeout(Duration::from_secs(120), rx.recv()).await
-                    && !bytes.is_empty()
-                    && let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&bytes)
-                {
-                    let response = cached_entry_to_response(
-                        ingress,
-                        &cached_entry,
-                        is_stream,
-                        Some(key),
-                        "EXACT",
-                        None,
-                        cache_config.exact.stream_replay_tps,
-                        cache_config.exact.expose_headers,
-                    );
-                    let cached_usage = cached_entry.usage.clone();
-                    LogBuilder::from_dispatch(
-                        &gw,
-                        &ingress_str,
-                        &request_model,
-                        auth_key.id.as_deref(),
-                        start,
-                    )
-                    .stream_flag(is_stream)
-                    .upstream_model_str(
-                        cached_entry
-                            .actual_model
-                            .as_deref()
-                            .unwrap_or(&request_model),
-                    )
-                    .provider_id_str(&cached_entry.provider_name)
-                    .status_i32(cached_entry.status_code as i32)
-                    .usage(cached_usage)
-                    .with_req_extras(&req_extras)
-                    .resp_body(serde_json::to_string(&cached_entry.payload).ok())
-                    .emit();
-                    return response;
-                }
-            }
-            DashEntry::Vacant(entry) => {
-                let (tx, _) = broadcast::channel(16);
-                entry.insert(tx.clone());
-                singleflight_leader = Some((key.clone(), tx));
-            }
-        }
-    }
-
-    // ── Semantic cache read ───────────────────────────────────────────────────
-
-    let mut semantic_query_vector: Option<Vec<f32>> = None;
-    if semantic_enabled_for_route
-        && let (Some(vector_store), Some(partition), Some((_, semantic_text))) = (
-            vector_store.as_ref(),
-            semantic_partition.as_deref(),
-            semantic_embedding.as_ref(),
-        )
-        && let Ok(vector) = compute_embedding(&gw, semantic_text).await
-    {
-        semantic_query_vector = Some(vector.clone());
-        if let Ok(Some(hit)) = vector_store
-            .search(partition, &vector, semantic_threshold)
-            .await
-            && let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&hit.data)
-            && !is_semantic_entry_expired(&cached_entry, semantic_ttl)
-        {
-            if exact_enabled_for_route
-                && let (Some(cache_backend), Some(key)) =
-                    (cache_backend.as_ref(), request_cache_key.as_deref())
-            {
-                let _ = cache_backend.set(key, &hit.data, Some(exact_ttl)).await;
-            }
-            let response = cached_entry_to_response(
-                ingress,
-                &cached_entry,
-                is_stream,
-                Some(&hit.key),
-                "SEMANTIC",
-                Some(hit.score),
-                cache_config.semantic.stream_replay_tps,
-                cache_config.semantic.expose_headers,
-            );
-            let cached_usage = cached_entry.usage.clone();
-            LogBuilder::from_dispatch(
-                &gw,
-                &ingress_str,
-                &request_model,
-                auth_key.id.as_deref(),
-                start,
-            )
-            .stream_flag(is_stream)
-            .upstream_model_str(
-                cached_entry
-                    .actual_model
-                    .as_deref()
-                    .unwrap_or(&request_model),
-            )
-            .provider_id_str(&cached_entry.provider_name)
-            .status_i32(cached_entry.status_code as i32)
-            .usage(cached_usage)
-            .with_req_extras(&req_extras)
-            .resp_body(serde_json::to_string(&cached_entry.payload).ok())
-            .emit();
-            return response;
-        }
-    }
-
-    let semantic_write_ctx = if semantic_enabled_for_route && semantic_write_temp_allowed {
-        if let (Some(partition), Some((_, semantic_text))) =
-            (semantic_partition.clone(), semantic_embedding.clone())
-        {
-            Some(SemanticWriteContext {
-                partition,
-                embedding_text: semantic_text,
-                key: semantic_entry_key,
-                query_vector: semantic_query_vector.clone(),
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
     // ── Request hooks ──────────────────────────────────────────────────────────
 
     let hook_registry = crate::integrations::HookRegistry::global();
@@ -410,9 +193,6 @@ pub async fn dispatch_pipeline(
         .emit();
         return error_response(503, "no route targets configured");
     }
-
-    let miss_expose_headers =
-        cache_config.exact.expose_headers || cache_config.semantic.expose_headers;
 
     let mut last_response: Option<Response> = None;
     for target in ordered_targets {
@@ -576,14 +356,6 @@ pub async fn dispatch_pipeline(
             is_stream,
             start,
         };
-        let cache_ctx = CacheWriteCtx {
-            cache_key: request_cache_key.as_deref(),
-            allow_exact_store: exact_enabled_for_route,
-            exact_cache_ttl: Some(exact_ttl),
-            semantic: semantic_write_ctx.clone(),
-            expose_headers: miss_expose_headers,
-        };
-
         let response = if is_stream {
             handle_stream(
                 client,
@@ -591,10 +363,7 @@ pub async fn dispatch_pipeline(
                 outbound.headers,
                 outbound.body,
                 &call_ctx,
-                &cache_ctx,
                 &req_extras,
-                singleflight_leader.as_ref().map(|(k, _)| k.as_str()),
-                singleflight_leader.as_ref().map(|(_, tx)| tx.clone()),
                 passthrough_resp,
             )
             .await
@@ -605,7 +374,6 @@ pub async fn dispatch_pipeline(
                 outbound.headers,
                 outbound.body,
                 &call_ctx,
-                &cache_ctx,
             )
             .await
         } else {
@@ -615,7 +383,6 @@ pub async fn dispatch_pipeline(
                 outbound.headers,
                 outbound.body,
                 &call_ctx,
-                &cache_ctx,
                 &req_extras,
                 adapter.as_ref(),
                 &ctx,
@@ -626,9 +393,6 @@ pub async fn dispatch_pipeline(
 
         let status = response.status().as_u16();
         if status < 400 {
-            if !is_stream {
-                finalize_singleflight(&gw, singleflight_leader.as_ref(), true).await;
-            }
             gw.health_registry.record_success(&target_key);
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             TargetSelector::record_selected(&route.strategy, &target_key);
@@ -640,11 +404,9 @@ pub async fn dispatch_pipeline(
             last_response = Some(response);
             continue;
         }
-        finalize_singleflight(&gw, singleflight_leader.as_ref(), false).await;
         return response;
     }
 
-    finalize_singleflight(&gw, singleflight_leader.as_ref(), false).await;
     last_response.unwrap_or_else(|| {
         LogBuilder::from_dispatch(
             &gw,
@@ -711,17 +473,6 @@ struct CallCtx<'a> {
     api_key_name: Option<&'a str>,
     is_stream: bool,
     start: Instant,
-}
-
-/// Cache write parameters for a single upstream call. Shared by all three
-/// HTTP-level handlers.
-struct CacheWriteCtx<'a> {
-    cache_key: Option<&'a str>,
-    allow_exact_store: bool,
-    exact_cache_ttl: Option<Duration>,
-    /// Semantic-cache write context; `None` when semantic cache is disabled.
-    semantic: Option<SemanticWriteContext>,
-    expose_headers: bool,
 }
 
 /// Owned request HTTP metadata kept for log entries. Used by the non-stream
@@ -828,16 +579,6 @@ impl LogBuilder {
 
     fn status_i32(mut self, code: i32) -> Self {
         self.client_status_code = code;
-        self
-    }
-
-    fn upstream_model_str(mut self, m: &str) -> Self {
-        self.upstream_model = m.to_string();
-        self
-    }
-
-    fn provider_id_str(mut self, id: &str) -> Self {
-        self.provider_id = id.to_string();
         self
     }
 
@@ -970,140 +711,8 @@ impl LogBuilder {
 // ── Non-streaming / streaming handlers: see non_stream.rs and stream.rs ───────
 // ── Auth helpers: see auth.rs ─────────────────────────────────────────────
 
-// Cache helpers (SemanticWriteContext, resolve_route_cache, route_*_ttl,
-// is_semantic_entry_expired, request_has_image_input, extract_semantic_embedding_input,
-// is_retryable, runtime_binding_headers, load_route_targets) are in util.rs.
-
-fn set_cache_headers(
-    response: &mut Response,
-    cache_status: &str,
-    key: Option<&str>,
-    score: Option<f64>,
-    expose_headers: bool,
-) {
-    if !expose_headers {
-        return;
-    }
-    let headers = response.headers_mut();
-    if let Ok(value) = HeaderValue::from_str(cache_status) {
-        headers.insert("X-NYRO-CACHE", value);
-    }
-    if let Some(key) = key
-        && let Ok(value) = HeaderValue::from_str(key)
-    {
-        headers.insert("X-NYRO-CACHE-KEY", value);
-    }
-    if let Some(score) = score
-        && let Ok(value) = HeaderValue::from_str(&format!("{score:.4}"))
-    {
-        headers.insert("X-NYRO-CACHE-SCORE", value);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn cached_entry_to_response(
-    ingress: ProtocolId,
-    entry: &CacheEntry,
-    is_stream: bool,
-    cache_key: Option<&str>,
-    cache_status: &str,
-    score: Option<f64>,
-    stream_replay_tps: u32,
-    expose_headers: bool,
-) -> Response {
-    if is_stream && let Some(internal) = entry.internal_response.as_ref() {
-        return replay_cached_stream(
-            ingress,
-            internal,
-            cache_key,
-            cache_status,
-            score,
-            stream_replay_tps,
-            expose_headers,
-        );
-    }
-    let mut response = (
-        StatusCode::from_u16(entry.status_code).unwrap_or(StatusCode::OK),
-        Json(entry.payload.clone()),
-    )
-        .into_response();
-    set_cache_headers(
-        &mut response,
-        cache_status,
-        cache_key,
-        score,
-        expose_headers,
-    );
-    response
-}
-
-fn replay_cached_stream(
-    ingress: ProtocolId,
-    ai_resp: &AiResponse,
-    cache_key: Option<&str>,
-    cache_status: &str,
-    score: Option<f64>,
-    stream_replay_tps: u32,
-    expose_headers: bool,
-) -> Response {
-    let mut formatter = ingress.handler().make_stream_response_encoder();
-    let ai_deltas = ai_response_to_deltas(ai_resp);
-    let ai_deltas = if stream_replay_tps > 0 {
-        split_text_deltas(ai_deltas, 4)
-    } else {
-        ai_deltas
-    };
-    let mut payloads: Vec<String> = formatter
-        .format_deltas(&ai_deltas)
-        .into_iter()
-        .map(|ev| ev.to_sse_string())
-        .collect();
-    payloads.extend(
-        formatter
-            .format_done()
-            .into_iter()
-            .map(|ev| ev.to_sse_string()),
-    );
-
-    let interval = if stream_replay_tps > 0 {
-        Some(std::time::Duration::from_micros(
-            1_000_000 / stream_replay_tps as u64,
-        ))
-    } else {
-        None
-    };
-
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, Infallible>>(payloads.len().max(1));
-    tokio::spawn(async move {
-        for (i, payload) in payloads.into_iter().enumerate() {
-            if i > 0
-                && let Some(d) = interval
-            {
-                tokio::time::sleep(d).await;
-            }
-            if tx.send(Ok(payload)).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    let body = Body::from_stream(ReceiverStream::new(rx));
-    let mut response = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive")
-        .body(body)
-        .unwrap();
-    set_cache_headers(
-        &mut response,
-        cache_status,
-        cache_key,
-        score,
-        expose_headers,
-    );
-    response
-}
+// Utility helpers (is_retryable, runtime_binding_headers, load_route_targets,
+// forwarded_client_headers) are in util.rs.
 
 fn ai_response_to_deltas(resp: &AiResponse) -> Vec<crate::protocol::ir::AiStreamDelta> {
     use crate::protocol::ir::AiStreamDelta;
@@ -1195,66 +804,6 @@ fn ai_response_to_deltas(resp: &AiResponse) -> Vec<crate::protocol::ir::AiStream
     deltas
 }
 
-fn split_text_deltas(
-    deltas: Vec<crate::protocol::ir::AiStreamDelta>,
-    chunk_chars: usize,
-) -> Vec<crate::protocol::ir::AiStreamDelta> {
-    use crate::protocol::ir::AiStreamDelta;
-    deltas
-        .into_iter()
-        .flat_map(|d| match d {
-            AiStreamDelta::TextDelta(text) => {
-                let chars: Vec<char> = text.chars().collect();
-                if chars.len() <= chunk_chars {
-                    return vec![AiStreamDelta::TextDelta(text)];
-                }
-                chars
-                    .chunks(chunk_chars)
-                    .map(|c| AiStreamDelta::TextDelta(c.iter().collect()))
-                    .collect()
-            }
-            AiStreamDelta::ThinkingDelta(text) => {
-                let chars: Vec<char> = text.chars().collect();
-                if chars.len() <= chunk_chars {
-                    return vec![AiStreamDelta::ThinkingDelta(text)];
-                }
-                chars
-                    .chunks(chunk_chars)
-                    .map(|c| AiStreamDelta::ThinkingDelta(c.iter().collect()))
-                    .collect()
-            }
-            other => vec![other],
-        })
-        .collect()
-}
-
-async fn finalize_singleflight(
-    gw: &Gateway,
-    leader: Option<&(String, broadcast::Sender<Vec<u8>>)>,
-    success: bool,
-) {
-    let Some((key, tx)) = leader else {
-        return;
-    };
-    let payload = if success {
-        let cache_backend = (**gw.cache_backend.load()).clone();
-        if let Some(cache_backend) = cache_backend.as_ref() {
-            cache_backend
-                .get(key)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-    let _ = tx.send(payload);
-    gw.cache_in_flight.remove(key);
-}
-
 /// Emit a `LogEntry` for a request that failed to decode at the ingress
 /// boundary (before `dispatch_pipeline` runs) and return the corresponding
 /// 400 `Response`. Ensures decode failures show up in the in-app log module
@@ -1316,145 +865,12 @@ pub(crate) fn error_response(status: u16, message: &str) -> Response {
 
 // StreamResponseAccumulator and ensure_tool_index are in accumulator.rs.
 
-// ── Semantic embedding computation ────────────────────────────────────────────
-
-/// Compute an embedding vector for the given text using the configured
-/// semantic-cache embedding route.
-///
-/// Uses `VendorRegistry` directly because this is an internal embedding
-/// call on the embeddings endpoint, outside the main chat proxy pipeline.
-async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>> {
-    let runtime_cache = gw.effective_cache_config();
-    let embedding_route = runtime_cache.semantic.embedding_route.trim();
-    if embedding_route.is_empty() {
-        anyhow::bail!("semantic cache embedding_route is empty");
-    }
-    let route = {
-        let cache = gw.route_cache.read().await;
-        cache.match_route(embedding_route).cloned()
-    }
-    .ok_or_else(|| anyhow::anyhow!("embedding route not found: {embedding_route}"))?;
-
-    let targets = load_route_targets(gw, &route).await;
-    if targets.is_empty() {
-        anyhow::bail!("embedding route has no targets: {embedding_route}");
-    }
-    let ordered_targets = TargetSelector::select_ordered(&route.strategy, &targets);
-    let access_store = GatewayProxyAccessStore::new(gw);
-    let mut missing_openai_endpoint = false;
-
-    for target in ordered_targets {
-        let provider = match get_provider(&access_store, &target.provider_id).await {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        let provider_runtime = match gw.admin().resolve_provider_runtime(&provider).await {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        let openai_base_url = provider_runtime
-            .binding
-            .base_url_override
-            .clone()
-            .filter(|v| !v.trim().is_empty())
-            .or_else(|| resolve_openai_base_url(&provider));
-        let Some(openai_base_url) = openai_base_url else {
-            missing_openai_endpoint = true;
-            continue;
-        };
-        let actual_model = if target.model.is_empty() || target.model == "*" {
-            embedding_route.to_string()
-        } else {
-            target.model.clone()
-        };
-        let extension =
-            match VendorRegistry::global().resolve(&provider, OPENAI_COMPATIBLE_EMBEDDINGS_V1) {
-                Some(ext) => ext.clone(),
-                None => continue,
-            };
-        let credential = provider_runtime.access_token.clone();
-        let upstream_url;
-        let mut request_headers;
-        {
-            let ctx = VendorCtx {
-                provider: &provider,
-                protocol_id: OPENAI_COMPATIBLE_EMBEDDINGS_V1,
-                api_key: &credential,
-                actual_model: &actual_model,
-                credential: None,
-            };
-            upstream_url = extension.build_url(&ctx, &openai_base_url, "/v1/embeddings");
-            request_headers = match runtime_binding_headers(&provider_runtime.binding) {
-                Ok(h) => h,
-                Err(_) => continue,
-            };
-            if !provider_runtime.binding.disable_default_auth {
-                request_headers.extend(extension.auth_headers(&ctx));
-            }
-        }
-        let client = match gw.http_client_for_provider(provider.use_proxy).await {
-            Ok(c) => ProxyClient::new(c),
-            Err(_) => continue,
-        };
-        let request_body = serde_json::json!({ "model": actual_model, "input": text });
-        match client
-            .call_non_stream(&upstream_url, request_headers, request_body)
-            .await
-        {
-            Ok((payload, status, _)) if status < 400 => {
-                if let Some(vector) = parse_embedding_vector(&payload) {
-                    return Ok(vector);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if missing_openai_endpoint {
-        anyhow::bail!("embedding route targets must expose openai protocol");
-    }
-    anyhow::bail!("failed to compute embedding from route: {embedding_route}")
-}
-
-fn parse_embedding_vector(payload: &Value) -> Option<Vec<f32>> {
-    let embedding = payload
-        .get("data")
-        .and_then(Value::as_array)?
-        .first()?
-        .get("embedding")
-        .and_then(Value::as_array)?;
-    let mut out = Vec::with_capacity(embedding.len());
-    for v in embedding {
-        out.push(v.as_f64()? as f32);
-    }
-    if out.is_empty() { None } else { Some(out) }
-}
-
-fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
-    let protocols = ProviderProtocols::from_provider(provider);
-    if !protocols.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1) {
-        return None;
-    }
-    let resolved = protocols.resolve_egress(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
-    let trimmed = resolved.base_url.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::ai_response_to_deltas;
     use super::dispatch_pipeline;
     use crate::Gateway;
-    use crate::protocol::StreamResponseEncoder;
-    use crate::protocol::codec::google::gemini::stream::GoogleStreamFormatter;
     use crate::protocol::ids::OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1;
-    use crate::protocol::ir::response::ResponseItem;
     use crate::protocol::ir::{AiRequest, RawEnvelope};
-    use crate::protocol::ir::{AiResponse, Usage};
     use axum::http::{HeaderMap, StatusCode};
     use serde_json::Value;
     use std::collections::HashMap;
@@ -1503,63 +919,5 @@ mod tests {
         assert_eq!(parsed["content-type"], "application/json");
         assert!(!headers.contains("client-secret"));
         assert!(!headers.contains("client-key"));
-    }
-
-    #[test]
-    fn cached_non_stream_gemini_response_replays_inline_data_as_stream() {
-        let mut resp = AiResponse::new("cached-image", "gemini-3.1-flash-image-preview");
-        resp.items = Some(vec![ResponseItem::Unknown {
-            raw: serde_json::json!({
-                "inlineData": {
-                    "mimeType": "image/png",
-                    "data": "iVBORw0KGgoAAAANSUhEUgA"
-                }
-            }),
-        }]);
-        resp.stop_reason = Some("stop".to_string());
-        resp.usage = Usage {
-            prompt_tokens: 24,
-            completion_tokens: 1120,
-            ..Usage::default()
-        };
-        resp.vendor.ingress.insert(
-            "__google_response_metadata".to_string(),
-            serde_json::json!({
-                "responseId": "cached-image",
-                "modelVersion": "gemini-3.1-flash-image-preview",
-                "usageMetadata": {
-                    "promptTokenCount": 24,
-                    "candidatesTokenCount": 1120,
-                    "totalTokenCount": 1144,
-                    "trafficType": "ON_DEMAND"
-                }
-            }),
-        );
-
-        let deltas = ai_response_to_deltas(&resp);
-        let mut formatter = GoogleStreamFormatter::new();
-        let events = formatter.format_deltas(&deltas);
-
-        let image_event = events
-            .iter()
-            .map(|event| serde_json::from_str::<Value>(&event.data).unwrap())
-            .find(|value| {
-                value["candidates"][0]["content"]["parts"]
-                    .as_array()
-                    .is_some_and(|parts| parts.iter().any(|part| part.get("inlineData").is_some()))
-            })
-            .expect("cached stream replay should contain inlineData");
-        assert_eq!(
-            image_event["candidates"][0]["content"]["parts"][0]["inlineData"]["data"],
-            "iVBORw0KGgoAAAANSUhEUgA"
-        );
-
-        let usage_event = events
-            .iter()
-            .map(|event| serde_json::from_str::<Value>(&event.data).unwrap())
-            .find(|value| value.get("usageMetadata").is_some())
-            .expect("cached stream replay should contain terminal usage");
-        assert_eq!(usage_event["usageMetadata"]["trafficType"], "ON_DEMAND");
-        assert_eq!(usage_event["responseId"], "cached-image");
     }
 }

@@ -8,11 +8,6 @@ impl AdminService {
         if let Some(store) = self.gw.storage.route_targets() {
             for route in &mut routes {
                 route.targets = store.list_targets_by_route(&route.id).await?;
-                route.cache = resolve_route_cache(route);
-            }
-        } else {
-            for route in &mut routes {
-                route.cache = resolve_route_cache(route);
             }
         }
         Ok(routes)
@@ -29,8 +24,6 @@ impl AdminService {
         let primary_target = targets
             .first()
             .ok_or_else(|| anyhow::anyhow!("at least one route target is required"))?;
-        let (cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) =
-            flatten_route_cache_columns(input.cache.as_ref());
 
         let route = self
             .gw
@@ -44,10 +37,6 @@ impl AdminService {
                 target_model: primary_target.model.clone(),
                 targets: vec![],
                 access_control: input.access_control,
-                cache: None,
-                cache_exact_ttl,
-                cache_semantic_ttl,
-                cache_semantic_threshold,
             })
             .await?;
         if let Some(store) = self.gw.storage.route_targets() {
@@ -78,16 +67,6 @@ impl AdminService {
             .ok_or_else(|| anyhow::anyhow!("at least one route target is required"))?;
         let access_control = input.access_control.unwrap_or(current.access_control);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
-        let (cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) =
-            if let Some(cache) = input.cache.as_ref() {
-                flatten_route_cache_columns(Some(cache))
-            } else {
-                (
-                    current.cache_exact_ttl,
-                    current.cache_semantic_ttl,
-                    current.cache_semantic_threshold,
-                )
-            };
         ensure_virtual_model(&virtual_model)?;
         self.ensure_route_unique(Some(id), &virtual_model).await?;
 
@@ -104,10 +83,6 @@ impl AdminService {
                     target_model: Some(primary_target.model.clone()),
                     targets: None,
                     access_control: Some(access_control),
-                    cache: None,
-                    cache_exact_ttl,
-                    cache_semantic_ttl,
-                    cache_semantic_threshold,
                     is_enabled: Some(is_enabled),
                 },
             )
@@ -176,7 +151,6 @@ impl AdminService {
         if let Some(store) = self.gw.storage.route_targets() {
             route.targets = store.list_targets_by_route(&route.id).await?;
         }
-        route.cache = resolve_route_cache(&route);
         Ok(route)
     }
 

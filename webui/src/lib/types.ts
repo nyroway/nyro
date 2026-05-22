@@ -28,7 +28,6 @@ export interface Route {
   target_provider: string;
   target_model: string;
   access_control: boolean;
-  cache?: RouteCacheConfig;
   is_enabled: boolean;
   created_at: string;
   targets: RouteTarget[];
@@ -236,7 +235,6 @@ export interface CreateRoute {
   target_model: string;
   targets?: CreateRouteTarget[];
   access_control?: boolean;
-  cache?: RouteCacheConfig | null;
 }
 
 export interface UpdateRoute {
@@ -247,42 +245,7 @@ export interface UpdateRoute {
   target_model?: string;
   targets?: UpsertRouteTarget[];
   access_control?: boolean;
-  cache?: RouteCacheConfig | null;
   is_enabled?: boolean;
-}
-
-export interface RouteCacheConfig {
-  exact?: RouteExactCacheConfig;
-  semantic?: RouteSemanticCacheConfig;
-}
-
-export interface RouteExactCacheConfig {
-  ttl?: number | null;
-}
-
-export interface RouteSemanticCacheConfig {
-  ttl?: number | null;
-  threshold?: number | null;
-}
-
-export interface CacheSettings {
-  exact: {
-    enabled: boolean;
-    default_ttl: number;
-    max_entries: number;
-    stream_replay_tps: number;
-    expose_headers: boolean;
-  };
-  semantic: {
-    enabled: boolean;
-    embedding_route: string;
-    similarity_threshold: number;
-    vector_dimensions: number;
-    default_ttl: number;
-    max_entries: number;
-    stream_replay_tps: number;
-    expose_headers: boolean;
-  };
 }
 
 export interface CreateRouteTarget {

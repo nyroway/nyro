@@ -15,18 +15,16 @@ use bytes::Bytes;
 use futures::StreamExt;
 use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use serde_json::Value;
-use tokio::sync::broadcast;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::cache::entry::CacheEntry;
 use crate::protocol::ids::ProtocolEndpoint;
 use crate::protocol::ir::AiStreamDelta;
 use crate::proxy::client::ProxyClient;
 use crate::proxy::observability::headers_to_json;
 
 use super::{
-    CacheWriteCtx, CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator,
-    ai_response_to_deltas, compute_embedding, error_response, set_cache_headers,
+    CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator,
+    ai_response_to_deltas, error_response,
 };
 
 // ── Streaming response handler ────────────────────────────────────────────────
@@ -37,19 +35,11 @@ pub(super) async fn handle_stream(
     headers: ReqwestHeaderMap,
     body: Value,
     call_ctx: &CallCtx<'_>,
-    cache_ctx: &CacheWriteCtx<'_>,
     req_extras: &RequestExtras,
-    singleflight_key: Option<&str>,
-    singleflight_tx: Option<broadcast::Sender<Vec<u8>>>,
     passthrough_resp: bool,
 ) -> Response {
     let egress = call_ctx.egress;
     let ingress = call_ctx.ingress;
-    let cache_key = cache_ctx.cache_key;
-    let allow_exact_store = cache_ctx.allow_exact_store;
-    let exact_cache_ttl = cache_ctx.exact_cache_ttl;
-    let semantic_write_ctx = cache_ctx.semantic.clone();
-    let expose_headers = cache_ctx.expose_headers;
     // Shared log builder: identity + request-side extras pre-filled.
     let log = LogBuilder::from_ctx(call_ctx)
         .with_req_extras(req_extras)
@@ -105,10 +95,6 @@ pub(super) async fn handle_stream(
         // fields are already owned inside the builder, so no individual variable
         // cloning is needed.
         let log_pt = log.clone();
-        // gw is needed after emit() consumes log_pt; clone it up-front.
-        let gw_pt = log_pt.gw.clone();
-        let leader_key_pt = singleflight_key.map(ToString::to_string);
-        let leader_tx_pt = singleflight_tx.clone();
         let upstream_hdrs_pt = upstream_hdrs_str.clone();
         let upstream_req_hdrs_pt = upstream_req_hdrs_str.clone();
         let upstream_req_body_pt = upstream_req_body_str.clone();
@@ -224,24 +210,17 @@ pub(super) async fn handle_stream(
                 .with_client_response(None, Some(converted_client_sse.unwrap_or(raw_sse)))
                 .stream_metrics(chunks_count, first_chunk_ms)
                 .emit();
-
-            // log_pt is consumed by emit(); use the pre-cloned gw_pt.
-            if let (Some(key), Some(tx)) = (leader_key_pt.as_deref(), leader_tx_pt.as_ref()) {
-                let _ = tx.send(vec![]);
-                gw_pt.cache_in_flight.remove(key);
-            }
         });
 
         let stream = ReceiverStream::new(pt_rx);
         let body = Body::from_stream(stream);
-        let mut response = Response::builder()
+        let response = Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/event-stream")
             .header(header::CACHE_CONTROL, "no-cache")
             .header(header::CONNECTION, "keep-alive")
             .body(body)
             .unwrap();
-        set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
         return response;
     }
 
@@ -254,14 +233,7 @@ pub(super) async fn handle_stream(
     // Move the log builder into the spawn.  Extract the fields we need AFTER
     // emit() consumes the builder, before passing it to the spawn.
     let log_ir = log;
-    let gw_ir = log_ir.gw.clone(); // needed for cache writes after emit()
-    let provider_name_ir = log_ir.provider_id.clone();
     let act_model_ir = log_ir.upstream_model.clone();
-    let cache_key_owned = cache_key.map(ToString::to_string);
-    let leader_key_owned = singleflight_key.map(ToString::to_string);
-    let leader_tx_owned = singleflight_tx.clone();
-    let exact_cache_ttl_owned = exact_cache_ttl;
-    let semantic_write_ctx_owned = semantic_write_ctx.clone();
     let upstream_hdrs_owned = upstream_hdrs_str;
 
     tokio::spawn(async move {
@@ -357,97 +329,18 @@ pub(super) async fn handle_stream(
             .with_client_response(None, Some(client_sse_str))
             .stream_metrics(chunks_count, first_chunk_ms)
             .emit();
-
-        let mut singleflight_payload: Option<Vec<u8>> = None;
-        if allow_exact_store && ai_resp.tool_calls.is_empty() {
-            let cache_backend = (**gw_ir.cache_backend.load()).clone();
-            if let (Some(cache_backend), Some(cache_key)) =
-                (cache_backend.as_ref(), cache_key_owned.as_deref())
-            {
-                let formatter = ingress.handler().make_response_encoder();
-                let payload = formatter.format_response(&ai_resp);
-                let entry = CacheEntry {
-                    payload,
-                    status_code: 200,
-                    provider_name: provider_name_ir.clone(),
-                    actual_model: Some(act_model_ir.clone()),
-                    usage: ai_resp.usage.clone(),
-                    created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-                    internal_response: Some(ai_resp.clone()),
-                };
-                if let Ok(bytes) = serde_json::to_vec(&entry) {
-                    cache_backend
-                        .set(cache_key, &bytes, exact_cache_ttl_owned)
-                        .await
-                        .ok();
-                    singleflight_payload = Some(bytes.clone());
-                    let vector_store = (**gw_ir.vector_store.load()).clone();
-                    if let (Some(vector_store), Some(ctx)) =
-                        (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
-                    {
-                        let vector = if let Some(existing) = ctx.query_vector.clone() {
-                            Some(existing)
-                        } else {
-                            compute_embedding(&gw_ir, &ctx.embedding_text).await.ok()
-                        };
-                        if let Some(vector) = vector {
-                            vector_store
-                                .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                                .await
-                                .ok();
-                        }
-                    }
-                }
-            }
-        } else if ai_resp.tool_calls.is_empty() {
-            let vector_store = (**gw_ir.vector_store.load()).clone();
-            if let (Some(vector_store), Some(ctx)) =
-                (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
-            {
-                let formatter = ingress.handler().make_response_encoder();
-                let payload = formatter.format_response(&ai_resp);
-                let entry = CacheEntry {
-                    payload,
-                    status_code: 200,
-                    provider_name: provider_name_ir.clone(),
-                    actual_model: Some(act_model_ir.clone()),
-                    usage: ai_resp.usage.clone(),
-                    created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-                    internal_response: Some(ai_resp.clone()),
-                };
-                if let Ok(bytes) = serde_json::to_vec(&entry) {
-                    let vector = if let Some(existing) = ctx.query_vector.clone() {
-                        Some(existing)
-                    } else {
-                        compute_embedding(&gw_ir, &ctx.embedding_text).await.ok()
-                    };
-                    if let Some(vector) = vector {
-                        vector_store
-                            .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                            .await
-                            .ok();
-                    }
-                }
-            }
-        }
-
-        if let (Some(key), Some(tx)) = (leader_key_owned.as_deref(), leader_tx_owned.as_ref()) {
-            let _ = tx.send(singleflight_payload.unwrap_or_default());
-            gw_ir.cache_in_flight.remove(key);
-        }
     });
 
     let stream = ReceiverStream::new(rx);
     let body = Body::from_stream(stream);
 
-    let mut response = Response::builder()
+    let response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
         .header(header::CACHE_CONTROL, "no-cache")
         .header(header::CONNECTION, "keep-alive")
         .body(body)
         .unwrap();
-    set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
     response
 }
 

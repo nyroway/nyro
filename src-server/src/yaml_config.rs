@@ -1,8 +1,6 @@
 use indexmap::IndexMap;
-use nyro_core::cache::{CacheConfig, ExactCacheConfig, SemanticCacheConfig};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 pub struct YamlConfig {
@@ -14,42 +12,6 @@ pub struct YamlConfig {
     pub routes: Vec<YamlRoute>,
     #[serde(default)]
     pub settings: HashMap<String, String>,
-    #[serde(default)]
-    pub cache: YamlCacheConfig,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct YamlCacheConfig {
-    #[serde(default)]
-    pub exact: YamlExactCacheConfig,
-    #[serde(default)]
-    pub semantic: YamlSemanticCacheConfig,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct YamlExactCacheConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub default_ttl: Option<u64>,
-    #[serde(default)]
-    pub max_entries: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct YamlSemanticCacheConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub embedding_route: Option<String>,
-    #[serde(default)]
-    pub similarity_threshold: Option<f64>,
-    #[serde(default)]
-    pub vector_dimensions: Option<usize>,
-    #[serde(default)]
-    pub default_ttl: Option<u64>,
-    #[serde(default)]
-    pub max_entries: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -300,30 +262,6 @@ impl YamlConfig {
     }
 }
 
-impl YamlCacheConfig {
-    pub fn to_cache_config(&self) -> CacheConfig {
-        CacheConfig {
-            exact: ExactCacheConfig {
-                enabled: self.exact.enabled,
-                default_ttl: Duration::from_secs(self.exact.default_ttl.unwrap_or(3600)),
-                max_entries: self.exact.max_entries.unwrap_or(1000),
-                stream_replay_tps: 100,
-                expose_headers: true,
-            },
-            semantic: SemanticCacheConfig {
-                enabled: self.semantic.enabled,
-                embedding_route: self.semantic.embedding_route.clone().unwrap_or_default(),
-                similarity_threshold: self.semantic.similarity_threshold.unwrap_or(0.92),
-                vector_dimensions: self.semantic.vector_dimensions.unwrap_or(1536),
-                default_ttl: Duration::from_secs(self.semantic.default_ttl.unwrap_or(600)),
-                max_entries: self.semantic.max_entries.unwrap_or(500),
-                stream_replay_tps: 100,
-                expose_headers: true,
-            },
-        }
-    }
-}
-
 use nyro_core::db::models::{Provider, Route, RouteTarget};
 
 pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
@@ -420,10 +358,6 @@ pub fn build_routes(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Route> {
                 target_provider: primary.map(|t| t.provider_id.clone()).unwrap_or_default(),
                 target_model: primary.map(|t| t.model.clone()).unwrap_or_default(),
                 access_control: yr.access_control,
-                cache_exact_ttl: None,
-                cache_semantic_ttl: None,
-                cache_semantic_threshold: None,
-                cache: None,
                 is_enabled: true,
                 created_at: now,
                 targets,

@@ -16,7 +16,7 @@ use crate::db::models::{
 };
 use crate::logging::LogEntry;
 use crate::storage::traits::{
-    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, CacheStore, LogStore, OAuthCredentialStore,
+    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, LogStore, OAuthCredentialStore,
     ProviderStore, ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore,
     SettingsStore, Storage, StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
 };
@@ -38,17 +38,12 @@ pub struct SqliteStorage {
 impl SqliteStorage {
     pub async fn from_config(config: &GatewayConfig) -> anyhow::Result<Self> {
         let pool = db::init_pool(&config.data_dir).await?;
-        let storage =
-            Self::from_pool_with_dimensions(pool, config.cache.semantic.vector_dimensions);
+        let storage = Self::from_pool(pool);
         storage.bootstrap().migrate().await?;
         Ok(storage)
     }
 
     pub fn from_pool(pool: SqlitePool) -> Self {
-        Self::from_pool_with_dimensions(pool, 1536)
-    }
-
-    pub fn from_pool_with_dimensions(pool: SqlitePool, vector_dimensions: usize) -> Self {
         let provider_store = Arc::new(SqliteProviderStore { pool: pool.clone() });
         let route_store = Arc::new(SqliteRouteStore { pool: pool.clone() });
         let route_target_store = Arc::new(SqliteRouteTargetStore { pool: pool.clone() });
@@ -59,7 +54,6 @@ impl SqliteStorage {
         let log_store = Arc::new(SqliteLogStore { pool: pool.clone() });
         let bootstrap = Arc::new(SqliteBootstrap {
             pool: pool.clone(),
-            vector_dimensions: vector_dimensions.max(1),
         });
         Self {
             pool,
@@ -111,10 +105,6 @@ impl Storage for SqliteStorage {
 
     fn logs(&self) -> &dyn LogStore {
         self.log_store.as_ref()
-    }
-
-    fn cache(&self) -> Option<&dyn CacheStore> {
-        Some(self.log_store.as_ref())
     }
 
     fn oauth_credentials(&self) -> &dyn OAuthCredentialStore {
@@ -498,7 +488,7 @@ impl SqliteRouteStore {
 impl RouteStore for SqliteRouteStore {
     async fn list(&self) -> anyhow::Result<Vec<Route>> {
         Ok(sqlx::query_as::<_, Route>(
-            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM routes ORDER BY created_at DESC",
+            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM routes ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?)
@@ -506,7 +496,7 @@ impl RouteStore for SqliteRouteStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Route>> {
         Ok(sqlx::query_as::<_, Route>(
-            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM routes WHERE id = ?",
+            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM routes WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -519,7 +509,7 @@ impl RouteStore for SqliteRouteStore {
         let strategy = input.strategy.unwrap_or_else(|| "weighted".to_string());
         if self.has_match_pattern_column().await? {
             sqlx::query(
-                "INSERT INTO routes (id, name, virtual_model, match_pattern, strategy, target_provider, target_model, access_control, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO routes (id, name, virtual_model, match_pattern, strategy, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(input.name.trim())
@@ -529,14 +519,11 @@ impl RouteStore for SqliteRouteStore {
             .bind(input.target_provider.trim())
             .bind(input.target_model.trim())
             .bind(input.access_control.unwrap_or(false))
-            .bind(input.cache_exact_ttl)
-            .bind(input.cache_semantic_ttl)
-            .bind(input.cache_semantic_threshold)
             .execute(&self.pool)
             .await?;
         } else {
             sqlx::query(
-                "INSERT INTO routes (id, name, virtual_model, strategy, target_provider, target_model, access_control, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO routes (id, name, virtual_model, strategy, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(input.name.trim())
@@ -545,9 +532,6 @@ impl RouteStore for SqliteRouteStore {
             .bind(input.target_provider.trim())
             .bind(input.target_model.trim())
             .bind(input.access_control.unwrap_or(false))
-            .bind(input.cache_exact_ttl)
-            .bind(input.cache_semantic_ttl)
-            .bind(input.cache_semantic_threshold)
             .execute(&self.pool)
             .await?;
         }
@@ -566,14 +550,11 @@ impl RouteStore for SqliteRouteStore {
         let target_provider = input.target_provider.unwrap_or(current.target_provider);
         let target_model = input.target_model.unwrap_or(current.target_model);
         let access_control = input.access_control.unwrap_or(current.access_control);
-        let cache_exact_ttl = input.cache_exact_ttl;
-        let cache_semantic_ttl = input.cache_semantic_ttl;
-        let cache_semantic_threshold = input.cache_semantic_threshold;
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         if self.has_match_pattern_column().await? {
             sqlx::query(
-                "UPDATE routes SET name=?, virtual_model=?, match_pattern=?, strategy=?, target_provider=?, target_model=?, access_control=?, cache_exact_ttl=?, cache_semantic_ttl=?, cache_semantic_threshold=?, is_enabled=? WHERE id=?",
+                "UPDATE routes SET name=?, virtual_model=?, match_pattern=?, strategy=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
             )
             .bind(name.trim())
             .bind(&virtual_model)
@@ -582,16 +563,13 @@ impl RouteStore for SqliteRouteStore {
             .bind(target_provider.trim())
             .bind(target_model.trim())
             .bind(access_control)
-            .bind(cache_exact_ttl)
-            .bind(cache_semantic_ttl)
-            .bind(cache_semantic_threshold)
             .bind(is_enabled)
             .bind(id)
             .execute(&self.pool)
             .await?;
         } else {
             sqlx::query(
-                "UPDATE routes SET name=?, virtual_model=?, strategy=?, target_provider=?, target_model=?, access_control=?, cache_exact_ttl=?, cache_semantic_ttl=?, cache_semantic_threshold=?, is_enabled=? WHERE id=?",
+                "UPDATE routes SET name=?, virtual_model=?, strategy=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
             )
             .bind(name.trim())
             .bind(&virtual_model)
@@ -599,9 +577,6 @@ impl RouteStore for SqliteRouteStore {
             .bind(target_provider.trim())
             .bind(target_model.trim())
             .bind(access_control)
-            .bind(cache_exact_ttl)
-            .bind(cache_semantic_ttl)
-            .bind(cache_semantic_threshold)
             .bind(is_enabled)
             .bind(id)
             .execute(&self.pool)
@@ -681,9 +656,6 @@ impl RouteSnapshotStore for SqliteRouteStore {
                 COALESCE(strategy, 'weighted') AS strategy,
                 target_provider, target_model,
                 COALESCE(access_control, 0) AS access_control,
-                cache_exact_ttl,
-                cache_semantic_ttl,
-                cache_semantic_threshold,
                 COALESCE(is_enabled, 1) AS is_enabled,
                 created_at
             FROM routes
@@ -1276,60 +1248,9 @@ impl LogStore for SqliteLogStore {
     }
 }
 
-#[async_trait]
-impl CacheStore for SqliteLogStore {
-    async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
-        let row = sqlx::query_as::<_, (Vec<u8>,)>(
-            "SELECT data FROM cache_entries WHERE key = ? AND datetime(expires_at) > datetime('now')",
-        )
-        .bind(key)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(|v| v.0))
-    }
-
-    async fn set(&self, key: &str, data: &[u8], ttl: Option<Duration>) -> anyhow::Result<()> {
-        let ttl_secs = ttl.unwrap_or_else(|| Duration::from_secs(3600)).as_secs() as i64;
-        sqlx::query(
-            "INSERT INTO cache_entries (key, data, expires_at, created_at) VALUES (?, ?, datetime('now', ?), datetime('now')) \
-             ON CONFLICT(key) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at",
-        )
-        .bind(key)
-        .bind(data)
-        .bind(format!("+{ttl_secs} seconds"))
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    async fn delete(&self, key: &str) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM cache_entries WHERE key = ?")
-            .bind(key)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn flush(&self) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM cache_entries")
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn cleanup_expired(&self) -> anyhow::Result<u64> {
-        let result =
-            sqlx::query("DELETE FROM cache_entries WHERE datetime(expires_at) <= datetime('now')")
-                .execute(&self.pool)
-                .await?;
-        Ok(result.rows_affected())
-    }
-}
-
 #[derive(Clone)]
 struct SqliteBootstrap {
     pool: SqlitePool,
-    vector_dimensions: usize,
 }
 
 #[async_trait]
@@ -1339,7 +1260,7 @@ impl StorageBootstrap for SqliteBootstrap {
     }
 
     async fn migrate(&self) -> anyhow::Result<()> {
-        db::migrate(&self.pool, self.vector_dimensions).await
+        db::migrate(&self.pool).await
     }
 
     async fn health(&self) -> anyhow::Result<StorageHealth> {

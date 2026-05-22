@@ -34,19 +34,6 @@ pub(super) fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
     }
 }
 
-pub(super) fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
-    let protocols = ProviderProtocols::from_provider(provider);
-    if !protocols.supports(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1) {
-        return None;
-    }
-    let resolved = protocols.resolve_egress(OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1);
-    let trimmed = resolved.base_url.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(trimmed.to_string())
-}
-
 pub(super) fn runtime_binding_headers(binding: &RuntimeBinding) -> anyhow::Result<HeaderMap> {
     let mut headers = HeaderMap::new();
     for (key, value) in &binding.extra_headers {
@@ -548,38 +535,6 @@ pub(super) fn parse_maybe_price_per_token(value: &Value) -> Option<f64> {
         return None;
     }
     Some(parsed * 1_000_000.0)
-}
-
-pub(super) async fn load_route_targets_for_probe(gw: &Gateway, route: &Route) -> Vec<RouteTarget> {
-    if let Some(store) = gw.storage.route_targets()
-        && let Ok(targets) = store.list_targets_by_route(&route.id).await
-        && !targets.is_empty()
-    {
-        return targets;
-    }
-    if route.target_provider.trim().is_empty() {
-        return vec![];
-    }
-    vec![RouteTarget {
-        id: String::new(),
-        route_id: route.id.clone(),
-        provider_id: route.target_provider.clone(),
-        model: route.target_model.clone(),
-        weight: 100,
-        priority: 1,
-        created_at: String::new(),
-    }]
-}
-
-pub(super) fn parse_embedding_dimensions_from_payload(payload: &Value) -> Option<u64> {
-    payload
-        .get("data")
-        .and_then(Value::as_array)?
-        .first()?
-        .get("embedding")
-        .and_then(Value::as_array)
-        .map(|embedding| embedding.len() as u64)
-        .filter(|value| *value > 0)
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

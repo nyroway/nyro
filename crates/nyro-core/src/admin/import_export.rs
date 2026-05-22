@@ -145,10 +145,6 @@ impl AdminService {
                         target_model: r.target_model.clone(),
                         targets: vec![],
                         access_control: Some(r.access_control),
-                        cache: None,
-                        cache_exact_ttl: None,
-                        cache_semantic_ttl: None,
-                        cache_semantic_threshold: None,
                     })
                     .await
                     .is_ok()

@@ -16,13 +16,8 @@ use crate::auth::types::{
     RefreshAuthContext, RuntimeBinding, StartAuthContext, StoredCredential, UpdateAuthSession,
 };
 use crate::db::models::*;
-use crate::protocol::ProviderProtocols;
-use crate::protocol::ids::OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1;
-use crate::protocol::ids::OPENAI_COMPATIBLE_EMBEDDINGS_V1;
 use crate::provider::metadata::CapabilitiesSource;
-use crate::provider::{VendorCtx, VendorRegistry, vertexai};
-use crate::proxy::client::ProxyClient;
-use crate::router::TargetSelector;
+use crate::provider::{VendorRegistry, vertexai};
 use crate::storage::traits::ProviderTestResult;
 
 mod api_keys;

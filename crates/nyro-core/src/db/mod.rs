@@ -1,34 +1,14 @@
 pub mod models;
 
-use std::os::raw::{c_char, c_int};
 use std::path::Path;
-use std::sync::Once;
 
-use sqlite_vec::sqlite3_vec_init;
 use sqlx::Row;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use crate::protocol::registry::ProtocolRegistry;
 
-static SQLITE_VEC_INIT: Once = Once::new();
-const VECTOR_DIMENSIONS_SETTING_KEY: &str = "vector_embedding_dimensions";
-
-type SqliteExtensionInit = unsafe extern "C" fn(
-    *mut libsqlite3_sys::sqlite3,
-    *mut *mut c_char,
-    *const libsqlite3_sys::sqlite3_api_routines,
-) -> c_int;
-
 pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
-    SQLITE_VEC_INIT.call_once(|| unsafe {
-        // Register sqlite-vec once per process. All later SQLite connections can use vec0 tables.
-        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute::<
-            *const (),
-            SqliteExtensionInit,
-        >(sqlite3_vec_init as *const ())));
-    });
-
     std::fs::create_dir_all(data_dir)?;
     let db_path = data_dir.join("gateway.db");
 
@@ -46,7 +26,7 @@ pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
-pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Result<()> {
+pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::raw_sql(INIT_SQL).execute(pool).await?;
     ensure_provider_column(pool, "vendor", "TEXT").await?;
     ensure_provider_column(pool, "preset_key", "TEXT").await?;
@@ -61,9 +41,6 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_route_column(pool, "virtual_model", "TEXT").await?;
     ensure_route_column(pool, "strategy", "TEXT DEFAULT 'weighted'").await?;
     ensure_route_column(pool, "access_control", "INTEGER DEFAULT 0").await?;
-    ensure_route_column(pool, "cache_exact_ttl", "INTEGER").await?;
-    ensure_route_column(pool, "cache_semantic_ttl", "INTEGER").await?;
-    ensure_route_column(pool, "cache_semantic_threshold", "REAL").await?;
     ensure_request_log_column(pool, "api_key_id", "TEXT").await?;
     ensure_request_log_column(pool, "method", "TEXT").await?;
     ensure_request_log_column(pool, "path", "TEXT").await?;
@@ -82,7 +59,6 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_api_key_column(pool, "is_enabled", "INTEGER DEFAULT 1").await?;
     migrate_api_key_status_to_is_enabled(pool).await?;
     ensure_route_targets_table(pool).await?;
-    ensure_cache_entries_table(pool).await?;
     ensure_provider_column(pool, "auth_mode", "TEXT NOT NULL DEFAULT 'apikey'").await?;
     sqlx::query("UPDATE providers SET auth_mode = 'apikey' WHERE auth_mode = 'api_key'")
         .execute(pool)
@@ -92,7 +68,6 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_provider_column(pool, "expires_at", "TEXT").await?;
     ensure_oauth_credentials_table(pool).await?;
     migrate_oauth_credentials_from_providers(pool).await?;
-    ensure_semantic_cache_vectors_table(pool, vector_dimensions).await?;
     backfill_provider_vendor(pool).await?;
     migrate_vendor_renames(pool).await?;
     normalize_provider_protocols(pool).await?;
@@ -549,85 +524,6 @@ async fn ensure_route_targets_table(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn ensure_cache_entries_table(pool: &SqlitePool) -> anyhow::Result<()> {
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS cache_entries (
-            key         TEXT PRIMARY KEY,
-            data        BLOB NOT NULL,
-            expires_at  TEXT NOT NULL,
-            created_at  TEXT DEFAULT (datetime('now'))
-        )"#,
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at)",
-    )
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-pub async fn recreate_vec0_table(
-    pool: &SqlitePool,
-    vector_dimensions: usize,
-) -> anyhow::Result<()> {
-    let dimensions = vector_dimensions.max(1);
-    sqlx::query("DROP TABLE IF EXISTS semantic_cache_vectors")
-        .execute(pool)
-        .await?;
-
-    let ddl = format!(
-        r#"CREATE VIRTUAL TABLE semantic_cache_vectors USING vec0(
-            partition TEXT partition key,
-            cache_key TEXT,
-            dimensions INTEGER,
-            embedding float[{dimensions}] distance_metric=cosine,
-            +data BLOB,
-            created_at INTEGER
-        )"#
-    );
-    sqlx::query(&ddl).execute(pool).await?;
-    sqlx::query(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-    )
-    .bind(VECTOR_DIMENSIONS_SETTING_KEY)
-    .bind(dimensions.to_string())
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-async fn ensure_semantic_cache_vectors_table(
-    pool: &SqlitePool,
-    vector_dimensions: usize,
-) -> anyhow::Result<()> {
-    let dimensions = vector_dimensions.max(1);
-    let stored_dimension =
-        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
-            .bind(VECTOR_DIMENSIONS_SETTING_KEY)
-            .fetch_optional(pool)
-            .await?
-            .and_then(|raw| raw.trim().parse::<usize>().ok());
-    let table_exists = semantic_cache_vectors_table_exists(pool).await?;
-    if !table_exists || stored_dimension != Some(dimensions) {
-        recreate_vec0_table(pool, dimensions).await?;
-    }
-    Ok(())
-}
-
-async fn semantic_cache_vectors_table_exists(pool: &SqlitePool) -> anyhow::Result<bool> {
-    let count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'semantic_cache_vectors'",
-    )
-    .fetch_one(pool)
-    .await?;
-    Ok(count > 0)
-}
-
 async fn migrate_provider_is_active_to_is_enabled(pool: &SqlitePool) -> anyhow::Result<()> {
     if column_exists(pool, "providers", "is_active").await? {
         sqlx::query("UPDATE providers SET is_enabled = is_active WHERE is_enabled IS NULL OR is_enabled != is_active AND is_active IS NOT NULL")
@@ -667,23 +563,6 @@ async fn backfill_route_fields(pool: &SqlitePool) -> anyhow::Result<()> {
         .await?;
     }
     drop_route_column_if_exists(pool, "route_type").await?;
-    if column_exists(pool, "routes", "cache_ttl").await? {
-        sqlx::query(
-            "UPDATE routes SET cache_exact_ttl = cache_ttl WHERE cache_exact_ttl IS NULL AND cache_ttl IS NOT NULL",
-        )
-        .execute(pool)
-        .await?;
-    }
-    if column_exists(pool, "routes", "cache_enabled").await? {
-        sqlx::query(
-            "UPDATE routes SET cache_exact_ttl = 3600 WHERE cache_enabled = 1 AND cache_exact_ttl IS NULL",
-        )
-        .execute(pool)
-        .await?;
-        sqlx::query("UPDATE routes SET cache_exact_ttl = NULL WHERE cache_enabled = 0")
-            .execute(pool)
-            .await?;
-    }
 
     Ok(())
 }
@@ -803,9 +682,6 @@ CREATE TABLE IF NOT EXISTS routes (
     strategy          TEXT DEFAULT 'weighted',
     target_provider   TEXT NOT NULL REFERENCES providers(id),
     target_model      TEXT NOT NULL,
-    cache_exact_ttl   INTEGER,
-    cache_semantic_ttl INTEGER,
-    cache_semantic_threshold REAL,
     access_control    INTEGER DEFAULT 0,
     is_enabled        INTEGER DEFAULT 1,
     priority          INTEGER DEFAULT 0,
@@ -865,13 +741,4 @@ CREATE TABLE IF NOT EXISTS settings (
     value      TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
 );
-
-CREATE TABLE IF NOT EXISTS cache_entries (
-    key         TEXT PRIMARY KEY,
-    data        BLOB NOT NULL,
-    expires_at  TEXT NOT NULL,
-    created_at  TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at);
 "#;

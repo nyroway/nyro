@@ -1,9 +1,7 @@
 //! Pure utility helpers for the proxy dispatcher.
 //!
-//! Covers: route-target loading, retryability, cache configuration helpers,
-//! request introspection, and semantic embedding input extraction.
-
-use tokio::time::Duration;
+//! Covers: route-target loading, retryability, runtime-binding headers,
+//! and safe client header forwarding.
 
 use reqwest::header::{
     HeaderMap as ReqwestHeaderMap, HeaderName as ReqwestHeaderName,
@@ -11,23 +9,7 @@ use reqwest::header::{
 };
 
 use crate::Gateway;
-use crate::cache::entry::CacheEntry;
-use crate::db::models::{
-    Route, RouteCacheConfig, RouteExactCacheConfig, RouteSemanticCacheConfig, RouteTarget,
-};
-use crate::protocol::ir::{AiRequest, ContentBlock, MessageContent, Role};
-
-// ── Semantic write context ─────────────────────────────────────────────────────
-
-/// Carry-along context that allows the response handler to write a semantic
-/// cache entry after a successful upstream call.
-#[derive(Clone)]
-pub(super) struct SemanticWriteContext {
-    pub(super) partition: String,
-    pub(super) embedding_text: String,
-    pub(super) key: String,
-    pub(super) query_vector: Option<Vec<f32>>,
-}
+use crate::db::models::{Route, RouteTarget};
 
 // ── Route target loading ────────────────────────────────────────────────────────
 
@@ -157,95 +139,6 @@ fn should_forward_client_header(name: &str) -> bool {
         || name.starts_with("cf-");
 
     !denied
-}
-
-// ── Route-level cache configuration helpers ────────────────────────────────────
-
-pub(super) fn resolve_route_cache(route: &Route) -> RouteCacheConfig {
-    let exact = route.cache_exact_ttl.map(|ttl| RouteExactCacheConfig {
-        ttl: if ttl > 0 { Some(ttl) } else { None },
-    });
-    let semantic = route
-        .cache_semantic_ttl
-        .map(|ttl| RouteSemanticCacheConfig {
-            ttl: if ttl > 0 { Some(ttl) } else { None },
-            threshold: route.cache_semantic_threshold,
-        });
-    RouteCacheConfig { exact, semantic }
-}
-
-pub(super) fn route_exact_ttl(cache: &RouteCacheConfig, default_ttl: Duration) -> Duration {
-    cache
-        .exact
-        .as_ref()
-        .and_then(|e| e.ttl)
-        .and_then(|ttl| (ttl > 0).then_some(Duration::from_secs(ttl as u64)))
-        .unwrap_or(default_ttl)
-}
-
-pub(super) fn route_semantic_ttl(cache: &RouteCacheConfig, default_ttl: Duration) -> Duration {
-    cache
-        .semantic
-        .as_ref()
-        .and_then(|s| s.ttl)
-        .and_then(|ttl| (ttl > 0).then_some(Duration::from_secs(ttl as u64)))
-        .unwrap_or(default_ttl)
-}
-
-pub(super) fn route_semantic_threshold(cache: &RouteCacheConfig, default_threshold: f64) -> f64 {
-    cache
-        .semantic
-        .as_ref()
-        .and_then(|s| s.threshold)
-        .filter(|t| *t > 0.0)
-        .unwrap_or(default_threshold)
-}
-
-pub(super) fn is_semantic_entry_expired(entry: &CacheEntry, ttl: Duration) -> bool {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let ttl_ms = ttl.as_millis() as i64;
-    now_ms.saturating_sub(entry.created_at_epoch_ms) > ttl_ms
-}
-
-// ── Request introspection ─────────────────────────────────────────────────────
-
-pub(super) fn request_has_image_input(request: &AiRequest) -> bool {
-    for message in &request.messages {
-        if let MessageContent::Blocks(blocks) = &message.content
-            && blocks
-                .iter()
-                .any(|b| matches!(b, ContentBlock::Image { .. }))
-        {
-            return true;
-        }
-    }
-    false
-}
-
-pub(super) fn extract_semantic_embedding_input(request: &AiRequest) -> Option<(String, String)> {
-    let system_prompt = request
-        .messages
-        .iter()
-        .filter(|m| matches!(m.role, Role::System))
-        .map(|m| m.content.to_text())
-        .filter(|t| !t.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let last_user = request
-        .messages
-        .iter()
-        .rev()
-        .find(|m| matches!(m.role, Role::User))
-        .map(|m| m.content.to_text())
-        .filter(|t| !t.trim().is_empty())?;
-
-    let combined = if system_prompt.is_empty() {
-        last_user.clone()
-    } else {
-        format!("{system_prompt}\n{last_user}")
-    };
-    Some((system_prompt, combined))
 }
 
 #[cfg(test)]

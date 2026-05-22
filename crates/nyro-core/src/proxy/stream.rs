@@ -97,7 +97,7 @@ impl StreamState {
 
 /// A callback that MUST run when the bridge is dropped.
 ///
-/// Used to release singleflight slots, cache reservations, etc.
+/// Used to release resource reservations, cleanup state, etc.
 pub type CleanupFn = Box<dyn FnOnce() + Send + 'static>;
 
 // ── StreamBridge ──────────────────────────────────────────────────────────────

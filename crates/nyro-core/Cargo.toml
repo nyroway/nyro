@@ -19,10 +19,6 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-sqlite-vec = { workspace = true }
-libsqlite3-sys = { workspace = true }
-zerocopy = { workspace = true }
-pgvector = { workspace = true }
 
 eventsource-stream = "0.2"
 async-stream = "0.3"

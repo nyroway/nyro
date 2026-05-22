@@ -11,17 +11,13 @@ use futures::StreamExt;
 use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use serde_json::Value;
 
-use crate::cache::entry::CacheEntry;
 use crate::integrations::{HookContext, HookRegistry};
 use crate::provider::inbound::InboundResponse;
 use crate::provider::vendor::ProviderCtx;
 use crate::proxy::client::{ProxyClient, UpstreamResponseDecodeError};
 use crate::proxy::observability::headers_to_json;
 
-use super::{
-    CacheWriteCtx, CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator,
-    compute_embedding, error_response, set_cache_headers,
-};
+use super::{CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator, error_response};
 
 // ── Non-streaming response handler ───────────────────────────────────────────
 
@@ -31,7 +27,6 @@ pub(super) async fn handle_non_stream(
     headers: ReqwestHeaderMap,
     body: Value,
     call_ctx: &CallCtx<'_>,
-    cache_ctx: &CacheWriteCtx<'_>,
     req_extras: &RequestExtras,
     adapter: &dyn crate::provider::vendor::Vendor,
     // `ctx` is the vendor-level provider context used for codec operations.
@@ -39,17 +34,10 @@ pub(super) async fn handle_non_stream(
     // When true: Native protocol + no response mutations → skip IR round-trip.
     passthrough_resp: bool,
 ) -> Response {
-    let gw = &call_ctx.gw;
-    let provider = call_ctx.provider;
     let egress = call_ctx.egress;
     let ingress = call_ctx.ingress;
     let egress_str = call_ctx.egress_str; // used in tracing::debug!
     let actual_model = call_ctx.actual_model;
-    let cache_key = cache_ctx.cache_key;
-    let allow_exact_store = cache_ctx.allow_exact_store;
-    let exact_cache_ttl = cache_ctx.exact_cache_ttl;
-    let semantic_write_ctx = cache_ctx.semantic.clone();
-    let expose_headers = cache_ctx.expose_headers;
     // Shared log builder pre-filled with identity + request-side extras.
     let log = LogBuilder::from_ctx(call_ctx).with_req_extras(req_extras);
     let upstream_req_hdrs_str = crate::proxy::observability::reqwest_headers_to_json(&headers);
@@ -212,7 +200,6 @@ pub(super) async fn handle_non_stream(
         }
     }
 
-    let is_tool = !ai_resp.tool_calls.is_empty();
     let usage = ai_resp.usage.clone();
     let formatter = ingress.handler().make_response_encoder();
     let output = formatter.format_response(&ai_resp);
@@ -220,7 +207,7 @@ pub(super) async fn handle_non_stream(
     let response_body_full = serde_json::to_string(&output).ok();
     log.status(status)
         .upstream_url(url)
-        .usage(usage.clone())
+        .usage(usage)
         .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
         .with_upstream_response(
             status as i32,
@@ -231,47 +218,11 @@ pub(super) async fn handle_non_stream(
         .with_client_response(None, response_body_full)
         .emit();
 
-    let mut response = (
+    let response = (
         StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-        Json(output.clone()),
+        Json(output),
     )
         .into_response();
-    set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
-
-    if status < 400 && !is_tool {
-        let entry = CacheEntry {
-            payload: output,
-            status_code: status,
-            provider_name: provider.name.clone(),
-            actual_model: Some(actual_model.to_string()),
-            usage,
-            created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-            internal_response: Some(ai_resp),
-        };
-        if let Ok(bytes) = serde_json::to_vec(&entry) {
-            if allow_exact_store {
-                let cache_backend = (**gw.cache_backend.load()).clone();
-                if let (Some(key), Some(cache_backend)) = (cache_key, cache_backend.as_ref()) {
-                    let _ = cache_backend.set(key, &bytes, exact_cache_ttl).await;
-                }
-            }
-            let vector_store = (**gw.vector_store.load()).clone();
-            if let (Some(vector_store), Some(ctx)) =
-                (vector_store.as_ref(), semantic_write_ctx.as_ref())
-            {
-                let vector = if let Some(existing) = ctx.query_vector.clone() {
-                    Some(existing)
-                } else {
-                    compute_embedding(&gw, &ctx.embedding_text).await.ok()
-                };
-                if let Some(vector) = vector {
-                    let _ = vector_store
-                        .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                        .await;
-                }
-            }
-        }
-    }
     response
 }
 
@@ -403,13 +354,6 @@ mod tests {
             is_stream: false,
             start: std::time::Instant::now(),
         };
-        let cache_ctx = CacheWriteCtx {
-            cache_key: None,
-            allow_exact_store: false,
-            exact_cache_ttl: None,
-            semantic: None,
-            expose_headers: false,
-        };
         let req_extras = RequestExtras {
             method: "POST".into(),
             path: "/v1/chat/completions".into(),
@@ -438,7 +382,6 @@ mod tests {
             headers,
             serde_json::json!({"model": "gemini-2.5-flash"}),
             &call_ctx,
-            &cache_ctx,
             &req_extras,
             &NoopVendor,
             &provider_ctx,
@@ -495,18 +438,10 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
     headers: ReqwestHeaderMap,
     body: Value,
     call_ctx: &CallCtx<'_>,
-    cache_ctx: &CacheWriteCtx<'_>,
 ) -> Response {
-    let gw = &call_ctx.gw;
-    let provider = call_ctx.provider;
     let egress = call_ctx.egress;
     let ingress = call_ctx.ingress;
     let actual_model = call_ctx.actual_model;
-    let cache_key = cache_ctx.cache_key;
-    let allow_exact_store = cache_ctx.allow_exact_store;
-    let exact_cache_ttl = cache_ctx.exact_cache_ttl;
-    let semantic_write_ctx = cache_ctx.semantic.clone();
-    let expose_headers = cache_ctx.expose_headers;
     let log = LogBuilder::from_ctx(call_ctx).upstream_url(url);
 
     let upstream_start = std::time::Instant::now();
@@ -594,7 +529,6 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
         ai_resp.stop_reason = Some("stop".to_string());
     }
 
-    let is_tool = !ai_resp.tool_calls.is_empty();
     let usage = ai_resp.usage.clone();
     let formatter = ingress.handler().make_response_encoder();
     let output = formatter.format_response(&ai_resp);
@@ -602,7 +536,7 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
     let client_resp_body_str = serde_json::to_string(&output).ok();
     log.status(status)
         .upstream_url(url)
-        .usage(usage.clone())
+        .usage(usage)
         .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
         .with_upstream_response(
             status as i32,
@@ -613,46 +547,10 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
         .with_client_response(None, client_resp_body_str)
         .emit();
 
-    let mut response = (
+    let response = (
         StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-        Json(output.clone()),
+        Json(output),
     )
         .into_response();
-    set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
-
-    if status < 400 && !is_tool {
-        let entry = CacheEntry {
-            payload: output,
-            status_code: status,
-            provider_name: provider.name.clone(),
-            actual_model: Some(actual_model.to_string()),
-            usage,
-            created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-            internal_response: Some(ai_resp),
-        };
-        if let Ok(bytes) = serde_json::to_vec(&entry) {
-            if allow_exact_store {
-                let cache_backend = (**gw.cache_backend.load()).clone();
-                if let (Some(key), Some(cache_backend)) = (cache_key, cache_backend.as_ref()) {
-                    let _ = cache_backend.set(key, &bytes, exact_cache_ttl).await;
-                }
-            }
-            let vector_store = (**gw.vector_store.load()).clone();
-            if let (Some(vector_store), Some(ctx)) =
-                (vector_store.as_ref(), semantic_write_ctx.as_ref())
-            {
-                let vector = if let Some(existing) = ctx.query_vector.clone() {
-                    Some(existing)
-                } else {
-                    compute_embedding(&gw, &ctx.embedding_text).await.ok()
-                };
-                if let Some(vector) = vector {
-                    let _ = vector_store
-                        .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                        .await;
-                }
-            }
-        }
-    }
     response
 }

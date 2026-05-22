@@ -115,18 +115,6 @@ pub struct Route {
     pub target_provider: String,
     pub target_model: String,
     pub access_control: bool,
-    #[serde(default)]
-    #[sqlx(default)]
-    pub cache_exact_ttl: Option<i64>,
-    #[serde(default)]
-    #[sqlx(default)]
-    pub cache_semantic_ttl: Option<i64>,
-    #[serde(default)]
-    #[sqlx(default)]
-    pub cache_semantic_threshold: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[sqlx(skip)]
-    pub cache: Option<RouteCacheConfig>,
     pub is_enabled: bool,
     pub created_at: String,
     #[serde(default)]
@@ -316,14 +304,6 @@ pub struct UpdateRoute {
     #[serde(default)]
     pub targets: Option<Vec<UpsertRouteTarget>>,
     pub access_control: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache: Option<RouteCacheConfig>,
-    #[serde(skip)]
-    pub cache_exact_ttl: Option<i64>,
-    #[serde(skip)]
-    pub cache_semantic_ttl: Option<i64>,
-    #[serde(skip)]
-    pub cache_semantic_threshold: Option<f64>,
     pub is_enabled: Option<bool>,
 }
 
@@ -338,33 +318,6 @@ pub struct CreateRoute {
     #[serde(default)]
     pub targets: Vec<CreateRouteTarget>,
     pub access_control: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache: Option<RouteCacheConfig>,
-    #[serde(skip)]
-    pub cache_exact_ttl: Option<i64>,
-    #[serde(skip)]
-    pub cache_semantic_ttl: Option<i64>,
-    #[serde(skip)]
-    pub cache_semantic_threshold: Option<f64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct RouteCacheConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exact: Option<RouteExactCacheConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub semantic: Option<RouteSemanticCacheConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RouteExactCacheConfig {
-    pub ttl: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RouteSemanticCacheConfig {
-    pub ttl: Option<i64>,
-    pub threshold: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
