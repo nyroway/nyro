@@ -103,7 +103,7 @@ def test_api_key_crud(admin_env: dict[str, str]) -> None:
 @pytest.mark.admin
 def test_access_control_rejects_anonymous(admin_env: dict[str, str]) -> None:
     provider_id = _create_provider(admin_env, "test-provider-access")
-    _create_model(admin_env, provider_id, "test-model-access", "test-vmodel-access")
+    _create_model(admin_env, provider_id, "test-model-access", "test-model-access")
 
     status, _ = http_request(
         "POST",
@@ -134,7 +134,7 @@ def test_export_config_counts(admin_env: dict[str, str]) -> None:
 @pytest.mark.admin
 def test_proxy_request_creates_log(admin_env: dict[str, str]) -> None:
     provider_id = _create_provider(admin_env, "test-provider-log")
-    model_id = _create_model(admin_env, provider_id, "test-model-log", "test-vmodel-log")
+    model_id = _create_model(admin_env, provider_id, "test-model-log", "test-model-log")
     api_key = _create_api_key(admin_env, model_id, "test-key-log")
 
     status, resp = http_request(
@@ -168,7 +168,7 @@ def test_proxy_request_creates_log(admin_env: dict[str, str]) -> None:
 @pytest.mark.admin
 def test_stats_overview_incremented(admin_env: dict[str, str]) -> None:
     provider_id = _create_provider(admin_env, "test-provider-stats")
-    model_id = _create_model(admin_env, provider_id, "test-model-stats", "test-vmodel-stats")
+    model_id = _create_model(admin_env, provider_id, "test-model-stats", "test-model-stats")
     api_key = _create_api_key(admin_env, model_id, "test-key-stats")
 
     status, _ = http_request(
