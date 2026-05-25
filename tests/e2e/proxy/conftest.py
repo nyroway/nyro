@@ -7,7 +7,7 @@ Pipeline orchestrated by these fixtures:
   2. Spawn one ``nyro-tools replay`` subprocess per protocol on ports
      25208-25211 (or ephemeral if those are busy).
   3. Synthesise a ``standalone.yaml`` whose 4 providers point at the replay
-     instances and whose routes use the ``replay_model`` string as
+     instances and whose models use the ``replay_model`` string as
      ``name`` / ``vmodel`` / ``targets[].model`` (so nyro overrides the
      request body model and replay's HashMap lookup hits).
   4. Boot ``nyro-server`` against that config and yield its base URL.
@@ -132,13 +132,13 @@ def _render_standalone(
             "api_key": "replay",
         })
 
-    routes = []
+    models = []
     for protocol in PROTOCOLS:
         for replay_model in replay_models.get(protocol, []):
-            routes.append({
+            models.append({
                 "name": replay_model,
                 "vmodel": replay_model,
-                "targets": [
+                "backends": [
                     {"provider": f"replay-{protocol}", "model": replay_model},
                 ],
             })
@@ -146,7 +146,7 @@ def _render_standalone(
     config = {
         "server": {"proxy_host": "127.0.0.1", "proxy_port": proxy_port},
         "providers": providers,
-        "routes": routes,
+        "models": models,
     }
     tmp = tempfile.NamedTemporaryFile(
         suffix=".yaml", mode="w", delete=False, encoding="utf-8"

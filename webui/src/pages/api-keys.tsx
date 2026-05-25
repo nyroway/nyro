@@ -4,7 +4,7 @@ import { Check, ChevronLeft, ChevronRight, Copy, KeyRound, Pencil, Plus, Trash2,
 
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
-import type { ApiKey, CreateApiKey, Route as RouteType, UpdateApiKey } from "@/lib/types";
+import type { ApiKey, CreateApiKey, Model as ModelType, UpdateApiKey } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -102,7 +102,7 @@ type CreateForm = {
   tpm: string;
   tpd: string;
   expiresPreset: ExpirePreset;
-  route_ids: string[];
+  model_ids: string[];
 };
 
 type EditForm = {
@@ -114,7 +114,7 @@ type EditForm = {
   rpd: string;
   tpm: string;
   tpd: string;
-  route_ids: string[];
+  model_ids: string[];
 };
 
 const emptyCreate: CreateForm = {
@@ -124,7 +124,7 @@ const emptyCreate: CreateForm = {
   tpm: "",
   tpd: "",
   expiresPreset: "30d",
-  route_ids: [],
+  model_ids: [],
 };
 
 export default function ApiKeysPage() {
@@ -160,9 +160,9 @@ export default function ApiKeysPage() {
     queryKey: ["api-keys"],
     queryFn: () => backend("list_api_keys"),
   });
-  const { data: routes = [] } = useQuery<RouteType[]>({
+  const { data: routes = [] } = useQuery<ModelType[]>({
     queryKey: ["routes"],
-    queryFn: () => backend("list_routes"),
+    queryFn: () => backend("list_models"),
   });
 
   const createMut = useMutation({
@@ -234,7 +234,7 @@ export default function ApiKeysPage() {
       rpd: item.rpd ? String(item.rpd) : "",
       tpm: item.tpm ? String(item.tpm) : "",
       tpd: item.tpd ? String(item.tpd) : "",
-      route_ids: item.route_ids ?? [],
+      model_ids: item.model_ids ?? [],
     });
   }
 
@@ -250,7 +250,7 @@ export default function ApiKeysPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{isZh ? "API Key" : "API Keys"}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {isZh ? "管理鉴权 Key、配额与路由绑定" : "Manage authentication keys, quotas, and route bindings"}
+            {isZh ? "管理鉴权 Key、配额与模型绑定" : "Manage authentication keys, quotas, and model bindings"}
           </p>
         </div>
         <Button
@@ -315,18 +315,18 @@ export default function ApiKeysPage() {
               <div className="space-y-2">
                 <FieldLabel>
                   {isZh
-                    ? "绑定路由（不勾选=不可访问受控路由）"
-                    : "Bind Routes (none = deny on protected routes)"}
+                    ? "绑定模型（不勾选=不可访问受控模型）"
+                    : "Bind Models (none = deny on protected models)"}
                 </FieldLabel>
                 <MultiSelect
                   options={routeOptions}
-                  values={createForm.route_ids}
+                  values={createForm.model_ids}
                   placeholder={
-                    isZh ? "选择可访问的受控路由" : "Select protected routes this key can access"
+                    isZh ? "选择可访问的受控模型" : "Select protected models this key can access"
                   }
-                  searchPlaceholder={isZh ? "搜索路由..." : "Search routes..."}
-                  emptyText={isZh ? "无匹配路由" : "No matching routes"}
-                  onChange={(next) => setCreateForm((prev) => ({ ...prev, route_ids: next }))}
+                  searchPlaceholder={isZh ? "搜索模型..." : "Search models..."}
+                  emptyText={isZh ? "无匹配模型" : "No matching models"}
+                  onChange={(next) => setCreateForm((prev) => ({ ...prev, model_ids: next }))}
                 />
               </div>
             </div>
@@ -393,7 +393,7 @@ export default function ApiKeysPage() {
                   tpm: createForm.tpm ? Number.parseInt(createForm.tpm, 10) : undefined,
                   tpd: createForm.tpd ? Number.parseInt(createForm.tpd, 10) : undefined,
                   expires_at: resolveExpiresAt(createForm.expiresPreset),
-                  route_ids: createForm.route_ids,
+                  model_ids: createForm.model_ids,
                 })
               }
               disabled={createMut.isPending || !createForm.name.trim()}
@@ -492,14 +492,14 @@ export default function ApiKeysPage() {
                         </FieldLabel>
                         <MultiSelect
                           options={routeOptions}
-                          values={editForm.route_ids}
+                          values={editForm.model_ids}
                           placeholder={
-                            isZh ? "选择可访问的受控路由" : "Select protected routes this key can access"
+                            isZh ? "选择可访问的受控模型" : "Select protected models this key can access"
                           }
                           searchPlaceholder={isZh ? "搜索路由..." : "Search routes..."}
                           emptyText={isZh ? "无匹配路由" : "No matching routes"}
                           onChange={(next) =>
-                            setEditForm((prev) => (prev ? { ...prev, route_ids: next } : prev))
+                            setEditForm((prev) => (prev ? { ...prev, model_ids: next } : prev))
                           }
                         />
                       </div>
@@ -572,7 +572,7 @@ export default function ApiKeysPage() {
                             rpd: editForm.rpd ? Number.parseInt(editForm.rpd, 10) : 0,
                             tpm: editForm.tpm ? Number.parseInt(editForm.tpm, 10) : 0,
                             tpd: editForm.tpd ? Number.parseInt(editForm.tpd, 10) : 0,
-                            route_ids: editForm.route_ids,
+                            model_ids: editForm.model_ids,
                           },
                         })
                       }
@@ -617,9 +617,9 @@ export default function ApiKeysPage() {
                       <Badge variant={keyExpired ? "danger" : "success"} className="connect-label-badge">
                         {formatValidityLabel(keyExpired, isZh)}
                       </Badge>
-                      {item.route_ids.length > 0 && (
+                      {item.model_ids.length > 0 && (
                         <Badge variant="warning" className="connect-label-badge bg-cyan-50 text-cyan-700">
-                          {isZh ? `共 ${item.route_ids.length} 条路由` : `${item.route_ids.length} Routes`}
+                          {isZh ? `共 ${item.model_ids.length} 个模型` : `${item.model_ids.length} Models`}
                         </Badge>
                       )}
                       <Badge variant="warning" className="connect-label-badge bg-indigo-50 text-indigo-700">

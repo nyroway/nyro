@@ -1,6 +1,6 @@
 //! Pure utility helpers for the proxy dispatcher.
 //!
-//! Covers: route-target loading, retryability, runtime-binding headers,
+//! Covers: model-backend loading, retryability, runtime-binding headers,
 //! and safe client header forwarding.
 
 use reqwest::header::{
@@ -9,27 +9,27 @@ use reqwest::header::{
 };
 
 use crate::Gateway;
-use crate::db::models::{Route, RouteTarget};
+use crate::db::models::{Model, ModelBackend};
 
-// ── Route target loading ────────────────────────────────────────────────────────
+// ── Model backend loading ────────────────────────────────────────────────────────
 
-pub(super) async fn load_route_targets(gw: &Gateway, route: &Route) -> Vec<RouteTarget> {
-    if let Some(store) = gw.storage.route_targets()
-        && let Ok(targets) = store.list_targets_by_route(&route.id).await
-        && !targets.is_empty()
+pub(super) async fn load_model_backends(gw: &Gateway, model: &Model) -> Vec<ModelBackend> {
+    if let Some(store) = gw.storage.model_backends()
+        && let Ok(backends) = store.list_backends_by_model(&model.id).await
+        && !backends.is_empty()
     {
-        return targets;
+        return backends;
     }
-    // Fallback: synthesize a single target from the legacy
-    // `route.target_provider` / `route.target_model` columns.
-    if route.target_provider.trim().is_empty() {
+    // Fallback: synthesize a single backend from the legacy
+    // `model.target_provider` / `model.target_model` columns.
+    if model.target_provider.trim().is_empty() {
         return Vec::new();
     }
-    vec![RouteTarget {
+    vec![ModelBackend {
         id: String::new(),
-        route_id: route.id.clone(),
-        provider_id: route.target_provider.clone(),
-        model: route.target_model.clone(),
+        model_id: model.id.clone(),
+        provider_id: model.target_provider.clone(),
+        model: model.target_model.clone(),
         weight: 100,
         priority: 1,
         created_at: String::new(),

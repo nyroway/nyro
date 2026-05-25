@@ -404,7 +404,7 @@ export default function SettingsPage() {
         <h2 className="text-lg font-semibold text-slate-900">{isZh ? "配置备份" : "Config Backup"}</h2>
         <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 px-4 py-3">
           <p className="text-xs text-slate-500">
-            {isZh ? "导出或导入提供商、路由和设置" : "Export or import providers, routes & settings"}
+            {isZh ? "导出或导入提供商、模型和设置" : "Export or import providers, models & settings"}
           </p>
           <div className="ml-auto flex items-center gap-2">
             <Button
@@ -445,8 +445,8 @@ export default function SettingsPage() {
           {importMut.isSuccess && importMut.data && (
             <p className="w-full text-xs text-green-600">
               {isZh
-                ? `已导入：${(importMut.data as ImportResult).providers_imported} 个提供商，${(importMut.data as ImportResult).routes_imported} 条路由，${(importMut.data as ImportResult).settings_imported} 项设置`
-                : `Imported: ${(importMut.data as ImportResult).providers_imported} providers, ${(importMut.data as ImportResult).routes_imported} routes, ${(importMut.data as ImportResult).settings_imported} settings`}
+                ? `已导入：${(importMut.data as ImportResult).providers_imported} 个提供商，${(importMut.data as ImportResult).models_imported} 个模型，${(importMut.data as ImportResult).settings_imported} 项设置`
+                : `Imported: ${(importMut.data as ImportResult).providers_imported} providers, ${(importMut.data as ImportResult).models_imported} models, ${(importMut.data as ImportResult).settings_imported} settings`}
             </p>
           )}
         </div>

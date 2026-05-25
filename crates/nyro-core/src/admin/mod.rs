@@ -24,11 +24,11 @@ mod api_keys;
 mod auth_data;
 mod import_export;
 mod model_catalog;
+mod model_data;
+mod models;
 mod oauth;
 mod observability;
 mod providers;
-mod route_data;
-mod routes;
 mod settings;
 
 use auth_data::*;
@@ -36,7 +36,7 @@ use model_catalog::*;
 pub use model_catalog::{
     refresh_models_dev_runtime_cache_if_stale, refresh_models_dev_runtime_cache_on_startup,
 };
-use route_data::*;
+use model_data::*;
 
 #[cfg(test)]
 mod session_tests;

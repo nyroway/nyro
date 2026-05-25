@@ -125,14 +125,14 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
           input: args?.input,
         },
       };
-    case "list_routes":
-      return { method: "GET", url: `${base}/routes` };
-    case "create_route":
-      return { method: "POST", url: `${base}/routes`, body: args?.input as Record<string, unknown> };
-    case "update_route":
-      return { method: "PUT", url: `${base}/routes/${args?.id}`, body: args?.input as Record<string, unknown> };
-    case "delete_route":
-      return { method: "DELETE", url: `${base}/routes/${args?.id}` };
+    case "list_models":
+      return { method: "GET", url: `${base}/models` };
+    case "create_model":
+      return { method: "POST", url: `${base}/models`, body: args?.input as Record<string, unknown> };
+    case "update_model":
+      return { method: "PUT", url: `${base}/models/${args?.id}`, body: args?.input as Record<string, unknown> };
+    case "delete_model":
+      return { method: "DELETE", url: `${base}/models/${args?.id}` };
 
     case "list_api_keys":
       return { method: "GET", url: `${base}/api-keys` };

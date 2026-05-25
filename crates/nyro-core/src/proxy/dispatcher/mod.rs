@@ -25,7 +25,7 @@ mod non_stream;
 mod stream;
 mod util;
 use self::accumulator::*;
-use self::auth::{GatewayProxyAccessStore, authorize_route_access, get_provider};
+use self::auth::{GatewayProxyAccessStore, authorize_model_access, get_provider};
 use self::non_stream::{handle_non_stream, handle_non_stream_via_upstream_stream};
 use self::stream::handle_stream;
 use self::util::*;
@@ -97,8 +97,8 @@ pub async fn dispatch_pipeline(
     // ── Route lookup ─────────────────────────────────────────────────────────
 
     let route = {
-        let cache = gw.route_cache.read().await;
-        cache.match_route(&request_model).cloned()
+        let cache = gw.model_cache.read().await;
+        cache.match_model(&request_model).cloned()
     };
     let route = match route {
         Some(r) => r,
@@ -119,7 +119,7 @@ pub async fn dispatch_pipeline(
     // ── Auth ─────────────────────────────────────────────────────────────────
 
     let access_store = GatewayProxyAccessStore::new(&gw);
-    let auth_key = match authorize_route_access(&access_store, &route, &headers).await {
+    let auth_key = match authorize_model_access(&access_store, &route, &headers).await {
         Ok(v) => v,
         Err(resp) => {
             let status = resp.status().as_u16() as i32;
@@ -163,7 +163,7 @@ pub async fn dispatch_pipeline(
 
     // ── Target iteration ──────────────────────────────────────────────────────
 
-    let targets = load_route_targets(&gw, &route).await;
+    let targets = load_model_backends(&gw, &route).await;
     if targets.is_empty() {
         LogBuilder::from_dispatch(
             &gw,
@@ -716,7 +716,7 @@ impl LogBuilder {
 // ── Non-streaming / streaming handlers: see non_stream.rs and stream.rs ───────
 // ── Auth helpers: see auth.rs ─────────────────────────────────────────────
 
-// Utility helpers (is_retryable, runtime_binding_headers, load_route_targets,
+// Utility helpers (is_retryable, runtime_binding_headers, load_model_backends,
 // forwarded_client_headers) are in util.rs.
 
 fn ai_response_to_deltas(resp: &AiResponse) -> Vec<crate::protocol::ir::AiStreamDelta> {
@@ -850,7 +850,7 @@ pub(crate) fn error_response(status: u16, message: &str) -> Response {
         403 => GatewayError::Forbidden {
             reason: crate::error::AccessDenial::Custom(message.to_string()),
         },
-        404 => GatewayError::RouteNotFound {
+        404 => GatewayError::ModelNotFound {
             model: message.to_string(),
         },
         429 => GatewayError::QuotaExceeded {

@@ -24,10 +24,10 @@ def _create_provider(env: dict[str, str], name: str) -> str:
     return resp["data"]["id"]
 
 
-def _create_route(env: dict[str, str], provider_id: str, name: str, vmodel: str) -> str:
+def _create_model(env: dict[str, str], provider_id: str, name: str, vmodel: str) -> str:
     status, resp = http_request(
         "POST",
-        f"{env['admin']}/api/v1/routes",
+        f"{env['admin']}/api/v1/models",
         payload={
             "name": name,
             "virtual_model": vmodel,
@@ -37,15 +37,15 @@ def _create_route(env: dict[str, str], provider_id: str, name: str, vmodel: str)
         },
         headers=env["auth"],
     )
-    assert status == 200, f"create route failed: {status} {resp}"
+    assert status == 200, f"create model failed: {status} {resp}"
     return resp["data"]["id"]
 
 
-def _create_api_key(env: dict[str, str], route_id: str, name: str) -> dict[str, Any]:
+def _create_api_key(env: dict[str, str], model_id: str, name: str) -> dict[str, Any]:
     status, resp = http_request(
         "POST",
         f"{env['admin']}/api/v1/api-keys",
-        payload={"name": name, "route_ids": [route_id]},
+        payload={"name": name, "model_ids": [model_id]},
         headers=env["auth"],
     )
     assert status == 200, f"create api-key failed: {status} {resp}"
@@ -80,22 +80,22 @@ def test_provider_crud(admin_env: dict[str, str]) -> None:
 
 @pytest.mark.e2e
 @pytest.mark.admin
-def test_route_crud(admin_env: dict[str, str]) -> None:
-    provider_id = _create_provider(admin_env, "test-provider-route")
-    route_id = _create_route(admin_env, provider_id, "test-route", "test-model")
+def test_model_crud(admin_env: dict[str, str]) -> None:
+    provider_id = _create_provider(admin_env, "test-provider-model")
+    model_id = _create_model(admin_env, provider_id, "test-model", "test-vmodel")
 
-    status, resp = http_request("GET", f"{admin_env['admin']}/api/v1/routes", headers=admin_env["auth"])
+    status, resp = http_request("GET", f"{admin_env['admin']}/api/v1/models", headers=admin_env["auth"])
     assert status == 200
     ids = [item["id"] for item in resp.get("data", [])]
-    assert route_id in ids
+    assert model_id in ids
 
 
 @pytest.mark.e2e
 @pytest.mark.admin
 def test_api_key_crud(admin_env: dict[str, str]) -> None:
     provider_id = _create_provider(admin_env, "test-provider-key")
-    route_id = _create_route(admin_env, provider_id, "test-route-key", "test-model-key")
-    api_key = _create_api_key(admin_env, route_id, "test-key")
+    model_id = _create_model(admin_env, provider_id, "test-model-key", "test-vmodel-key")
+    api_key = _create_api_key(admin_env, model_id, "test-key")
     assert api_key.get("key"), f"missing api key material: {api_key}"
 
 
@@ -103,7 +103,7 @@ def test_api_key_crud(admin_env: dict[str, str]) -> None:
 @pytest.mark.admin
 def test_access_control_rejects_anonymous(admin_env: dict[str, str]) -> None:
     provider_id = _create_provider(admin_env, "test-provider-access")
-    _create_route(admin_env, provider_id, "test-route-access", "test-model-access")
+    _create_model(admin_env, provider_id, "test-model-access", "test-vmodel-access")
 
     status, _ = http_request(
         "POST",
@@ -117,7 +117,7 @@ def test_access_control_rejects_anonymous(admin_env: dict[str, str]) -> None:
 @pytest.mark.admin
 def test_export_config_counts(admin_env: dict[str, str]) -> None:
     provider_id = _create_provider(admin_env, "test-provider-export")
-    _create_route(admin_env, provider_id, "test-route-export", "test-model-export")
+    _create_model(admin_env, provider_id, "test-model-export", "test-vmodel-export")
 
     status, resp = http_request(
         "GET",
@@ -127,15 +127,15 @@ def test_export_config_counts(admin_env: dict[str, str]) -> None:
     assert status == 200
     data = resp.get("data", {})
     assert len(data.get("providers", [])) >= 1
-    assert len(data.get("routes", [])) >= 1
+    assert len(data.get("models", [])) >= 1
 
 
 @pytest.mark.e2e
 @pytest.mark.admin
 def test_proxy_request_creates_log(admin_env: dict[str, str]) -> None:
     provider_id = _create_provider(admin_env, "test-provider-log")
-    route_id = _create_route(admin_env, provider_id, "test-route-log", "test-model-log")
-    api_key = _create_api_key(admin_env, route_id, "test-key-log")
+    model_id = _create_model(admin_env, provider_id, "test-model-log", "test-vmodel-log")
+    api_key = _create_api_key(admin_env, model_id, "test-key-log")
 
     status, resp = http_request(
         "POST",
@@ -168,8 +168,8 @@ def test_proxy_request_creates_log(admin_env: dict[str, str]) -> None:
 @pytest.mark.admin
 def test_stats_overview_incremented(admin_env: dict[str, str]) -> None:
     provider_id = _create_provider(admin_env, "test-provider-stats")
-    route_id = _create_route(admin_env, provider_id, "test-route-stats", "test-model-stats")
-    api_key = _create_api_key(admin_env, route_id, "test-key-stats")
+    model_id = _create_model(admin_env, provider_id, "test-model-stats", "test-vmodel-stats")
+    api_key = _create_api_key(admin_env, model_id, "test-key-stats")
 
     status, _ = http_request(
         "POST",

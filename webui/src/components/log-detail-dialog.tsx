@@ -74,7 +74,7 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
       `# Method: ${method}  Path: ${path}`,
       `# Client Status: ${log.client_status_code ?? "–"}  Upstream Status: ${log.upstream_status_code ?? "–"}`,
       `# Latency Total: ${formatDuration(log.latency_total_ms)}  Upstream: ${formatDuration(log.latency_upstream_ms)}`,
-      `# Provider: ${log.provider_name ?? log.provider_id ?? "–"}  Route: ${log.route_name ?? log.route_id ?? "–"}  ApiKey: ${log.api_key_name ?? log.api_key_id ?? "–"}`,
+      `# Provider: ${log.provider_name ?? log.provider_id ?? "–"}  Model: ${log.model_name ?? log.model_id ?? "–"}  ApiKey: ${log.api_key_name ?? log.api_key_id ?? "–"}`,
       `# Client Model: ${log.client_model ?? "–"}  Upstream Model: ${log.upstream_model ?? "–"}`,
       `# Protocol: ${proto}`,
       `# Tokens: IN=${log.input_tokens} OUT=${log.output_tokens}`,
@@ -154,8 +154,8 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
           {(log?.provider_name ?? log?.provider_id) ? (
             <Badge variant="outline">{log.provider_name ?? log.provider_id}</Badge>
           ) : null}
-          {log?.route_name ? (
-            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">{log.route_name}</Badge>
+          {log?.model_name ? (
+            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">{log.model_name}</Badge>
           ) : null}
           {log?.api_key_name ? (
             <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">{log.api_key_name}</Badge>

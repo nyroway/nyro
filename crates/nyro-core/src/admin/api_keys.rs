@@ -25,7 +25,7 @@ impl AdminService {
                 tpm: input.tpm,
                 tpd: input.tpd,
                 expires_at: input.expires_at,
-                route_ids: input.route_ids,
+                model_ids: input.model_ids,
             })
             .await
     }
@@ -61,7 +61,7 @@ impl AdminService {
                     tpd,
                     is_enabled: Some(is_enabled),
                     expires_at,
-                    route_ids: input.route_ids,
+                    model_ids: input.model_ids,
                 },
             )
             .await

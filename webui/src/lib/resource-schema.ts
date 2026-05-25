@@ -49,7 +49,7 @@ function countArray(v: unknown): string {
 }
 
 export const SCHEMAS: Record<string, ResourceSchema> = {
-  routes: {
+  models: {
     fields: [
       { key: "name", label: "Name", type: "text", required: true, placeholder: "my-route" },
       { 

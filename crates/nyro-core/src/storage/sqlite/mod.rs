@@ -9,15 +9,15 @@ use std::time::Duration;
 use crate::config::GatewayConfig;
 use crate::db;
 use crate::db::models::{
-    ApiKey, ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget,
-    LogPage, LogQuery, ModelStats, OAuthCredential, Provider, ProviderStats, RequestLog, Route,
-    RouteTarget, StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
+    ApiKey, ApiKeyWithBindings, CreateApiKey, CreateModel, CreateModelBackend, CreateProvider,
+    LogPage, LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats,
+    RequestLog, StatsHourly, StatsOverview, UpdateApiKey, UpdateModel, UpdateProvider,
     UpsertOAuthCredential, is_valid_provider_auth_mode,
 };
 use crate::logging::LogEntry;
 use crate::storage::traits::{
-    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, LogStore, OAuthCredentialStore,
-    ProviderStore, ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore,
+    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, LogStore, ModelBackendStore,
+    ModelSnapshotStore, ModelStore, OAuthCredentialStore, ProviderStore, ProviderTestResult,
     SettingsStore, Storage, StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
 };
 
@@ -25,8 +25,8 @@ use crate::storage::traits::{
 pub struct SqliteStorage {
     pool: SqlitePool,
     provider_store: Arc<SqliteProviderStore>,
-    route_store: Arc<SqliteRouteStore>,
-    route_target_store: Arc<SqliteRouteTargetStore>,
+    model_store: Arc<SqliteModelStore>,
+    model_backend_store: Arc<SqliteModelBackendStore>,
     settings_store: Arc<SqliteSettingsStore>,
     api_key_store: Arc<SqliteApiKeyStore>,
     auth_store: Arc<SqliteAuthAccessStore>,
@@ -45,8 +45,8 @@ impl SqliteStorage {
 
     pub fn from_pool(pool: SqlitePool) -> Self {
         let provider_store = Arc::new(SqliteProviderStore { pool: pool.clone() });
-        let route_store = Arc::new(SqliteRouteStore { pool: pool.clone() });
-        let route_target_store = Arc::new(SqliteRouteTargetStore { pool: pool.clone() });
+        let model_store = Arc::new(SqliteModelStore { pool: pool.clone() });
+        let model_backend_store = Arc::new(SqliteModelBackendStore { pool: pool.clone() });
         let settings_store = Arc::new(SqliteSettingsStore { pool: pool.clone() });
         let api_key_store = Arc::new(SqliteApiKeyStore { pool: pool.clone() });
         let auth_store = Arc::new(SqliteAuthAccessStore { pool: pool.clone() });
@@ -56,8 +56,8 @@ impl SqliteStorage {
         Self {
             pool,
             provider_store,
-            route_store,
-            route_target_store,
+            model_store,
+            model_backend_store,
             settings_store,
             api_key_store,
             auth_store,
@@ -77,20 +77,20 @@ impl Storage for SqliteStorage {
         self.provider_store.as_ref()
     }
 
-    fn routes(&self) -> &dyn RouteStore {
-        self.route_store.as_ref()
+    fn models(&self) -> &dyn ModelStore {
+        self.model_store.as_ref()
     }
 
-    fn snapshots(&self) -> &dyn RouteSnapshotStore {
-        self.route_store.as_ref()
+    fn snapshots(&self) -> &dyn ModelSnapshotStore {
+        self.model_store.as_ref()
     }
 
     fn settings(&self) -> &dyn SettingsStore {
         self.settings_store.as_ref()
     }
 
-    fn route_targets(&self) -> Option<&dyn RouteTargetStore> {
-        Some(self.route_target_store.as_ref())
+    fn model_backends(&self) -> Option<&dyn ModelBackendStore> {
+        Some(self.model_backend_store.as_ref())
     }
 
     fn api_keys(&self) -> Option<&dyn ApiKeyStore> {
@@ -397,16 +397,16 @@ impl ProviderStore for SqliteProviderStore {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "DELETE FROM route_targets
+            "DELETE FROM model_backends
              WHERE provider_id = ?
-                OR route_id IN (SELECT id FROM routes WHERE target_provider = ?)",
+                OR model_id IN (SELECT id FROM models WHERE target_provider = ?)",
         )
         .bind(id)
         .bind(id)
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query("DELETE FROM routes WHERE target_provider = ?")
+        sqlx::query("DELETE FROM models WHERE target_provider = ?")
             .bind(id)
             .execute(&mut *tx)
             .await?;
@@ -465,13 +465,13 @@ fn normalize_provider_vendor(vendor: Option<&str>) -> Option<String> {
 }
 
 #[derive(Clone)]
-struct SqliteRouteStore {
+struct SqliteModelStore {
     pool: SqlitePool,
 }
 
-impl SqliteRouteStore {
+impl SqliteModelStore {
     async fn has_match_pattern_column(&self) -> anyhow::Result<bool> {
-        let rows = sqlx::query("PRAGMA table_info(routes)")
+        let rows = sqlx::query("PRAGMA table_info(models)")
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.iter().any(|row| {
@@ -483,31 +483,31 @@ impl SqliteRouteStore {
 }
 
 #[async_trait]
-impl RouteStore for SqliteRouteStore {
-    async fn list(&self) -> anyhow::Result<Vec<Route>> {
-        Ok(sqlx::query_as::<_, Route>(
-            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM routes ORDER BY created_at DESC",
+impl ModelStore for SqliteModelStore {
+    async fn list(&self) -> anyhow::Result<Vec<Model>> {
+        Ok(sqlx::query_as::<_, Model>(
+            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?)
     }
 
-    async fn get(&self, id: &str) -> anyhow::Result<Option<Route>> {
-        Ok(sqlx::query_as::<_, Route>(
-            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM routes WHERE id = ?",
+    async fn get(&self, id: &str) -> anyhow::Result<Option<Model>> {
+        Ok(sqlx::query_as::<_, Model>(
+            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await?)
     }
 
-    async fn create(&self, input: CreateRoute) -> anyhow::Result<Route> {
+    async fn create(&self, input: CreateModel) -> anyhow::Result<Model> {
         let id = uuid::Uuid::new_v4().to_string();
         let virtual_model = input.virtual_model.trim().to_string();
         let strategy = input.strategy.unwrap_or_else(|| "weighted".to_string());
         if self.has_match_pattern_column().await? {
             sqlx::query(
-                "INSERT INTO routes (id, name, virtual_model, match_pattern, strategy, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO models (id, name, virtual_model, match_pattern, strategy, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(input.name.trim())
@@ -521,7 +521,7 @@ impl RouteStore for SqliteRouteStore {
             .await?;
         } else {
             sqlx::query(
-                "INSERT INTO routes (id, name, virtual_model, strategy, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO models (id, name, virtual_model, strategy, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(input.name.trim())
@@ -533,11 +533,11 @@ impl RouteStore for SqliteRouteStore {
             .execute(&self.pool)
             .await?;
         }
-        self.get(&id).await?.context("route missing after create")
+        self.get(&id).await?.context("model missing after create")
     }
 
-    async fn update(&self, id: &str, input: UpdateRoute) -> anyhow::Result<Route> {
-        let current = self.get(id).await?.context("route not found for update")?;
+    async fn update(&self, id: &str, input: UpdateModel) -> anyhow::Result<Model> {
+        let current = self.get(id).await?.context("model not found for update")?;
         let name = input.name.unwrap_or(current.name);
         let virtual_model = input
             .virtual_model
@@ -552,7 +552,7 @@ impl RouteStore for SqliteRouteStore {
 
         if self.has_match_pattern_column().await? {
             sqlx::query(
-                "UPDATE routes SET name=?, virtual_model=?, match_pattern=?, strategy=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
+                "UPDATE models SET name=?, virtual_model=?, match_pattern=?, strategy=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
             )
             .bind(name.trim())
             .bind(&virtual_model)
@@ -567,7 +567,7 @@ impl RouteStore for SqliteRouteStore {
             .await?;
         } else {
             sqlx::query(
-                "UPDATE routes SET name=?, virtual_model=?, strategy=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
+                "UPDATE models SET name=?, virtual_model=?, strategy=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
             )
             .bind(name.trim())
             .bind(&virtual_model)
@@ -580,11 +580,11 @@ impl RouteStore for SqliteRouteStore {
             .execute(&self.pool)
             .await?;
         }
-        self.get(id).await?.context("route missing after update")
+        self.get(id).await?.context("model missing after update")
     }
 
     async fn delete(&self, id: &str) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM routes WHERE id = ?")
+        sqlx::query("DELETE FROM models WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -593,9 +593,9 @@ impl RouteStore for SqliteRouteStore {
 
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
         let sql = if exclude_id.is_some() {
-            "SELECT id FROM routes WHERE lower(trim(name)) = lower(trim(?)) AND id != ? LIMIT 1"
+            "SELECT id FROM models WHERE lower(trim(name)) = lower(trim(?)) AND id != ? LIMIT 1"
         } else {
-            "SELECT id FROM routes WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1"
+            "SELECT id FROM models WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1"
         };
         let row = if let Some(exclude_id) = exclude_id {
             sqlx::query_scalar::<_, String>(sql)
@@ -619,13 +619,13 @@ impl RouteStore for SqliteRouteStore {
     ) -> anyhow::Result<bool> {
         let has_match_pattern = self.has_match_pattern_column().await?;
         let sql = if has_match_pattern && exclude_id.is_some() {
-            "SELECT id FROM routes WHERE COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? AND id != ? LIMIT 1"
+            "SELECT id FROM models WHERE COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? AND id != ? LIMIT 1"
         } else if has_match_pattern {
-            "SELECT id FROM routes WHERE COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? LIMIT 1"
+            "SELECT id FROM models WHERE COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? LIMIT 1"
         } else if exclude_id.is_some() {
-            "SELECT id FROM routes WHERE virtual_model = ? AND id != ? LIMIT 1"
+            "SELECT id FROM models WHERE virtual_model = ? AND id != ? LIMIT 1"
         } else {
-            "SELECT id FROM routes WHERE virtual_model = ? LIMIT 1"
+            "SELECT id FROM models WHERE virtual_model = ? LIMIT 1"
         };
         let normalized_model = virtual_model.trim();
         let row = if let Some(exclude_id) = exclude_id {
@@ -645,9 +645,9 @@ impl RouteStore for SqliteRouteStore {
 }
 
 #[async_trait]
-impl RouteSnapshotStore for SqliteRouteStore {
-    async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Route>> {
-        Ok(sqlx::query_as::<_, Route>(
+impl ModelSnapshotStore for SqliteModelStore {
+    async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Model>> {
+        Ok(sqlx::query_as::<_, Model>(
             r#"SELECT
                 id, name,
                 virtual_model,
@@ -656,7 +656,7 @@ impl RouteSnapshotStore for SqliteRouteStore {
                 COALESCE(access_control, 0) AS access_control,
                 COALESCE(is_enabled, 1) AS is_enabled,
                 created_at
-            FROM routes
+            FROM models
             WHERE COALESCE(is_enabled, 1) = 1"#,
         )
         .fetch_all(&self.pool)
@@ -665,54 +665,54 @@ impl RouteSnapshotStore for SqliteRouteStore {
 }
 
 #[derive(Clone)]
-struct SqliteRouteTargetStore {
+struct SqliteModelBackendStore {
     pool: SqlitePool,
 }
 
 #[async_trait]
-impl RouteTargetStore for SqliteRouteTargetStore {
-    async fn list_targets_by_route(&self, route_id: &str) -> anyhow::Result<Vec<RouteTarget>> {
-        Ok(sqlx::query_as::<_, RouteTarget>(
-            "SELECT id, route_id, provider_id, model, weight, priority, created_at FROM route_targets WHERE route_id = ? ORDER BY priority ASC, created_at ASC",
+impl ModelBackendStore for SqliteModelBackendStore {
+    async fn list_backends_by_model(&self, model_id: &str) -> anyhow::Result<Vec<ModelBackend>> {
+        Ok(sqlx::query_as::<_, ModelBackend>(
+            "SELECT id, model_id, provider_id, model, weight, priority, created_at FROM model_backends WHERE model_id = ? ORDER BY priority ASC, created_at ASC",
         )
-        .bind(route_id)
+        .bind(model_id)
         .fetch_all(&self.pool)
         .await?)
     }
 
-    async fn set_targets(
+    async fn set_backends(
         &self,
-        route_id: &str,
-        targets: &[CreateRouteTarget],
-    ) -> anyhow::Result<Vec<RouteTarget>> {
+        model_id: &str,
+        backends: &[CreateModelBackend],
+    ) -> anyhow::Result<Vec<ModelBackend>> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM route_targets WHERE route_id = ?")
-            .bind(route_id)
+        sqlx::query("DELETE FROM model_backends WHERE model_id = ?")
+            .bind(model_id)
             .execute(&mut *tx)
             .await?;
 
-        for target in targets {
+        for backend in backends {
             let id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
-                "INSERT INTO route_targets (id, route_id, provider_id, model, weight, priority) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO model_backends (id, model_id, provider_id, model, weight, priority) VALUES (?, ?, ?, ?, ?, ?)",
             )
             .bind(id)
-            .bind(route_id)
-            .bind(target.provider_id.trim())
-            .bind(target.model.trim())
-            .bind(target.weight.unwrap_or(100).max(0))
-            .bind(target.priority.unwrap_or(1).max(1))
+            .bind(model_id)
+            .bind(backend.provider_id.trim())
+            .bind(backend.model.trim())
+            .bind(backend.weight.unwrap_or(100).max(0))
+            .bind(backend.priority.unwrap_or(1).max(1))
             .execute(&mut *tx)
             .await?;
         }
 
         tx.commit().await?;
-        self.list_targets_by_route(route_id).await
+        self.list_backends_by_model(model_id).await
     }
 
-    async fn delete_targets_by_route(&self, route_id: &str) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM route_targets WHERE route_id = ?")
-            .bind(route_id)
+    async fn delete_backends_by_model(&self, model_id: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM model_backends WHERE model_id = ?")
+            .bind(model_id)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -770,7 +770,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
 
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
-            let route_ids = list_api_key_route_ids(&self.pool, &row.id).await?;
+            let model_ids = list_api_key_model_ids(&self.pool, &row.id).await?;
             items.push(ApiKeyWithBindings {
                 id: row.id,
                 key: row.key,
@@ -783,7 +783,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
                 expires_at: row.expires_at,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
-                route_ids,
+                model_ids,
             });
         }
         Ok(items)
@@ -800,7 +800,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
         let Some(row) = row else {
             return Ok(None);
         };
-        let route_ids = list_api_key_route_ids(&self.pool, id).await?;
+        let model_ids = list_api_key_model_ids(&self.pool, id).await?;
         Ok(Some(ApiKeyWithBindings {
             id: row.id,
             key: row.key,
@@ -813,7 +813,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
             expires_at: row.expires_at,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            route_ids,
+            model_ids,
         }))
     }
 
@@ -834,7 +834,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
         .execute(&self.pool)
         .await?;
 
-        replace_api_key_routes(&self.pool, &id, &input.route_ids).await?;
+        replace_api_key_models(&self.pool, &id, &input.model_ids).await?;
         self.get(&id).await?.context("api key missing after create")
     }
 
@@ -869,8 +869,8 @@ impl ApiKeyStore for SqliteApiKeyStore {
         .execute(&self.pool)
         .await?;
 
-        if let Some(route_ids) = input.route_ids {
-            replace_api_key_routes(&self.pool, id, &route_ids).await?;
+        if let Some(model_ids) = input.model_ids {
+            replace_api_key_models(&self.pool, id, &model_ids).await?;
         }
 
         self.get(id).await?.context("api key missing after update")
@@ -946,19 +946,19 @@ impl AuthAccessStore for SqliteAuthAccessStore {
         ))
     }
 
-    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool> {
+    async fn model_binding_exists(&self, api_key_id: &str, model_id: &str) -> anyhow::Result<bool> {
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM api_key_routes WHERE api_key_id = ? AND route_id = ?",
+            "SELECT COUNT(*) FROM api_key_models WHERE api_key_id = ? AND model_id = ?",
         )
         .bind(api_key_id)
-        .bind(route_id)
+        .bind(model_id)
         .fetch_one(&self.pool)
         .await?;
         Ok(count > 0)
     }
 
-    async fn list_bound_route_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>> {
-        list_api_key_route_ids(&self.pool, api_key_id).await
+    async fn list_bound_model_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>> {
+        list_api_key_model_ids(&self.pool, api_key_id).await
     }
 
     async fn request_count_since(
@@ -998,33 +998,33 @@ impl AuthAccessStore for SqliteAuthAccessStore {
     }
 }
 
-async fn list_api_key_route_ids(
+async fn list_api_key_model_ids(
     pool: &SqlitePool,
     api_key_id: &str,
 ) -> anyhow::Result<Vec<String>> {
     Ok(sqlx::query_scalar::<_, String>(
-        "SELECT route_id FROM api_key_routes WHERE api_key_id = ? ORDER BY route_id ASC",
+        "SELECT model_id FROM api_key_models WHERE api_key_id = ? ORDER BY model_id ASC",
     )
     .bind(api_key_id)
     .fetch_all(pool)
     .await?)
 }
 
-async fn replace_api_key_routes(
+async fn replace_api_key_models(
     pool: &SqlitePool,
     api_key_id: &str,
-    route_ids: &[String],
+    model_ids: &[String],
 ) -> anyhow::Result<()> {
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM api_key_routes WHERE api_key_id = ?")
+    sqlx::query("DELETE FROM api_key_models WHERE api_key_id = ?")
         .bind(api_key_id)
         .execute(&mut *tx)
         .await?;
 
-    for route_id in route_ids.iter().filter(|id| !id.trim().is_empty()) {
-        sqlx::query("INSERT OR IGNORE INTO api_key_routes (api_key_id, route_id) VALUES (?, ?)")
+    for model_id in model_ids.iter().filter(|id| !id.trim().is_empty()) {
+        sqlx::query("INSERT OR IGNORE INTO api_key_models (api_key_id, model_id) VALUES (?, ?)")
             .bind(api_key_id)
-            .bind(route_id.trim())
+            .bind(model_id.trim())
             .execute(&mut *tx)
             .await?;
     }

@@ -4,9 +4,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use crate::db::models::{
-    ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget, LogPage,
-    LogQuery, ModelStats, OAuthCredential, Provider, ProviderStats, RequestLog, Route, RouteTarget,
-    StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute, UpsertOAuthCredential,
+    ApiKeyWithBindings, CreateApiKey, CreateModel, CreateModelBackend, CreateProvider, LogPage,
+    LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats,
+    RequestLog, StatsHourly, StatsOverview, UpdateApiKey, UpdateModel, UpdateProvider,
+    UpsertOAuthCredential,
 };
 use crate::logging::LogEntry;
 
@@ -64,11 +65,11 @@ pub trait ProviderStore: Send + Sync {
 }
 
 #[async_trait]
-pub trait RouteStore: Send + Sync {
-    async fn list(&self) -> anyhow::Result<Vec<Route>>;
-    async fn get(&self, id: &str) -> anyhow::Result<Option<Route>>;
-    async fn create(&self, input: CreateRoute) -> anyhow::Result<Route>;
-    async fn update(&self, id: &str, input: UpdateRoute) -> anyhow::Result<Route>;
+pub trait ModelStore: Send + Sync {
+    async fn list(&self) -> anyhow::Result<Vec<Model>>;
+    async fn get(&self, id: &str) -> anyhow::Result<Option<Model>>;
+    async fn create(&self, input: CreateModel) -> anyhow::Result<Model>;
+    async fn update(&self, id: &str, input: UpdateModel) -> anyhow::Result<Model>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool>;
     async fn exists_by_virtual_model(
@@ -79,19 +80,19 @@ pub trait RouteStore: Send + Sync {
 }
 
 #[async_trait]
-pub trait RouteSnapshotStore: Send + Sync {
-    async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Route>>;
+pub trait ModelSnapshotStore: Send + Sync {
+    async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Model>>;
 }
 
 #[async_trait]
-pub trait RouteTargetStore: Send + Sync {
-    async fn list_targets_by_route(&self, route_id: &str) -> anyhow::Result<Vec<RouteTarget>>;
-    async fn set_targets(
+pub trait ModelBackendStore: Send + Sync {
+    async fn list_backends_by_model(&self, model_id: &str) -> anyhow::Result<Vec<ModelBackend>>;
+    async fn set_backends(
         &self,
-        route_id: &str,
-        targets: &[CreateRouteTarget],
-    ) -> anyhow::Result<Vec<RouteTarget>>;
-    async fn delete_targets_by_route(&self, route_id: &str) -> anyhow::Result<()>;
+        model_id: &str,
+        backends: &[CreateModelBackend],
+    ) -> anyhow::Result<Vec<ModelBackend>>;
+    async fn delete_backends_by_model(&self, model_id: &str) -> anyhow::Result<()>;
 }
 
 #[async_trait]
@@ -114,8 +115,8 @@ pub trait ApiKeyStore: Send + Sync {
 #[async_trait]
 pub trait AuthAccessStore: Send + Sync {
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
-    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
-    async fn list_bound_route_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>>;
+    async fn model_binding_exists(&self, api_key_id: &str, model_id: &str) -> anyhow::Result<bool>;
+    async fn list_bound_model_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>>;
     async fn request_count_since(
         &self,
         api_key_id: &str,
@@ -170,9 +171,9 @@ pub trait StorageBootstrap: Send + Sync {
 
 pub trait Storage: Send + Sync {
     fn providers(&self) -> &dyn ProviderStore;
-    fn routes(&self) -> &dyn RouteStore;
-    fn snapshots(&self) -> &dyn RouteSnapshotStore;
-    fn route_targets(&self) -> Option<&dyn RouteTargetStore> {
+    fn models(&self) -> &dyn ModelStore;
+    fn snapshots(&self) -> &dyn ModelSnapshotStore;
+    fn model_backends(&self) -> Option<&dyn ModelBackendStore> {
         None
     }
     fn settings(&self) -> &dyn SettingsStore;

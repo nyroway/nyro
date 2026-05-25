@@ -4,7 +4,7 @@ import { Check, Code2, Copy, TerminalSquare } from "lucide-react";
 
 import { backend, IS_TAURI } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
-import type { ApiKey, GatewayStatus, ModelCapabilities, Route as RouteType } from "@/lib/types";
+import type { ApiKey, GatewayStatus, ModelCapabilities, Model as ModelType } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -414,9 +414,9 @@ export default function ConnectPage() {
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
   const cliFeedbackTimeoutRef = useRef<number | null>(null);
 
-  const { data: routes = [] } = useQuery<RouteType[]>({
+  const { data: routes = [] } = useQuery<ModelType[]>({
     queryKey: ["routes"],
-    queryFn: () => backend("list_routes"),
+    queryFn: () => backend("list_models"),
   });
   const { data: apiKeys = [] } = useQuery<ApiKey[]>({
     queryKey: ["api-keys"],
@@ -504,7 +504,7 @@ export default function ConnectPage() {
 
   const codeAvailableKeys = useMemo(() => {
     if (!selectedRoute) return [];
-    return apiKeys.filter((key) => key.route_ids.includes(selectedRoute.id));
+    return apiKeys.filter((key) => key.model_ids.includes(selectedRoute.id));
   }, [apiKeys, selectedRoute]);
 
   useEffect(() => {
@@ -540,7 +540,7 @@ export default function ConnectPage() {
   );
   const cliAvailableKeys = useMemo(() => {
     if (!selectedCliRoute) return [];
-    return apiKeys.filter((key) => key.route_ids.includes(selectedCliRoute.id));
+    return apiKeys.filter((key) => key.model_ids.includes(selectedCliRoute.id));
   }, [apiKeys, selectedCliRoute]);
 
   useEffect(() => {
@@ -822,7 +822,7 @@ export default function ConnectPage() {
                 <div className="grid grid-cols-2 gap-4 items-start">
                   <div className="space-y-2">
                     <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                      {isZh ? "选择路由" : "Select Route"}
+                      {isZh ? "选择模型" : "Select Model"}
                     </p>
                   <Combobox
                     className="bg-white"
@@ -837,11 +837,11 @@ export default function ConnectPage() {
                     }))}
                     placeholder={
                       cliRoutes.length > 0
-                        ? (isZh ? "选择路由" : "Select route")
-                        : (isZh ? "请先创建路由" : "Create a route first")
+                        ? (isZh ? "选择模型" : "Select model")
+                        : (isZh ? "请先创建模型" : "Create a model first")
                     }
-                    searchPlaceholder={isZh ? "搜索路由..." : "Search routes..."}
-                    emptyText={isZh ? "暂无可选路由" : "No routes available"}
+                    searchPlaceholder={isZh ? "搜索模型..." : "Search models..."}
+                    emptyText={isZh ? "暂无可选模型" : "No models available"}
                   />
                     {selectedCliCapabilities && (
                       <div className="flex flex-wrap gap-2 text-xs text-slate-600 pt-1">
@@ -979,15 +979,15 @@ export default function ConnectPage() {
                 {cliRoutes.length === 0 && (
                   <p className="text-xs text-amber-600">
                     {isZh
-                      ? "当前没有可选对话路由，请先创建对话路由。"
-                      : "No chat routes available. Create a chat route first."}
+                      ? "当前没有可选对话模型，请先创建对话模型。"
+                      : "No chat models available. Create a chat model first."}
                   </p>
                 )}
                 {selectedCliRoute?.access_control && !selectedCliApiKey && (
                   <p className="text-xs text-amber-600">
                     {isZh
-                      ? "当前路由开启了访问控制，请先选择 API Key 再同步。"
-                      : "This route requires access control. Select an API key before syncing."}
+                      ? "当前模型开启了访问控制，请先选择 API Key 再同步。"
+                      : "This model requires access control. Select an API key before syncing."}
                   </p>
                 )}
               </div>
@@ -1057,7 +1057,7 @@ export default function ConnectPage() {
               <div className="grid grid-cols-2 gap-4 items-start">
                 <div className="space-y-2">
                   <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                    {isZh ? "选择路由" : "Select Route"}
+                    {isZh ? "选择模型" : "Select Model"}
                   </p>
                   <Combobox
                     className="bg-white"
@@ -1069,11 +1069,11 @@ export default function ConnectPage() {
                     }))}
                     placeholder={
                       codeRoutes.length > 0
-                        ? (isZh ? "选择路由" : "Select route")
-                        : (isZh ? "请先创建路由" : "Create a route first")
+                        ? (isZh ? "选择模型" : "Select model")
+                        : (isZh ? "请先创建模型" : "Create a model first")
                     }
-                    searchPlaceholder={isZh ? "搜索路由..." : "Search routes..."}
-                    emptyText={isZh ? "暂无可选路由" : "No routes available"}
+                    searchPlaceholder={isZh ? "搜索模型..." : "Search models..."}
+                    emptyText={isZh ? "暂无可选模型" : "No models available"}
                   />
                 </div>
 
@@ -1134,15 +1134,15 @@ export default function ConnectPage() {
                 </div>
               ) : (
                 <p className="text-xs text-amber-600">
-                  {isZh ? "请先选择路由以生成代码示例。" : "Select a route first to generate code samples."}
+                  {isZh ? "请先选择模型以生成代码示例。" : "Select a model first to generate code samples."}
                 </p>
               )}
 
               {selectedRoute && !selectedRoute.access_control && (
                 <p className="text-xs text-slate-500">
                   {isZh
-                    ? `当前路由未开启访问控制，示例中已使用占位 API Key：${OPTIONAL_KEY_PLACEHOLDER}`
-                    : `Access control is disabled on this route. The sample uses placeholder key: ${OPTIONAL_KEY_PLACEHOLDER}`}
+                    ? `当前模型未开启访问控制，示例中已使用占位 API Key：${OPTIONAL_KEY_PLACEHOLDER}`
+                    : `Access control is disabled on this model. The sample uses placeholder key: ${OPTIONAL_KEY_PLACEHOLDER}`}
                 </p>
               )}
             </div>

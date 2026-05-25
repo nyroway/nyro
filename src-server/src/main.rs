@@ -196,17 +196,17 @@ async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
     let proxy_port = yaml.server.proxy_port;
 
     let providers = yaml_config::build_providers(&yaml);
-    let routes = yaml_config::build_routes(&yaml, &providers);
+    let models = yaml_config::build_models(&yaml, &providers);
     let settings: Vec<(String, String)> = yaml.settings.into_iter().collect();
 
     tracing::info!(
-        "loaded {} providers, {} routes from YAML",
+        "loaded {} providers, {} models from YAML",
         providers.len(),
-        routes.len()
+        models.len()
     );
 
     let storage: nyro_core::storage::DynStorage =
-        Arc::new(MemoryStorage::new(providers, routes, settings));
+        Arc::new(MemoryStorage::new(providers, models, settings));
 
     let data_dir = shellexpand::tilde(&args.data_dir).to_string();
     let proxy_cors_origins = if args.proxy_cors_origins.is_empty() {

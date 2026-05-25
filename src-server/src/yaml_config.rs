@@ -8,8 +8,8 @@ pub struct YamlConfig {
     pub server: ServerSection,
     #[serde(default)]
     pub providers: Vec<YamlProvider>,
-    #[serde(default)]
-    pub routes: Vec<YamlRoute>,
+    #[serde(default, rename = "models", alias = "routes")]
+    pub models: Vec<YamlModel>,
     #[serde(default)]
     pub settings: HashMap<String, String>,
 }
@@ -124,8 +124,6 @@ impl TryFrom<YamlProviderRaw> for YamlProvider {
 }
 
 impl YamlProvider {
-    /// Resolve the effective default protocol: explicit value if set,
-    /// otherwise the first endpoint key in YAML declaration order.
     pub fn resolved_protocol(&self) -> Option<&str> {
         if let Some(p) = self.default_protocol.as_deref() {
             return Some(p);
@@ -140,13 +138,14 @@ pub struct YamlEndpoint {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct YamlRoute {
+pub struct YamlModel {
     pub name: String,
     #[serde(alias = "vmodel")]
     pub virtual_model: String,
     #[serde(default = "default_strategy")]
     pub strategy: String,
-    pub targets: Vec<YamlRouteTarget>,
+    #[serde(default, rename = "backends", alias = "targets")]
+    pub backends: Vec<YamlModelBackend>,
     #[serde(default)]
     pub access_control: bool,
     // Deprecated: route_type / type was removed; captured here only to emit a warning.
@@ -159,7 +158,7 @@ fn default_strategy() -> String {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct YamlRouteTarget {
+pub struct YamlModelBackend {
     pub provider: String,
     pub model: String,
     #[serde(default = "default_weight")]
@@ -231,29 +230,29 @@ impl YamlConfig {
                 );
             }
         }
-        for (i, r) in self.routes.iter().enumerate() {
-            if r.name.trim().is_empty() {
-                anyhow::bail!("routes[{i}]: name is required");
+        for (i, m) in self.models.iter().enumerate() {
+            if m.name.trim().is_empty() {
+                anyhow::bail!("models[{i}]: name is required");
             }
-            if r.route_type.is_some() {
+            if m.route_type.is_some() {
                 tracing::warn!(
-                    route = %r.name,
+                    model = %m.name,
                     "YAML field 'type' (route_type) is no longer supported and will be ignored; \
                      remove it from your config file"
                 );
             }
-            if r.virtual_model.trim().is_empty() {
-                anyhow::bail!("routes[{i}] ({}): virtual_model is required", r.name);
+            if m.virtual_model.trim().is_empty() {
+                anyhow::bail!("models[{i}] ({}): virtual_model is required", m.name);
             }
-            if r.targets.is_empty() {
-                anyhow::bail!("routes[{i}] ({}): at least one target is required", r.name);
+            if m.backends.is_empty() {
+                anyhow::bail!("models[{i}] ({}): at least one backend is required", m.name);
             }
-            for (j, t) in r.targets.iter().enumerate() {
-                if !provider_names.contains(&t.provider.as_str()) {
+            for (j, b) in m.backends.iter().enumerate() {
+                if !provider_names.contains(&b.provider.as_str()) {
                     anyhow::bail!(
-                        "routes[{i}] ({}): targets[{j}].provider '{}' not found in providers",
-                        r.name,
-                        t.provider
+                        "models[{i}] ({}): backends[{j}].provider '{}' not found in providers",
+                        m.name,
+                        b.provider
                     );
                 }
             }
@@ -262,7 +261,7 @@ impl YamlConfig {
     }
 }
 
-use nyro_core::db::models::{Provider, Route, RouteTarget};
+use nyro_core::db::models::{Model, ModelBackend, Provider};
 
 pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
     use nyro_core::protocol::registry::ProtocolRegistry;
@@ -274,8 +273,6 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
         .map(|(i, yp)| {
             let id = format!("yaml-provider-{i}");
             let raw_protocol = yp.resolved_protocol().unwrap_or_default().to_string();
-            // Normalize the yaml-declared protocol to canonical protocol-suite
-            // form so storage rows are consistent with admin / preset writes.
             let resolved_protocol = reg
                 .parse_protocol(&raw_protocol)
                 .map(|protocol| protocol.as_str().to_string())
@@ -315,52 +312,52 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
         .collect()
 }
 
-pub fn build_routes(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Route> {
+pub fn build_models(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Model> {
     let name_to_id: HashMap<&str, &str> = providers
         .iter()
         .map(|p| (p.name.as_str(), p.id.as_str()))
         .collect();
 
-    yaml.routes
+    yaml.models
         .iter()
         .enumerate()
-        .map(|(i, yr)| {
-            let route_id = format!("yaml-route-{i}");
+        .map(|(i, ym)| {
+            let model_id = format!("yaml-model-{i}");
             let now = chrono::Utc::now().to_rfc3339();
 
-            let targets: Vec<RouteTarget> = yr
-                .targets
+            let backends: Vec<ModelBackend> = ym
+                .backends
                 .iter()
                 .enumerate()
-                .map(|(j, yt)| {
+                .map(|(j, yb)| {
                     let provider_id = name_to_id
-                        .get(yt.provider.as_str())
+                        .get(yb.provider.as_str())
                         .unwrap_or(&"")
                         .to_string();
-                    RouteTarget {
-                        id: format!("{route_id}-target-{j}"),
-                        route_id: route_id.clone(),
+                    ModelBackend {
+                        id: format!("{model_id}-backend-{j}"),
+                        model_id: model_id.clone(),
                         provider_id,
-                        model: yt.model.clone(),
-                        weight: yt.weight,
-                        priority: yt.priority,
+                        model: yb.model.clone(),
+                        weight: yb.weight,
+                        priority: yb.priority,
                         created_at: now.clone(),
                     }
                 })
                 .collect();
 
-            let primary = targets.first();
-            Route {
-                id: route_id,
-                name: yr.name.clone(),
-                virtual_model: yr.virtual_model.clone(),
-                strategy: yr.strategy.clone(),
-                target_provider: primary.map(|t| t.provider_id.clone()).unwrap_or_default(),
-                target_model: primary.map(|t| t.model.clone()).unwrap_or_default(),
-                access_control: yr.access_control,
+            let primary = backends.first();
+            Model {
+                id: model_id,
+                name: ym.name.clone(),
+                virtual_model: ym.virtual_model.clone(),
+                strategy: ym.strategy.clone(),
+                target_provider: primary.map(|b| b.provider_id.clone()).unwrap_or_default(),
+                target_model: primary.map(|b| b.model.clone()).unwrap_or_default(),
+                access_control: ym.access_control,
                 is_enabled: true,
                 created_at: now,
-                targets,
+                targets: backends,
             }
         })
         .collect()
@@ -493,6 +490,26 @@ providers:
       openai:
         base_url: https://api.openai.com/v1
     apikey: sk-x
+models:
+  - name: gpt-4o
+    vmodel: gpt-4o
+    backends:
+      - provider: openai
+        model: gpt-4o
+"#;
+        let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
+        cfg.validate().expect("validate");
+    }
+
+    #[test]
+    fn validate_accepts_legacy_routes_key() {
+        let yaml = r#"
+providers:
+  - name: openai
+    endpoints:
+      openai:
+        base_url: https://api.openai.com/v1
+    apikey: sk-x
 routes:
   - name: gpt-4o
     vmodel: gpt-4o
@@ -506,9 +523,6 @@ routes:
 
     #[test]
     fn build_providers_normalizes_legacy_protocol_keys_to_canonical_suite() {
-        // Legacy YAML uses short aliases (`openai`, `anthropic`). The
-        // builder must canonicalize the selected protocol into protocol-suite
-        // form so storage rows match what admin / preset writes produce.
         let yaml = r#"
 providers:
   - name: vendor1
@@ -548,13 +562,8 @@ providers:
         );
     }
 
-    // ── Deprecated field acceptance ────────────────────────────────────────────
-
     #[test]
     fn deprecated_route_type_field_is_silently_parsed() {
-        // `type` / `route_type` was removed in Q2. Existing YAML configs that
-        // still carry this field must parse and validate without error, and must
-        // produce the same `Route` output as configs without it.
         let yaml = r#"
 providers:
   - name: openai
@@ -562,37 +571,34 @@ providers:
       openai:
         base_url: https://api.openai.com/v1
     apikey: sk-x
-routes:
+models:
   - name: embeddings
     vmodel: text-embedding-3-small
     type: embedding
-    targets:
+    backends:
       - provider: openai
         model: text-embedding-3-small
   - name: chat
     vmodel: gpt-4o
     route_type: chat
-    targets:
+    backends:
       - provider: openai
         model: gpt-4o
 "#;
         let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
         cfg.validate()
             .expect("validate must succeed for deprecated type field");
-        assert_eq!(cfg.routes.len(), 2);
+        assert_eq!(cfg.models.len(), 2);
 
         let providers = build_providers(&cfg);
-        let routes = build_routes(&cfg, &providers);
-        assert_eq!(routes.len(), 2);
-        // Both routes are built correctly; route_type is not propagated.
-        assert_eq!(routes[0].name, "embeddings");
-        assert_eq!(routes[1].name, "chat");
+        let models = build_models(&cfg, &providers);
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].name, "embeddings");
+        assert_eq!(models[1].name, "chat");
     }
 
     #[test]
     fn deprecated_capabilities_source_field_is_silently_parsed() {
-        // `capabilities_source` was removed in Q3. Configs that still carry it
-        // must parse and validate without error; the field is not propagated.
         let yaml = r#"
 providers:
   - name: openai
@@ -601,10 +607,10 @@ providers:
         base_url: https://api.openai.com/v1
     apikey: sk-x
     capabilities_source: models.dev
-routes:
+models:
   - name: chat
     vmodel: gpt-4o
-    targets:
+    backends:
       - provider: openai
         model: gpt-4o
 "#;
@@ -627,19 +633,19 @@ providers:
         base_url: https://api.openai.com/v1
     apikey: sk-x
     capabilities_source: http
-routes:
+models:
   - name: embeddings
     vmodel: text-embedding-3-small
     type: embedding
-    targets:
+    backends:
       - provider: openai
         model: text-embedding-3-small
 "#;
         let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
         cfg.validate().expect("validate");
         let providers = build_providers(&cfg);
-        let routes = build_routes(&cfg, &providers);
+        let models = build_models(&cfg, &providers);
         assert_eq!(providers.len(), 1);
-        assert_eq!(routes.len(), 1);
+        assert_eq!(models.len(), 1);
     }
 }

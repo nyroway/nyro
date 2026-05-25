@@ -6,17 +6,17 @@ use sqlx::{Pool, Postgres};
 use std::time::Duration;
 
 use crate::db::models::{
-    ApiKey, ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget,
-    LogPage, LogQuery, ModelStats, OAuthCredential, Provider, ProviderStats, RequestLog, Route,
-    RouteTarget, StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
+    ApiKey, ApiKeyWithBindings, CreateApiKey, CreateModel, CreateModelBackend, CreateProvider,
+    LogPage, LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats,
+    RequestLog, StatsHourly, StatsOverview, UpdateApiKey, UpdateModel, UpdateProvider,
     UpsertOAuthCredential, is_valid_provider_auth_mode,
 };
 use crate::logging::LogEntry;
 use crate::storage::sql::config::SqlBackendConfig;
 use crate::storage::sql::pool::RelationalPool;
 use crate::storage::traits::{
-    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, LogStore, OAuthCredentialStore,
-    ProviderStore, ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore,
+    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, LogStore, ModelBackendStore,
+    ModelSnapshotStore, ModelStore, OAuthCredentialStore, ProviderStore, ProviderTestResult,
     SettingsStore, Storage, StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
 };
 
@@ -73,8 +73,8 @@ impl PostgresAdapter {
 pub struct PostgresStorage {
     pool: Pool<Postgres>,
     provider_store: Arc<PostgresProviderStore>,
-    route_store: Arc<PostgresRouteStore>,
-    route_target_store: Arc<PostgresRouteTargetStore>,
+    model_store: Arc<PostgresModelStore>,
+    model_backend_store: Arc<PostgresModelBackendStore>,
     settings_store: Arc<PostgresSettingsStore>,
     api_key_store: Arc<PostgresApiKeyStore>,
     auth_store: Arc<PostgresAuthAccessStore>,
@@ -88,8 +88,8 @@ impl PostgresStorage {
         let adapter = PostgresAdapter::connect(config).await?;
         let pool = adapter.pool().clone();
         let provider_store = Arc::new(PostgresProviderStore { pool: pool.clone() });
-        let route_store = Arc::new(PostgresRouteStore { pool: pool.clone() });
-        let route_target_store = Arc::new(PostgresRouteTargetStore { pool: pool.clone() });
+        let model_store = Arc::new(PostgresModelStore { pool: pool.clone() });
+        let model_backend_store = Arc::new(PostgresModelBackendStore { pool: pool.clone() });
         let settings_store = Arc::new(PostgresSettingsStore { pool: pool.clone() });
         let api_key_store = Arc::new(PostgresApiKeyStore { pool: pool.clone() });
         let auth_store = Arc::new(PostgresAuthAccessStore { pool: pool.clone() });
@@ -99,8 +99,8 @@ impl PostgresStorage {
         Ok(Self {
             pool,
             provider_store,
-            route_store,
-            route_target_store,
+            model_store,
+            model_backend_store,
             settings_store,
             api_key_store,
             auth_store,
@@ -120,20 +120,20 @@ impl Storage for PostgresStorage {
         self.provider_store.as_ref()
     }
 
-    fn routes(&self) -> &dyn RouteStore {
-        self.route_store.as_ref()
+    fn models(&self) -> &dyn ModelStore {
+        self.model_store.as_ref()
     }
 
-    fn snapshots(&self) -> &dyn RouteSnapshotStore {
-        self.route_store.as_ref()
+    fn snapshots(&self) -> &dyn ModelSnapshotStore {
+        self.model_store.as_ref()
     }
 
     fn settings(&self) -> &dyn SettingsStore {
         self.settings_store.as_ref()
     }
 
-    fn route_targets(&self) -> Option<&dyn RouteTargetStore> {
-        Some(self.route_target_store.as_ref())
+    fn model_backends(&self) -> Option<&dyn ModelBackendStore> {
+        Some(self.model_backend_store.as_ref())
     }
 
     fn api_keys(&self) -> Option<&dyn ApiKeyStore> {
@@ -385,15 +385,15 @@ impl ProviderStore for PostgresProviderStore {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "DELETE FROM route_targets
+            "DELETE FROM model_backends
              WHERE provider_id = $1
-                OR route_id IN (SELECT id FROM routes WHERE target_provider = $1)",
+                OR model_id IN (SELECT id FROM models WHERE target_provider = $1)",
         )
         .bind(id)
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query("DELETE FROM routes WHERE target_provider = $1")
+        sqlx::query("DELETE FROM models WHERE target_provider = $1")
             .bind(id)
             .execute(&mut *tx)
             .await?;
@@ -445,33 +445,33 @@ impl ProviderStore for PostgresProviderStore {
 }
 
 #[derive(Clone)]
-struct PostgresRouteStore {
+struct PostgresModelStore {
     pool: Pool<Postgres>,
 }
 
 #[async_trait]
-impl RouteStore for PostgresRouteStore {
-    async fn list(&self) -> anyhow::Result<Vec<Route>> {
+impl ModelStore for PostgresModelStore {
+    async fn list(&self) -> anyhow::Result<Vec<Model>> {
         Ok(
-            sqlx::query_as::<_, Route>(&route_select(Some("ORDER BY created_at DESC")))
+            sqlx::query_as::<_, Model>(&model_select(Some("ORDER BY created_at DESC")))
                 .fetch_all(&self.pool)
                 .await?,
         )
     }
 
-    async fn get(&self, id: &str) -> anyhow::Result<Option<Route>> {
-        let sql = format!("{} WHERE id = $1", route_select(None));
-        Ok(sqlx::query_as::<_, Route>(&sql)
+    async fn get(&self, id: &str) -> anyhow::Result<Option<Model>> {
+        let sql = format!("{} WHERE id = $1", model_select(None));
+        Ok(sqlx::query_as::<_, Model>(&sql)
             .bind(id)
             .fetch_optional(&self.pool)
             .await?)
     }
 
-    async fn create(&self, input: CreateRoute) -> anyhow::Result<Route> {
+    async fn create(&self, input: CreateModel) -> anyhow::Result<Model> {
         let id = uuid::Uuid::new_v4().to_string();
         let virtual_model = input.virtual_model.trim().to_string();
         sqlx::query(
-            "INSERT INTO routes (id, name, virtual_model, strategy, target_provider, target_model, access_control) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO models (id, name, virtual_model, strategy, target_provider, target_model, access_control) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&id)
         .bind(input.name.trim())
@@ -482,11 +482,11 @@ impl RouteStore for PostgresRouteStore {
         .bind(input.access_control.unwrap_or(false))
         .execute(&self.pool)
         .await?;
-        self.get(&id).await?.context("route missing after create")
+        self.get(&id).await?.context("model missing after create")
     }
 
-    async fn update(&self, id: &str, input: UpdateRoute) -> anyhow::Result<Route> {
-        let current = self.get(id).await?.context("route not found for update")?;
+    async fn update(&self, id: &str, input: UpdateModel) -> anyhow::Result<Model> {
+        let current = self.get(id).await?.context("model not found for update")?;
         let name = input.name.unwrap_or(current.name);
         let virtual_model = input
             .virtual_model
@@ -500,7 +500,7 @@ impl RouteStore for PostgresRouteStore {
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE routes SET name=$1, virtual_model=$2, strategy=$3, target_provider=$4, target_model=$5, access_control=$6, is_enabled=$7 WHERE id=$8",
+            "UPDATE models SET name=$1, virtual_model=$2, strategy=$3, target_provider=$4, target_model=$5, access_control=$6, is_enabled=$7 WHERE id=$8",
         )
         .bind(name.trim())
         .bind(&virtual_model)
@@ -512,11 +512,11 @@ impl RouteStore for PostgresRouteStore {
         .bind(id)
         .execute(&self.pool)
         .await?;
-        self.get(id).await?.context("route missing after update")
+        self.get(id).await?.context("model missing after update")
     }
 
     async fn delete(&self, id: &str) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM routes WHERE id = $1")
+        sqlx::query("DELETE FROM models WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -526,7 +526,7 @@ impl RouteStore for PostgresRouteStore {
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
         let row = if let Some(exclude_id) = exclude_id {
             sqlx::query_scalar::<_, String>(
-                "SELECT id FROM routes WHERE lower(trim(name)) = lower(trim($1)) AND id != $2 LIMIT 1",
+                "SELECT id FROM models WHERE lower(trim(name)) = lower(trim($1)) AND id != $2 LIMIT 1",
             )
             .bind(name)
             .bind(exclude_id)
@@ -534,7 +534,7 @@ impl RouteStore for PostgresRouteStore {
             .await?
         } else {
             sqlx::query_scalar::<_, String>(
-                "SELECT id FROM routes WHERE lower(trim(name)) = lower(trim($1)) LIMIT 1",
+                "SELECT id FROM models WHERE lower(trim(name)) = lower(trim($1)) LIMIT 1",
             )
             .bind(name)
             .fetch_optional(&self.pool)
@@ -551,7 +551,7 @@ impl RouteStore for PostgresRouteStore {
         let normalized_model = virtual_model.trim();
         let row = if let Some(exclude_id) = exclude_id {
             sqlx::query_scalar::<_, String>(
-                "SELECT id FROM routes WHERE virtual_model = $1 AND id != $2 LIMIT 1",
+                "SELECT id FROM models WHERE virtual_model = $1 AND id != $2 LIMIT 1",
             )
             .bind(normalized_model)
             .bind(exclude_id)
@@ -559,7 +559,7 @@ impl RouteStore for PostgresRouteStore {
             .await?
         } else {
             sqlx::query_scalar::<_, String>(
-                "SELECT id FROM routes WHERE virtual_model = $1 LIMIT 1",
+                "SELECT id FROM models WHERE virtual_model = $1 LIMIT 1",
             )
             .bind(normalized_model)
             .fetch_optional(&self.pool)
@@ -570,67 +570,67 @@ impl RouteStore for PostgresRouteStore {
 }
 
 #[async_trait]
-impl RouteSnapshotStore for PostgresRouteStore {
-    async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Route>> {
+impl ModelSnapshotStore for PostgresModelStore {
+    async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Model>> {
         let sql = format!(
             "{} WHERE COALESCE(is_enabled, TRUE) = true",
-            route_select(None)
+            model_select(None)
         );
-        Ok(sqlx::query_as::<_, Route>(&sql)
+        Ok(sqlx::query_as::<_, Model>(&sql)
             .fetch_all(&self.pool)
             .await?)
     }
 }
 
 #[derive(Clone)]
-struct PostgresRouteTargetStore {
+struct PostgresModelBackendStore {
     pool: Pool<Postgres>,
 }
 
 #[async_trait]
-impl RouteTargetStore for PostgresRouteTargetStore {
-    async fn list_targets_by_route(&self, route_id: &str) -> anyhow::Result<Vec<RouteTarget>> {
-        Ok(sqlx::query_as::<_, RouteTarget>(
-            "SELECT id, route_id, provider_id, model, weight, priority, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM route_targets WHERE route_id = $1 ORDER BY priority ASC, created_at ASC",
+impl ModelBackendStore for PostgresModelBackendStore {
+    async fn list_backends_by_model(&self, model_id: &str) -> anyhow::Result<Vec<ModelBackend>> {
+        Ok(sqlx::query_as::<_, ModelBackend>(
+            "SELECT id, model_id, provider_id, model, weight, priority, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM model_backends WHERE model_id = $1 ORDER BY priority ASC, created_at ASC",
         )
-        .bind(route_id)
+        .bind(model_id)
         .fetch_all(&self.pool)
         .await?)
     }
 
-    async fn set_targets(
+    async fn set_backends(
         &self,
-        route_id: &str,
-        targets: &[CreateRouteTarget],
-    ) -> anyhow::Result<Vec<RouteTarget>> {
+        model_id: &str,
+        backends: &[CreateModelBackend],
+    ) -> anyhow::Result<Vec<ModelBackend>> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM route_targets WHERE route_id = $1")
-            .bind(route_id)
+        sqlx::query("DELETE FROM model_backends WHERE model_id = $1")
+            .bind(model_id)
             .execute(&mut *tx)
             .await?;
 
-        for target in targets {
+        for backend in backends {
             let id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
-                "INSERT INTO route_targets (id, route_id, provider_id, model, weight, priority) VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO model_backends (id, model_id, provider_id, model, weight, priority) VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(id)
-            .bind(route_id)
-            .bind(target.provider_id.trim())
-            .bind(target.model.trim())
-            .bind(target.weight.unwrap_or(100).max(0))
-            .bind(target.priority.unwrap_or(1).max(1))
+            .bind(model_id)
+            .bind(backend.provider_id.trim())
+            .bind(backend.model.trim())
+            .bind(backend.weight.unwrap_or(100).max(0))
+            .bind(backend.priority.unwrap_or(1).max(1))
             .execute(&mut *tx)
             .await?;
         }
 
         tx.commit().await?;
-        self.list_targets_by_route(route_id).await
+        self.list_backends_by_model(model_id).await
     }
 
-    async fn delete_targets_by_route(&self, route_id: &str) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM route_targets WHERE route_id = $1")
-            .bind(route_id)
+    async fn delete_backends_by_model(&self, model_id: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM model_backends WHERE model_id = $1")
+            .bind(model_id)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -685,8 +685,8 @@ impl ApiKeyStore for PostgresApiKeyStore {
             .await?;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
-            let route_ids = list_api_key_route_ids(&self.pool, &row.id).await?;
-            items.push(api_key_with_bindings(row, route_ids));
+            let model_ids = list_api_key_model_ids(&self.pool, &row.id).await?;
+            items.push(api_key_with_bindings(row, model_ids));
         }
         Ok(items)
     }
@@ -699,8 +699,8 @@ impl ApiKeyStore for PostgresApiKeyStore {
         let Some(row) = row else {
             return Ok(None);
         };
-        let route_ids = list_api_key_route_ids(&self.pool, id).await?;
-        Ok(Some(api_key_with_bindings(row, route_ids)))
+        let model_ids = list_api_key_model_ids(&self.pool, id).await?;
+        Ok(Some(api_key_with_bindings(row, model_ids)))
     }
 
     async fn create(&self, input: CreateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
@@ -719,7 +719,7 @@ impl ApiKeyStore for PostgresApiKeyStore {
         .bind(input.expires_at.as_deref().map(str::trim).unwrap_or(""))
         .execute(&self.pool)
         .await?;
-        replace_api_key_routes(&self.pool, &id, &input.route_ids).await?;
+        replace_api_key_models(&self.pool, &id, &input.model_ids).await?;
         self.get(&id).await?.context("api key missing after create")
     }
 
@@ -751,8 +751,8 @@ impl ApiKeyStore for PostgresApiKeyStore {
         .execute(&self.pool)
         .await?;
 
-        if let Some(route_ids) = input.route_ids {
-            replace_api_key_routes(&self.pool, id, &route_ids).await?;
+        if let Some(model_ids) = input.model_ids {
+            replace_api_key_models(&self.pool, id, &model_ids).await?;
         }
         self.get(id).await?.context("api key missing after update")
     }
@@ -827,19 +827,19 @@ impl AuthAccessStore for PostgresAuthAccessStore {
         ))
     }
 
-    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool> {
+    async fn model_binding_exists(&self, api_key_id: &str, model_id: &str) -> anyhow::Result<bool> {
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM api_key_routes WHERE api_key_id = $1 AND route_id = $2",
+            "SELECT COUNT(*) FROM api_key_models WHERE api_key_id = $1 AND model_id = $2",
         )
         .bind(api_key_id)
-        .bind(route_id)
+        .bind(model_id)
         .fetch_one(&self.pool)
         .await?;
         Ok(count > 0)
     }
 
-    async fn list_bound_route_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>> {
-        list_api_key_route_ids(&self.pool, api_key_id).await
+    async fn list_bound_model_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>> {
+        list_api_key_model_ids(&self.pool, api_key_id).await
     }
 
     async fn request_count_since(
@@ -1227,6 +1227,28 @@ END $$;"#,
         )
         .execute(self.adapter.pool())
         .await?;
+
+        // Rename tables: routes → models, route_targets → model_backends, api_key_routes → api_key_models
+        pg_rename_table_if_needed(self.adapter.pool(), "routes", "models").await?;
+        pg_rename_table_if_needed(self.adapter.pool(), "route_targets", "model_backends").await?;
+        pg_rename_table_if_needed(self.adapter.pool(), "api_key_routes", "api_key_models").await?;
+
+        // Rename columns within renamed tables
+        pg_rename_column_if_needed(
+            self.adapter.pool(),
+            "model_backends",
+            "route_id",
+            "model_id",
+        )
+        .await?;
+        pg_rename_column_if_needed(
+            self.adapter.pool(),
+            "api_key_models",
+            "route_id",
+            "model_id",
+        )
+        .await?;
+
         Ok(())
     }
 
@@ -1312,6 +1334,49 @@ async fn pg_column_exists(
     .bind(column_name)
     .fetch_one(pool)
     .await?)
+}
+
+async fn pg_table_exists(pool: &Pool<Postgres>, table_name: &str) -> anyhow::Result<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = current_schema()
+              AND table_name = $1
+        )",
+    )
+    .bind(table_name)
+    .fetch_one(pool)
+    .await?)
+}
+
+async fn pg_rename_table_if_needed(
+    pool: &Pool<Postgres>,
+    old: &str,
+    new: &str,
+) -> anyhow::Result<()> {
+    if pg_table_exists(pool, old).await? && !pg_table_exists(pool, new).await? {
+        tracing::info!("renaming table {old} -> {new}");
+        sqlx::query(&format!("ALTER TABLE {old} RENAME TO {new}"))
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn pg_rename_column_if_needed(
+    pool: &Pool<Postgres>,
+    table: &str,
+    old: &str,
+    new: &str,
+) -> anyhow::Result<()> {
+    if pg_column_exists(pool, table, old).await? && !pg_column_exists(pool, table, new).await? {
+        tracing::info!("renaming column {table}.{old} -> {table}.{new}");
+        sqlx::query(&format!("ALTER TABLE {table} RENAME COLUMN {old} TO {new}"))
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
 }
 
 fn base_url_from_protocol_endpoints(raw: &str, protocol: &str) -> Option<String> {
@@ -1417,9 +1482,9 @@ fn provider_select(suffix: Option<&str>) -> String {
     sql
 }
 
-fn route_select(suffix: Option<&str>) -> String {
+fn model_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM routes",
+        "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM models",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1441,7 +1506,7 @@ fn api_key_select(suffix: Option<&str>) -> String {
     sql
 }
 
-fn api_key_with_bindings(row: ApiKey, route_ids: Vec<String>) -> ApiKeyWithBindings {
+fn api_key_with_bindings(row: ApiKey, model_ids: Vec<String>) -> ApiKeyWithBindings {
     ApiKeyWithBindings {
         id: row.id,
         key: row.key,
@@ -1454,7 +1519,7 @@ fn api_key_with_bindings(row: ApiKey, route_ids: Vec<String>) -> ApiKeyWithBindi
         expires_at: row.expires_at,
         created_at: row.created_at,
         updated_at: row.updated_at,
-        route_ids,
+        model_ids,
     }
 }
 
@@ -1472,35 +1537,35 @@ fn interval_expr(window: UsageWindow) -> &'static str {
     }
 }
 
-async fn list_api_key_route_ids(
+async fn list_api_key_model_ids(
     pool: &Pool<Postgres>,
     api_key_id: &str,
 ) -> anyhow::Result<Vec<String>> {
     Ok(sqlx::query_scalar::<_, String>(
-        "SELECT route_id FROM api_key_routes WHERE api_key_id = $1 ORDER BY route_id ASC",
+        "SELECT model_id FROM api_key_models WHERE api_key_id = $1 ORDER BY model_id ASC",
     )
     .bind(api_key_id)
     .fetch_all(pool)
     .await?)
 }
 
-async fn replace_api_key_routes(
+async fn replace_api_key_models(
     pool: &Pool<Postgres>,
     api_key_id: &str,
-    route_ids: &[String],
+    model_ids: &[String],
 ) -> anyhow::Result<()> {
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM api_key_routes WHERE api_key_id = $1")
+    sqlx::query("DELETE FROM api_key_models WHERE api_key_id = $1")
         .bind(api_key_id)
         .execute(&mut *tx)
         .await?;
 
-    for route_id in route_ids.iter().filter(|id| !id.trim().is_empty()) {
+    for model_id in model_ids.iter().filter(|id| !id.trim().is_empty()) {
         sqlx::query(
-            "INSERT INTO api_key_routes (api_key_id, route_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            "INSERT INTO api_key_models (api_key_id, model_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         )
         .bind(api_key_id)
-        .bind(route_id.trim())
+        .bind(model_id.trim())
         .execute(&mut *tx)
         .await?;
     }

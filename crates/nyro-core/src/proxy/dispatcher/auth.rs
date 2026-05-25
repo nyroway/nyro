@@ -5,7 +5,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 
 use crate::Gateway;
-use crate::db::models::{Provider, Route};
+use crate::db::models::{Model, Provider};
 use crate::proxy::security::{extract_api_key, is_key_expired};
 use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
 
@@ -22,7 +22,7 @@ pub(super) struct AuthenticatedKey {
 pub(super) trait ProxyAccessStore {
     async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>>;
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
-    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
+    async fn model_binding_exists(&self, api_key_id: &str, model_id: &str) -> anyhow::Result<bool>;
     async fn request_count_since(
         &self,
         api_key_id: &str,
@@ -54,9 +54,9 @@ impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
             None => Ok(None),
         }
     }
-    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool> {
+    async fn model_binding_exists(&self, api_key_id: &str, model_id: &str) -> anyhow::Result<bool> {
         match self.gw.storage.auth() {
-            Some(store) => store.route_binding_exists(api_key_id, route_id).await,
+            Some(store) => store.model_binding_exists(api_key_id, model_id).await,
             None => Ok(false),
         }
     }
@@ -84,12 +84,12 @@ impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
 
 // ── Functions ─────────────────────────────────────────────────────────────────
 
-pub(super) async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
+pub(super) async fn authorize_model_access<S: ProxyAccessStore + ?Sized>(
     access_store: &S,
-    route: &Route,
+    model: &Model,
     headers: &HeaderMap,
 ) -> Result<AuthenticatedKey, Response> {
-    if !route.access_control {
+    if !model.access_control {
         return Ok(AuthenticatedKey {
             id: None,
             name: None,
@@ -120,11 +120,11 @@ pub(super) async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
     }
 
     let allowed = access_store
-        .route_binding_exists(&key_row.id, &route.id)
+        .model_binding_exists(&key_row.id, &model.id)
         .await
         .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
     if !allowed {
-        return Err(error_response(403, "api key not allowed for this route"));
+        return Err(error_response(403, "api key not allowed for this model"));
     }
 
     if let Some(limit) = key_row.rpm.filter(|v| *v > 0) {

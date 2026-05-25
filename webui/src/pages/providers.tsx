@@ -1699,8 +1699,8 @@ export default function ProvidersPage() {
                 <FieldLabel
                   info={
                     isZh
-                      ? "用于创建路由时自动获取可用模型列表"
-                      : "Used to auto-fetch available model list when creating routes"
+                      ? "用于创建模型时自动获取可用模型列表"
+                      : "Used to auto-fetch available model list when creating models"
                   }
                 >
                   {isZh ? "模型发现源" : "Model Discovery Source"}
@@ -2225,8 +2225,8 @@ export default function ProvidersPage() {
                       <FieldLabel
                         info={
                           isZh
-                            ? "用于创建路由时自动获取可用模型列表"
-                            : "Used to auto-fetch available model list when creating routes"
+                            ? "用于创建模型时自动获取可用模型列表"
+                            : "Used to auto-fetch available model list when creating models"
                         }
                       >
                         {isZh ? "模型发现源" : "Model Discovery Source"}
@@ -2518,7 +2518,7 @@ export default function ProvidersPage() {
           if (!open) setProviderToDisable(null);
         }}
         title={isZh ? "确认禁用供应商" : "Confirm provider disable"}
-        description={isZh ? "禁用后，引用该供应商的路由请求将受影响，确认禁用？" : "After disabling, route requests referencing this provider will be affected. Confirm disable?"}
+        description={isZh ? "禁用后，引用该供应商的模型请求将受影响，确认禁用？" : "After disabling, model requests referencing this provider will be affected. Confirm disable?"}
         cancelText={isZh ? "取消" : "Cancel"}
         confirmText={isZh ? "禁用" : "Disable"}
         onConfirm={() => {
@@ -2549,17 +2549,17 @@ export default function ProvidersPage() {
               checked={appendTargets}
               onCheckedChange={(checked) => setAppendTargets(checked === true)}
               disabled={copyMut.isPending}
-              aria-label={isZh ? "追加路由目标" : "Append route targets"}
+              aria-label={isZh ? "追加模型目标" : "Append model targets"}
               className="mt-0.5"
             />
             <span className="space-y-1">
               <span className="block font-medium text-slate-800">
-                {isZh ? "追加路由目标" : "Append route targets"}
+                {isZh ? "追加模型目标" : "Append model targets"}
               </span>
               <span className="block text-xs text-slate-500">
                 {isZh
-                  ? "在引用该提供商的现有路由中追加指向新提供商的目标。"
-                  : "Append targets pointing to the new provider in existing routes that reference this provider."}
+                  ? "在引用该提供商的现有模型中追加指向新提供商的目标。"
+                  : "Append targets pointing to the new provider in existing models that reference this provider."}
               </span>
             </span>
           </label>

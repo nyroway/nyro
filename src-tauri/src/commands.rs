@@ -234,34 +234,34 @@ pub async fn bind_provider_oauth(
 // ── Routes ──
 
 #[tauri::command]
-pub async fn list_routes(gw: State<'_, Gateway>) -> Result<Vec<Route>, String> {
-    gw.admin().list_routes().await.map_err(|e| e.to_string())
+pub async fn list_models(gw: State<'_, Gateway>) -> Result<Vec<Model>, String> {
+    gw.admin().list_models().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn create_route(gw: State<'_, Gateway>, input: CreateRoute) -> Result<Route, String> {
+pub async fn create_model(gw: State<'_, Gateway>, input: CreateModel) -> Result<Model, String> {
     gw.admin()
-        .create_route(input)
+        .create_model(input)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn update_route(
+pub async fn update_model(
     gw: State<'_, Gateway>,
     id: String,
-    input: UpdateRoute,
-) -> Result<Route, String> {
+    input: UpdateModel,
+) -> Result<Model, String> {
     gw.admin()
-        .update_route(&id, input)
+        .update_model(&id, input)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn delete_route(gw: State<'_, Gateway>, id: String) -> Result<(), String> {
+pub async fn delete_model(gw: State<'_, Gateway>, id: String) -> Result<(), String> {
     gw.admin()
-        .delete_route(&id)
+        .delete_model(&id)
         .await
         .map_err(|e| e.to_string())
 }

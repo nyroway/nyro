@@ -34,17 +34,17 @@ pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Respo
                 .map(|expires| !is_key_expired(expires))
                 .unwrap_or(true);
 
-        if key_active && let Ok(bound_route_ids) = store.list_bound_route_ids(&key_row.id).await {
+        if key_active && let Ok(bound_route_ids) = store.list_bound_model_ids(&key_row.id).await {
             accessible_route_ids.extend(bound_route_ids);
         }
     }
 
-    let cache = gw.route_cache.read().await;
+    let cache = gw.model_cache.read().await;
     let models = cache
-        .routes
+        .models
         .iter()
-        .filter(|route| !route.access_control || accessible_route_ids.contains(&route.id))
-        .map(|route| route.virtual_model.trim())
+        .filter(|model| !model.access_control || accessible_route_ids.contains(&model.id))
+        .map(|model| model.virtual_model.trim())
         .filter(|model| !model.is_empty())
         .map(ToString::to_string)
         .collect::<BTreeSet<_>>();

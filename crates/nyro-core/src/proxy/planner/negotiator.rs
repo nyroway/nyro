@@ -8,7 +8,7 @@
 //! Provider declarations now describe a single protocol suite and base URL,
 //! so resolution is deterministic by construction.
 
-use crate::db::models::RouteTarget;
+use crate::db::models::ModelBackend;
 use crate::error::GatewayError;
 use crate::protocol::ProviderProtocols;
 use crate::protocol::ids::ProtocolId;
@@ -56,7 +56,7 @@ pub enum ProtocolMode {
 /// P2-H will add `WeightedStrategy` / `LeastLatencyStrategy` etc.
 pub trait RoutingStrategy: Send + Sync {
     fn name(&self) -> &'static str;
-    fn select_ordered(&self, targets: &[RouteTarget], _ctx: &RequestContext) -> Vec<RouteTarget>;
+    fn select_ordered(&self, targets: &[ModelBackend], _ctx: &RequestContext) -> Vec<ModelBackend>;
 }
 
 /// Ordered strategy: target order == DB row order. Preserves the pre-PR-04
@@ -68,7 +68,7 @@ impl RoutingStrategy for OrderedStrategy {
         "ordered"
     }
 
-    fn select_ordered(&self, targets: &[RouteTarget], _ctx: &RequestContext) -> Vec<RouteTarget> {
+    fn select_ordered(&self, targets: &[ModelBackend], _ctx: &RequestContext) -> Vec<ModelBackend> {
         targets.to_vec()
     }
 }

@@ -63,8 +63,8 @@ impl AuthFailure {
 /// Why a request was denied after authentication passed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccessDenial {
-    /// The key is not authorised to access this route.
-    RouteNotAllowed,
+    /// The key is not authorised to access this model.
+    ModelNotAllowed,
     /// IP / CIDR block deny-list hit.
     IpDenied,
     /// Custom reason (e.g. admin-set flag).
@@ -101,8 +101,8 @@ pub enum GatewayError {
     /// The caller has exceeded a usage quota.
     QuotaExceeded { window: QuotaWindow },
 
-    /// No route matched the requested model / path.
-    RouteNotFound { model: String },
+    /// No model matched the requested model / path.
+    ModelNotFound { model: String },
 
     /// The ingress protocol cannot be translated to the target egress protocol.
     ProtocolUnsupported { ingress: String, egress: String },
@@ -144,7 +144,7 @@ impl GatewayError {
             GatewayError::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
             GatewayError::Forbidden { .. } => StatusCode::FORBIDDEN,
             GatewayError::QuotaExceeded { .. } => StatusCode::TOO_MANY_REQUESTS,
-            GatewayError::RouteNotFound { .. } => StatusCode::NOT_FOUND,
+            GatewayError::ModelNotFound { .. } => StatusCode::NOT_FOUND,
             GatewayError::ProtocolUnsupported { .. } => StatusCode::BAD_REQUEST,
             GatewayError::ProtocolLossyRejected { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             GatewayError::UpstreamStatus { status, .. } => {
@@ -167,7 +167,7 @@ impl GatewayError {
             GatewayError::Unauthorized { .. } => "NYRO_AUTH_ERROR",
             GatewayError::Forbidden { .. } => "NYRO_FORBIDDEN",
             GatewayError::QuotaExceeded { .. } => "NYRO_RATE_LIMIT",
-            GatewayError::RouteNotFound { .. } => "NYRO_NOT_FOUND",
+            GatewayError::ModelNotFound { .. } => "NYRO_NOT_FOUND",
             GatewayError::ProtocolUnsupported { .. } => "NYRO_PROTOCOL_UNSUPPORTED",
             GatewayError::ProtocolLossyRejected { .. } => "NYRO_PROTOCOL_LOSSY_REJECTED",
             GatewayError::UpstreamStatus { .. } => "NYRO_UPSTREAM_ERROR",
@@ -187,15 +187,15 @@ impl GatewayError {
                 format!("authentication failed: {}", reason.as_str())
             }
             GatewayError::Forbidden { reason } => match reason {
-                AccessDenial::RouteNotAllowed => "access to this route is not permitted".into(),
+                AccessDenial::ModelNotAllowed => "access to this model is not permitted".into(),
                 AccessDenial::IpDenied => "request origin is blocked".into(),
                 AccessDenial::Custom(msg) => msg.clone(),
             },
             GatewayError::QuotaExceeded { window } => {
                 format!("quota exceeded for window: {}", window.window_type)
             }
-            GatewayError::RouteNotFound { model } => {
-                format!("no route found for model: {model}")
+            GatewayError::ModelNotFound { model } => {
+                format!("no model found for model: {model}")
             }
             GatewayError::ProtocolUnsupported { ingress, egress } => {
                 format!("cannot translate {ingress} to {egress}")
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn render_includes_request_id() {
-        let err = GatewayError::RouteNotFound {
+        let err = GatewayError::ModelNotFound {
             model: "gpt-4".into(),
         };
         let resp = err.render(Some("req-abc-123"));

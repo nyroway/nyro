@@ -20,7 +20,7 @@ import { openExternalUrl } from "@/lib/open-external";
 const NAV_ITEMS = [
   { label: "Dashboard", path: "/", icon: LayoutDashboard },
   { label: "Providers", path: "/providers", icon: Server },
-  { label: "Routes", path: "/routes", icon: Route },
+  { label: "Models", path: "/models", icon: Route },
   { label: "API Keys", path: "/api-keys", icon: KeyRound },
   { label: "Connect", path: "/connect", icon: Plug },
   { type: "divider" as const },
@@ -124,8 +124,8 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                       ? "概览"
                       : label === "Providers"
                         ? "提供商"
-                        : label === "Routes"
-                          ? "路由"
+                        : label === "Models"
+                          ? "模型"
                           : label === "API Keys"
                             ? "密钥"
                           : label === "Connect"

@@ -121,7 +121,7 @@ def build_harness(work_dir: Path) -> None:
 
         use anyhow::{Context, ensure};
         use nyro_core::config::{GatewayConfig, SqlStorageConfig, StorageBackendKind};
-        use nyro_core::db::models::{CreateApiKey, CreateProvider, CreateRoute, LogQuery};
+        use nyro_core::db::models::{CreateApiKey, CreateModel, CreateProvider, LogQuery};
         use nyro_core::{logging, Gateway};
         use reqwest::StatusCode;
         use sqlx::postgres::PgPoolOptions;
@@ -192,8 +192,8 @@ def build_harness(work_dir: Path) -> None:
                 use_proxy: false,
             }).await?;
 
-            let route = admin.create_route(CreateRoute {
-                name: format!("{backend}-e2e-route"),
+            let route = admin.create_model(CreateModel {
+                name: format!("{backend}-e2e-model"),
                 virtual_model: format!("{backend}-model"),
                 strategy: None,
                 target_provider: provider.id.clone(),
@@ -210,15 +210,15 @@ def build_harness(work_dir: Path) -> None:
                 name: format!("{backend}-e2e-key"),
                 rpm: Some(10), rpd: None, tpm: None, tpd: None,
                 expires_at: None,
-                route_ids: vec![route.id.clone()],
+                model_ids: vec![route.id.clone()],
             }).await?;
 
             ensure!(admin.list_providers().await?.len() == 1, "provider count");
-            ensure!(admin.list_routes().await?.len() == 1, "route count");
+            ensure!(admin.list_models().await?.len() == 1, "model count");
             ensure!(admin.list_api_keys().await?.len() == 1, "api key count");
             let export = admin.export_config().await?;
             ensure!(export.providers.len() == 1, "export providers");
-            ensure!(export.routes.len() == 1, "export routes");
+            ensure!(export.models.len() == 1, "export models");
 
             tokio::spawn(async move { let _ = gw.start_proxy().await; });
             tokio::time::sleep(Duration::from_millis(250)).await;

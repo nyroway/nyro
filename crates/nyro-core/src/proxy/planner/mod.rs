@@ -10,7 +10,7 @@ pub use negotiator::{
     OrderedStrategy, ProtocolMode, ProtocolPlan, RoutingStrategy, get_routing_strategy, negotiate,
 };
 
-use crate::db::models::{Route, RouteTarget};
+use crate::db::models::{Model, ModelBackend};
 use crate::protocol::ids::ProtocolId;
 
 // ── Plan ──────────────────────────────────────────────────────────────────────
@@ -20,9 +20,9 @@ use crate::protocol::ids::ProtocolId;
 #[derive(Debug, Clone)]
 pub struct Plan {
     /// The route that was matched.
-    pub route: Route,
+    pub route: Model,
     /// The ordered list of targets to try (already sorted by strategy).
-    pub ordered_targets: Vec<RouteTarget>,
+    pub ordered_targets: Vec<ModelBackend>,
     /// The ingress protocol (copied from `RequestContext`).
     pub ingress: ProtocolId,
     /// The resolved protocol negotiation plan.

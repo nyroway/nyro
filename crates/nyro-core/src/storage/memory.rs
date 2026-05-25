@@ -5,15 +5,15 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use crate::db::models::{
-    CreateProvider, CreateRoute, LogPage, LogQuery, ModelStats, OAuthCredential, Provider,
-    ProviderStats, RequestLog, Route, StatsHourly, StatsOverview, UpdateProvider, UpdateRoute,
+    CreateModel, CreateProvider, LogPage, LogQuery, Model, ModelStats, OAuthCredential, Provider,
+    ProviderStats, RequestLog, StatsHourly, StatsOverview, UpdateModel, UpdateProvider,
     UpsertOAuthCredential,
 };
 use crate::logging::LogEntry;
 
 use super::traits::{
-    ApiKeyStore, AuthAccessStore, LogStore, OAuthCredentialStore, ProviderStore,
-    ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore, SettingsStore, Storage,
+    ApiKeyStore, AuthAccessStore, LogStore, ModelBackendStore, ModelSnapshotStore, ModelStore,
+    OAuthCredentialStore, ProviderStore, ProviderTestResult, SettingsStore, Storage,
     StorageBackend, StorageBootstrap, StorageHealth,
 };
 
@@ -22,7 +22,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct MemoryStorage {
     providers: Arc<RwLock<Vec<Provider>>>,
-    routes: Arc<RwLock<Vec<Route>>>,
+    models: Arc<RwLock<Vec<Model>>>,
     settings: Arc<RwLock<Vec<(String, String)>>>,
     oauth_credentials: Arc<MemoryOAuthCredentialStore>,
 }
@@ -30,12 +30,12 @@ pub struct MemoryStorage {
 impl MemoryStorage {
     pub fn new(
         providers: Vec<Provider>,
-        routes: Vec<Route>,
+        models: Vec<Model>,
         settings: Vec<(String, String)>,
     ) -> Self {
         Self {
             providers: Arc::new(RwLock::new(providers)),
-            routes: Arc::new(RwLock::new(routes)),
+            models: Arc::new(RwLock::new(models)),
             settings: Arc::new(RwLock::new(settings)),
             oauth_credentials: Arc::new(MemoryOAuthCredentialStore {
                 credentials: RwLock::new(std::collections::HashMap::new()),
@@ -52,13 +52,13 @@ impl Storage for MemoryStorage {
     fn providers(&self) -> &dyn ProviderStore {
         self
     }
-    fn routes(&self) -> &dyn RouteStore {
+    fn models(&self) -> &dyn ModelStore {
         self
     }
-    fn snapshots(&self) -> &dyn RouteSnapshotStore {
+    fn snapshots(&self) -> &dyn ModelSnapshotStore {
         self
     }
-    fn route_targets(&self) -> Option<&dyn RouteTargetStore> {
+    fn model_backends(&self) -> Option<&dyn ModelBackendStore> {
         None
     }
     fn settings(&self) -> &dyn SettingsStore {
@@ -126,26 +126,26 @@ impl ProviderStore for MemoryStorage {
 }
 
 #[async_trait]
-impl RouteStore for MemoryStorage {
-    async fn list(&self) -> anyhow::Result<Vec<Route>> {
-        Ok(self.routes.read().await.clone())
+impl ModelStore for MemoryStorage {
+    async fn list(&self) -> anyhow::Result<Vec<Model>> {
+        Ok(self.models.read().await.clone())
     }
 
-    async fn get(&self, id: &str) -> anyhow::Result<Option<Route>> {
+    async fn get(&self, id: &str) -> anyhow::Result<Option<Model>> {
         Ok(self
-            .routes
+            .models
             .read()
             .await
             .iter()
-            .find(|r| r.id == id)
+            .find(|m| m.id == id)
             .cloned())
     }
 
-    async fn create(&self, _input: CreateRoute) -> anyhow::Result<Route> {
+    async fn create(&self, _input: CreateModel) -> anyhow::Result<Model> {
         anyhow::bail!("create not supported in standalone (YAML) mode")
     }
 
-    async fn update(&self, _id: &str, _input: UpdateRoute) -> anyhow::Result<Route> {
+    async fn update(&self, _id: &str, _input: UpdateModel) -> anyhow::Result<Model> {
         anyhow::bail!("update not supported in standalone (YAML) mode")
     }
 
@@ -154,10 +154,10 @@ impl RouteStore for MemoryStorage {
     }
 
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
-        let routes = self.routes.read().await;
-        Ok(routes
+        let models = self.models.read().await;
+        Ok(models
             .iter()
-            .any(|r| r.name == name && exclude_id.is_none_or(|eid| r.id != eid)))
+            .any(|m| m.name == name && exclude_id.is_none_or(|eid| m.id != eid)))
     }
 
     async fn exists_by_virtual_model(
@@ -165,18 +165,18 @@ impl RouteStore for MemoryStorage {
         virtual_model: &str,
         exclude_id: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let routes = self.routes.read().await;
-        Ok(routes
+        let models = self.models.read().await;
+        Ok(models
             .iter()
-            .any(|r| r.virtual_model == virtual_model && exclude_id.is_none_or(|eid| r.id != eid)))
+            .any(|m| m.virtual_model == virtual_model && exclude_id.is_none_or(|eid| m.id != eid)))
     }
 }
 
 #[async_trait]
-impl RouteSnapshotStore for MemoryStorage {
-    async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Route>> {
-        let routes = self.routes.read().await;
-        Ok(routes.iter().filter(|r| r.is_enabled).cloned().collect())
+impl ModelSnapshotStore for MemoryStorage {
+    async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Model>> {
+        let models = self.models.read().await;
+        Ok(models.iter().filter(|m| m.is_enabled).cloned().collect())
     }
 }
 
@@ -373,7 +373,6 @@ impl OAuthCredentialStore for MemoryOAuthCredentialStore {
     }
 
     async fn list_expiring(&self, _before: Duration) -> anyhow::Result<Vec<OAuthCredential>> {
-        // Memory store: return all connected credentials (no real time comparison)
         let map = self.credentials.read().await;
         Ok(map
             .values()

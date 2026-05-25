@@ -208,7 +208,7 @@ impl AdminService {
 
     pub async fn delete_provider(&self, id: &str) -> anyhow::Result<()> {
         self.gw.storage.providers().delete(id).await?;
-        self.reload_route_cache().await?;
+        self.reload_model_cache().await?;
         self.gw.clear_ollama_capability_cache_for_provider(id).await;
         Ok(())
     }
@@ -267,17 +267,17 @@ impl AdminService {
         original_provider_id: &str,
         copied_provider_id: &str,
     ) -> anyhow::Result<()> {
-        let routes = self.list_routes().await?;
-        for route in routes.into_iter().filter(|route| {
-            route
+        let models = self.list_models().await?;
+        for model in models.into_iter().filter(|model| {
+            model
                 .targets
                 .iter()
                 .any(|target| target.provider_id == original_provider_id)
         }) {
-            let mut targets = route
+            let mut targets = model
                 .targets
                 .iter()
-                .map(|target| CreateRouteTarget {
+                .map(|target| CreateModelBackend {
                     provider_id: target.provider_id.clone(),
                     model: target.model.clone(),
                     weight: Some(target.weight),
@@ -285,11 +285,11 @@ impl AdminService {
                 })
                 .collect::<Vec<_>>();
 
-            let copied_targets = route
+            let copied_targets = model
                 .targets
                 .iter()
                 .filter(|target| target.provider_id == original_provider_id)
-                .map(|target| CreateRouteTarget {
+                .map(|target| CreateModelBackend {
                     provider_id: copied_provider_id.to_string(),
                     model: target.model.clone(),
                     weight: Some(target.weight),
@@ -297,13 +297,13 @@ impl AdminService {
                 });
             targets.extend(copied_targets);
 
-            self.update_route(
-                &route.id,
-                UpdateRoute {
+            self.update_model(
+                &model.id,
+                UpdateModel {
                     targets: Some(
                         targets
                             .into_iter()
-                            .map(|target| UpsertRouteTarget {
+                            .map(|target| UpsertModelBackend {
                                 id: None,
                                 provider_id: target.provider_id,
                                 model: target.model,
@@ -312,7 +312,7 @@ impl AdminService {
                             })
                             .collect(),
                     ),
-                    ..UpdateRoute::default()
+                    ..UpdateModel::default()
                 },
             )
             .await?;

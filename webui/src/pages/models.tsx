@@ -5,14 +5,14 @@ import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon,
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
-  CreateRoute,
-  CreateRouteTarget,
+  CreateModel,
+  CreateModelBackend,
   ModelCapabilities,
   Provider,
-  Route as RouteType,
-  RouteStrategy,
-  UpdateRoute,
-  UpsertRouteTarget,
+  Model as ModelType,
+  ModelStrategy,
+  UpdateModel,
+  UpsertModelBackend,
 } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
@@ -32,15 +32,15 @@ import {
 
 const PAGE_SIZE = 7;
 
-type RouteForm = {
+type ModelForm = {
   name: string;
   virtual_model: string;
-  strategy: RouteStrategy;
-  targets: RouteTargetForm[];
+  strategy: ModelStrategy;
+  targets: ModelBackendForm[];
   access_control: boolean;
 };
 
-type RouteTargetForm = {
+type ModelBackendForm = {
   id?: string;
   provider_id: string;
   model: string;
@@ -48,7 +48,7 @@ type RouteTargetForm = {
   priority: number;
 };
 
-const emptyCreate: RouteForm = {
+const emptyCreate: ModelForm = {
   name: "",
   virtual_model: "",
   strategy: "weighted",
@@ -60,7 +60,7 @@ function FieldLabel({ children }: { children: string }) {
   return <label className="ml-1 text-xs leading-none font-normal text-slate-900">{children}</label>;
 }
 
-function strategyLabel(value: RouteStrategy, isZh: boolean) {
+function strategyLabel(value: ModelStrategy, isZh: boolean) {
   if (value === "priority") return isZh ? "主备分级" : "Priority";
   return isZh ? "加权轮询" : "Weighted";
 }
@@ -83,7 +83,7 @@ function ToggleStatusLabel({ enabled, isZh }: { enabled: boolean; isZh: boolean 
   );
 }
 
-type RouteToggleControlProps = {
+type ModelToggleControlProps = {
   title: string;
   isZh: boolean;
   checked: boolean;
@@ -95,7 +95,7 @@ type RouteToggleControlProps = {
   onCheckedChange: (checked: boolean) => void;
 };
 
-function RouteToggleControl({
+function ModelToggleControl({
   title,
   isZh,
   checked,
@@ -105,7 +105,7 @@ function RouteToggleControl({
   uncheckedMessage,
   switchId,
   onCheckedChange,
-}: RouteToggleControlProps) {
+}: ModelToggleControlProps) {
   const message = checked ? checkedMessage : uncheckedMessage;
 
   return (
@@ -150,12 +150,12 @@ function ModelCapabilitySummary({ caps, isZh }: { caps: ModelCapabilities; isZh:
 type TargetRowProps = {
   mode: "create" | "edit";
   index: number;
-  target: RouteTargetForm;
-  strategy: RouteStrategy;
+  target: ModelBackendForm;
+  strategy: ModelStrategy;
   isZh: boolean;
   providerOptions: Array<{ value: string; label: string; provider: Provider }>;
   providerMap: Map<string, Provider>;
-  onUpdate: (index: number, patch: Partial<RouteTargetForm>) => void;
+  onUpdate: (index: number, patch: Partial<ModelBackendForm>) => void;
   onRemove: (index: number) => void;
   disableRemove: boolean;
 };
@@ -311,7 +311,7 @@ function TargetRow({
   );
 }
 
-export default function RoutesPage() {
+export default function ModelsPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
   const qc = useQueryClient();
@@ -319,10 +319,10 @@ export default function RoutesPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
-  const [createForm, setCreateForm] = useState<RouteForm>(emptyCreate);
-  const [editForm, setEditForm] = useState<(RouteForm & { id: string }) | null>(null);
+  const [createForm, setCreateForm] = useState<ModelForm>(emptyCreate);
+  const [editForm, setEditForm] = useState<(ModelForm & { id: string }) | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [routeToDelete, setRouteToDelete] = useState<RouteType | null>(null);
+  const [modelToDelete, setModelToDelete] = useState<ModelType | null>(null);
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
 
   function formatErrorMessage(error: unknown) {
@@ -336,9 +336,9 @@ export default function RoutesPage() {
     });
   }
 
-  const { data: routes = [], isLoading } = useQuery<RouteType[]>({
+  const { data: routes = [], isLoading } = useQuery<ModelType[]>({
     queryKey: ["routes"],
-    queryFn: () => backend("list_routes"),
+    queryFn: () => backend("list_models"),
   });
   const { data: providers = [] } = useQuery<Provider[]>({
     queryKey: ["providers"],
@@ -346,18 +346,18 @@ export default function RoutesPage() {
   });
 
   const createMut = useMutation({
-    mutationFn: (input: CreateRoute) => backend("create_route", { input }),
+    mutationFn: (input: CreateModel) => backend("create_model", { input }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["routes"] });
       setShowForm(false);
       setCreateForm(emptyCreate);
     },
     onError: (error: unknown) => {
-      showErrorDialog("创建路由失败", "Failed to create route", error);
+      showErrorDialog("创建模型失败", "Failed to create model", error);
     },
   });
   const updateMut = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: UpdateRoute }) => backend("update_route", { id, input }),
+    mutationFn: ({ id, input }: { id: string; input: UpdateModel }) => backend("update_model", { id, input }),
     onSuccess: () => {
       setEditError(null);
       setEditingId(null);
@@ -366,22 +366,22 @@ export default function RoutesPage() {
     },
     onError: (err: Error) => {
       setEditError(String(err));
-      showErrorDialog("保存路由失败", "Failed to save route", err);
+      showErrorDialog("保存模型失败", "Failed to save model", err);
     },
   });
   const deleteMut = useMutation({
-    mutationFn: (id: string) => backend("delete_route", { id }),
+    mutationFn: (id: string) => backend("delete_model", { id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
     onError: (error: unknown) => {
-      showErrorDialog("删除路由失败", "Failed to delete route", error);
+      showErrorDialog("删除模型失败", "Failed to delete model", error);
     },
   });
 
-  const [routeToDisable, setRouteToDisable] = useState<RouteType | null>(null);
+  const [modelToDisable, setModelToDisable] = useState<ModelType | null>(null);
 
   const toggleEnabledMut = useMutation({
     mutationFn: ({ id, is_enabled }: { id: string; is_enabled: boolean }) =>
-      backend("update_route", { id, input: { is_enabled } }),
+      backend("update_model", { id, input: { is_enabled } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
     onError: (error: unknown) => {
       showErrorDialog("操作失败", "Operation failed", error);
@@ -401,7 +401,7 @@ export default function RoutesPage() {
     if (page > totalPages - 1) setPage(0);
   }, [page, totalPages]);
 
-  function startEdit(route: RouteType) {
+  function startEdit(route: ModelType) {
     setEditingId(route.id);
     setEditError(null);
     const targets = route.targets?.length
@@ -423,14 +423,14 @@ export default function RoutesPage() {
     });
   }
 
-  function updateCreateTarget(index: number, patch: Partial<RouteTargetForm>) {
+  function updateCreateTarget(index: number, patch: Partial<ModelBackendForm>) {
     setCreateForm((prev) => ({
       ...prev,
       targets: prev.targets.map((target, idx) => (idx === index ? { ...target, ...patch } : target)),
     }));
   }
 
-  function updateEditTarget(index: number, patch: Partial<RouteTargetForm>) {
+  function updateEditTarget(index: number, patch: Partial<ModelBackendForm>) {
     setEditForm((prev) => {
       if (!prev) return prev;
       return {
@@ -472,7 +472,7 @@ export default function RoutesPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "路由" : "Routes"}</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "模型" : "Models"}</h1>
           <p className="mt-1 text-sm text-slate-500">
             {isZh ? "按虚拟模型精确匹配，自动开放所有接入协议" : "Exact match by virtual model, all ingress protocols enabled"}
           </p>
@@ -486,20 +486,20 @@ export default function RoutesPage() {
           className="flex items-center gap-2"
         >
           <Plus className="h-4 w-4" />
-          {isZh ? "新增路由" : "Add Route"}
+          {isZh ? "新增模型" : "Add Model"}
         </Button>
       </div>
 
       {showForm && (
         <div className="glass rounded-2xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "新建路由" : "New Route"}</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "新建模型" : "New Model"}</h2>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
               <Input
                 value={createForm.name}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder={isZh ? "输入路由名称" : "Enter route name"}
+                placeholder={isZh ? "输入模型名称" : "Enter model name"}
               />
             </div>
             <div className="space-y-2">
@@ -514,7 +514,7 @@ export default function RoutesPage() {
               <FieldLabel>{isZh ? "负载策略" : "Load Strategy"}</FieldLabel>
               <Select
                 value={createForm.strategy}
-                onValueChange={(value: RouteStrategy) =>
+                onValueChange={(value: ModelStrategy) =>
                   setCreateForm((prev) => ({ ...prev, strategy: value }))
                 }
               >
@@ -561,11 +561,11 @@ export default function RoutesPage() {
                 </Button>
               </div>
             </div>
-            <RouteToggleControl
+            <ModelToggleControl
               title={isZh ? "访问控制" : "Access Control"}
               isZh={isZh}
               checked={createForm.access_control}
-              checkedMessage={isZh ? "仅允许绑定路由的 API Key 访问" : "Only API keys bound to this route are allowed"}
+              checkedMessage={isZh ? "仅允许绑定模型的 API Key 访问" : "Only API keys bound to this model are allowed"}
               uncheckedMessage={isZh ? "仅允许携带 API Key 的请求访问" : "Only requests with an API key are allowed"}
               switchId="create-route-access-control"
               onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, access_control: checked }))}
@@ -603,7 +603,7 @@ export default function RoutesPage() {
       ) : routes.length === 0 ? (
         <div className="glass rounded-2xl p-12 text-center">
           <RouteIcon className="mx-auto h-10 w-10 text-slate-400" />
-          <p className="mt-3 text-sm text-slate-500">{isZh ? "还没有配置路由" : "No routes configured"}</p>
+          <p className="mt-3 text-sm text-slate-500">{isZh ? "还没有配置模型" : "No models configured"}</p>
         </div>
       ) : (
         <div className="grid gap-3">
@@ -614,7 +614,7 @@ export default function RoutesPage() {
               return (
                 <div key={route.id} className="glass rounded-2xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-900">{isZh ? "编辑路由" : "Edit Route"}</h3>
+                    <h3 className="text-sm font-semibold text-slate-900">{isZh ? "编辑模型" : "Edit Model"}</h3>
                     <button
                       onClick={() => {
                         setEditingId(null);
@@ -647,7 +647,7 @@ export default function RoutesPage() {
                       <FieldLabel>{isZh ? "负载策略" : "Load Strategy"}</FieldLabel>
                       <Select
                         value={editForm.strategy}
-                        onValueChange={(value: RouteStrategy) =>
+                        onValueChange={(value: ModelStrategy) =>
                           setEditForm((prev) => (prev ? { ...prev, strategy: value } : prev))
                         }
                       >
@@ -694,11 +694,11 @@ export default function RoutesPage() {
                         </Button>
                       </div>
                     </div>
-                    <RouteToggleControl
+                    <ModelToggleControl
                       title={isZh ? "访问控制" : "Access Control"}
                       isZh={isZh}
                       checked={editForm.access_control}
-                      checkedMessage={isZh ? "仅允许绑定路由的 API Key 访问" : "Only API keys bound to this route are allowed"}
+                      checkedMessage={isZh ? "仅允许绑定模型的 API Key 访问" : "Only API keys bound to this model are allowed"}
                       uncheckedMessage={isZh ? "仅允许携带 API Key 的请求访问" : "Only requests with an API key are allowed"}
                       onCheckedChange={(checked) =>
                         setEditForm((prev) => (prev ? { ...prev, access_control: checked } : prev))
@@ -775,7 +775,7 @@ export default function RoutesPage() {
                   <button
                     onClick={() => {
                       if (route.is_enabled) {
-                        setRouteToDisable(route);
+                        setModelToDisable(route);
                       } else {
                         toggleEnabledMut.mutate({ id: route.id, is_enabled: true });
                       }
@@ -796,7 +796,7 @@ export default function RoutesPage() {
                     <Pencil className="h-4 w-4" />
                   </button>
                   <button
-                    onClick={() => setRouteToDelete(route)}
+                    onClick={() => setModelToDelete(route)}
                     className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -835,39 +835,39 @@ export default function RoutesPage() {
       )}
 
       <ConfirmDialog
-        open={Boolean(routeToDisable)}
+        open={Boolean(modelToDisable)}
         onOpenChange={(open) => {
-          if (!open) setRouteToDisable(null);
+          if (!open) setModelToDisable(null);
         }}
-        title={isZh ? "确认禁用路由" : "Confirm route disable"}
+        title={isZh ? "确认禁用模型" : "Confirm model disable"}
         description={isZh ? "禁用后，该虚拟模型将不可用，确认禁用？" : "After disabling, the virtual model will be unavailable. Confirm disable?"}
         cancelText={isZh ? "取消" : "Cancel"}
         confirmText={isZh ? "禁用" : "Disable"}
         onConfirm={() => {
-          if (!routeToDisable) return;
-          toggleEnabledMut.mutate({ id: routeToDisable.id, is_enabled: false });
-          setRouteToDisable(null);
+          if (!modelToDisable) return;
+          toggleEnabledMut.mutate({ id: modelToDisable.id, is_enabled: false });
+          setModelToDisable(null);
         }}
       />
       <ConfirmDialog
-        open={Boolean(routeToDelete)}
+        open={Boolean(modelToDelete)}
         onOpenChange={(open) => {
-          if (!open) setRouteToDelete(null);
+          if (!open) setModelToDelete(null);
         }}
-        title={isZh ? "确认删除路由" : "Confirm route deletion"}
+        title={isZh ? "确认删除模型" : "Confirm model deletion"}
         description={
-          routeToDelete
+          modelToDelete
             ? (isZh
-              ? `此操作不可撤销。确认删除「${routeToDelete.name}」吗？`
-              : `This action cannot be undone. Delete "${routeToDelete.name}"?`)
+              ? `此操作不可撤销。确认删除「${modelToDelete.name}」吗？`
+              : `This action cannot be undone. Delete "${modelToDelete.name}"?`)
             : undefined
         }
         cancelText={isZh ? "取消" : "Cancel"}
         confirmText={isZh ? "删除" : "Delete"}
         onConfirm={() => {
-          if (!routeToDelete) return;
-          deleteMut.mutate(routeToDelete.id);
-          setRouteToDelete(null);
+          if (!modelToDelete) return;
+          deleteMut.mutate(modelToDelete.id);
+          setModelToDelete(null);
         }}
       />
       <ConfirmDialog
@@ -885,8 +885,8 @@ export default function RoutesPage() {
   );
 }
 
-function buildCreatePayload(form: RouteForm): CreateRoute {
-  const targets: CreateRouteTarget[] = form.targets.map((target) => ({
+function buildCreatePayload(form: ModelForm): CreateModel {
+  const targets: CreateModelBackend[] = form.targets.map((target) => ({
     provider_id: target.provider_id,
     model: target.model.trim(),
     weight: target.weight,
@@ -904,8 +904,8 @@ function buildCreatePayload(form: RouteForm): CreateRoute {
   };
 }
 
-function buildUpdatePayload(form: RouteForm & { id: string }): UpdateRoute {
-  const targets: UpsertRouteTarget[] = form.targets.map((target) => ({
+function buildUpdatePayload(form: ModelForm & { id: string }): UpdateModel {
+  const targets: UpsertModelBackend[] = form.targets.map((target) => ({
     id: target.id,
     provider_id: target.provider_id,
     model: target.model.trim(),

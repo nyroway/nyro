@@ -80,6 +80,16 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     ensure_request_log_column(pool, "route_id", "TEXT").await?;
     ensure_request_log_column(pool, "route_name", "TEXT").await?;
     ensure_request_log_column(pool, "cache_read_tokens", "INTEGER DEFAULT 0").await?;
+
+    // Rename tables: routes → models, route_targets → model_backends, api_key_routes → api_key_models
+    rename_table_if_needed(pool, "routes", "models").await?;
+    rename_table_if_needed(pool, "route_targets", "model_backends").await?;
+    rename_table_if_needed(pool, "api_key_routes", "api_key_models").await?;
+
+    // Rename columns within renamed tables
+    rename_column_if_needed(pool, "model_backends", "route_id", "model_id").await?;
+    rename_column_if_needed(pool, "api_key_models", "route_id", "model_id").await?;
+
     Ok(())
 }
 
@@ -648,6 +658,38 @@ async fn column_exists(
             .map(|name| name == column_name)
             .unwrap_or(false)
     }))
+}
+
+async fn table_exists(pool: &SqlitePool, table_name: &str) -> anyhow::Result<bool> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({table_name})"))
+        .fetch_all(pool)
+        .await?;
+    Ok(!rows.is_empty())
+}
+
+async fn rename_table_if_needed(pool: &SqlitePool, old: &str, new: &str) -> anyhow::Result<()> {
+    if table_exists(pool, old).await? && !table_exists(pool, new).await? {
+        tracing::info!("renaming table {old} -> {new}");
+        sqlx::query(&format!("ALTER TABLE {old} RENAME TO {new}"))
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn rename_column_if_needed(
+    pool: &SqlitePool,
+    table: &str,
+    old: &str,
+    new: &str,
+) -> anyhow::Result<()> {
+    if column_exists(pool, table, old).await? && !column_exists(pool, table, new).await? {
+        tracing::info!("renaming column {table}.{old} -> {table}.{new}");
+        sqlx::query(&format!("ALTER TABLE {table} RENAME COLUMN {old} TO {new}"))
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
 }
 
 const INIT_SQL: &str = r#"

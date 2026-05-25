@@ -20,24 +20,24 @@ export interface Provider {
   updated_at: string;
 }
 
-export interface Route {
+export interface Model {
   id: string;
   name: string;
   virtual_model: string;
-  strategy: RouteStrategy;
+  strategy: ModelStrategy;
   target_provider: string;
   target_model: string;
   access_control: boolean;
   is_enabled: boolean;
   created_at: string;
-  targets: RouteTarget[];
+  targets: ModelBackend[];
 }
 
-export type RouteStrategy = "weighted" | "priority";
+export type ModelStrategy = "weighted" | "priority";
 
-export interface RouteTarget {
+export interface ModelBackend {
   id: string;
-  route_id: string;
+  model_id: string;
   provider_id: string;
   model: string;
   weight: number;
@@ -57,7 +57,7 @@ export interface ApiKey {
   expires_at?: string | null;
   created_at: string;
   updated_at: string;
-  route_ids: string[];
+  model_ids: string[];
 }
 
 export interface RequestLog {
@@ -71,8 +71,8 @@ export interface RequestLog {
   upstream_protocol?: string;
   provider_id?: string;
   provider_name?: string;
-  route_id?: string;
-  route_name?: string;
+  model_id?: string;
+  model_name?: string;
   upstream_url?: string;
   client_model?: string;
   upstream_model?: string;
@@ -227,35 +227,35 @@ export interface UpdateProvider {
   is_enabled?: boolean;
 }
 
-export interface CreateRoute {
+export interface CreateModel {
   name: string;
   virtual_model: string;
-  strategy?: RouteStrategy;
+  strategy?: ModelStrategy;
   target_provider: string;
   target_model: string;
-  targets?: CreateRouteTarget[];
+  targets?: CreateModelBackend[];
   access_control?: boolean;
 }
 
-export interface UpdateRoute {
+export interface UpdateModel {
   name?: string;
   virtual_model?: string;
-  strategy?: RouteStrategy;
+  strategy?: ModelStrategy;
   target_provider?: string;
   target_model?: string;
-  targets?: UpsertRouteTarget[];
+  targets?: UpsertModelBackend[];
   access_control?: boolean;
   is_enabled?: boolean;
 }
 
-export interface CreateRouteTarget {
+export interface CreateModelBackend {
   provider_id: string;
   model: string;
   weight?: number;
   priority?: number;
 }
 
-export interface UpsertRouteTarget {
+export interface UpsertModelBackend {
   id?: string;
   provider_id: string;
   model: string;
@@ -270,7 +270,7 @@ export interface CreateApiKey {
   tpm?: number;
   tpd?: number;
   expires_at?: string;
-  route_ids: string[];
+  model_ids: string[];
 }
 
 export interface UpdateApiKey {
@@ -281,7 +281,7 @@ export interface UpdateApiKey {
   tpd?: number;
   is_enabled?: boolean;
   expires_at?: string;
-  route_ids?: string[];
+  model_ids?: string[];
 }
 
 export interface LogQuery {
@@ -295,7 +295,7 @@ export interface LogQuery {
 export interface ExportData {
   version: number;
   providers: ExportProvider[];
-  routes: ExportRoute[];
+  models: ExportModel[];
   settings: [string, string][];
 }
 
@@ -313,7 +313,7 @@ export interface ExportProvider {
   is_enabled: boolean;
 }
 
-export interface ExportRoute {
+export interface ExportModel {
   name: string;
   virtual_model: string;
   target_model: string;
@@ -323,7 +323,7 @@ export interface ExportRoute {
 
 export interface ImportResult {
   providers_imported: number;
-  routes_imported: number;
+  models_imported: number;
   settings_imported: number;
 }
 

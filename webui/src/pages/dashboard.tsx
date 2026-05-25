@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Line, LineChart } from "recharts";
 import { backend } from "@/lib/backend";
-import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, GatewayStatus, Provider, Route as RouteType } from "@/lib/types";
-import { Activity, Zap, Clock, AlertTriangle, Server, Route } from "lucide-react";
+import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, GatewayStatus, Provider, Model as ModelType } from "@/lib/types";
+import { Activity, Zap, Clock, AlertTriangle, Server, Route as RouteIcon } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 
 function fmt(n: number) {
@@ -56,9 +56,9 @@ export default function DashboardPage() {
     queryFn: () => backend("get_providers"),
   });
 
-  const { data: routes = [] } = useQuery<RouteType[]>({
+  const { data: routes = [] } = useQuery<ModelType[]>({
     queryKey: ["routes"],
-    queryFn: () => backend("list_routes"),
+    queryFn: () => backend("list_models"),
   });
 
   const errorRate = overview && overview.total_requests > 0
@@ -73,7 +73,7 @@ export default function DashboardPage() {
     { label: isZh ? "平均延迟" : "Avg Latency", value: fmtLatency(overview?.avg_duration_ms ?? 0), icon: Clock, color: "text-green-600" },
     { label: isZh ? "错误率" : "Error Rate", value: `${errorRate}%`, icon: AlertTriangle, color: "text-red-500" },
     { label: isZh ? "提供商" : "Providers", value: String(providers.length), icon: Server, color: "text-purple-600" },
-    { label: isZh ? "路由" : "Routes", value: String(routes.length), icon: Route, color: "text-indigo-600" },
+    { label: isZh ? "模型" : "Models", value: String(routes.length), icon: RouteIcon, color: "text-indigo-600" },
   ];
 
   const chartHourly = hourly.map((h) => ({

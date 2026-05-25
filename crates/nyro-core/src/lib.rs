@@ -47,7 +47,7 @@ pub struct Gateway {
     pub storage_kind: RuntimeStorageKind,
     pub http_client: reqwest::Client,
     proxy_client_cache: Arc<tokio::sync::RwLock<Option<ProxyClientCache>>>,
-    pub route_cache: Arc<tokio::sync::RwLock<router::RouteCache>>,
+    pub model_cache: Arc<tokio::sync::RwLock<router::ModelCache>>,
     pub health_registry: Arc<HealthRegistry>,
     pub ollama_capability_cache: Arc<tokio::sync::RwLock<HashMap<String, CapabilityCacheEntry>>>,
     pub log_tx: mpsc::Sender<LogEntry>,
@@ -131,8 +131,8 @@ impl Gateway {
             .timeout(std::time::Duration::from_secs(300))
             .build()?;
 
-        let route_cache = Arc::new(tokio::sync::RwLock::new(
-            router::RouteCache::load(storage.snapshots()).await?,
+        let model_cache = Arc::new(tokio::sync::RwLock::new(
+            router::ModelCache::load(storage.snapshots()).await?,
         ));
         let health_registry = Arc::new(HealthRegistry::new());
         let ollama_capability_cache = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
@@ -145,7 +145,7 @@ impl Gateway {
             storage_kind,
             http_client,
             proxy_client_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            route_cache,
+            model_cache,
             health_registry,
             ollama_capability_cache,
             log_tx,

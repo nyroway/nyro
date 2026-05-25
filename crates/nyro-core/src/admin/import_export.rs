@@ -44,7 +44,7 @@ impl AdminService {
 
     pub async fn export_config(&self) -> anyhow::Result<ExportData> {
         let providers = self.list_providers().await?;
-        let routes = self.list_routes().await?;
+        let models = self.list_models().await?;
         let settings = self.gw.storage.settings().list_all().await?;
 
         Ok(ExportData {
@@ -68,14 +68,14 @@ impl AdminService {
                     is_enabled: p.is_enabled,
                 })
                 .collect(),
-            routes: routes
+            models: models
                 .into_iter()
-                .map(|r| ExportRoute {
-                    name: r.name,
-                    virtual_model: r.virtual_model,
-                    target_model: r.target_model,
-                    access_control: r.access_control,
-                    is_enabled: r.is_enabled,
+                .map(|m| ExportModel {
+                    name: m.name,
+                    virtual_model: m.virtual_model,
+                    target_model: m.target_model,
+                    access_control: m.access_control,
+                    is_enabled: m.is_enabled,
                 })
                 .collect(),
             settings: settings.into_iter().collect(),
@@ -84,7 +84,7 @@ impl AdminService {
 
     pub async fn import_config(&self, data: ExportData) -> anyhow::Result<ImportResult> {
         let mut providers_imported = 0u32;
-        let mut routes_imported = 0u32;
+        let mut models_imported = 0u32;
         let mut settings_imported = 0u32;
 
         for p in &data.providers {
@@ -125,31 +125,31 @@ impl AdminService {
             .next()
             .map(|provider| provider.id);
 
-        for r in &data.routes {
+        for m in &data.models {
             let exists = self
                 .gw
                 .storage
-                .routes()
-                .exists_by_name(&r.name, None)
+                .models()
+                .exists_by_name(&m.name, None)
                 .await
                 .unwrap_or(false);
 
             if !exists
                 && let Some(pid) = fallback_provider_id.clone()
                 && self
-                    .create_route(CreateRoute {
-                        name: r.name.clone(),
-                        virtual_model: r.virtual_model.clone(),
+                    .create_model(CreateModel {
+                        name: m.name.clone(),
+                        virtual_model: m.virtual_model.clone(),
                         strategy: Some("weighted".to_string()),
                         target_provider: pid,
-                        target_model: r.target_model.clone(),
+                        target_model: m.target_model.clone(),
                         targets: vec![],
-                        access_control: Some(r.access_control),
+                        access_control: Some(m.access_control),
                     })
                     .await
                     .is_ok()
             {
-                routes_imported += 1;
+                models_imported += 1;
             }
         }
 
@@ -160,7 +160,7 @@ impl AdminService {
 
         Ok(ImportResult {
             providers_imported,
-            routes_imported,
+            models_imported,
             settings_imported,
         })
     }

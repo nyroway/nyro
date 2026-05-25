@@ -1,9 +1,9 @@
 //! Security layer: API-key authentication and per-key quota enforcement.
 //!
 //! This module owns all logic that was previously inside `handler.rs` under
-//! `authorize_route_access`, `extract_api_key`, and `is_key_expired`.
+//! `authorize_model_access`, `extract_api_key`, and `is_key_expired`.
 //!
-//! The public API is a single async function `check_route_access` that returns
+//! The public API is a single async function `check_model_access` that returns
 //! an `AuthenticatedKey` on success or a `GatewayError` on failure.
 
 use async_trait::async_trait;
@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, header};
 use chrono::{NaiveDateTime, Utc};
 
 use crate::Gateway;
-use crate::db::models::{Provider, Route};
+use crate::db::models::{Model, Provider};
 use crate::error::{AccessDenial, AuthFailure, GatewayError, QuotaWindow};
 use crate::proxy::context::{AuthSubject, RequestContext};
 use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
@@ -41,7 +41,7 @@ impl AuthenticatedKey {
 pub trait ProxyAccessStore: Send + Sync {
     async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>>;
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
-    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
+    async fn model_binding_exists(&self, api_key_id: &str, model_id: &str) -> anyhow::Result<bool>;
     async fn request_count_since(
         &self,
         api_key_id: &str,
@@ -75,9 +75,9 @@ impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
         }
     }
 
-    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool> {
+    async fn model_binding_exists(&self, api_key_id: &str, model_id: &str) -> anyhow::Result<bool> {
         match self.gw.storage.auth() {
-            Some(store) => store.route_binding_exists(api_key_id, route_id).await,
+            Some(store) => store.model_binding_exists(api_key_id, model_id).await,
             None => Ok(false),
         }
     }
@@ -114,13 +114,13 @@ impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
 ///
 /// Internally stamps `ctx.auth_subject` so downstream layers don't need to
 /// repeat the lookup.
-pub async fn check_route_access(
+pub async fn check_model_access(
     access_store: &dyn ProxyAccessStore,
-    route: &Route,
+    model: &Model,
     headers: &HeaderMap,
     ctx: &mut RequestContext,
 ) -> Result<AuthenticatedKey, GatewayError> {
-    if !route.access_control {
+    if !model.access_control {
         return Ok(AuthenticatedKey { id: None });
     }
 
@@ -152,12 +152,12 @@ pub async fn check_route_access(
     }
 
     let allowed = access_store
-        .route_binding_exists(&key_row.id, &route.id)
+        .model_binding_exists(&key_row.id, &model.id)
         .await
         .map_err(GatewayError::internal)?;
     if !allowed {
         return Err(GatewayError::Forbidden {
-            reason: AccessDenial::RouteNotAllowed,
+            reason: AccessDenial::ModelNotAllowed,
         });
     }
 
