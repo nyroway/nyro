@@ -111,7 +111,7 @@ pub struct Model {
     pub name: String,
     #[serde(alias = "vmodel")]
     pub virtual_model: String,
-    pub strategy: String,
+    pub balance: String,
     pub target_provider: String,
     pub target_model: String,
     pub access_control: bool,
@@ -136,7 +136,7 @@ pub struct ModelBackend {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
-pub enum ModelStrategy {
+pub enum ModelBalance {
     /// Weighted reservoir sampling — targets with higher weight are preferred.
     #[default]
     Weighted,
@@ -148,7 +148,7 @@ pub enum ModelStrategy {
     Latency,
 }
 
-impl ModelStrategy {
+impl ModelBalance {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Weighted => "weighted",
@@ -159,7 +159,7 @@ impl ModelStrategy {
     }
 }
 
-impl std::str::FromStr for ModelStrategy {
+impl std::str::FromStr for ModelBalance {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -168,7 +168,7 @@ impl std::str::FromStr for ModelStrategy {
             "priority" => Ok(Self::Priority),
             "cooldown" => Ok(Self::Cooldown),
             "latency" => Ok(Self::Latency),
-            other => anyhow::bail!("unsupported model strategy: {other}"),
+            other => anyhow::bail!("unsupported model balance: {other}"),
         }
     }
 }
@@ -217,8 +217,10 @@ pub struct RequestLog {
     pub upstream_protocol: Option<String>,
     pub provider_id: Option<String>,
     pub provider_name: Option<String>,
-    pub route_id: Option<String>,
-    pub route_name: Option<String>,
+    #[serde(alias = "route_id")]
+    pub model_id: Option<String>,
+    #[serde(alias = "route_name")]
+    pub model_name: Option<String>,
     pub upstream_url: Option<String>,
     pub client_model: Option<String>,
     pub upstream_model: Option<String>,
@@ -299,7 +301,8 @@ pub struct UpdateModel {
     pub name: Option<String>,
     #[serde(alias = "vmodel")]
     pub virtual_model: Option<String>,
-    pub strategy: Option<String>,
+    #[serde(rename = "balance", alias = "strategy")]
+    pub balance: Option<String>,
     pub target_provider: Option<String>,
     pub target_model: Option<String>,
     #[serde(default)]
@@ -313,7 +316,8 @@ pub struct CreateModel {
     pub name: String,
     #[serde(alias = "vmodel")]
     pub virtual_model: String,
-    pub strategy: Option<String>,
+    #[serde(rename = "balance", alias = "strategy")]
+    pub balance: Option<String>,
     pub target_provider: String,
     pub target_model: String,
     #[serde(default)]

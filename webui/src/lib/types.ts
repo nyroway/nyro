@@ -24,7 +24,7 @@ export interface Model {
   id: string;
   name: string;
   virtual_model: string;
-  strategy: ModelStrategy;
+  balance: ModelBalance;
   target_provider: string;
   target_model: string;
   access_control: boolean;
@@ -33,7 +33,7 @@ export interface Model {
   targets: ModelBackend[];
 }
 
-export type ModelStrategy = "weighted" | "priority";
+export type ModelBalance = "weighted" | "priority";
 
 export interface ModelBackend {
   id: string;
@@ -230,7 +230,7 @@ export interface UpdateProvider {
 export interface CreateModel {
   name: string;
   virtual_model: string;
-  strategy?: ModelStrategy;
+  balance?: ModelBalance;
   target_provider: string;
   target_model: string;
   targets?: CreateModelBackend[];
@@ -240,7 +240,7 @@ export interface CreateModel {
 export interface UpdateModel {
   name?: string;
   virtual_model?: string;
-  strategy?: ModelStrategy;
+  balance?: ModelBalance;
   target_provider?: string;
   target_model?: string;
   targets?: UpsertModelBackend[];

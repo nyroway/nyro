@@ -195,15 +195,11 @@ def build_harness(work_dir: Path) -> None:
             let route = admin.create_model(CreateModel {
                 name: format!("{backend}-e2e-model"),
                 virtual_model: format!("{backend}-model"),
-                strategy: None,
+                balance: None,
                 target_provider: provider.id.clone(),
                 target_model: "gpt-4o-mini".to_string(),
                 targets: vec![],
                 access_control: Some(true),
-                cache: None,
-                cache_exact_ttl: None,
-                cache_semantic_ttl: None,
-                cache_semantic_threshold: None,
             }).await?;
 
             let api_key = admin.create_api_key(CreateApiKey {

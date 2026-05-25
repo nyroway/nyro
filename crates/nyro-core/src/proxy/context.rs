@@ -207,8 +207,8 @@ pub struct RequestContext {
     pub cancellation: CancellationToken,
     /// The protocol the client spoke on the ingress side.
     pub ingress_protocol: ProtocolId,
-    /// Matched route ID (after `security` layer).
-    pub route_id: Option<String>,
+    /// Matched model ID (after `security` layer).
+    pub model_id: Option<String>,
     /// Resolved provider ID (after `planner` layer).
     pub provider_id: Option<String>,
     /// Selected target ID (after `planner` layer).
@@ -232,7 +232,7 @@ impl RequestContext {
             deadline: Deadline::from_now(timeout),
             cancellation: CancellationToken::new(),
             ingress_protocol,
-            route_id: None,
+            model_id: None,
             provider_id: None,
             target_id: None,
             egress_protocol: None,

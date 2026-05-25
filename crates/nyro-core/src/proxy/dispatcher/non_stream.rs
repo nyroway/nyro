@@ -190,7 +190,7 @@ pub(super) async fn handle_non_stream(
     if hook_registry.has_response_hooks() {
         let latency_ms = call_ctx.start.elapsed().as_millis() as u64;
         let hook_ctx = HookContext {
-            route_id: call_ctx.route_id.to_string(),
+            model_id: call_ctx.model_id.to_string(),
             provider_name: call_ctx.provider.name.clone(),
             model: ai_resp.model.clone(),
             api_key_id: call_ctx.api_key_id.map(str::to_string),
@@ -341,8 +341,8 @@ mod tests {
         let call_ctx = CallCtx {
             gw: gw.clone(),
             provider: &provider,
-            route_id: "route-google",
-            route_name: "Google route",
+            model_id: "route-google",
+            model_name: "Google route",
             egress: GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
             ingress: OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
             ingress_str: "openai/chat/v1",

@@ -13,8 +13,8 @@ use crate::protocol::ir::{AiRequest, AiResponse};
 /// hooks can be `'static` without lifetime constraints.
 #[derive(Debug, Clone)]
 pub struct HookContext {
-    /// Matched route ID (from the route database row).
-    pub route_id: String,
+    /// Matched model ID (from the model database row).
+    pub model_id: String,
     /// Upstream provider name (empty for `RequestHook` — provider not yet selected).
     pub provider_name: String,
     /// The model name as seen by the client (may differ from upstream model).

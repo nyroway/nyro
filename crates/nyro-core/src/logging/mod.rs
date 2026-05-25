@@ -16,13 +16,13 @@ pub struct LogEntry {
     /// Unix 毫秒时间戳
     pub created_at: i64,
 
-    // === 路由 ===
+    // === 模型 ===
     pub client_protocol: String,
     pub upstream_protocol: String,
     pub provider_id: String,
     pub provider_name: String,
-    pub route_id: Option<String>,
-    pub route_name: Option<String>,
+    pub model_id: Option<String>,
+    pub model_name: Option<String>,
     pub upstream_url: Option<String>,
     pub client_model: String,
     pub upstream_model: String,

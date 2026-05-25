@@ -140,7 +140,7 @@ impl AdminService {
                     .create_model(CreateModel {
                         name: m.name.clone(),
                         virtual_model: m.virtual_model.clone(),
-                        strategy: Some("weighted".to_string()),
+                        balance: Some("weighted".to_string()),
                         target_provider: pid,
                         target_model: m.target_model.clone(),
                         targets: vec![],

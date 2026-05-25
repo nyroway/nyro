@@ -17,10 +17,10 @@
 //!
 //! ```rust,ignore
 //! // Dispatcher
-//! let ordered = TargetSelector::select_ordered(&route.strategy, &targets);
+//! let ordered = TargetSelector::select_ordered(&route.balance, &targets);
 //! // After a successful call (for stateful strategies):
-//! TargetSelector::record_selected(&route.strategy, &target_key);
-//! TargetSelector::record_latency(&route.strategy, &target_key, elapsed_ms);
+//! TargetSelector::record_selected(&route.balance, &target_key);
+//! TargetSelector::record_latency(&route.balance, &target_key, elapsed_ms);
 //! ```
 
 use std::collections::{BTreeMap, HashMap};
@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use rand::Rng;
 
-use crate::db::models::{ModelBackend, ModelStrategy};
+use crate::db::models::{ModelBackend, ModelBalance};
 
 // ── SelectedTarget ────────────────────────────────────────────────────────────
 
@@ -176,29 +176,29 @@ impl RoutingStrategy for LatencyStrategy {
 pub struct TargetSelector;
 
 impl TargetSelector {
-    /// Return targets ordered by the named strategy. Unrecognised strategy
+    /// Return targets ordered by the named balance. Unrecognised balance
     /// strings fall back to `weighted`.
-    pub fn select_ordered(strategy: &str, targets: &[ModelBackend]) -> Vec<SelectedTarget> {
-        match ModelStrategy::from_str(strategy).unwrap_or_default() {
-            ModelStrategy::Weighted => WeightedStrategy.select_ordered(targets),
-            ModelStrategy::Priority => PriorityStrategy.select_ordered(targets),
-            ModelStrategy::Cooldown => CooldownStrategy::global().select_ordered(targets),
-            ModelStrategy::Latency => LatencyStrategy::global().select_ordered(targets),
+    pub fn select_ordered(balance: &str, targets: &[ModelBackend]) -> Vec<SelectedTarget> {
+        match ModelBalance::from_str(balance).unwrap_or_default() {
+            ModelBalance::Weighted => WeightedStrategy.select_ordered(targets),
+            ModelBalance::Priority => PriorityStrategy.select_ordered(targets),
+            ModelBalance::Cooldown => CooldownStrategy::global().select_ordered(targets),
+            ModelBalance::Latency => LatencyStrategy::global().select_ordered(targets),
         }
     }
 
     /// Record that `target_key` was successfully selected.
-    /// Only meaningful for the `cooldown` strategy; a no-op for others.
-    pub fn record_selected(strategy: &str, target_key: &str) {
-        if ModelStrategy::from_str(strategy).unwrap_or_default() == ModelStrategy::Cooldown {
+    /// Only meaningful for the `cooldown` balance; a no-op for others.
+    pub fn record_selected(balance: &str, target_key: &str) {
+        if ModelBalance::from_str(balance).unwrap_or_default() == ModelBalance::Cooldown {
             CooldownStrategy::global().record_selected(target_key);
         }
     }
 
     /// Record observed response latency for `target_key`.
-    /// Only meaningful for the `latency` strategy; a no-op for others.
-    pub fn record_latency(strategy: &str, target_key: &str, latency_ms: f64) {
-        if ModelStrategy::from_str(strategy).unwrap_or_default() == ModelStrategy::Latency {
+    /// Only meaningful for the `latency` balance; a no-op for others.
+    pub fn record_latency(balance: &str, target_key: &str, latency_ms: f64) {
+        if ModelBalance::from_str(balance).unwrap_or_default() == ModelBalance::Latency {
             LatencyStrategy::global().record_latency(target_key, latency_ms);
         }
     }

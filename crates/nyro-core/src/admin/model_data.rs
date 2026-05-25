@@ -7,11 +7,11 @@ pub(super) fn ensure_virtual_model(model: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn normalize_model_strategy(strategy: Option<&str>) -> anyhow::Result<String> {
-    let normalized = strategy.unwrap_or("weighted").trim().to_ascii_lowercase();
+pub(super) fn normalize_model_balance(balance: Option<&str>) -> anyhow::Result<String> {
+    let normalized = balance.unwrap_or("weighted").trim().to_ascii_lowercase();
     match normalized.as_str() {
         "weighted" | "priority" => Ok(normalized),
-        _ => anyhow::bail!("unsupported model strategy: {normalized}"),
+        _ => anyhow::bail!("unsupported model balance: {normalized}"),
     }
 }
 

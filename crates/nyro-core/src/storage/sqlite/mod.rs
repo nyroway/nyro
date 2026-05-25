@@ -486,7 +486,7 @@ impl SqliteModelStore {
 impl ModelStore for SqliteModelStore {
     async fn list(&self) -> anyhow::Result<Vec<Model>> {
         Ok(sqlx::query_as::<_, Model>(
-            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models ORDER BY created_at DESC",
+            "SELECT id, name, virtual_model, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?)
@@ -494,7 +494,7 @@ impl ModelStore for SqliteModelStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Model>> {
         Ok(sqlx::query_as::<_, Model>(
-            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models WHERE id = ?",
+            "SELECT id, name, virtual_model, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -504,16 +504,16 @@ impl ModelStore for SqliteModelStore {
     async fn create(&self, input: CreateModel) -> anyhow::Result<Model> {
         let id = uuid::Uuid::new_v4().to_string();
         let virtual_model = input.virtual_model.trim().to_string();
-        let strategy = input.strategy.unwrap_or_else(|| "weighted".to_string());
+        let balance = input.balance.unwrap_or_else(|| "weighted".to_string());
         if self.has_match_pattern_column().await? {
             sqlx::query(
-                "INSERT INTO models (id, name, virtual_model, match_pattern, strategy, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO models (id, name, virtual_model, match_pattern, balance, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(input.name.trim())
             .bind(&virtual_model)
             .bind(&virtual_model)
-            .bind(strategy)
+            .bind(balance)
             .bind(input.target_provider.trim())
             .bind(input.target_model.trim())
             .bind(input.access_control.unwrap_or(false))
@@ -521,12 +521,12 @@ impl ModelStore for SqliteModelStore {
             .await?;
         } else {
             sqlx::query(
-                "INSERT INTO models (id, name, virtual_model, strategy, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO models (id, name, virtual_model, balance, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(input.name.trim())
             .bind(&virtual_model)
-            .bind(strategy)
+            .bind(balance)
             .bind(input.target_provider.trim())
             .bind(input.target_model.trim())
             .bind(input.access_control.unwrap_or(false))
@@ -544,7 +544,7 @@ impl ModelStore for SqliteModelStore {
             .unwrap_or(current.virtual_model)
             .trim()
             .to_string();
-        let strategy = input.strategy.unwrap_or(current.strategy);
+        let balance = input.balance.unwrap_or(current.balance);
         let target_provider = input.target_provider.unwrap_or(current.target_provider);
         let target_model = input.target_model.unwrap_or(current.target_model);
         let access_control = input.access_control.unwrap_or(current.access_control);
@@ -552,12 +552,12 @@ impl ModelStore for SqliteModelStore {
 
         if self.has_match_pattern_column().await? {
             sqlx::query(
-                "UPDATE models SET name=?, virtual_model=?, match_pattern=?, strategy=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
+                "UPDATE models SET name=?, virtual_model=?, match_pattern=?, balance=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
             )
             .bind(name.trim())
             .bind(&virtual_model)
             .bind(&virtual_model)
-            .bind(strategy.trim().to_lowercase())
+            .bind(balance.trim().to_lowercase())
             .bind(target_provider.trim())
             .bind(target_model.trim())
             .bind(access_control)
@@ -567,11 +567,11 @@ impl ModelStore for SqliteModelStore {
             .await?;
         } else {
             sqlx::query(
-                "UPDATE models SET name=?, virtual_model=?, strategy=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
+                "UPDATE models SET name=?, virtual_model=?, balance=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
             )
             .bind(name.trim())
             .bind(&virtual_model)
-            .bind(strategy.trim().to_lowercase())
+            .bind(balance.trim().to_lowercase())
             .bind(target_provider.trim())
             .bind(target_model.trim())
             .bind(access_control)
@@ -651,7 +651,7 @@ impl ModelSnapshotStore for SqliteModelStore {
             r#"SELECT
                 id, name,
                 virtual_model,
-                COALESCE(strategy, 'weighted') AS strategy,
+                COALESCE(balance, 'weighted') AS balance,
                 target_provider, target_model,
                 COALESCE(access_control, 0) AS access_control,
                 COALESCE(is_enabled, 1) AS is_enabled,
@@ -1046,7 +1046,7 @@ impl LogStore for SqliteLogStore {
             sqlx::query(
                 r#"INSERT INTO request_logs
                     (id, created_at, api_key_id, api_key_name,
-                     client_protocol, upstream_protocol, provider_id, provider_name, route_id, route_name, upstream_url,
+                     client_protocol, upstream_protocol, provider_id, provider_name, model_id, model_name, upstream_url,
                      client_model, upstream_model,
                      method, path,
                      client_request_headers, client_request_body,
@@ -1067,8 +1067,8 @@ impl LogStore for SqliteLogStore {
             .bind(&entry.upstream_protocol)
             .bind(&entry.provider_id)
             .bind(&entry.provider_name)
-            .bind(&entry.route_id)
-            .bind(&entry.route_name)
+            .bind(&entry.model_id)
+            .bind(&entry.model_name)
             .bind(&entry.upstream_url)
             .bind(&entry.client_model)
             .bind(&entry.upstream_model)
@@ -1103,7 +1103,7 @@ impl LogStore for SqliteLogStore {
         // List query skips the heavy body/header columns (NULL placeholders preserve struct layout).
         let mut data_sql = String::from(
             "SELECT id, COALESCE(CAST(created_at AS INTEGER), 0) AS created_at, api_key_id, api_key_name, \
-             client_protocol, upstream_protocol, provider_id, provider_name, route_id, route_name, upstream_url, \
+             client_protocol, upstream_protocol, provider_id, provider_name, model_id, model_name, upstream_url, \
              client_model, upstream_model, method, path, \
              NULL AS client_request_headers, NULL AS client_request_body, \
              NULL AS client_response_headers, NULL AS client_response_body, \
@@ -1156,7 +1156,7 @@ impl LogStore for SqliteLogStore {
     async fn find_by_id(&self, id: &str) -> anyhow::Result<Option<RequestLog>> {
         let row = sqlx::query_as::<_, RequestLog>(
             "SELECT id, COALESCE(CAST(created_at AS INTEGER), 0) AS created_at, api_key_id, api_key_name, \
-             client_protocol, upstream_protocol, provider_id, provider_name, route_id, route_name, upstream_url, \
+             client_protocol, upstream_protocol, provider_id, provider_name, model_id, model_name, upstream_url, \
              client_model, upstream_model, method, path, \
              client_request_headers, client_request_body, \
              client_response_headers, client_response_body, \

@@ -18,7 +18,7 @@ impl AdminService {
         self.ensure_model_name_unique(None, &name).await?;
         ensure_virtual_model(&input.virtual_model)?;
         self.ensure_model_unique(None, &input.virtual_model).await?;
-        let strategy = normalize_model_strategy(input.strategy.as_deref())?;
+        let balance = normalize_model_balance(input.balance.as_deref())?;
         let backends = normalize_create_model_backends(&input)?;
         ensure_model_backends_valid(&backends)?;
         let primary_backend = backends
@@ -32,7 +32,7 @@ impl AdminService {
             .create(CreateModel {
                 name,
                 virtual_model: input.virtual_model,
-                strategy: Some(strategy),
+                balance: Some(balance),
                 target_provider: primary_backend.provider_id.clone(),
                 target_model: primary_backend.model.clone(),
                 targets: vec![],
@@ -58,8 +58,7 @@ impl AdminService {
             .virtual_model
             .clone()
             .unwrap_or_else(|| current.virtual_model.clone());
-        let strategy =
-            normalize_model_strategy(input.strategy.as_deref().or(Some(&current.strategy)))?;
+        let balance = normalize_model_balance(input.balance.as_deref().or(Some(&current.balance)))?;
         let backends = normalize_update_model_backends(&current, &input)?;
         ensure_model_backends_valid(&backends)?;
         let primary_backend = backends
@@ -78,7 +77,7 @@ impl AdminService {
                 UpdateModel {
                     name: Some(name),
                     virtual_model: Some(virtual_model),
-                    strategy: Some(strategy),
+                    balance: Some(balance),
                     target_provider: Some(primary_backend.provider_id.clone()),
                     target_model: Some(primary_backend.model.clone()),
                     targets: None,

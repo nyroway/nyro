@@ -142,8 +142,8 @@ pub struct YamlModel {
     pub name: String,
     #[serde(alias = "vmodel")]
     pub virtual_model: String,
-    #[serde(default = "default_strategy")]
-    pub strategy: String,
+    #[serde(default = "default_balance", alias = "strategy")]
+    pub balance: String,
     #[serde(default, rename = "backends", alias = "targets")]
     pub backends: Vec<YamlModelBackend>,
     #[serde(default)]
@@ -153,7 +153,7 @@ pub struct YamlModel {
     pub route_type: Option<String>,
 }
 
-fn default_strategy() -> String {
+fn default_balance() -> String {
     "weighted".to_string()
 }
 
@@ -351,7 +351,7 @@ pub fn build_models(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Model> {
                 id: model_id,
                 name: ym.name.clone(),
                 virtual_model: ym.virtual_model.clone(),
-                strategy: ym.strategy.clone(),
+                balance: ym.balance.clone(),
                 target_provider: primary.map(|b| b.provider_id.clone()).unwrap_or_default(),
                 target_model: primary.map(|b| b.model.clone()).unwrap_or_default(),
                 access_control: ym.access_control,

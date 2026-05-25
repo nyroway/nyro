@@ -137,7 +137,7 @@ pub async fn dispatch_pipeline(
     let hook_registry = crate::integrations::HookRegistry::global();
     if hook_registry.has_request_hooks() {
         let hook_ctx = crate::integrations::HookContext {
-            route_id: route.id.clone(),
+            model_id: route.id.clone(),
             provider_name: String::new(),
             model: request.model.clone(),
             api_key_id: auth_key.id.clone(),
@@ -178,7 +178,7 @@ pub async fn dispatch_pipeline(
         .emit();
         return error_response(503, "no route targets configured");
     }
-    let ordered_targets = TargetSelector::select_ordered(&route.strategy, &targets);
+    let ordered_targets = TargetSelector::select_ordered(&route.balance, &targets);
     if ordered_targets.is_empty() {
         LogBuilder::from_dispatch(
             &gw,
@@ -348,8 +348,8 @@ pub async fn dispatch_pipeline(
         let call_ctx = CallCtx {
             gw: gw.clone(),
             provider: &provider,
-            route_id: &route.id,
-            route_name: &route.name,
+            model_id: &route.id,
+            model_name: &route.name,
             egress,
             ingress,
             ingress_str: &ingress_str,
@@ -400,8 +400,8 @@ pub async fn dispatch_pipeline(
         if status < 400 {
             gw.health_registry.record_success(&target_key);
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-            TargetSelector::record_selected(&route.strategy, &target_key);
-            TargetSelector::record_latency(&route.strategy, &target_key, elapsed_ms);
+            TargetSelector::record_selected(&route.balance, &target_key);
+            TargetSelector::record_latency(&route.balance, &target_key, elapsed_ms);
             return response;
         }
         gw.health_registry.record_failure(&target_key);
@@ -466,8 +466,8 @@ pub async fn dispatch(
 struct CallCtx<'a> {
     gw: Gateway,
     provider: &'a Provider,
-    route_id: &'a str,
-    route_name: &'a str,
+    model_id: &'a str,
+    model_name: &'a str,
     egress: ProtocolId,
     ingress: ProtocolId,
     ingress_str: &'a str,
@@ -510,8 +510,8 @@ struct LogBuilder {
     api_key_name: Option<String>,
     provider_id: String,
     provider_name: String,
-    route_id: Option<String>,
-    route_name: Option<String>,
+    model_id: Option<String>,
+    model_name: Option<String>,
     is_stream: bool,
     start: Instant,
     client_status_code: i32,
@@ -532,8 +532,8 @@ impl LogBuilder {
             api_key_name: call_ctx.api_key_name.map(ToString::to_string),
             provider_id: call_ctx.provider.id.clone(),
             provider_name: call_ctx.provider.name.clone(),
-            route_id: Some(call_ctx.route_id.to_string()),
-            route_name: Some(call_ctx.route_name.to_string()),
+            model_id: Some(call_ctx.model_id.to_string()),
+            model_name: Some(call_ctx.model_name.to_string()),
             is_stream: call_ctx.is_stream,
             start: call_ctx.start,
             client_status_code: 200,
@@ -562,8 +562,8 @@ impl LogBuilder {
             api_key_name: None,
             provider_id: String::new(),
             provider_name: String::new(),
-            route_id: None,
-            route_name: None,
+            model_id: None,
+            model_name: None,
             is_stream: false,
             start,
             client_status_code: 200,
@@ -685,8 +685,8 @@ impl LogBuilder {
             upstream_protocol: self.upstream_protocol,
             provider_id: self.provider_id,
             provider_name: self.provider_name,
-            route_id: self.route_id,
-            route_name: self.route_name,
+            model_id: self.model_id,
+            model_name: self.model_name,
             upstream_url: self.extras.upstream_url,
             client_model: self.client_model,
             upstream_model: self.upstream_model,

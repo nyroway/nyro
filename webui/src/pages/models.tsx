@@ -10,7 +10,7 @@ import type {
   ModelCapabilities,
   Provider,
   Model as ModelType,
-  ModelStrategy,
+  ModelBalance,
   UpdateModel,
   UpsertModelBackend,
 } from "@/lib/types";
@@ -35,7 +35,7 @@ const PAGE_SIZE = 7;
 type ModelForm = {
   name: string;
   virtual_model: string;
-  strategy: ModelStrategy;
+  balance: ModelBalance;
   targets: ModelBackendForm[];
   access_control: boolean;
 };
@@ -51,7 +51,7 @@ type ModelBackendForm = {
 const emptyCreate: ModelForm = {
   name: "",
   virtual_model: "",
-  strategy: "weighted",
+  balance: "weighted",
   targets: [{ provider_id: "", model: "", weight: 100, priority: 1 }],
   access_control: false,
 };
@@ -60,7 +60,7 @@ function FieldLabel({ children }: { children: string }) {
   return <label className="ml-1 text-xs leading-none font-normal text-slate-900">{children}</label>;
 }
 
-function strategyLabel(value: ModelStrategy, isZh: boolean) {
+function balanceLabel(value: ModelBalance, isZh: boolean) {
   if (value === "priority") return isZh ? "主备分级" : "Priority";
   return isZh ? "加权轮询" : "Weighted";
 }
@@ -151,7 +151,7 @@ type TargetRowProps = {
   mode: "create" | "edit";
   index: number;
   target: ModelBackendForm;
-  strategy: ModelStrategy;
+  balance: ModelBalance;
   isZh: boolean;
   providerOptions: Array<{ value: string; label: string; provider: Provider }>;
   providerMap: Map<string, Provider>;
@@ -164,7 +164,7 @@ function TargetRow({
   mode,
   index,
   target,
-  strategy,
+  balance,
   isZh,
   providerOptions,
   providerMap,
@@ -212,7 +212,7 @@ function TargetRow({
     staleTime: 60_000,
   });
 
-  const rowClassName = strategy === "weighted"
+  const rowClassName = balance === "weighted"
     ? "grid w-full grid-cols-[minmax(0,2.8fr)_minmax(0,5.2fr)_minmax(0,1.25fr)_32px] items-center gap-2.5"
     : "grid w-full grid-cols-[minmax(0,2.8fr)_minmax(0,5.2fr)_minmax(0,1.25fr)_32px] items-center gap-2.5";
 
@@ -271,7 +271,7 @@ function TargetRow({
           />
         )}
 
-        {strategy === "weighted" ? (
+        {balance === "weighted" ? (
           <Input
             className="bg-white"
             type="number"
@@ -417,7 +417,7 @@ export default function ModelsPage() {
       id: route.id,
       name: route.name,
       virtual_model: route.virtual_model,
-      strategy: route.strategy ?? "weighted",
+      balance: route.balance ?? "weighted",
       targets,
       access_control: route.access_control,
     });
@@ -513,9 +513,9 @@ export default function ModelsPage() {
             <div className="space-y-2">
               <FieldLabel>{isZh ? "负载策略" : "Load Strategy"}</FieldLabel>
               <Select
-                value={createForm.strategy}
-                onValueChange={(value: ModelStrategy) =>
-                  setCreateForm((prev) => ({ ...prev, strategy: value }))
+                value={createForm.balance}
+                onValueChange={(value: ModelBalance) =>
+                  setCreateForm((prev) => ({ ...prev, balance: value }))
                 }
               >
                 <SelectTrigger>
@@ -541,7 +541,7 @@ export default function ModelsPage() {
                     mode="create"
                     index={index}
                     target={target}
-                    strategy={createForm.strategy}
+                    balance={createForm.balance}
                     isZh={isZh}
                     providerOptions={providerOptions}
                     providerMap={providerMap}
@@ -646,9 +646,9 @@ export default function ModelsPage() {
                     <div className="space-y-2">
                       <FieldLabel>{isZh ? "负载策略" : "Load Strategy"}</FieldLabel>
                       <Select
-                        value={editForm.strategy}
-                        onValueChange={(value: ModelStrategy) =>
-                          setEditForm((prev) => (prev ? { ...prev, strategy: value } : prev))
+                        value={editForm.balance}
+                        onValueChange={(value: ModelBalance) =>
+                          setEditForm((prev) => (prev ? { ...prev, balance: value } : prev))
                         }
                       >
                         <SelectTrigger>
@@ -674,7 +674,7 @@ export default function ModelsPage() {
                             mode="edit"
                             index={index}
                             target={target}
-                            strategy={editForm.strategy}
+                            balance={editForm.balance}
                             isZh={isZh}
                             providerOptions={providerOptions}
                             providerMap={providerMap}
@@ -756,7 +756,7 @@ export default function ModelsPage() {
                       variant="secondary"
                       className="connect-label-badge bg-sky-50 text-sky-700"
                     >
-                      {strategyLabel(route.strategy ?? "weighted", isZh)}
+                      {balanceLabel(route.balance ?? "weighted", isZh)}
                     </Badge>
                     {route.access_control && (
                       <Badge variant="success" className="connect-label-badge">
@@ -896,7 +896,7 @@ function buildCreatePayload(form: ModelForm): CreateModel {
   return {
     name: form.name.trim(),
     virtual_model: form.virtual_model.trim(),
-    strategy: form.strategy,
+    balance: form.balance,
     targets,
     target_provider: primary.provider_id,
     target_model: primary.model,
@@ -916,7 +916,7 @@ function buildUpdatePayload(form: ModelForm & { id: string }): UpdateModel {
   return {
     name: form.name.trim(),
     virtual_model: form.virtual_model.trim(),
-    strategy: form.strategy,
+    balance: form.balance,
     targets,
     target_provider: primary.provider_id,
     target_model: primary.model,

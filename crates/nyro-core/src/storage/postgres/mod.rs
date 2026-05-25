@@ -471,12 +471,12 @@ impl ModelStore for PostgresModelStore {
         let id = uuid::Uuid::new_v4().to_string();
         let virtual_model = input.virtual_model.trim().to_string();
         sqlx::query(
-            "INSERT INTO models (id, name, virtual_model, strategy, target_provider, target_model, access_control) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO models (id, name, virtual_model, balance, target_provider, target_model, access_control) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&id)
         .bind(input.name.trim())
         .bind(&virtual_model)
-        .bind(input.strategy.unwrap_or_else(|| "weighted".to_string()))
+        .bind(input.balance.unwrap_or_else(|| "weighted".to_string()))
         .bind(input.target_provider.trim())
         .bind(input.target_model.trim())
         .bind(input.access_control.unwrap_or(false))
@@ -493,18 +493,18 @@ impl ModelStore for PostgresModelStore {
             .unwrap_or(current.virtual_model)
             .trim()
             .to_string();
-        let strategy = input.strategy.unwrap_or(current.strategy);
+        let balance = input.balance.unwrap_or(current.balance);
         let target_provider = input.target_provider.unwrap_or(current.target_provider);
         let target_model = input.target_model.unwrap_or(current.target_model);
         let access_control = input.access_control.unwrap_or(current.access_control);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE models SET name=$1, virtual_model=$2, strategy=$3, target_provider=$4, target_model=$5, access_control=$6, is_enabled=$7 WHERE id=$8",
+            "UPDATE models SET name=$1, virtual_model=$2, balance=$3, target_provider=$4, target_model=$5, access_control=$6, is_enabled=$7 WHERE id=$8",
         )
         .bind(name.trim())
         .bind(&virtual_model)
-        .bind(strategy.trim().to_lowercase())
+        .bind(balance.trim().to_lowercase())
         .bind(target_provider.trim())
         .bind(target_model.trim())
         .bind(access_control)
@@ -886,7 +886,7 @@ impl LogStore for PostgresLogStore {
             sqlx::query(
                 r#"INSERT INTO request_logs
                     (id, created_at, api_key_id, api_key_name,
-                     client_protocol, upstream_protocol, provider_id, provider_name, route_id, route_name, upstream_url,
+                     client_protocol, upstream_protocol, provider_id, provider_name, model_id, model_name, upstream_url,
                      client_model, upstream_model,
                      method, path,
                      client_request_headers, client_request_body,
@@ -907,8 +907,8 @@ impl LogStore for PostgresLogStore {
             .bind(&entry.upstream_protocol)
             .bind(&entry.provider_id)
             .bind(&entry.provider_name)
-            .bind(&entry.route_id)
-            .bind(&entry.route_name)
+            .bind(&entry.model_id)
+            .bind(&entry.model_name)
             .bind(&entry.upstream_url)
             .bind(&entry.client_model)
             .bind(&entry.upstream_model)
@@ -943,7 +943,7 @@ impl LogStore for PostgresLogStore {
         // List query skips heavy body/header columns (NULL placeholders preserve struct layout).
         let mut data_sql = String::from(
             "SELECT id, COALESCE(created_at::BIGINT, 0) AS created_at, api_key_id, api_key_name, \
-             client_protocol, upstream_protocol, provider_id, provider_name, route_id, route_name, upstream_url, \
+             client_protocol, upstream_protocol, provider_id, provider_name, model_id, model_name, upstream_url, \
              client_model, upstream_model, method, path, \
              NULL::text AS client_request_headers, NULL::text AS client_request_body, \
              NULL::text AS client_response_headers, NULL::text AS client_response_body, \
@@ -1007,7 +1007,7 @@ impl LogStore for PostgresLogStore {
     async fn find_by_id(&self, id: &str) -> anyhow::Result<Option<RequestLog>> {
         let row = sqlx::query_as::<_, RequestLog>(
             "SELECT id, COALESCE(created_at::BIGINT, 0) AS created_at, api_key_id, api_key_name, \
-             client_protocol, upstream_protocol, provider_id, provider_name, route_id, route_name, upstream_url, \
+             client_protocol, upstream_protocol, provider_id, provider_name, model_id, model_name, upstream_url, \
              client_model, upstream_model, method, path, \
              client_request_headers, client_request_body, \
              client_response_headers, client_response_body, \
@@ -1098,12 +1098,14 @@ impl StorageBootstrap for PostgresBootstrap {
         sqlx::raw_sql(POSTGRES_INIT_SQL)
             .execute(self.adapter.pool())
             .await?;
-        sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS strategy TEXT DEFAULT 'weighted'")
+        sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS balance TEXT DEFAULT 'weighted'")
             .execute(self.adapter.pool())
             .await?;
-        sqlx::query("UPDATE routes SET strategy = 'weighted' WHERE strategy IS NULL OR btrim(strategy) = ''")
-            .execute(self.adapter.pool())
-            .await?;
+        sqlx::query(
+            "UPDATE routes SET balance = 'weighted' WHERE balance IS NULL OR btrim(balance) = ''",
+        )
+        .execute(self.adapter.pool())
+        .await?;
         sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS use_proxy BOOLEAN NOT NULL DEFAULT FALSE")
             .execute(self.adapter.pool())
             .await?;
@@ -1248,6 +1250,20 @@ END $$;"#,
             "model_id",
         )
         .await?;
+
+        // Rename columns in request_logs: route_id → model_id, route_name → model_name
+        pg_rename_column_if_needed(self.adapter.pool(), "request_logs", "route_id", "model_id")
+            .await?;
+        pg_rename_column_if_needed(
+            self.adapter.pool(),
+            "request_logs",
+            "route_name",
+            "model_name",
+        )
+        .await?;
+
+        // Rename column: models strategy → balance
+        pg_rename_column_if_needed(self.adapter.pool(), "models", "strategy", "balance").await?;
 
         Ok(())
     }
@@ -1484,7 +1500,7 @@ fn provider_select(suffix: Option<&str>) -> String {
 
 fn model_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM models",
+        "SELECT id, name, virtual_model, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM models",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1603,7 +1619,7 @@ CREATE TABLE IF NOT EXISTS routes (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     virtual_model TEXT,
-    strategy TEXT DEFAULT 'weighted',
+    balance TEXT DEFAULT 'weighted',
     target_provider TEXT NOT NULL REFERENCES providers(id),
     target_model TEXT NOT NULL,
     access_control BOOLEAN DEFAULT FALSE,
@@ -1633,8 +1649,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
     upstream_protocol         TEXT,
     provider_id               TEXT,
     provider_name             TEXT,
-    route_id                  TEXT,
-    route_name                TEXT,
+    model_id                  TEXT,
+    model_name                TEXT,
     upstream_url              TEXT,
     client_model              TEXT,
     upstream_model            TEXT,

@@ -71,7 +71,7 @@ async fn copy_provider_can_copy_matching_route_targets_to_copied_provider() -> a
         .create_model(CreateModel {
             name: "source-route".to_string(),
             virtual_model: "source-model".to_string(),
-            strategy: Some("priority".to_string()),
+            balance: Some("priority".to_string()),
             target_provider: String::new(),
             target_model: String::new(),
             targets: vec![
@@ -122,7 +122,7 @@ async fn copy_provider_can_copy_matching_route_targets_to_copied_provider() -> a
         .expect("source route should remain");
     assert_eq!(updated_model.name, "source-route");
     assert_eq!(updated_model.virtual_model, "source-model");
-    assert_eq!(updated_model.strategy, "priority");
+    assert_eq!(updated_model.balance, "priority");
     assert!(updated_model.access_control);
     assert_eq!(updated_model.target_provider, original.id);
     assert_eq!(updated_model.target_model, "source-upstream-model");
@@ -161,7 +161,7 @@ async fn copy_provider_does_not_append_targets_by_default() -> anyhow::Result<()
         .create_model(CreateModel {
             name: "no-route-copy-source".to_string(),
             virtual_model: "no-route-copy-model".to_string(),
-            strategy: None,
+            balance: None,
             target_provider: original.id.clone(),
             target_model: "source-upstream-model".to_string(),
             targets: vec![],
@@ -196,7 +196,7 @@ async fn delete_provider_removes_route_associations_before_provider() -> anyhow:
         .create_model(CreateModel {
             name: "route-owned-by-deleted-provider".to_string(),
             virtual_model: "route-owned-model".to_string(),
-            strategy: None,
+            balance: None,
             target_provider: removed_provider.id.clone(),
             target_model: "gpt-delete".to_string(),
             targets: vec![],
@@ -208,7 +208,7 @@ async fn delete_provider_removes_route_associations_before_provider() -> anyhow:
         .create_model(CreateModel {
             name: "route-with-secondary-deleted-provider".to_string(),
             virtual_model: "route-kept-model".to_string(),
-            strategy: None,
+            balance: None,
             target_provider: kept_provider.id.clone(),
             target_model: "gpt-keep".to_string(),
             targets: vec![

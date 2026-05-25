@@ -39,7 +39,7 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     ensure_provider_column(pool, "use_proxy", "INTEGER DEFAULT 0").await?;
     migrate_collapse_provider_protocol_columns(pool).await?;
     ensure_route_column(pool, "virtual_model", "TEXT").await?;
-    ensure_route_column(pool, "strategy", "TEXT DEFAULT 'weighted'").await?;
+    ensure_route_column(pool, "balance", "TEXT DEFAULT 'weighted'").await?;
     ensure_route_column(pool, "access_control", "INTEGER DEFAULT 0").await?;
     ensure_request_log_column(pool, "api_key_id", "TEXT").await?;
     ensure_request_log_column(pool, "method", "TEXT").await?;
@@ -77,8 +77,8 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     ensure_request_log_column(pool, "is_stream", "INTEGER DEFAULT 0").await?;
     ensure_request_log_column(pool, "api_key_name", "TEXT").await?;
     ensure_request_log_column(pool, "provider_name", "TEXT").await?;
-    ensure_request_log_column(pool, "route_id", "TEXT").await?;
-    ensure_request_log_column(pool, "route_name", "TEXT").await?;
+    ensure_request_log_column(pool, "model_id", "TEXT").await?;
+    ensure_request_log_column(pool, "model_name", "TEXT").await?;
     ensure_request_log_column(pool, "cache_read_tokens", "INTEGER DEFAULT 0").await?;
 
     // Rename tables: routes → models, route_targets → model_backends, api_key_routes → api_key_models
@@ -89,6 +89,13 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     // Rename columns within renamed tables
     rename_column_if_needed(pool, "model_backends", "route_id", "model_id").await?;
     rename_column_if_needed(pool, "api_key_models", "route_id", "model_id").await?;
+
+    // Rename columns: request_logs route_id/route_name → model_id/model_name
+    rename_column_if_needed(pool, "request_logs", "route_id", "model_id").await?;
+    rename_column_if_needed(pool, "request_logs", "route_name", "model_name").await?;
+
+    // Rename column: models strategy → balance
+    rename_column_if_needed(pool, "models", "strategy", "balance").await?;
 
     Ok(())
 }
@@ -565,7 +572,13 @@ async fn migrate_api_key_status_to_is_enabled(pool: &SqlitePool) -> anyhow::Resu
 }
 
 async fn backfill_route_fields(pool: &SqlitePool) -> anyhow::Result<()> {
-    if column_exists(pool, "routes", "strategy").await? {
+    if column_exists(pool, "models", "balance").await? {
+        sqlx::query(
+            "UPDATE models SET balance = 'weighted' WHERE balance IS NULL OR trim(balance) = ''",
+        )
+        .execute(pool)
+        .await?;
+    } else if column_exists(pool, "routes", "strategy").await? {
         sqlx::query(
             "UPDATE routes SET strategy = 'weighted' WHERE strategy IS NULL OR trim(strategy) = ''",
         )
@@ -721,7 +734,7 @@ CREATE TABLE IF NOT EXISTS routes (
     id                TEXT PRIMARY KEY,
     name              TEXT NOT NULL,
     virtual_model     TEXT,
-    strategy          TEXT DEFAULT 'weighted',
+    balance           TEXT DEFAULT 'weighted',
     target_provider   TEXT NOT NULL REFERENCES providers(id),
     target_model      TEXT NOT NULL,
     access_control    INTEGER DEFAULT 0,
@@ -751,8 +764,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
     upstream_protocol         TEXT,
     provider_id               TEXT,
     provider_name             TEXT,
-    route_id                  TEXT,
-    route_name                TEXT,
+    model_id                  TEXT,
+    model_name                TEXT,
     upstream_url              TEXT,
     client_model              TEXT,
     upstream_model            TEXT,
