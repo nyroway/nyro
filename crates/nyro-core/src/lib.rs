@@ -13,6 +13,7 @@ pub mod router;
 pub mod storage;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -26,6 +27,10 @@ use config::{GatewayConfig, SqlStorageConfig, StorageBackendKind};
 use logging::LogEntry;
 use storage::sql::config::SqlBackendConfig;
 use storage::{DynStorage, PostgresStorage, SqliteStorage};
+
+async fn shutdown_pending() {
+    std::future::pending::<()>().await;
+}
 
 #[derive(Clone, Debug)]
 pub struct CapabilityCacheEntry {
@@ -182,11 +187,20 @@ impl Gateway {
     }
 
     pub async fn start_proxy(&self) -> anyhow::Result<()> {
+        self.start_proxy_with_shutdown(shutdown_pending()).await
+    }
+
+    pub async fn start_proxy_with_shutdown(
+        &self,
+        shutdown: impl Future<Output = ()> + Send + 'static,
+    ) -> anyhow::Result<()> {
         let router = proxy::server::create_router(self.clone());
         let addr = format!("{}:{}", self.config.proxy_host, self.config.proxy_port);
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         tracing::info!("proxy listening on {}", addr);
-        axum::serve(listener, router).await?;
+        axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown)
+            .await?;
         Ok(())
     }
 
@@ -318,4 +332,39 @@ fn to_sql_backend_config(
         idle_timeout: config.idle_timeout,
         max_lifetime: config.max_lifetime,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn proxy_server_stops_when_shutdown_future_resolves() {
+        let config = GatewayConfig {
+            proxy_host: "127.0.0.1".to_string(),
+            proxy_port: 0,
+            storage: config::GatewayStorageConfig::default(),
+            ..Default::default()
+        };
+        let storage: DynStorage = Arc::new(storage::MemoryStorage::new(vec![], vec![], vec![]));
+        let (gateway, _log_rx) = Gateway::from_storage(config, storage).await.unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+        let server = tokio::spawn(async move {
+            gateway
+                .start_proxy_with_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+        });
+
+        shutdown_tx.send(()).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), server)
+            .await
+            .expect("proxy server should stop after shutdown")
+            .expect("proxy server task should complete")
+            .expect("proxy server should exit cleanly");
+    }
 }

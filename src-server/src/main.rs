@@ -16,6 +16,7 @@ use nyro_core::{
     storage::MemoryStorage,
 };
 use rust_embed::RustEmbed;
+use tokio::sync::broadcast;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 mod admin_routes;
@@ -234,7 +235,7 @@ async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
     tracing::info!("proxy  → http://{}:{}", proxy_host, proxy_port);
     tracing::info!("standalone mode: admin API and WebUI are disabled");
 
-    gateway.start_proxy().await?;
+    gateway.start_proxy_with_shutdown(shutdown_signal()).await?;
     Ok(())
 }
 
@@ -272,9 +273,15 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
 
     let gw_proxy = gateway.clone();
     let storage_for_logs = gateway.storage.clone();
+    let (shutdown_tx, _) = broadcast::channel::<()>(1);
+    let proxy_shutdown = shutdown_tx.subscribe();
+    let admin_shutdown_tx = shutdown_tx.clone();
 
-    tokio::spawn(async move {
-        if let Err(e) = gw_proxy.start_proxy().await {
+    let proxy_task = tokio::spawn(async move {
+        if let Err(e) = gw_proxy
+            .start_proxy_with_shutdown(wait_for_shutdown(proxy_shutdown))
+            .await
+        {
             tracing::error!("proxy server error: {e}");
         }
     });
@@ -299,8 +306,52 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
     if admin_token.is_none() {
         tracing::warn!("admin API auth disabled: set --admin-token for production");
     }
-    axum::serve(listener, app).await?;
+    let admin_result = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            let _ = admin_shutdown_tx.send(());
+        })
+        .await;
+
+    let _ = shutdown_tx.send(());
+    if let Err(error) = proxy_task.await {
+        tracing::error!("proxy server task failed: {error}");
+    }
+
+    admin_result?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::warn!("failed to listen for shutdown signal: {error}");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(error) => tracing::warn!("failed to listen for SIGTERM: {error}"),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("shutdown signal received");
+}
+
+async fn wait_for_shutdown(mut shutdown: broadcast::Receiver<()>) {
+    let _ = shutdown.recv().await;
 }
 
 // ── WebUI (embedded) ──────────────────────────────────────────────────────────
