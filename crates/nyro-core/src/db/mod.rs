@@ -28,6 +28,11 @@ pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
 
 pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::raw_sql(INIT_SQL).execute(pool).await?;
+
+    // Rename columns for MySQL compat: must happen before any code references new column names
+    rename_column_if_needed(pool, "settings", "key", "name").await?;
+    rename_column_if_needed(pool, "api_keys", "key", "token").await?;
+
     ensure_provider_column(pool, "vendor", "TEXT").await?;
     ensure_provider_column(pool, "preset_key", "TEXT").await?;
     ensure_provider_column(pool, "channel", "TEXT").await?;
@@ -111,10 +116,6 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await
         .ok();
-
-    // Rename columns for MySQL compat: settings.key → settings.name, api_keys.key → api_keys.token
-    rename_column_if_needed(pool, "settings", "key", "name").await?;
-    rename_column_if_needed(pool, "api_keys", "key", "token").await?;
 
     Ok(())
 }
