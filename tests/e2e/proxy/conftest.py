@@ -8,7 +8,7 @@ Pipeline orchestrated by these fixtures:
      25208-25211 (or ephemeral if those are busy).
   3. Synthesise a ``standalone.yaml`` whose 4 providers point at the replay
      instances and whose models use the ``replay_model`` string as
-     ``name`` / ``vmodel`` / ``targets[].model`` (so nyro overrides the
+     ``name`` / ``targets[].model`` (so nyro overrides the
      request body model and replay's HashMap lookup hits).
   4. Boot ``nyro-server`` against that config and yield its base URL.
 
@@ -137,7 +137,6 @@ def _render_standalone(
         for replay_model in replay_models.get(protocol, []):
             models.append({
                 "name": replay_model,
-                "vmodel": replay_model,
                 "backends": [
                     {"provider": f"replay-{protocol}", "model": replay_model},
                 ],

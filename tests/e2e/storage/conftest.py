@@ -193,8 +193,7 @@ def build_harness(work_dir: Path) -> None:
             }).await?;
 
             let route = admin.create_model(CreateModel {
-                name: format!("{backend}-e2e-model"),
-                virtual_model: format!("{backend}-model"),
+                name: format!("{backend}-model"),
                 balance: None,
                 target_provider: provider.id.clone(),
                 target_model: "gpt-4o-mini".to_string(),
