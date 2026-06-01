@@ -34,12 +34,10 @@ pub struct MysqlHealth {
 
 impl MysqlAdapter {
     pub async fn connect(config: SqlBackendConfig) -> anyhow::Result<Self> {
-        let pool = RelationalPool::connect(
-            crate::storage::sql::config::SqlBackendKind::Mysql,
-            &config,
-        )
-        .await
-        .context("connect mysql adapter")?;
+        let pool =
+            RelationalPool::connect(crate::storage::sql::config::SqlBackendKind::Mysql, &config)
+                .await
+                .context("connect mysql adapter")?;
         let pool = pool
             .as_mysql()
             .cloned()
@@ -555,10 +553,7 @@ impl ModelStore for MysqlModelStore {
 #[async_trait]
 impl ModelSnapshotStore for MysqlModelStore {
     async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Model>> {
-        let sql = format!(
-            "{} WHERE COALESCE(is_enabled, 1) = 1",
-            model_select(None)
-        );
+        let sql = format!("{} WHERE COALESCE(is_enabled, 1) = 1", model_select(None));
         Ok(sqlx::query_as::<_, Model>(&sql)
             .fetch_all(&self.pool)
             .await?)
@@ -636,11 +631,10 @@ struct MysqlSettingsStore {
 #[async_trait]
 impl SettingsStore for MysqlSettingsStore {
     async fn get(&self, key: &str) -> anyhow::Result<Option<String>> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT value FROM settings WHERE name = ?")
-                .bind(key)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE name = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.map(|r| r.0))
     }
 
@@ -1106,19 +1100,36 @@ impl StorageBootstrap for MysqlBootstrap {
         sqlx::raw_sql(MYSQL_INIT_SQL).execute(pool).await?;
 
         // Add balance column to routes
-        mysql_add_column_if_not_exists(pool, "routes", "balance", "VARCHAR(255) DEFAULT 'weighted'")
-            .await?;
-        sqlx::query("UPDATE routes SET balance = 'weighted' WHERE balance IS NULL OR TRIM(balance) = ''")
-            .execute(pool)
-            .await?;
+        mysql_add_column_if_not_exists(
+            pool,
+            "routes",
+            "balance",
+            "VARCHAR(255) DEFAULT 'weighted'",
+        )
+        .await?;
+        sqlx::query(
+            "UPDATE routes SET balance = 'weighted' WHERE balance IS NULL OR TRIM(balance) = ''",
+        )
+        .execute(pool)
+        .await?;
 
         // Add use_proxy to providers
-        mysql_add_column_if_not_exists(pool, "providers", "use_proxy", "TINYINT(1) NOT NULL DEFAULT 0")
-            .await?;
+        mysql_add_column_if_not_exists(
+            pool,
+            "providers",
+            "use_proxy",
+            "TINYINT(1) NOT NULL DEFAULT 0",
+        )
+        .await?;
 
         // Add auth_mode to providers
-        mysql_add_column_if_not_exists(pool, "providers", "auth_mode", "VARCHAR(255) NOT NULL DEFAULT 'apikey'")
-            .await?;
+        mysql_add_column_if_not_exists(
+            pool,
+            "providers",
+            "auth_mode",
+            "VARCHAR(255) NOT NULL DEFAULT 'apikey'",
+        )
+        .await?;
 
         // Add OAuth columns to providers
         mysql_add_column_if_not_exists(pool, "providers", "access_token", "TEXT").await?;
@@ -1215,8 +1226,13 @@ impl StorageBootstrap for MysqlBootstrap {
         }
 
         // Add cache_read_tokens
-        mysql_add_column_if_not_exists(pool, "request_logs", "cache_read_tokens", "INTEGER DEFAULT 0")
-            .await?;
+        mysql_add_column_if_not_exists(
+            pool,
+            "request_logs",
+            "cache_read_tokens",
+            "INTEGER DEFAULT 0",
+        )
+        .await?;
 
         // Rename tables: routes → models, route_targets → model_backends, api_key_routes → api_key_models
         mysql_rename_table_if_needed(pool, "routes", "models").await?;
@@ -1255,10 +1271,12 @@ impl StorageBootstrap for MysqlBootstrap {
             .await?;
 
         // Rename settings key log_record_payloads → enable_payload
-        sqlx::query("UPDATE settings SET name = 'enable_payload' WHERE name = 'log_record_payloads'")
-            .execute(pool)
-            .await
-            .ok();
+        sqlx::query(
+            "UPDATE settings SET name = 'enable_payload' WHERE name = 'log_record_payloads'",
+        )
+        .execute(pool)
+        .await
+        .ok();
 
         // Rename columns for compat: settings.key → settings.name, api_keys.key → api_keys.token
         mysql_rename_column_if_needed(pool, "settings", "key", "name").await?;
@@ -1364,7 +1382,8 @@ async fn migrate_collapse_provider_protocol_columns_mysql(
     pool: &Pool<MySql>,
 ) -> anyhow::Result<()> {
     let has_default_protocol = mysql_column_exists(pool, "providers", "default_protocol").await?;
-    let has_protocol_endpoints = mysql_column_exists(pool, "providers", "protocol_endpoints").await?;
+    let has_protocol_endpoints =
+        mysql_column_exists(pool, "providers", "protocol_endpoints").await?;
     if !has_default_protocol && !has_protocol_endpoints {
         return Ok(());
     }
@@ -1591,13 +1610,11 @@ async fn replace_api_key_models(
         .await?;
 
     for model_id in model_ids.iter().filter(|id| !id.trim().is_empty()) {
-        sqlx::query(
-            "INSERT IGNORE INTO api_key_models (api_key_id, model_id) VALUES (?, ?)",
-        )
-        .bind(api_key_id)
-        .bind(model_id.trim())
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("INSERT IGNORE INTO api_key_models (api_key_id, model_id) VALUES (?, ?)")
+            .bind(api_key_id)
+            .bind(model_id.trim())
+            .execute(&mut *tx)
+            .await?;
     }
 
     tx.commit().await?;

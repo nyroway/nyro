@@ -1261,10 +1261,12 @@ END $$;"#,
             .execute(self.adapter.pool())
             .await?;
         // Rename settings key log_record_payloads → enable_payload
-        sqlx::query("UPDATE settings SET name = 'enable_payload' WHERE name = 'log_record_payloads'")
-            .execute(self.adapter.pool())
-            .await
-            .ok();
+        sqlx::query(
+            "UPDATE settings SET name = 'enable_payload' WHERE name = 'log_record_payloads'",
+        )
+        .execute(self.adapter.pool())
+        .await
+        .ok();
 
         // Rename columns for MySQL compat: settings.key → settings.name, api_keys.key → api_keys.token
         pg_rename_column_if_needed(self.adapter.pool(), "settings", "key", "name").await?;

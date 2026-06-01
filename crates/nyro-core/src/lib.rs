@@ -132,15 +132,30 @@ impl Gateway {
             anyhow::bail!("selected storage backend is not reachable");
         }
 
-        Self::from_storage_with_kind(config, storage, storage_kind, sqlite_pool, postgres_pool, mysql_pool)
-            .await
+        Self::from_storage_with_kind(
+            config,
+            storage,
+            storage_kind,
+            sqlite_pool,
+            postgres_pool,
+            mysql_pool,
+        )
+        .await
     }
 
     pub async fn from_storage(
         config: GatewayConfig,
         storage: DynStorage,
     ) -> anyhow::Result<(Self, mpsc::Receiver<LogEntry>)> {
-        Self::from_storage_with_kind(config, storage, RuntimeStorageKind::Memory, None, None, None).await
+        Self::from_storage_with_kind(
+            config,
+            storage,
+            RuntimeStorageKind::Memory,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     async fn from_storage_with_kind(
