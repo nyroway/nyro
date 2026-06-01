@@ -1,7 +1,8 @@
 use anyhow::Context;
+use sqlx::mysql::MySqlPoolOptions;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{Pool, Postgres, Sqlite};
+use sqlx::{MySql, Pool, Postgres, Sqlite};
 
 use super::config::{SqlBackendConfig, SqlBackendKind};
 use super::dialect::SqlDialect;
@@ -10,6 +11,7 @@ use super::dialect::SqlDialect;
 pub enum RelationalPool {
     Sqlite(Pool<Sqlite>),
     Postgres(Pool<Postgres>),
+    Mysql(Pool<MySql>),
 }
 
 impl RelationalPool {
@@ -21,7 +23,6 @@ impl RelationalPool {
                     .min_connections(cfg.min_connections)
                     .acquire_timeout(cfg.acquire_timeout)
                     .idle_timeout(cfg.idle_timeout)
-                    .max_lifetime(cfg.max_lifetime)
                     .connect(&cfg.url)
                     .await
                     .with_context(|| format!("failed to connect sqlite: {}", cfg.url))?;
@@ -33,11 +34,21 @@ impl RelationalPool {
                     .min_connections(cfg.min_connections)
                     .acquire_timeout(cfg.acquire_timeout)
                     .idle_timeout(cfg.idle_timeout)
-                    .max_lifetime(cfg.max_lifetime)
                     .connect(&cfg.url)
                     .await
                     .with_context(|| format!("failed to connect postgres: {}", cfg.url))?;
                 Ok(Self::Postgres(pool))
+            }
+            SqlBackendKind::Mysql => {
+                let pool = MySqlPoolOptions::new()
+                    .max_connections(cfg.max_connections)
+                    .min_connections(cfg.min_connections)
+                    .acquire_timeout(cfg.acquire_timeout)
+                    .idle_timeout(cfg.idle_timeout)
+                    .connect(&cfg.url)
+                    .await
+                    .with_context(|| format!("failed to connect mysql: {}", cfg.url))?;
+                Ok(Self::Mysql(pool))
             }
         }
     }
@@ -46,6 +57,7 @@ impl RelationalPool {
         match self {
             RelationalPool::Sqlite(_) => SqlDialect::Sqlite,
             RelationalPool::Postgres(_) => SqlDialect::Postgres,
+            RelationalPool::Mysql(_) => SqlDialect::Mysql,
         }
     }
 
@@ -57,6 +69,9 @@ impl RelationalPool {
             RelationalPool::Postgres(pool) => {
                 sqlx::query("SELECT 1").execute(pool).await?;
             }
+            RelationalPool::Mysql(pool) => {
+                sqlx::query("SELECT 1").execute(pool).await?;
+            }
         }
         Ok(())
     }
@@ -65,13 +80,21 @@ impl RelationalPool {
         match self {
             RelationalPool::Sqlite(pool) => pool.close().await,
             RelationalPool::Postgres(pool) => pool.close().await,
+            RelationalPool::Mysql(pool) => pool.close().await,
         }
     }
 
     pub fn as_postgres(&self) -> Option<&Pool<Postgres>> {
         match self {
             RelationalPool::Postgres(pool) => Some(pool),
-            RelationalPool::Sqlite(_) => None,
+            _ => None,
+        }
+    }
+
+    pub fn as_mysql(&self) -> Option<&Pool<MySql>> {
+        match self {
+            RelationalPool::Mysql(pool) => Some(pool),
+            _ => None,
         }
     }
 }

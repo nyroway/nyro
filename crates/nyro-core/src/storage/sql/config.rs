@@ -4,6 +4,7 @@ use std::time::Duration;
 pub enum SqlBackendKind {
     Sqlite,
     Postgres,
+    Mysql,
 }
 
 #[derive(Debug, Clone)]
@@ -13,7 +14,6 @@ pub struct SqlBackendConfig {
     pub min_connections: u32,
     pub acquire_timeout: Duration,
     pub idle_timeout: Option<Duration>,
-    pub max_lifetime: Option<Duration>,
 }
 
 impl SqlBackendConfig {
@@ -33,7 +33,6 @@ impl Default for SqlBackendConfig {
             min_connections: 1,
             acquire_timeout: Duration::from_secs(10),
             idle_timeout: Some(Duration::from_secs(300)),
-            max_lifetime: Some(Duration::from_secs(1800)),
         }
     }
 }

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use sqlx::{Pool, Postgres, SqlitePool};
+use sqlx::{MySql, Pool, Postgres, SqlitePool};
 use tokio::sync::mpsc;
 
 use crate::auth::types::AuthSession;
@@ -26,7 +26,7 @@ use crate::router::health::HealthRegistry;
 use config::{GatewayConfig, SqlStorageConfig, StorageBackendKind};
 use logging::LogEntry;
 use storage::sql::config::SqlBackendConfig;
-use storage::{DynStorage, PostgresStorage, SqliteStorage};
+use storage::{DynStorage, MysqlStorage, PostgresStorage, SqliteStorage};
 
 async fn shutdown_pending() {
     std::future::pending::<()>().await;
@@ -43,6 +43,7 @@ pub enum RuntimeStorageKind {
     Memory,
     Sqlite,
     Postgres,
+    Mysql,
 }
 
 #[derive(Clone)]
@@ -61,6 +62,8 @@ pub struct Gateway {
     sqlite_pool: Option<SqlitePool>,
     #[allow(dead_code)]
     postgres_pool: Option<Pool<Postgres>>,
+    #[allow(dead_code)]
+    mysql_pool: Option<Pool<MySql>>,
 }
 
 #[derive(Clone)]
@@ -71,11 +74,12 @@ struct ProxyClientCache {
 
 impl Gateway {
     pub async fn new(config: GatewayConfig) -> anyhow::Result<(Self, mpsc::Receiver<LogEntry>)> {
-        let (storage_kind, storage, sqlite_pool, postgres_pool): (
+        let (storage_kind, storage, sqlite_pool, postgres_pool, mysql_pool): (
             RuntimeStorageKind,
             DynStorage,
             Option<SqlitePool>,
             Option<Pool<Postgres>>,
+            Option<Pool<MySql>>,
         ) = match config.storage.backend {
             StorageBackendKind::Sqlite => {
                 let sqlite_storage = if config.storage.sqlite.migrate_on_start {
@@ -90,6 +94,7 @@ impl Gateway {
                     Arc::new(sqlite_storage),
                     Some(pool),
                     None,
+                    None,
                 )
             }
             StorageBackendKind::Postgres => {
@@ -99,6 +104,19 @@ impl Gateway {
                 (
                     RuntimeStorageKind::Postgres,
                     Arc::new(postgres_storage),
+                    None,
+                    Some(pool),
+                    None,
+                )
+            }
+            StorageBackendKind::Mysql => {
+                let backend_config = to_sql_backend_config(&config.storage.mysql, "mysql")?;
+                let mysql_storage = MysqlStorage::connect(backend_config).await?;
+                let pool = mysql_storage.pool().clone();
+                (
+                    RuntimeStorageKind::Mysql,
+                    Arc::new(mysql_storage),
+                    None,
                     None,
                     Some(pool),
                 )
@@ -114,7 +132,7 @@ impl Gateway {
             anyhow::bail!("selected storage backend is not reachable");
         }
 
-        Self::from_storage_with_kind(config, storage, storage_kind, sqlite_pool, postgres_pool)
+        Self::from_storage_with_kind(config, storage, storage_kind, sqlite_pool, postgres_pool, mysql_pool)
             .await
     }
 
@@ -122,7 +140,7 @@ impl Gateway {
         config: GatewayConfig,
         storage: DynStorage,
     ) -> anyhow::Result<(Self, mpsc::Receiver<LogEntry>)> {
-        Self::from_storage_with_kind(config, storage, RuntimeStorageKind::Memory, None, None).await
+        Self::from_storage_with_kind(config, storage, RuntimeStorageKind::Memory, None, None, None).await
     }
 
     async fn from_storage_with_kind(
@@ -131,6 +149,7 @@ impl Gateway {
         storage_kind: RuntimeStorageKind,
         sqlite_pool: Option<SqlitePool>,
         postgres_pool: Option<Pool<Postgres>>,
+        mysql_pool: Option<Pool<MySql>>,
     ) -> anyhow::Result<(Self, mpsc::Receiver<LogEntry>)> {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
@@ -157,6 +176,7 @@ impl Gateway {
             auth_sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             sqlite_pool,
             postgres_pool,
+            mysql_pool,
         };
 
         {
@@ -328,9 +348,8 @@ fn to_sql_backend_config(
         url,
         max_connections: config.max_connections,
         min_connections: config.min_connections,
-        acquire_timeout: config.acquire_timeout,
         idle_timeout: config.idle_timeout,
-        max_lifetime: config.max_lifetime,
+        ..Default::default()
     })
 }
 

@@ -105,7 +105,7 @@ struct Args {
     )]
     data_dir: String,
 
-    #[arg(long, value_parser = ["sqlite", "postgres"], default_value = "sqlite",
+    #[arg(long, value_parser = ["sqlite", "postgres", "mysql"], default_value = "sqlite",
           env = "NYRO_STORAGE_BACKEND", help_heading = "Storage")]
     storage_backend: String,
 
@@ -144,25 +144,42 @@ struct Args {
 
     #[arg(
         long,
-        default_value_t = 10,
-        help = "Postgres: connection acquire timeout (seconds)",
-        help_heading = "Storage"
-    )]
-    postgres_acquire_timeout: u64,
-
-    #[arg(
-        long,
         help = "Postgres: idle connection timeout (seconds)",
         help_heading = "Storage"
     )]
     postgres_idle_timeout: Option<u64>,
 
+    // ── MySQL ────────────────────────────────────────────────────────────────
     #[arg(
         long,
-        help = "Postgres: max connection lifetime (seconds)",
+        env = "NYRO_MYSQL_DSN",
+        help = "MySQL connection string (required when --storage-backend=mysql)",
         help_heading = "Storage"
     )]
-    postgres_max_lifetime: Option<u64>,
+    mysql_dsn: Option<String>,
+
+    #[arg(
+        long,
+        default_value_t = 10,
+        help = "MySQL: max connection pool size",
+        help_heading = "Storage"
+    )]
+    mysql_max_connections: u32,
+
+    #[arg(
+        long,
+        default_value_t = 1,
+        help = "MySQL: min connection pool size",
+        help_heading = "Storage"
+    )]
+    mysql_min_connections: u32,
+
+    #[arg(
+        long,
+        help = "MySQL: idle connection timeout (seconds)",
+        help_heading = "Storage"
+    )]
+    mysql_idle_timeout: Option<u64>,
 
     // ── Standalone ────────────────────────────────────────────────────────────
     #[arg(
@@ -432,13 +449,35 @@ fn build_storage_config(args: &Args) -> anyhow::Result<GatewayStorageConfig> {
         None
     };
 
-    let sql = SqlStorageConfig {
+    let postgres = SqlStorageConfig {
         url: postgres_url,
         max_connections: args.postgres_max_connections,
         min_connections: args.postgres_min_connections,
-        acquire_timeout: Duration::from_secs(args.postgres_acquire_timeout),
         idle_timeout: args.postgres_idle_timeout.map(Duration::from_secs),
-        max_lifetime: args.postgres_max_lifetime.map(Duration::from_secs),
+    };
+
+    let mysql_url = if matches!(backend, StorageBackendKind::Mysql) {
+        let dsn = args
+            .mysql_dsn
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--mysql-dsn (or env NYRO_MYSQL_DSN) is required \
+                     when --storage-backend=mysql"
+                )
+            })?;
+        Some(dsn.to_string())
+    } else {
+        None
+    };
+
+    let mysql = SqlStorageConfig {
+        url: mysql_url,
+        max_connections: args.mysql_max_connections,
+        min_connections: args.mysql_min_connections,
+        idle_timeout: args.mysql_idle_timeout.map(Duration::from_secs),
     };
 
     Ok(GatewayStorageConfig {
@@ -446,7 +485,8 @@ fn build_storage_config(args: &Args) -> anyhow::Result<GatewayStorageConfig> {
         sqlite: SqliteStorageConfig {
             migrate_on_start: args.migrate_on_start,
         },
-        postgres: sql,
+        postgres,
+        mysql,
     })
 }
 
@@ -454,6 +494,7 @@ fn parse_storage_backend(value: &str) -> anyhow::Result<StorageBackendKind> {
     match value.trim().to_ascii_lowercase().as_str() {
         "sqlite" => Ok(StorageBackendKind::Sqlite),
         "postgres" => Ok(StorageBackendKind::Postgres),
+        "mysql" => Ok(StorageBackendKind::Mysql),
         other => anyhow::bail!("unsupported storage backend: {other}"),
     }
 }

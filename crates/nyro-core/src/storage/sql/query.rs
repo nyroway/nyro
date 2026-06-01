@@ -28,7 +28,7 @@ pub fn pagination_clause(
                 dialect.placeholder(next_bind_index + 1)
             )
         }
-        SqlDialect::Sqlite => " LIMIT ? OFFSET ?".to_string(),
+        SqlDialect::Sqlite | SqlDialect::Mysql => " LIMIT ? OFFSET ?".to_string(),
     }
 }
 
@@ -36,5 +36,6 @@ pub fn now_expr(dialect: SqlDialect) -> &'static str {
     match dialect {
         SqlDialect::Sqlite => "datetime('now')",
         SqlDialect::Postgres => "CURRENT_TIMESTAMP",
+        SqlDialect::Mysql => "NOW()",
     }
 }
