@@ -157,18 +157,7 @@ impl ModelStore for MemoryStorage {
         let models = self.models.read().await;
         Ok(models
             .iter()
-            .any(|m| m.name == name && exclude_id.is_none_or(|eid| m.id != eid)))
-    }
-
-    async fn exists_by_virtual_model(
-        &self,
-        virtual_model: &str,
-        exclude_id: Option<&str>,
-    ) -> anyhow::Result<bool> {
-        let models = self.models.read().await;
-        Ok(models
-            .iter()
-            .any(|m| m.virtual_model == virtual_model && exclude_id.is_none_or(|eid| m.id != eid)))
+            .any(|m| m.name.eq_ignore_ascii_case(name) && exclude_id.is_none_or(|eid| m.id != eid)))
     }
 }
 

@@ -23,7 +23,6 @@ export interface Provider {
 export interface Model {
   id: string;
   name: string;
-  virtual_model: string;
   balance: ModelBalance;
   target_provider: string;
   target_model: string;
@@ -229,7 +228,6 @@ export interface UpdateProvider {
 
 export interface CreateModel {
   name: string;
-  virtual_model: string;
   balance?: ModelBalance;
   target_provider: string;
   target_model: string;
@@ -239,7 +237,6 @@ export interface CreateModel {
 
 export interface UpdateModel {
   name?: string;
-  virtual_model?: string;
   balance?: ModelBalance;
   target_provider?: string;
   target_model?: string;
@@ -315,7 +312,6 @@ export interface ExportProvider {
 
 export interface ExportModel {
   name: string;
-  virtual_model: string;
   target_model: string;
   access_control: boolean;
   is_enabled: boolean;

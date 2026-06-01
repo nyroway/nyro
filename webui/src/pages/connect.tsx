@@ -527,7 +527,7 @@ export default function ConnectPage() {
   const proxyPort = status?.proxy_port;
   const hasProxyPort = typeof proxyPort === "number" && Number.isFinite(proxyPort) && proxyPort > 0;
   const host = hasProxyPort ? `http://localhost:${proxyPort}` : "http://localhost:<proxy-port>";
-  const codeModel = selectedRoute?.virtual_model ?? "gpt-4o";
+  const codeModel = selectedRoute?.name ?? "gpt-4o";
   const codeRouteType: RouteKind = "chat";
   const codeProtocol = selectedCodeProtocol;
   const selectedCliTool =
@@ -602,7 +602,7 @@ export default function ConnectPage() {
     selectedCliRoute?.access_control
       ? selectedCliApiKey?.key ?? UNSELECTED_KEY_PLACEHOLDER
       : OPTIONAL_KEY_PLACEHOLDER;
-  const cliModel = selectedCliRoute?.virtual_model ?? "gpt-4o";
+  const cliModel = selectedCliRoute?.name ?? "gpt-4o";
   const canSyncCli =
     IS_TAURI &&
     hasProxyPort &&
@@ -833,7 +833,7 @@ export default function ConnectPage() {
                       }}
                     options={cliRoutes.map((route) => ({
                       value: route.id,
-                      label: `${route.name} · ${route.virtual_model}`,
+                      label: route.name,
                     }))}
                     placeholder={
                       cliRoutes.length > 0
@@ -1065,7 +1065,7 @@ export default function ConnectPage() {
                     onValueChange={setSelectedCodeRouteId}
                     options={codeRoutes.map((route) => ({
                       value: route.id,
-                      label: `${route.name} · ${route.virtual_model}`,
+                      label: route.name,
                     }))}
                     placeholder={
                       codeRoutes.length > 0

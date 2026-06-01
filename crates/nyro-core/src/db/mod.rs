@@ -97,6 +97,9 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     // Rename column: models strategy → balance
     rename_column_if_needed(pool, "models", "strategy", "balance").await?;
 
+    // Merge virtual_model into name and drop the column
+    migrate_merge_virtual_model_into_name(pool).await?;
+
     Ok(())
 }
 
@@ -705,6 +708,29 @@ async fn rename_column_if_needed(
     Ok(())
 }
 
+async fn migrate_merge_virtual_model_into_name(pool: &SqlitePool) -> anyhow::Result<()> {
+    if !column_exists(pool, "models", "virtual_model").await? {
+        return Ok(());
+    }
+    tracing::info!("merging virtual_model into name on models table");
+    sqlx::query(
+        "UPDATE models SET name = TRIM(virtual_model)
+         WHERE virtual_model IS NOT NULL AND TRIM(virtual_model) != ''",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("ALTER TABLE models DROP COLUMN virtual_model")
+        .execute(pool)
+        .await?;
+    // Also clean up legacy match_pattern column if present
+    if column_exists(pool, "models", "match_pattern").await? {
+        sqlx::query("ALTER TABLE models DROP COLUMN match_pattern")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 const INIT_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS providers (
     id          TEXT PRIMARY KEY,
@@ -733,7 +759,6 @@ CREATE TABLE IF NOT EXISTS providers (
 CREATE TABLE IF NOT EXISTS routes (
     id                TEXT PRIMARY KEY,
     name              TEXT NOT NULL,
-    virtual_model     TEXT,
     balance           TEXT DEFAULT 'weighted',
     target_provider   TEXT NOT NULL REFERENCES providers(id),
     target_model      TEXT NOT NULL,

@@ -109,8 +109,6 @@ pub struct UpsertOAuthCredential {
 pub struct Model {
     pub id: String,
     pub name: String,
-    #[serde(alias = "vmodel")]
-    pub virtual_model: String,
     pub balance: String,
     pub target_provider: String,
     pub target_model: String,
@@ -298,9 +296,8 @@ pub struct UpdateProvider {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateModel {
+    #[serde(alias = "virtual_model", alias = "vmodel")]
     pub name: Option<String>,
-    #[serde(alias = "vmodel")]
-    pub virtual_model: Option<String>,
     #[serde(rename = "balance", alias = "strategy")]
     pub balance: Option<String>,
     pub target_provider: Option<String>,
@@ -313,9 +310,8 @@ pub struct UpdateModel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateModel {
+    #[serde(alias = "virtual_model", alias = "vmodel")]
     pub name: String,
-    #[serde(alias = "vmodel")]
-    pub virtual_model: String,
     #[serde(rename = "balance", alias = "strategy")]
     pub balance: Option<String>,
     pub target_provider: String,
@@ -476,8 +472,8 @@ pub struct ExportProvider {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportModel {
+    #[serde(alias = "virtual_model")]
     pub name: String,
-    pub virtual_model: String,
     pub target_model: String,
     #[serde(default)]
     pub access_control: bool,

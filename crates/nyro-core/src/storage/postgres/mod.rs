@@ -469,13 +469,11 @@ impl ModelStore for PostgresModelStore {
 
     async fn create(&self, input: CreateModel) -> anyhow::Result<Model> {
         let id = uuid::Uuid::new_v4().to_string();
-        let virtual_model = input.virtual_model.trim().to_string();
         sqlx::query(
-            "INSERT INTO models (id, name, virtual_model, balance, target_provider, target_model, access_control) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO models (id, name, balance, target_provider, target_model, access_control) VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(&id)
         .bind(input.name.trim())
-        .bind(&virtual_model)
         .bind(input.balance.unwrap_or_else(|| "weighted".to_string()))
         .bind(input.target_provider.trim())
         .bind(input.target_model.trim())
@@ -488,11 +486,6 @@ impl ModelStore for PostgresModelStore {
     async fn update(&self, id: &str, input: UpdateModel) -> anyhow::Result<Model> {
         let current = self.get(id).await?.context("model not found for update")?;
         let name = input.name.unwrap_or(current.name);
-        let virtual_model = input
-            .virtual_model
-            .unwrap_or(current.virtual_model)
-            .trim()
-            .to_string();
         let balance = input.balance.unwrap_or(current.balance);
         let target_provider = input.target_provider.unwrap_or(current.target_provider);
         let target_model = input.target_model.unwrap_or(current.target_model);
@@ -500,10 +493,9 @@ impl ModelStore for PostgresModelStore {
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE models SET name=$1, virtual_model=$2, balance=$3, target_provider=$4, target_model=$5, access_control=$6, is_enabled=$7 WHERE id=$8",
+            "UPDATE models SET name=$1, balance=$2, target_provider=$3, target_model=$4, access_control=$5, is_enabled=$6 WHERE id=$7",
         )
         .bind(name.trim())
-        .bind(&virtual_model)
         .bind(balance.trim().to_lowercase())
         .bind(target_provider.trim())
         .bind(target_model.trim())
@@ -537,31 +529,6 @@ impl ModelStore for PostgresModelStore {
                 "SELECT id FROM models WHERE lower(trim(name)) = lower(trim($1)) LIMIT 1",
             )
             .bind(name)
-            .fetch_optional(&self.pool)
-            .await?
-        };
-        Ok(row.is_some())
-    }
-
-    async fn exists_by_virtual_model(
-        &self,
-        virtual_model: &str,
-        exclude_id: Option<&str>,
-    ) -> anyhow::Result<bool> {
-        let normalized_model = virtual_model.trim();
-        let row = if let Some(exclude_id) = exclude_id {
-            sqlx::query_scalar::<_, String>(
-                "SELECT id FROM models WHERE virtual_model = $1 AND id != $2 LIMIT 1",
-            )
-            .bind(normalized_model)
-            .bind(exclude_id)
-            .fetch_optional(&self.pool)
-            .await?
-        } else {
-            sqlx::query_scalar::<_, String>(
-                "SELECT id FROM models WHERE virtual_model = $1 LIMIT 1",
-            )
-            .bind(normalized_model)
             .fetch_optional(&self.pool)
             .await?
         };
@@ -1265,6 +1232,20 @@ END $$;"#,
         // Rename column: models strategy → balance
         pg_rename_column_if_needed(self.adapter.pool(), "models", "strategy", "balance").await?;
 
+        // Merge virtual_model into name and drop the column
+        if pg_column_exists(self.adapter.pool(), "models", "virtual_model").await? {
+            tracing::info!("merging virtual_model into name on models table (postgres)");
+            sqlx::query(
+                "UPDATE models SET name = BTRIM(virtual_model)
+                 WHERE virtual_model IS NOT NULL AND BTRIM(virtual_model) != ''",
+            )
+            .execute(self.adapter.pool())
+            .await?;
+            sqlx::query("ALTER TABLE models DROP COLUMN virtual_model")
+                .execute(self.adapter.pool())
+                .await?;
+        }
+
         Ok(())
     }
 
@@ -1500,7 +1481,7 @@ fn provider_select(suffix: Option<&str>) -> String {
 
 fn model_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, virtual_model, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM models",
+        "SELECT id, name, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM models",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1618,7 +1599,6 @@ CREATE TABLE IF NOT EXISTS providers (
 CREATE TABLE IF NOT EXISTS routes (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    virtual_model TEXT,
     balance TEXT DEFAULT 'weighted',
     target_provider TEXT NOT NULL REFERENCES providers(id),
     target_model TEXT NOT NULL,

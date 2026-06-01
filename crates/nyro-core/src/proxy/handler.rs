@@ -44,7 +44,7 @@ pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Respo
         .models
         .iter()
         .filter(|model| !model.access_control || accessible_route_ids.contains(&model.id))
-        .map(|model| model.virtual_model.trim())
+        .map(|model| model.name.trim())
         .filter(|model| !model.is_empty())
         .map(ToString::to_string)
         .collect::<BTreeSet<_>>();

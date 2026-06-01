@@ -72,7 +72,6 @@ impl AdminService {
                 .into_iter()
                 .map(|m| ExportModel {
                     name: m.name,
-                    virtual_model: m.virtual_model,
                     target_model: m.target_model,
                     access_control: m.access_control,
                     is_enabled: m.is_enabled,
@@ -139,7 +138,6 @@ impl AdminService {
                 && self
                     .create_model(CreateModel {
                         name: m.name.clone(),
-                        virtual_model: m.virtual_model.clone(),
                         balance: Some("weighted".to_string()),
                         target_provider: pid,
                         target_model: m.target_model.clone(),

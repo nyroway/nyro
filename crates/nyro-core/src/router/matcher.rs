@@ -18,5 +18,5 @@ impl ModelCache {
 }
 
 pub fn match_model<'a>(models: &'a [Model], model: &str) -> Option<&'a Model> {
-    models.iter().find(|m| m.virtual_model == model)
+    models.iter().find(|m| m.name == model)
 }

@@ -139,9 +139,8 @@ pub struct YamlEndpoint {
 
 #[derive(Debug, Deserialize)]
 pub struct YamlModel {
+    #[serde(alias = "vmodel", alias = "virtual_model")]
     pub name: String,
-    #[serde(alias = "vmodel")]
-    pub virtual_model: String,
     #[serde(default = "default_balance", alias = "strategy")]
     pub balance: String,
     #[serde(default, rename = "backends", alias = "targets")]
@@ -240,9 +239,6 @@ impl YamlConfig {
                     "YAML field 'type' (route_type) is no longer supported and will be ignored; \
                      remove it from your config file"
                 );
-            }
-            if m.virtual_model.trim().is_empty() {
-                anyhow::bail!("models[{i}] ({}): virtual_model is required", m.name);
             }
             if m.backends.is_empty() {
                 anyhow::bail!("models[{i}] ({}): at least one backend is required", m.name);
@@ -350,7 +346,6 @@ pub fn build_models(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Model> {
             Model {
                 id: model_id,
                 name: ym.name.clone(),
-                virtual_model: ym.virtual_model.clone(),
                 balance: ym.balance.clone(),
                 target_provider: primary.map(|b| b.provider_id.clone()).unwrap_or_default(),
                 target_model: primary.map(|b| b.model.clone()).unwrap_or_default(),
@@ -492,7 +487,6 @@ providers:
     apikey: sk-x
 models:
   - name: gpt-4o
-    vmodel: gpt-4o
     backends:
       - provider: openai
         model: gpt-4o
@@ -512,13 +506,52 @@ providers:
     apikey: sk-x
 routes:
   - name: gpt-4o
-    vmodel: gpt-4o
     targets:
       - provider: openai
         model: gpt-4o
 "#;
         let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
         cfg.validate().expect("validate");
+    }
+
+    #[test]
+    fn vmodel_alias_maps_to_name() {
+        let yaml = r#"
+providers:
+  - name: openai
+    endpoints:
+      openai:
+        base_url: https://api.openai.com/v1
+    apikey: sk-x
+models:
+  - vmodel: gpt-4o
+    backends:
+      - provider: openai
+        model: gpt-4o
+"#;
+        let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
+        cfg.validate().expect("validate");
+        assert_eq!(cfg.models[0].name, "gpt-4o");
+    }
+
+    #[test]
+    fn virtual_model_alias_maps_to_name() {
+        let yaml = r#"
+providers:
+  - name: openai
+    endpoints:
+      openai:
+        base_url: https://api.openai.com/v1
+    apikey: sk-x
+models:
+  - virtual_model: gpt-4o
+    backends:
+      - provider: openai
+        model: gpt-4o
+"#;
+        let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
+        cfg.validate().expect("validate");
+        assert_eq!(cfg.models[0].name, "gpt-4o");
     }
 
     #[test]
@@ -573,13 +606,11 @@ providers:
     apikey: sk-x
 models:
   - name: embeddings
-    vmodel: text-embedding-3-small
     type: embedding
     backends:
       - provider: openai
         model: text-embedding-3-small
   - name: chat
-    vmodel: gpt-4o
     route_type: chat
     backends:
       - provider: openai
@@ -609,7 +640,6 @@ providers:
     capabilities_source: models.dev
 models:
   - name: chat
-    vmodel: gpt-4o
     backends:
       - provider: openai
         model: gpt-4o
@@ -635,7 +665,6 @@ providers:
     capabilities_source: http
 models:
   - name: embeddings
-    vmodel: text-embedding-3-small
     type: embedding
     backends:
       - provider: openai

@@ -1,12 +1,5 @@
 use super::*;
 
-pub(super) fn ensure_virtual_model(model: &str) -> anyhow::Result<()> {
-    if model.trim().is_empty() {
-        anyhow::bail!("virtual_model cannot be empty");
-    }
-    Ok(())
-}
-
 pub(super) fn normalize_model_balance(balance: Option<&str>) -> anyhow::Result<String> {
     let normalized = balance.unwrap_or("weighted").trim().to_ascii_lowercase();
     match normalized.as_str() {

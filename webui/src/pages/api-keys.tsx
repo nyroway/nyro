@@ -217,7 +217,7 @@ export default function ApiKeysPage() {
     () =>
       routes.map((route) => ({
         value: route.id,
-        label: `${route.name} (${route.virtual_model})`,
+        label: route.name,
       })),
     [routes],
   );

@@ -72,11 +72,6 @@ pub trait ModelStore: Send + Sync {
     async fn update(&self, id: &str, input: UpdateModel) -> anyhow::Result<Model>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool>;
-    async fn exists_by_virtual_model(
-        &self,
-        virtual_model: &str,
-        exclude_id: Option<&str>,
-    ) -> anyhow::Result<bool>;
 }
 
 #[async_trait]

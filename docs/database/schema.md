@@ -53,8 +53,7 @@ AI 模型供应商配置（API endpoint、密钥、认证方式等）。
 | Column | Type | Default | Description |
 |---|---|---|---|
 | `id` | TEXT PK | — | 主键，UUID |
-| `name` | TEXT NOT NULL | — | 显示名称 |
-| `virtual_model` | TEXT | NULL | 客户端请求中使用的模型名（匹配键） |
+| `name` | TEXT NOT NULL | — | 显示名称，同时作为客户端请求的模型匹配键（路由唯一键的一部分） |
 | `balance` | TEXT | `'weighted'` | 多后端负载均衡策略：`weighted`、`priority`、`cooldown`、`latency` |
 | `target_provider` | TEXT NOT NULL | — | 默认后端 provider ID（FK → providers.id） |
 | `target_model` | TEXT NOT NULL | — | 默认后端使用的上游模型名 |
@@ -217,6 +216,7 @@ routes             → models
 route_targets      → model_backends
 api_key_routes     → api_key_models
 routes.strategy    → models.balance
+routes.virtual_model → models.name（合并至 name 列）
 request_logs.route_id   → request_logs.model_id
 request_logs.route_name → request_logs.model_name
 ```

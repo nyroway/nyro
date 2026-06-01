@@ -34,7 +34,6 @@ const PAGE_SIZE = 7;
 
 type ModelForm = {
   name: string;
-  virtual_model: string;
   balance: ModelBalance;
   targets: ModelBackendForm[];
   access_control: boolean;
@@ -50,7 +49,6 @@ type ModelBackendForm = {
 
 const emptyCreate: ModelForm = {
   name: "",
-  virtual_model: "",
   balance: "weighted",
   targets: [{ provider_id: "", model: "", weight: 100, priority: 1 }],
   access_control: false,
@@ -416,7 +414,6 @@ export default function ModelsPage() {
     setEditForm({
       id: route.id,
       name: route.name,
-      virtual_model: route.virtual_model,
       balance: route.balance ?? "weighted",
       targets,
       access_control: route.access_control,
@@ -474,7 +471,7 @@ export default function ModelsPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{isZh ? "模型" : "Models"}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {isZh ? "按虚拟模型精确匹配，自动开放所有接入协议" : "Exact match by virtual model, all ingress protocols enabled"}
+            {isZh ? "按模型名称精确匹配，自动开放所有接入协议" : "Exact match by model name, all ingress protocols enabled"}
           </p>
         </div>
         <Button
@@ -495,19 +492,11 @@ export default function ModelsPage() {
           <h2 className="text-lg font-semibold text-slate-900">{isZh ? "新建模型" : "New Model"}</h2>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
+              <FieldLabel>{isZh ? "模型名称（虚拟模型 ID）" : "Model Name (Virtual Model ID)"}</FieldLabel>
               <Input
                 value={createForm.name}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
                 placeholder={isZh ? "输入模型名称" : "Enter model name"}
-              />
-            </div>
-            <div className="space-y-2">
-              <FieldLabel>{isZh ? "虚拟模型 ID" : "Virtual Model ID"}</FieldLabel>
-              <Input
-                value={createForm.virtual_model}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, virtual_model: e.target.value }))}
-                placeholder={isZh ? "客户端请求中的模型 ID（精确匹配）" : "Client model ID (exact match)"}
               />
             </div>
             <div className="space-y-2">
@@ -579,7 +568,6 @@ export default function ModelsPage() {
               disabled={
                 createMut.isPending ||
                 !createForm.name.trim() ||
-                !createForm.virtual_model.trim() ||
                 createForm.targets.some((target) => !target.provider_id || !target.model.trim())
               }
             >
@@ -628,19 +616,10 @@ export default function ModelsPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
+                      <FieldLabel>{isZh ? "模型名称（虚拟模型 ID）" : "Model Name (Virtual Model ID)"}</FieldLabel>
                       <Input
                         value={editForm.name}
                         onChange={(e) => setEditForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <FieldLabel>{isZh ? "虚拟模型 ID" : "Virtual Model ID"}</FieldLabel>
-                      <Input
-                        value={editForm.virtual_model}
-                        onChange={(e) =>
-                          setEditForm((prev) => (prev ? { ...prev, virtual_model: e.target.value } : prev))
-                        }
                       />
                     </div>
                     <div className="space-y-2">
@@ -744,9 +723,6 @@ export default function ModelsPage() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex h-5 items-center font-semibold text-slate-900">{route.name}</span>
-                    <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[11px] leading-none text-slate-600">
-                      {route.virtual_model}
-                    </code>
                     {route.targets && route.targets.length > 1 && (
                       <Badge variant="success" className="connect-label-badge">
                         {isZh ? `共 ${route.targets.length} 个目标` : `${route.targets.length} Targets`}
@@ -840,7 +816,7 @@ export default function ModelsPage() {
           if (!open) setModelToDisable(null);
         }}
         title={isZh ? "确认禁用模型" : "Confirm model disable"}
-        description={isZh ? "禁用后，该虚拟模型将不可用，确认禁用？" : "After disabling, the virtual model will be unavailable. Confirm disable?"}
+        description={isZh ? "禁用后，该模型将不可用，确认禁用？" : "After disabling, the model will be unavailable. Confirm disable?"}
         cancelText={isZh ? "取消" : "Cancel"}
         confirmText={isZh ? "禁用" : "Disable"}
         onConfirm={() => {
@@ -895,7 +871,6 @@ function buildCreatePayload(form: ModelForm): CreateModel {
   const primary = targets[0] ?? { provider_id: "", model: "" };
   return {
     name: form.name.trim(),
-    virtual_model: form.virtual_model.trim(),
     balance: form.balance,
     targets,
     target_provider: primary.provider_id,
@@ -915,7 +890,6 @@ function buildUpdatePayload(form: ModelForm & { id: string }): UpdateModel {
   const primary = targets[0] ?? { provider_id: "", model: "" };
   return {
     name: form.name.trim(),
-    virtual_model: form.virtual_model.trim(),
     balance: form.balance,
     targets,
     target_provider: primary.provider_id,
