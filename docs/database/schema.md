@@ -1,6 +1,6 @@
 # Database Schema
 
-Nyro supports two storage backends — **SQLite** (default) and **PostgreSQL** — with identical table structures.
+Nyro supports three storage backends — **SQLite** (default), **PostgreSQL**, and **MySQL** — with identical table structures.
 
 ## Entity Relationship
 
@@ -90,7 +90,7 @@ API 密钥管理，用于代理端口的访问认证和限流。
 | Column | Type | Default | Description |
 |---|---|---|---|
 | `id` | TEXT PK | — | 主键，UUID |
-| `key` | TEXT NOT NULL UNIQUE | — | 密钥值（如 `nyro-xxxx`） |
+| `token` | TEXT NOT NULL UNIQUE | — | 密钥值（如 `nyro-xxxx`） |
 | `name` | TEXT NOT NULL | — | 显示名称 |
 | `rpm` | INTEGER | NULL | 每分钟请求数限制 |
 | `rpd` | INTEGER | NULL | 每日请求数限制 |
@@ -101,7 +101,7 @@ API 密钥管理，用于代理端口的访问认证和限流。
 | `created_at` | TEXT | `datetime('now')` | 创建时间 |
 | `updated_at` | TEXT | `datetime('now')` | 更新时间 |
 
-**索引**：`idx_api_keys_key` on `key`
+**索引**：`idx_api_keys_token` on `token`
 
 ---
 
@@ -202,7 +202,7 @@ OAuth 凭据存储，用于需要 OAuth 认证的供应商（如 Google Vertex A
 
 | Column | Type | Default | Description |
 |---|---|---|---|
-| `key` | TEXT PK | — | 配置键 |
+| `name` | TEXT PK | — | 配置键 |
 | `value` | TEXT NOT NULL | — | 配置值 |
 | `updated_at` | TEXT | `datetime('now')` | 更新时间 |
 
@@ -220,6 +220,8 @@ routes.strategy    → models.balance
 routes.virtual_model → models.name（合并至 name 列）
 request_logs.route_id   → request_logs.model_id
 request_logs.route_name → request_logs.model_name
+settings.key       → settings.name
+api_keys.key       → api_keys.token
 ```
 
 所有 rename 操作均为幂等：先检查旧列存在且新列不存在，才执行 `ALTER TABLE RENAME`。
