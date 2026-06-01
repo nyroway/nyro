@@ -214,14 +214,20 @@ Available server binaries: `linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `mac
 
 Open `http://localhost:19531` for the management UI. See [Server docs](docs/server/README.md) and [Standalone docs](docs/standalone/README.md) for full configuration reference.
 
-### PostgreSQL Storage Backend
+### SQL Storage Backends
 
-Default behavior: local SQLite under `--data-dir`. To use PostgreSQL:
+Default behavior: local SQLite under `--data-dir`. To use PostgreSQL or MySQL:
 
 ```bash
+# PostgreSQL
 ./nyro-server-linux-x86_64 \
   --storage-backend postgres \
   --postgres-dsn "postgres://user:pass@host:5432/db"
+
+# MySQL
+./nyro-server-linux-x86_64 \
+  --storage-backend mysql \
+  --mysql-dsn "mysql://user:pass@host:3306/db"
 ```
 
 Or via environment variable:
@@ -229,6 +235,10 @@ Or via environment variable:
 ```bash
 export NYRO_POSTGRES_DSN="postgres://user:pass@host:5432/db"
 ./nyro-server-linux-x86_64 --storage-backend postgres
+
+# or
+export NYRO_MYSQL_DSN="mysql://user:pass@host:3306/db"
+./nyro-server-linux-x86_64 --storage-backend mysql
 ```
 
 ### Docker
@@ -248,7 +258,7 @@ docker run --rm \
 
 Open `http://127.0.0.1:19531` for the management UI. Use the same `NYRO_ADMIN_TOKEN` value as the Bearer token for admin API requests.
 
-For Postgres-backed deployments and `docker compose` usage, see the [docker-nyro README](https://github.com/nyroway/docker-nyro).
+For Postgres- or MySQL-backed deployments and `docker compose` usage, see the [docker-nyro README](https://github.com/nyroway/docker-nyro).
 
 ---
 

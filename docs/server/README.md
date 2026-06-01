@@ -32,14 +32,16 @@ nyro-server
 | 参数 | 环境变量 | 默认值 | 说明 |
 |------|----------|--------|------|
 | `--data-dir` | `NYRO_DATA_DIR` | `~/.nyro` | 数据存储目录（SQLite 数据库存放位置） |
-| `--storage-backend` | `NYRO_STORAGE_BACKEND` | `sqlite` | 存储后端：`sqlite` / `postgres` |
+| `--storage-backend` | `NYRO_STORAGE_BACKEND` | `sqlite` | 存储后端：`sqlite` / `postgres` / `mysql` |
 | `--migrate-on-start` | — | `true` | 启动时自动运行数据库迁移 |
 | `--postgres-dsn` | `NYRO_POSTGRES_DSN` | 无 | PostgreSQL 连接字符串（`--storage-backend=postgres` 时必填） |
-| `--postgres-max-connections` | — | `10` | 连接池最大连接数 |
-| `--postgres-min-connections` | — | `1` | 连接池最小连接数 |
-| `--postgres-acquire-timeout` | — | `10` | 连接获取超时（秒） |
-| `--postgres-idle-timeout` | — | 无 | 空闲连接超时（秒） |
-| `--postgres-max-lifetime` | — | 无 | 连接最大生命周期（秒） |
+| `--postgres-max-connections` | — | `10` | PostgreSQL 连接池最大连接数 |
+| `--postgres-min-connections` | — | `1` | PostgreSQL 连接池最小连接数 |
+| `--postgres-idle-timeout` | — | 无 | PostgreSQL 空闲连接超时（秒） |
+| `--mysql-dsn` | `NYRO_MYSQL_DSN` | 无 | MySQL 连接字符串（`--storage-backend=mysql` 时必填） |
+| `--mysql-max-connections` | — | `10` | MySQL 连接池最大连接数 |
+| `--mysql-min-connections` | — | `1` | MySQL 连接池最小连接数 |
+| `--mysql-idle-timeout` | — | 无 | MySQL 空闲连接超时（秒） |
 
 ### Advanced (CORS)
 
@@ -73,6 +75,22 @@ nyro-server \
 ```bash
 export NYRO_STORAGE_BACKEND=postgres
 export NYRO_POSTGRES_DSN="postgres://user:pass@localhost:5432/nyro"
+nyro-server
+```
+
+### MySQL
+
+```bash
+nyro-server \
+  --storage-backend mysql \
+  --mysql-dsn "mysql://user:pass@localhost:3306/nyro"
+```
+
+或通过环境变量：
+
+```bash
+export NYRO_STORAGE_BACKEND=mysql
+export NYRO_MYSQL_DSN="mysql://user:pass@localhost:3306/nyro"
 nyro-server
 ```
 

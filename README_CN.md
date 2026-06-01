@@ -214,14 +214,20 @@ chmod +x nyro-server-linux-x86_64
 
 打开 `http://localhost:19531` 进入管理界面。详细配置参见 [Server 文档](docs/server/README.md) 和 [Standalone 文档](docs/standalone/README.md)。
 
-### PostgreSQL 存储后端
+### SQL 存储后端
 
-默认使用 `--data-dir` 下的本地 SQLite。如需切换到 PostgreSQL：
+默认使用 `--data-dir` 下的本地 SQLite。如需切换到 PostgreSQL 或 MySQL：
 
 ```bash
+# PostgreSQL
 ./nyro-server-linux-x86_64 \
   --storage-backend postgres \
   --postgres-dsn "postgres://user:pass@host:5432/db"
+
+# MySQL
+./nyro-server-linux-x86_64 \
+  --storage-backend mysql \
+  --mysql-dsn "mysql://user:pass@host:3306/db"
 ```
 
 或通过环境变量：
@@ -229,6 +235,10 @@ chmod +x nyro-server-linux-x86_64
 ```bash
 export NYRO_POSTGRES_DSN="postgres://user:pass@host:5432/db"
 ./nyro-server-linux-x86_64 --storage-backend postgres
+
+# 或
+export NYRO_MYSQL_DSN="mysql://user:pass@host:3306/db"
+./nyro-server-linux-x86_64 --storage-backend mysql
 ```
 
 ### Docker
@@ -248,7 +258,7 @@ docker run --rm \
 
 打开 `http://127.0.0.1:19531` 进入管理界面。管理 API 请求时，请使用同一个 `NYRO_ADMIN_TOKEN` 作为 Bearer Token。
 
-如需使用 Postgres 后端或 `docker compose` 部署，请参考 [docker-nyro README](https://github.com/nyroway/docker-nyro)。
+如需使用 Postgres / MySQL 后端或 `docker compose` 部署，请参考 [docker-nyro README](https://github.com/nyroway/docker-nyro)。
 
 
 ---
