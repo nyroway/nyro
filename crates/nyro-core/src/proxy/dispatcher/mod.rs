@@ -359,6 +359,7 @@ pub async fn dispatch_pipeline(
             api_key_id: auth_key.id.as_deref(),
             api_key_name: auth_key.name.as_deref(),
             is_stream,
+            enable_payload: route.enable_payload,
             start,
         };
         let response = if is_stream {
@@ -477,6 +478,7 @@ struct CallCtx<'a> {
     api_key_id: Option<&'a str>,
     api_key_name: Option<&'a str>,
     is_stream: bool,
+    enable_payload: Option<bool>,
     start: Instant,
 }
 
@@ -513,6 +515,7 @@ struct LogBuilder {
     model_id: Option<String>,
     model_name: Option<String>,
     is_stream: bool,
+    enable_payload: Option<bool>,
     start: Instant,
     client_status_code: i32,
     usage: Usage,
@@ -535,6 +538,7 @@ impl LogBuilder {
             model_id: Some(call_ctx.model_id.to_string()),
             model_name: Some(call_ctx.model_name.to_string()),
             is_stream: call_ctx.is_stream,
+            enable_payload: call_ctx.enable_payload,
             start: call_ctx.start,
             client_status_code: 200,
             usage: Usage::default(),
@@ -565,6 +569,7 @@ impl LogBuilder {
             model_id: None,
             model_name: None,
             is_stream: false,
+            enable_payload: None,
             start,
             client_status_code: 200,
             usage: Usage::default(),
@@ -708,6 +713,7 @@ impl LogBuilder {
             is_stream: self.is_stream,
             stream_chunks_count: self.extras.stream_chunks_count,
             stream_first_chunk_ms: self.extras.stream_first_chunk_ms,
+            enable_payload: self.enable_payload,
         };
         send_log(&self.gw, entry);
     }

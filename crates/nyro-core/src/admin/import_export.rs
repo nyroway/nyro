@@ -73,7 +73,8 @@ impl AdminService {
                 .map(|m| ExportModel {
                     name: m.name,
                     target_model: m.target_model,
-                    access_control: m.access_control,
+                    enable_auth: m.enable_auth,
+                    enable_payload: m.enable_payload,
                     is_enabled: m.is_enabled,
                 })
                 .collect(),
@@ -142,7 +143,8 @@ impl AdminService {
                         target_provider: pid,
                         target_model: m.target_model.clone(),
                         targets: vec![],
-                        access_control: Some(m.access_control),
+                        enable_auth: Some(m.enable_auth),
+                        enable_payload: m.enable_payload,
                     })
                     .await
                     .is_ok()

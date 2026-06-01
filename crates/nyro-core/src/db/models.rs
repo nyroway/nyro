@@ -112,7 +112,9 @@ pub struct Model {
     pub balance: String,
     pub target_provider: String,
     pub target_model: String,
-    pub access_control: bool,
+    #[serde(alias = "access_control")]
+    pub enable_auth: bool,
+    pub enable_payload: Option<bool>,
     pub is_enabled: bool,
     pub created_at: String,
     #[serde(default)]
@@ -304,7 +306,9 @@ pub struct UpdateModel {
     pub target_model: Option<String>,
     #[serde(default)]
     pub targets: Option<Vec<UpsertModelBackend>>,
-    pub access_control: Option<bool>,
+    #[serde(alias = "access_control")]
+    pub enable_auth: Option<bool>,
+    pub enable_payload: Option<Option<bool>>,
     pub is_enabled: Option<bool>,
 }
 
@@ -318,7 +322,9 @@ pub struct CreateModel {
     pub target_model: String,
     #[serde(default)]
     pub targets: Vec<CreateModelBackend>,
-    pub access_control: Option<bool>,
+    #[serde(alias = "access_control")]
+    pub enable_auth: Option<bool>,
+    pub enable_payload: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -475,8 +481,10 @@ pub struct ExportModel {
     #[serde(alias = "virtual_model")]
     pub name: String,
     pub target_model: String,
+    #[serde(alias = "access_control")]
+    pub enable_auth: bool,
     #[serde(default)]
-    pub access_control: bool,
+    pub enable_payload: Option<bool>,
     pub is_enabled: bool,
 }
 

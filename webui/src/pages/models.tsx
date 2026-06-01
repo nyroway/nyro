@@ -36,7 +36,8 @@ type ModelForm = {
   name: string;
   balance: ModelBalance;
   targets: ModelBackendForm[];
-  access_control: boolean;
+  enable_auth: boolean;
+  enable_payload: boolean;
 };
 
 type ModelBackendForm = {
@@ -51,7 +52,8 @@ const emptyCreate: ModelForm = {
   name: "",
   balance: "weighted",
   targets: [{ provider_id: "", model: "", weight: 100, priority: 1 }],
-  access_control: false,
+  enable_auth: false,
+  enable_payload: false,
 };
 
 function FieldLabel({ children }: { children: string }) {
@@ -342,6 +344,13 @@ export default function ModelsPage() {
     queryKey: ["providers"],
     queryFn: () => backend("get_providers"),
   });
+  const { data: globalEnablePayload } = useQuery<string | null>({
+    queryKey: ["setting", "enable_payload"],
+    queryFn: () => backend("get_setting", { key: "enable_payload" }),
+  });
+  const globalPayloadEnabled = !["false", "0", "off", "no"].includes(
+    (globalEnablePayload ?? "true").trim().toLowerCase(),
+  );
 
   const createMut = useMutation({
     mutationFn: (input: CreateModel) => backend("create_model", { input }),
@@ -416,7 +425,8 @@ export default function ModelsPage() {
       name: route.name,
       balance: route.balance ?? "weighted",
       targets,
-      access_control: route.access_control,
+      enable_auth: route.enable_auth,
+      enable_payload: route.enable_payload ?? false,
     });
   }
 
@@ -553,12 +563,23 @@ export default function ModelsPage() {
             <ModelToggleControl
               title={isZh ? "访问控制" : "Access Control"}
               isZh={isZh}
-              checked={createForm.access_control}
+              checked={createForm.enable_auth}
               checkedMessage={isZh ? "仅允许绑定模型的 API Key 访问" : "Only API keys bound to this model are allowed"}
               uncheckedMessage={isZh ? "仅允许携带 API Key 的请求访问" : "Only requests with an API key are allowed"}
-              switchId="create-route-access-control"
-              onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, access_control: checked }))}
+              switchId="create-route-enable-auth"
+              onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, enable_auth: checked }))}
             />
+            {globalPayloadEnabled && (
+              <ModelToggleControl
+                title={isZh ? "记录载荷" : "Record Payloads"}
+                isZh={isZh}
+                checked={createForm.enable_payload}
+                checkedMessage={isZh ? "记录完整的请求与响应内容" : "Log full request and response content"}
+                uncheckedMessage={isZh ? "仅记录 Token 用量等基础指标" : "Only basic metrics are logged"}
+                switchId="create-route-enable-payload"
+                onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, enable_payload: checked }))}
+              />
+            )}
           </div>
           <div className="flex gap-3">
             <Button
@@ -676,13 +697,25 @@ export default function ModelsPage() {
                     <ModelToggleControl
                       title={isZh ? "访问控制" : "Access Control"}
                       isZh={isZh}
-                      checked={editForm.access_control}
+                      checked={editForm.enable_auth}
                       checkedMessage={isZh ? "仅允许绑定模型的 API Key 访问" : "Only API keys bound to this model are allowed"}
                       uncheckedMessage={isZh ? "仅允许携带 API Key 的请求访问" : "Only requests with an API key are allowed"}
                       onCheckedChange={(checked) =>
-                        setEditForm((prev) => (prev ? { ...prev, access_control: checked } : prev))
+                        setEditForm((prev) => (prev ? { ...prev, enable_auth: checked } : prev))
                       }
                     />
+                    {globalPayloadEnabled && (
+                      <ModelToggleControl
+                        title={isZh ? "记录载荷" : "Record Payloads"}
+                        isZh={isZh}
+                        checked={editForm.enable_payload}
+                        checkedMessage={isZh ? "记录完整的请求与响应内容" : "Log full request and response content"}
+                        uncheckedMessage={isZh ? "仅记录 Token 用量等基础指标" : "Only basic metrics are logged"}
+                        onCheckedChange={(checked) =>
+                          setEditForm((prev) => (prev ? { ...prev, enable_payload: checked } : prev))
+                        }
+                      />
+                    )}
                   </div>
                   <div className="flex gap-3">
                     <Button
@@ -734,9 +767,14 @@ export default function ModelsPage() {
                     >
                       {balanceLabel(route.balance ?? "weighted", isZh)}
                     </Badge>
-                    {route.access_control && (
+                    {route.enable_auth && (
                       <Badge variant="success" className="connect-label-badge">
                         {isZh ? "鉴权" : "Auth"}
+                      </Badge>
+                    )}
+                    {route.enable_payload === false && (
+                      <Badge variant="danger" className="connect-label-badge">
+                        {isZh ? "不记录载荷" : "No Payloads"}
                       </Badge>
                     )}
                     {!route.is_enabled && (
@@ -875,7 +913,8 @@ function buildCreatePayload(form: ModelForm): CreateModel {
     targets,
     target_provider: primary.provider_id,
     target_model: primary.model,
-    access_control: form.access_control,
+    enable_auth: form.enable_auth,
+    enable_payload: form.enable_payload,
   };
 }
 
@@ -894,6 +933,7 @@ function buildUpdatePayload(form: ModelForm & { id: string }): UpdateModel {
     targets,
     target_provider: primary.provider_id,
     target_model: primary.model,
-    access_control: form.access_control,
+    enable_auth: form.enable_auth,
+    enable_payload: form.enable_payload,
   };
 }

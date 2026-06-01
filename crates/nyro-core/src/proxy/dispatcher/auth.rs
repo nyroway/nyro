@@ -89,7 +89,7 @@ pub(super) async fn authorize_model_access<S: ProxyAccessStore + ?Sized>(
     model: &Model,
     headers: &HeaderMap,
 ) -> Result<AuthenticatedKey, Response> {
-    if !model.access_control {
+    if !model.enable_auth {
         return Ok(AuthenticatedKey {
             id: None,
             name: None,

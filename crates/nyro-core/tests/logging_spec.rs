@@ -141,6 +141,7 @@ fn log_entry_timestamp_is_unix_millis() {
         is_stream: false,
         stream_chunks_count: 0,
         stream_first_chunk_ms: None,
+        enable_payload: None,
     };
 }
 
@@ -182,6 +183,7 @@ fn stream_indicator_via_chunks_count() {
         is_stream: false,
         stream_chunks_count: 0,
         stream_first_chunk_ms: None,
+        enable_payload: None,
     };
 
     // Non-streaming: chunks == 0

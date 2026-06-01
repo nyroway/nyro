@@ -75,8 +75,8 @@ export default function SettingsPage() {
     queryFn: () => backend("get_setting", { key: "log_retention_days" }),
   });
   const { data: logRecordPayloadsSetting } = useQuery<string | null>({
-    queryKey: ["setting", "log_record_payloads"],
-    queryFn: () => backend("get_setting", { key: "log_record_payloads" }),
+    queryKey: ["setting", "enable_payload"],
+    queryFn: () => backend("get_setting", { key: "enable_payload" }),
   });
   const { data: proxyEnabledSetting } = useQuery<string | null>({
     queryKey: ["setting", "proxy_enabled"],
@@ -140,8 +140,8 @@ export default function SettingsPage() {
   });
   const saveLogRecordPayloads = useMutation({
     mutationFn: (value: boolean) =>
-      backend("set_setting", { key: "log_record_payloads", value: value ? "true" : "false" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["setting", "log_record_payloads"] }),
+      backend("set_setting", { key: "enable_payload", value: value ? "true" : "false" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["setting", "enable_payload"] }),
     onError: (error: unknown) => {
       showErrorDialog("保存设置失败", "Failed to save settings", error);
     },
@@ -353,12 +353,12 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-1.5">
               <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
-                {isZh ? "记录 Payloads" : "Record Payloads"}
+                {isZh ? "记录载荷" : "Record Payloads"}
                 <HelpHint
                   text={
                     isZh
-                      ? "关闭后不再记录请求头、请求体、响应头和响应体"
-                      : "When off, request/response headers and bodies are no longer recorded"
+                      ? "总开关，关闭后所有模型均不记录载荷。开启后可在单个模型中按需关闭"
+                      : "Master switch — when off, no payloads are recorded. When on, individual models can opt out"
                   }
                 />
               </label>

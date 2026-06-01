@@ -508,7 +508,7 @@ export default function ConnectPage() {
   }, [apiKeys, selectedRoute]);
 
   useEffect(() => {
-    if (!selectedRoute?.access_control) {
+    if (!selectedRoute?.enable_auth) {
       setSelectedCodeKeyId("");
       return;
     }
@@ -523,7 +523,7 @@ export default function ConnectPage() {
   );
 
   const codeEffectiveApiKey =
-    selectedRoute?.access_control ? selectedApiKey?.key ?? UNSELECTED_KEY_PLACEHOLDER : OPTIONAL_KEY_PLACEHOLDER;
+    selectedRoute?.enable_auth ? selectedApiKey?.key ?? UNSELECTED_KEY_PLACEHOLDER : OPTIONAL_KEY_PLACEHOLDER;
   const proxyPort = status?.proxy_port;
   const hasProxyPort = typeof proxyPort === "number" && Number.isFinite(proxyPort) && proxyPort > 0;
   const host = hasProxyPort ? `http://localhost:${proxyPort}` : "http://localhost:<proxy-port>";
@@ -565,7 +565,7 @@ export default function ConnectPage() {
   }, [cliRouteAnchorByTool, cliRoutes, selectedCliTool.id, selectedCliRouteId, tab]);
 
   useEffect(() => {
-    if (!selectedCliRoute?.access_control) {
+    if (!selectedCliRoute?.enable_auth) {
       setSelectedCliKeyId("");
       return;
     }
@@ -599,7 +599,7 @@ export default function ConnectPage() {
     staleTime: 60_000,
   });
   const cliEffectiveApiKey =
-    selectedCliRoute?.access_control
+    selectedCliRoute?.enable_auth
       ? selectedCliApiKey?.key ?? UNSELECTED_KEY_PLACEHOLDER
       : OPTIONAL_KEY_PLACEHOLDER;
   const cliModel = selectedCliRoute?.name ?? "gpt-4o";
@@ -608,7 +608,7 @@ export default function ConnectPage() {
     hasProxyPort &&
     selectedCliReady &&
     Boolean(selectedCliRoute) &&
-    (!selectedCliRoute?.access_control || Boolean(selectedCliApiKey));
+    (!selectedCliRoute?.enable_auth || Boolean(selectedCliApiKey));
 
   const generatedCode = codeTemplate({
     protocol: codeProtocol,
@@ -858,7 +858,7 @@ export default function ConnectPage() {
                       </div>
                     )}
                   </div>
-                  {selectedCliRoute?.access_control && (
+                  {selectedCliRoute?.enable_auth && (
                     <div className="space-y-2">
                       <p className="ml-1 text-xs leading-none font-normal text-slate-900">
                         {isZh ? "选择 API Key" : "Select API Key"}
@@ -983,7 +983,7 @@ export default function ConnectPage() {
                       : "No chat models available. Create a chat model first."}
                   </p>
                 )}
-                {selectedCliRoute?.access_control && !selectedCliApiKey && (
+                {selectedCliRoute?.enable_auth && !selectedCliApiKey && (
                   <p className="text-xs text-amber-600">
                     {isZh
                       ? "当前模型开启了访问控制，请先选择 API Key 再同步。"
@@ -1077,7 +1077,7 @@ export default function ConnectPage() {
                   />
                 </div>
 
-                {selectedRoute?.access_control && (
+                {selectedRoute?.enable_auth && (
                   <div className="space-y-2">
                     <p className="ml-1 text-xs leading-none font-normal text-slate-900">
                       {isZh ? "选择 API Key" : "Select API Key"}
@@ -1138,7 +1138,7 @@ export default function ConnectPage() {
                 </p>
               )}
 
-              {selectedRoute && !selectedRoute.access_control && (
+              {selectedRoute && !selectedRoute.enable_auth && (
                 <p className="text-xs text-slate-500">
                   {isZh
                     ? `当前模型未开启访问控制，示例中已使用占位 API Key：${OPTIONAL_KEY_PLACEHOLDER}`

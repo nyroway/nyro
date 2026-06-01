@@ -467,7 +467,8 @@ trait VendorExtension: Send + Sync {
 | `ingress_protocol` | TEXT | 接入协议（canonical ProtocolId） |
 | `target_provider` | TEXT FK | 目标模型提供商 |
 | `target_model` | TEXT | 实际调用的模型 |
-| `access_control` | BOOLEAN | 是否启用访问控制，默认 false |
+| `enable_auth` | BOOLEAN | 是否启用访问控制，默认 false |
+| `enable_payload` | BOOLEAN | 是否记录载荷（headers/bodies），NULL 时受全局开关控制 |
 | `is_active` | BOOLEAN | 路由启用状态，默认 true |
 
 `name` 同时承担显示名称和路由匹配键两个角色。当客户端请求中的 `model` 值与某条路由的 `name` 精确匹配时，该路由被命中，请求被转发到 `target_provider` 的 `target_model`。
@@ -494,7 +495,7 @@ Key 格式：`sk-<32位hex>`，AES-256-GCM 加密存储。
    (优先级: Authorization: Bearer > x-api-key)
 2. match(ingress_protocol, model) → Route
    └── 未匹配 → GatewayError::RouteNotFound (404)
-3. if route.access_control == false:
+3. if route.enable_auth == false:
    └── 直接放行
 4. if api_key 为空 → GatewayError::Unauthorized (401)
 5. 验证 api_key:
@@ -556,7 +557,7 @@ CREATE TABLE routes (
     ingress_protocol  TEXT NOT NULL,   -- canonical ProtocolId
     target_provider   TEXT NOT NULL REFERENCES providers(id),
     target_model      TEXT NOT NULL,
-    access_control    INTEGER NOT NULL DEFAULT 0,
+    access_control    INTEGER NOT NULL DEFAULT 0,  -- renamed to enable_auth
     is_active         INTEGER NOT NULL DEFAULT 1,
     UNIQUE(ingress_protocol, name)
 );

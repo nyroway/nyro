@@ -159,7 +159,7 @@ routes:
 | `type` | — | 否 | 路由类型：`chat`（默认）/ `embedding` |
 | `strategy` | — | 否 | 负载策略：`weighted`（默认）/ `priority` |
 | `targets` | — | 是 | 目标列表（至少一个） |
-| `access_control` | — | 否 | 是否启用访问控制（默认 `false`） |
+| `access_control` | — | 否 | 是否启用访问控制（默认 `false`）。别名 `enable_auth` |
 
 ### routes[].targets[]
 

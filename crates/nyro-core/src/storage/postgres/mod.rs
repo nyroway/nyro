@@ -470,14 +470,15 @@ impl ModelStore for PostgresModelStore {
     async fn create(&self, input: CreateModel) -> anyhow::Result<Model> {
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO models (id, name, balance, target_provider, target_model, access_control) VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO models (id, name, balance, target_provider, target_model, enable_auth, enable_payload) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&id)
         .bind(input.name.trim())
         .bind(input.balance.unwrap_or_else(|| "weighted".to_string()))
         .bind(input.target_provider.trim())
         .bind(input.target_model.trim())
-        .bind(input.access_control.unwrap_or(false))
+        .bind(input.enable_auth.unwrap_or(false))
+        .bind(input.enable_payload)
         .execute(&self.pool)
         .await?;
         self.get(&id).await?.context("model missing after create")
@@ -489,17 +490,19 @@ impl ModelStore for PostgresModelStore {
         let balance = input.balance.unwrap_or(current.balance);
         let target_provider = input.target_provider.unwrap_or(current.target_provider);
         let target_model = input.target_model.unwrap_or(current.target_model);
-        let access_control = input.access_control.unwrap_or(current.access_control);
+        let enable_auth = input.enable_auth.unwrap_or(current.enable_auth);
+        let enable_payload = input.enable_payload.unwrap_or(current.enable_payload);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE models SET name=$1, balance=$2, target_provider=$3, target_model=$4, access_control=$5, is_enabled=$6 WHERE id=$7",
+            "UPDATE models SET name=$1, balance=$2, target_provider=$3, target_model=$4, enable_auth=$5, enable_payload=$6, is_enabled=$7 WHERE id=$8",
         )
         .bind(name.trim())
         .bind(balance.trim().to_lowercase())
         .bind(target_provider.trim())
         .bind(target_model.trim())
-        .bind(access_control)
+        .bind(enable_auth)
+        .bind(enable_payload)
         .bind(is_enabled)
         .bind(id)
         .execute(&self.pool)
@@ -1246,6 +1249,23 @@ END $$;"#,
                 .await?;
         }
 
+        // Rename access_control → enable_auth on models table
+        pg_rename_column_if_needed(
+            self.adapter.pool(),
+            "models",
+            "access_control",
+            "enable_auth",
+        )
+        .await?;
+        sqlx::query("ALTER TABLE models ADD COLUMN IF NOT EXISTS enable_payload BOOLEAN")
+            .execute(self.adapter.pool())
+            .await?;
+        // Rename settings key log_record_payloads → enable_payload
+        sqlx::query("UPDATE settings SET key = 'enable_payload' WHERE key = 'log_record_payloads'")
+            .execute(self.adapter.pool())
+            .await
+            .ok();
+
         Ok(())
     }
 
@@ -1481,7 +1501,7 @@ fn provider_select(suffix: Option<&str>) -> String {
 
 fn model_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM models",
+        "SELECT id, name, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(enable_auth, false) AS enable_auth, enable_payload, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM models",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1602,7 +1622,8 @@ CREATE TABLE IF NOT EXISTS routes (
     balance TEXT DEFAULT 'weighted',
     target_provider TEXT NOT NULL REFERENCES providers(id),
     target_model TEXT NOT NULL,
-    access_control BOOLEAN DEFAULT FALSE,
+    enable_auth BOOLEAN DEFAULT FALSE,
+    enable_payload BOOLEAN,
     is_enabled BOOLEAN DEFAULT TRUE,
     priority INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP

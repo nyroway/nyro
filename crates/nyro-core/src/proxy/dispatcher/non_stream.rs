@@ -352,6 +352,7 @@ mod tests {
             api_key_id: None,
             api_key_name: None,
             is_stream: false,
+            enable_payload: None,
             start: std::time::Instant::now(),
         };
         let req_extras = RequestExtras {

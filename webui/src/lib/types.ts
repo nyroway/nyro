@@ -26,7 +26,8 @@ export interface Model {
   balance: ModelBalance;
   target_provider: string;
   target_model: string;
-  access_control: boolean;
+  enable_auth: boolean;
+  enable_payload?: boolean | null;
   is_enabled: boolean;
   created_at: string;
   targets: ModelBackend[];
@@ -232,7 +233,8 @@ export interface CreateModel {
   target_provider: string;
   target_model: string;
   targets?: CreateModelBackend[];
-  access_control?: boolean;
+  enable_auth?: boolean;
+  enable_payload?: boolean | null;
 }
 
 export interface UpdateModel {
@@ -241,7 +243,8 @@ export interface UpdateModel {
   target_provider?: string;
   target_model?: string;
   targets?: UpsertModelBackend[];
-  access_control?: boolean;
+  enable_auth?: boolean;
+  enable_payload?: boolean | null;
   is_enabled?: boolean;
 }
 
@@ -313,7 +316,8 @@ export interface ExportProvider {
 export interface ExportModel {
   name: string;
   target_model: string;
-  access_control: boolean;
+  enable_auth: boolean;
+  enable_payload?: boolean | null;
   is_enabled: boolean;
 }
 

@@ -57,7 +57,8 @@ AI 模型供应商配置（API endpoint、密钥、认证方式等）。
 | `balance` | TEXT | `'weighted'` | 多后端负载均衡策略：`weighted`、`priority`、`cooldown`、`latency` |
 | `target_provider` | TEXT NOT NULL | — | 默认后端 provider ID（FK → providers.id） |
 | `target_model` | TEXT NOT NULL | — | 默认后端使用的上游模型名 |
-| `access_control` | INTEGER | `0` | 是否启用 API Key 访问控制 |
+| `enable_auth` | INTEGER | `0` | 是否启用 API Key 访问控制 |
+| `enable_payload` | INTEGER | — | 是否记录载荷（headers/bodies）。NULL = 默认记录（受全局 `enable_payload` 开关控制） |
 | `is_enabled` | INTEGER | `1` | 是否启用 |
 | `priority` | INTEGER | `0` | 优先级（预留） |
 | `created_at` | TEXT | `datetime('now')` | 创建时间 |
@@ -106,7 +107,7 @@ API 密钥管理，用于代理端口的访问认证和限流。
 
 ## api_key_models
 
-API Key 与模型的访问绑定关系（M:N 关联表）。仅当 model 启用 `access_control` 时生效。
+API Key 与模型的访问绑定关系（M:N 关联表）。仅当 model 启用 `enable_auth` 时生效。
 
 | Column | Type | Description |
 |---|---|---|

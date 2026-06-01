@@ -5,7 +5,7 @@ use crate::storage::DynStorage;
 
 const DEFAULT_RETENTION_DAYS: i64 = 7;
 const DEFAULT_RECORD_PAYLOADS: bool = true;
-pub const LOG_RECORD_PAYLOADS_KEY: &str = "log_record_payloads";
+pub const ENABLE_PAYLOAD_KEY: &str = "enable_payload";
 pub const LOG_RETENTION_DAYS_KEY: &str = "log_retention_days";
 
 #[derive(Debug, Clone)]
@@ -59,6 +59,11 @@ pub struct LogEntry {
     pub stream_chunks_count: i32,
     /// TTFB（ms）；非流式为 None
     pub stream_first_chunk_ms: Option<i64>,
+
+    // === 瞬态（不写入 DB） ===
+    /// Per-model enable_payload override.
+    /// None = use default (true), Some(true) = force on, Some(false) = force off.
+    pub enable_payload: Option<bool>,
 }
 
 impl LogEntry {
@@ -118,10 +123,10 @@ async fn cleanup_old_logs(storage: DynStorage) {
     }
 }
 
-async fn read_record_payloads(storage: &DynStorage) -> bool {
+async fn read_enable_payload(storage: &DynStorage) -> bool {
     storage
         .settings()
-        .get(LOG_RECORD_PAYLOADS_KEY)
+        .get(ENABLE_PAYLOAD_KEY)
         .await
         .ok()
         .flatten()
@@ -136,9 +141,11 @@ async fn read_record_payloads(storage: &DynStorage) -> bool {
 
 async fn flush(storage: DynStorage, buffer: &mut Vec<LogEntry>) {
     let mut entries = std::mem::take(buffer);
-    let record_payloads = read_record_payloads(&storage).await;
-    if !record_payloads {
-        for entry in entries.iter_mut() {
+    let global_enabled = read_enable_payload(&storage).await;
+    for entry in entries.iter_mut() {
+        // AND 语义：全局 OFF 则一切不记录，全局 ON 时按模型开关
+        let should_record = global_enabled && entry.enable_payload.unwrap_or(true);
+        if !should_record {
             entry.client_request_headers = None;
             entry.client_request_body = None;
             entry.client_response_headers = None;
@@ -148,6 +155,8 @@ async fn flush(storage: DynStorage, buffer: &mut Vec<LogEntry>) {
             entry.upstream_response_headers = None;
             entry.upstream_response_body = None;
         }
+        // Clear transient field before DB write
+        entry.enable_payload = None;
     }
     let _ = storage.logs().append_batch(entries).await;
 }

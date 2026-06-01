@@ -472,7 +472,7 @@ struct SqliteModelStore {
 impl ModelStore for SqliteModelStore {
     async fn list(&self) -> anyhow::Result<Vec<Model>> {
         Ok(sqlx::query_as::<_, Model>(
-            "SELECT id, name, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models ORDER BY created_at DESC",
+            "SELECT id, name, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(enable_auth, 0) AS enable_auth, enable_payload, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?)
@@ -480,7 +480,7 @@ impl ModelStore for SqliteModelStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Model>> {
         Ok(sqlx::query_as::<_, Model>(
-            "SELECT id, name, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models WHERE id = ?",
+            "SELECT id, name, COALESCE(balance, 'weighted') AS balance, target_provider, target_model, COALESCE(enable_auth, 0) AS enable_auth, enable_payload, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM models WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -491,14 +491,15 @@ impl ModelStore for SqliteModelStore {
         let id = uuid::Uuid::new_v4().to_string();
         let balance = input.balance.unwrap_or_else(|| "weighted".to_string());
         sqlx::query(
-            "INSERT INTO models (id, name, balance, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO models (id, name, balance, target_provider, target_model, enable_auth, enable_payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(input.name.trim())
         .bind(balance)
         .bind(input.target_provider.trim())
         .bind(input.target_model.trim())
-        .bind(input.access_control.unwrap_or(false))
+        .bind(input.enable_auth.unwrap_or(false))
+        .bind(input.enable_payload)
         .execute(&self.pool)
         .await?;
         self.get(&id).await?.context("model missing after create")
@@ -510,17 +511,19 @@ impl ModelStore for SqliteModelStore {
         let balance = input.balance.unwrap_or(current.balance);
         let target_provider = input.target_provider.unwrap_or(current.target_provider);
         let target_model = input.target_model.unwrap_or(current.target_model);
-        let access_control = input.access_control.unwrap_or(current.access_control);
+        let enable_auth = input.enable_auth.unwrap_or(current.enable_auth);
+        let enable_payload = input.enable_payload.unwrap_or(current.enable_payload);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE models SET name=?, balance=?, target_provider=?, target_model=?, access_control=?, is_enabled=? WHERE id=?",
+            "UPDATE models SET name=?, balance=?, target_provider=?, target_model=?, enable_auth=?, enable_payload=?, is_enabled=? WHERE id=?",
         )
         .bind(name.trim())
         .bind(balance.trim().to_lowercase())
         .bind(target_provider.trim())
         .bind(target_model.trim())
-        .bind(access_control)
+        .bind(enable_auth)
+        .bind(enable_payload)
         .bind(is_enabled)
         .bind(id)
         .execute(&self.pool)
@@ -566,7 +569,8 @@ impl ModelSnapshotStore for SqliteModelStore {
                 id, name,
                 COALESCE(balance, 'weighted') AS balance,
                 target_provider, target_model,
-                COALESCE(access_control, 0) AS access_control,
+                COALESCE(enable_auth, 0) AS enable_auth,
+                enable_payload,
                 COALESCE(is_enabled, 1) AS is_enabled,
                 created_at
             FROM models

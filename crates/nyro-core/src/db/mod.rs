@@ -100,6 +100,18 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     // Merge virtual_model into name and drop the column
     migrate_merge_virtual_model_into_name(pool).await?;
 
+    // Rename access_control → enable_auth on models table
+    rename_column_if_needed(pool, "models", "access_control", "enable_auth").await?;
+
+    // Add enable_payload column to models table
+    ensure_model_column(pool, "enable_payload", "INTEGER").await?;
+
+    // Rename settings key log_record_payloads → enable_payload
+    sqlx::query("UPDATE settings SET key = 'enable_payload' WHERE key = 'log_record_payloads'")
+        .execute(pool)
+        .await
+        .ok();
+
     Ok(())
 }
 
@@ -331,6 +343,19 @@ async fn ensure_route_column(
 ) -> anyhow::Result<()> {
     if !column_exists(pool, "routes", column_name).await? {
         let sql = format!("ALTER TABLE routes ADD COLUMN {column_name} {definition}");
+        sqlx::query(&sql).execute(pool).await?;
+    }
+
+    Ok(())
+}
+
+async fn ensure_model_column(
+    pool: &SqlitePool,
+    column_name: &str,
+    definition: &str,
+) -> anyhow::Result<()> {
+    if !column_exists(pool, "models", column_name).await? {
+        let sql = format!("ALTER TABLE models ADD COLUMN {column_name} {definition}");
         sqlx::query(&sql).execute(pool).await?;
     }
 
@@ -762,7 +787,8 @@ CREATE TABLE IF NOT EXISTS routes (
     balance           TEXT DEFAULT 'weighted',
     target_provider   TEXT NOT NULL REFERENCES providers(id),
     target_model      TEXT NOT NULL,
-    access_control    INTEGER DEFAULT 0,
+    enable_auth       INTEGER DEFAULT 0,
+    enable_payload    INTEGER,
     is_enabled        INTEGER DEFAULT 1,
     priority          INTEGER DEFAULT 0,
     created_at        TEXT DEFAULT (datetime('now'))

@@ -120,7 +120,7 @@ pub async fn check_model_access(
     headers: &HeaderMap,
     ctx: &mut RequestContext,
 ) -> Result<AuthenticatedKey, GatewayError> {
-    if !model.access_control {
+    if !model.enable_auth {
         return Ok(AuthenticatedKey { id: None });
     }
 

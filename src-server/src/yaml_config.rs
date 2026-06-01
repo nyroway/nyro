@@ -145,8 +145,8 @@ pub struct YamlModel {
     pub balance: String,
     #[serde(default, rename = "backends", alias = "targets")]
     pub backends: Vec<YamlModelBackend>,
-    #[serde(default)]
-    pub access_control: bool,
+    #[serde(default, alias = "access_control")]
+    pub enable_auth: bool,
     // Deprecated: route_type / type was removed; captured here only to emit a warning.
     #[serde(default, alias = "type")]
     pub route_type: Option<String>,
@@ -349,7 +349,8 @@ pub fn build_models(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Model> {
                 balance: ym.balance.clone(),
                 target_provider: primary.map(|b| b.provider_id.clone()).unwrap_or_default(),
                 target_model: primary.map(|b| b.model.clone()).unwrap_or_default(),
-                access_control: ym.access_control,
+                enable_auth: ym.enable_auth,
+                enable_payload: None,
                 is_enabled: true,
                 created_at: now,
                 targets: backends,

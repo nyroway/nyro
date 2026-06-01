@@ -33,7 +33,8 @@ impl AdminService {
                 target_provider: primary_backend.provider_id.clone(),
                 target_model: primary_backend.model.clone(),
                 targets: vec![],
-                access_control: input.access_control,
+                enable_auth: input.enable_auth,
+                enable_payload: input.enable_payload,
             })
             .await?;
         if let Some(store) = self.gw.storage.model_backends() {
@@ -57,7 +58,8 @@ impl AdminService {
         let primary_backend = backends
             .first()
             .ok_or_else(|| anyhow::anyhow!("at least one model backend is required"))?;
-        let access_control = input.access_control.unwrap_or(current.access_control);
+        let enable_auth = input.enable_auth.unwrap_or(current.enable_auth);
+        let enable_payload = input.enable_payload.unwrap_or(current.enable_payload);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         self.gw
@@ -71,7 +73,8 @@ impl AdminService {
                     target_provider: Some(primary_backend.provider_id.clone()),
                     target_model: Some(primary_backend.model.clone()),
                     targets: None,
-                    access_control: Some(access_control),
+                    enable_auth: Some(enable_auth),
+                    enable_payload: Some(enable_payload),
                     is_enabled: Some(is_enabled),
                 },
             )

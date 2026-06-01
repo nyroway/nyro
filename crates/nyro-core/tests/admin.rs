@@ -87,7 +87,8 @@ async fn copy_provider_can_copy_matching_route_targets_to_copied_provider() -> a
                     priority: Some(2),
                 },
             ],
-            access_control: Some(true),
+            enable_auth: Some(true),
+            enable_payload: None,
         })
         .await?;
 
@@ -116,7 +117,7 @@ async fn copy_provider_can_copy_matching_route_targets_to_copied_provider() -> a
         .expect("source route should remain");
     assert_eq!(updated_model.name, "source-model");
     assert_eq!(updated_model.balance, "priority");
-    assert!(updated_model.access_control);
+    assert!(updated_model.enable_auth);
     assert_eq!(updated_model.target_provider, original.id);
     assert_eq!(updated_model.target_model, "source-upstream-model");
     assert_eq!(updated_model.targets.len(), 3);
@@ -157,7 +158,8 @@ async fn copy_provider_does_not_append_targets_by_default() -> anyhow::Result<()
             target_provider: original.id.clone(),
             target_model: "source-upstream-model".to_string(),
             targets: vec![],
-            access_control: None,
+            enable_auth: None,
+            enable_payload: None,
         })
         .await?;
 
@@ -191,7 +193,8 @@ async fn delete_provider_removes_route_associations_before_provider() -> anyhow:
             target_provider: removed_provider.id.clone(),
             target_model: "gpt-delete".to_string(),
             targets: vec![],
-            access_control: None,
+            enable_auth: None,
+            enable_payload: None,
         })
         .await?;
     let kept_route = gw
@@ -215,7 +218,8 @@ async fn delete_provider_removes_route_associations_before_provider() -> anyhow:
                     priority: Some(2),
                 },
             ],
-            access_control: None,
+            enable_auth: None,
+            enable_payload: None,
         })
         .await?;
 
