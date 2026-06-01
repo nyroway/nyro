@@ -615,7 +615,7 @@ struct PostgresSettingsStore {
 #[async_trait]
 impl SettingsStore for PostgresSettingsStore {
     async fn get(&self, key: &str) -> anyhow::Result<Option<String>> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = $1")
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE name = $1")
             .bind(key)
             .fetch_optional(&self.pool)
             .await?;
@@ -624,7 +624,7 @@ impl SettingsStore for PostgresSettingsStore {
 
     async fn set(&self, key: &str, value: &str) -> anyhow::Result<()> {
         sqlx::query(
-            "INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at",
+            "INSERT INTO settings (name, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT(name) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at",
         )
         .bind(key)
         .bind(value)
@@ -635,7 +635,7 @@ impl SettingsStore for PostgresSettingsStore {
 
     async fn list_all(&self) -> anyhow::Result<Vec<(String, String)>> {
         Ok(
-            sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings")
+            sqlx::query_as::<_, (String, String)>("SELECT name, value FROM settings")
                 .fetch_all(&self.pool)
                 .await?,
         )
@@ -677,7 +677,7 @@ impl ApiKeyStore for PostgresApiKeyStore {
         let id = uuid::Uuid::new_v4().to_string();
         let key = format!("sk-{}", uuid::Uuid::new_v4().simple());
         sqlx::query(
-            "INSERT INTO api_keys (id, key, name, rpm, rpd, tpm, tpd, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::timestamptz)",
+            "INSERT INTO api_keys (id, token, name, rpm, rpd, tpm, tpd, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::timestamptz)",
         )
         .bind(&id)
         .bind(&key)
@@ -777,7 +777,7 @@ impl AuthAccessStore for PostgresAuthAccessStore {
                 Option<i32>,
             ),
         >(
-            "SELECT id, COALESCE(name, '') AS name, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = $1",
+            "SELECT id, COALESCE(name, '') AS name, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE token = $1",
         )
         .bind(raw_key)
         .fetch_optional(&self.pool)
@@ -1261,10 +1261,14 @@ END $$;"#,
             .execute(self.adapter.pool())
             .await?;
         // Rename settings key log_record_payloads → enable_payload
-        sqlx::query("UPDATE settings SET key = 'enable_payload' WHERE key = 'log_record_payloads'")
+        sqlx::query("UPDATE settings SET name = 'enable_payload' WHERE name = 'log_record_payloads'")
             .execute(self.adapter.pool())
             .await
             .ok();
+
+        // Rename columns for MySQL compat: settings.key → settings.name, api_keys.key → api_keys.token
+        pg_rename_column_if_needed(self.adapter.pool(), "settings", "key", "name").await?;
+        pg_rename_column_if_needed(self.adapter.pool(), "api_keys", "key", "token").await?;
 
         Ok(())
     }
@@ -1512,7 +1516,7 @@ fn model_select(suffix: Option<&str>) -> String {
 
 fn api_key_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, key, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM api_keys",
+        "SELECT id, token, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM api_keys",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1526,7 +1530,7 @@ fn api_key_select(suffix: Option<&str>) -> String {
 fn api_key_with_bindings(row: ApiKey, model_ids: Vec<String>) -> ApiKeyWithBindings {
     ApiKeyWithBindings {
         id: row.id,
-        key: row.key,
+        token: row.token,
         name: row.name,
         rpm: row.rpm,
         rpd: row.rpd,
@@ -1684,14 +1688,14 @@ CREATE INDEX IF NOT EXISTS idx_logs_upstream_model ON request_logs(upstream_mode
 CREATE INDEX IF NOT EXISTS idx_logs_api_key ON request_logs(api_key_id);
 
 CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
+    name TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY,
-    key TEXT NOT NULL UNIQUE,
+    token TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     rpm INTEGER,
     rpd INTEGER,
@@ -1709,7 +1713,7 @@ CREATE TABLE IF NOT EXISTS api_key_routes (
     PRIMARY KEY (api_key_id, route_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key);
+CREATE INDEX IF NOT EXISTS idx_api_keys_token ON api_keys(token);
 CREATE INDEX IF NOT EXISTS idx_api_key_routes_route_id ON api_key_routes(route_id);
 
 CREATE TABLE IF NOT EXISTS provider_oauth_credentials (

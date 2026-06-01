@@ -644,7 +644,7 @@ struct SqliteSettingsStore {
 #[async_trait]
 impl SettingsStore for SqliteSettingsStore {
     async fn get(&self, key: &str) -> anyhow::Result<Option<String>> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?")
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE name = ?")
             .bind(key)
             .fetch_optional(&self.pool)
             .await?;
@@ -653,7 +653,7 @@ impl SettingsStore for SqliteSettingsStore {
 
     async fn set(&self, key: &str, value: &str) -> anyhow::Result<()> {
         sqlx::query(
-            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            "INSERT INTO settings (name, value, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(name) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
         )
         .bind(key)
         .bind(value)
@@ -664,7 +664,7 @@ impl SettingsStore for SqliteSettingsStore {
 
     async fn list_all(&self) -> anyhow::Result<Vec<(String, String)>> {
         Ok(
-            sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings")
+            sqlx::query_as::<_, (String, String)>("SELECT name, value FROM settings")
                 .fetch_all(&self.pool)
                 .await?,
         )
@@ -680,7 +680,7 @@ struct SqliteApiKeyStore {
 impl ApiKeyStore for SqliteApiKeyStore {
     async fn list(&self) -> anyhow::Result<Vec<ApiKeyWithBindings>> {
         let rows = sqlx::query_as::<_, ApiKey>(
-            "SELECT id, key, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, 1) AS is_enabled, expires_at, created_at, updated_at FROM api_keys ORDER BY created_at DESC",
+            "SELECT id, token, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, 1) AS is_enabled, expires_at, created_at, updated_at FROM api_keys ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -690,7 +690,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
             let model_ids = list_api_key_model_ids(&self.pool, &row.id).await?;
             items.push(ApiKeyWithBindings {
                 id: row.id,
-                key: row.key,
+                token: row.token,
                 name: row.name,
                 rpm: row.rpm,
                 rpd: row.rpd,
@@ -708,7 +708,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<ApiKeyWithBindings>> {
         let row = sqlx::query_as::<_, ApiKey>(
-            "SELECT id, key, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, 1) AS is_enabled, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
+            "SELECT id, token, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, 1) AS is_enabled, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -720,7 +720,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
         let model_ids = list_api_key_model_ids(&self.pool, id).await?;
         Ok(Some(ApiKeyWithBindings {
             id: row.id,
-            key: row.key,
+            token: row.token,
             name: row.name,
             rpm: row.rpm,
             rpd: row.rpd,
@@ -738,7 +738,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
         let id = uuid::Uuid::new_v4().to_string();
         let key = format!("sk-{}", uuid::Uuid::new_v4().simple());
         sqlx::query(
-            "INSERT INTO api_keys (id, key, name, rpm, rpd, tpm, tpd, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO api_keys (id, token, name, rpm, rpd, tpm, tpd, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&key)
@@ -757,7 +757,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
 
     async fn update(&self, id: &str, input: UpdateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
         let current = sqlx::query_as::<_, ApiKey>(
-            "SELECT id, key, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, 1) AS is_enabled, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
+            "SELECT id, token, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, 1) AS is_enabled, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -844,7 +844,7 @@ impl AuthAccessStore for SqliteAuthAccessStore {
                 Option<i32>,
                 Option<i32>,
             ),
-        >("SELECT id, COALESCE(name, '') AS name, COALESCE(is_enabled, 1) AS is_enabled, expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = ?")
+        >("SELECT id, COALESCE(name, '') AS name, COALESCE(is_enabled, 1) AS is_enabled, expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE token = ?")
         .bind(raw_key)
         .fetch_optional(&self.pool)
         .await?;

@@ -176,7 +176,8 @@ impl std::str::FromStr for ModelBalance {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ApiKey {
     pub id: String,
-    pub key: String,
+    #[serde(rename = "key")]
+    pub token: String,
     pub name: String,
     pub rpm: Option<i32>,
     pub rpd: Option<i32>,
@@ -191,7 +192,8 @@ pub struct ApiKey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKeyWithBindings {
     pub id: String,
-    pub key: String,
+    #[serde(rename = "key")]
+    pub token: String,
     pub name: String,
     pub rpm: Option<i32>,
     pub rpd: Option<i32>,
