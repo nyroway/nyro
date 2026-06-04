@@ -47,6 +47,24 @@ def load_pg_url() -> str | None:
     return None
 
 
+def load_mysql_url() -> str | None:
+    for key in ("MYSQL_URL",):
+        value = os.environ.get(key)
+        if value:
+            return value
+
+    env_file = REPO_ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            if key.strip() == "MYSQL_URL":
+                return value.strip().strip("'\"")
+    return None
+
+
 class _MockHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -108,7 +126,7 @@ def build_harness(work_dir: Path) -> None:
         nyro-core = {{ path = "{REPO_ROOT / 'crates/nyro-core'}" }}
         reqwest = {{ version = "0.12", features = ["json"] }}
         serde_json = "1"
-        sqlx = {{ version = "0.8", features = ["runtime-tokio", "postgres"] }}
+        sqlx = {{ version = "0.8", features = ["runtime-tokio", "postgres", "mysql"] }}
         tokio = {{ version = "1", features = ["macros", "rt-multi-thread", "time"] }}
         """
     ).strip() + "\n"
@@ -125,6 +143,7 @@ def build_harness(work_dir: Path) -> None:
         use nyro_core::{logging, Gateway};
         use reqwest::StatusCode;
         use sqlx::postgres::PgPoolOptions;
+        use sqlx::mysql::MySqlPoolOptions;
 
         #[tokio::main]
         async fn main() -> anyhow::Result<()> {
@@ -170,6 +189,14 @@ def build_harness(work_dir: Path) -> None:
                         ..Default::default()
                     };
                 }
+                "mysql" => {
+                    let mysql_url = env::var("NYRO_STORAGE_MYSQL_URL").context("NYRO_STORAGE_MYSQL_URL")?;
+                    config.storage.backend = StorageBackendKind::Mysql;
+                    config.storage.mysql = SqlStorageConfig {
+                        url: Some(mysql_url),
+                        ..Default::default()
+                    };
+                }
                 other => anyhow::bail!("unknown backend: {other}"),
             }
 
@@ -198,7 +225,8 @@ def build_harness(work_dir: Path) -> None:
                 target_provider: provider.id.clone(),
                 target_model: "gpt-4o-mini".to_string(),
                 targets: vec![],
-                access_control: Some(true),
+                enable_auth: Some(true),
+                enable_payload: None,
             }).await?;
 
             let api_key = admin.create_api_key(CreateApiKey {
@@ -225,7 +253,7 @@ def build_harness(work_dir: Path) -> None:
             let no_key = client.post(&url).json(&payload).send().await?;
             ensure!(no_key.status() == StatusCode::UNAUTHORIZED, "missing key should 401");
 
-            let ok = client.post(&url).bearer_auth(&api_key.key).json(&payload).send().await?;
+            let ok = client.post(&url).bearer_auth(&api_key.token).json(&payload).send().await?;
             ensure!(ok.status() == StatusCode::OK, "valid key should 200");
             let body: serde_json::Value = ok.json().await?;
             ensure!(body["choices"][0]["message"]["content"].as_str() == Some("ok"), "content mismatch");
@@ -264,6 +292,7 @@ def run_harness(
     upstream_port: int,
     work_dir: Path,
     pg_url: str | None = None,
+    mysql_url: str | None = None,
 ) -> str:
     env = os.environ.copy()
     env["NYRO_STORAGE_BACKEND"] = backend
@@ -276,6 +305,11 @@ def run_harness(
             raise RuntimeError("postgres backend requires DB_URL or DATABASE_URL")
         env["NYRO_STORAGE_PG_URL"] = pg_url
         env["NYRO_STORAGE_PG_SCHEMA"] = make_isolated_schema()
+
+    if backend == "mysql":
+        if not mysql_url:
+            raise RuntimeError("mysql backend requires MYSQL_URL")
+        env["NYRO_STORAGE_MYSQL_URL"] = mysql_url
 
     proc = subprocess.run(
         ["cargo", "run", "--quiet", "--manifest-path", str(work_dir / "Cargo.toml")],
@@ -305,6 +339,7 @@ def storage_runtime() -> dict[str, object]:
                 "upstream_port": upstream_port,
                 "work_dir": tmpdir,
                 "pg_url": load_pg_url(),
+                "mysql_url": load_mysql_url(),
                 "run_harness": run_harness,
             }
     finally:

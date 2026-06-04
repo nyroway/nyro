@@ -2,14 +2,14 @@ name: Storage Backends
 
 on:
   schedule:
-    # Daily at 03:00 UTC — runs against both SQLite and pgvector/Postgres.
+    # Daily at 03:00 UTC — runs against SQLite, Postgres, and MySQL.
     - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       backend:
-        description: 'Backend(s) to test: sqlite, postgres, or both'
+        description: 'Backend(s) to test: sqlite, postgres, mysql, or all'
         required: false
-        default: 'sqlite postgres'
+        default: 'sqlite postgres mysql'
 
 concurrency:
   group: storage-backends-${{ github.ref }}
@@ -23,7 +23,7 @@ jobs:
 
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16
         env:
           POSTGRES_USER: nyro
           POSTGRES_PASSWORD: nyro
@@ -32,6 +32,21 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: nyro
+          MYSQL_DATABASE: nyro_test
+          MYSQL_USER: nyro
+          MYSQL_PASSWORD: nyro
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -58,7 +73,12 @@ jobs:
       - name: Run storage E2E tests (sqlite)
         run: python3 -m pytest tests/e2e/storage/test_storage.py -vv -s -rA -m storage -k sqlite
 
-      - name: Run storage E2E tests (postgres / pgvector)
+      - name: Run storage E2E tests (postgres)
         run: python3 -m pytest tests/e2e/storage/test_storage.py -vv -s -rA -m storage -k postgres
         env:
           DB_URL: postgresql://nyro:nyro@localhost:5432/nyro_test
+
+      - name: Run storage E2E tests (mysql)
+        run: python3 -m pytest tests/e2e/storage/test_storage.py -vv -s -rA -m storage -k mysql
+        env:
+          MYSQL_URL: mysql://nyro:nyro@localhost:3306/nyro_test
