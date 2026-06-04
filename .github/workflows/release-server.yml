@@ -55,12 +55,6 @@ jobs:
         if: matrix.target != '' && runner.os == 'Linux'
         run: sudo apt-get install -y musl-tools
 
-      - name: Set CFLAGS for musl targets (sqlite-vec BSD type compatibility)
-        if: contains(matrix.target, 'musl') && runner.os == 'Linux'
-        run: |
-          TARGET_ENV=$(echo "${{ matrix.target }}" | tr '-' '_')
-          echo "CFLAGS_${TARGET_ENV}=-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t" >> $GITHUB_ENV
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:

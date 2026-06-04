@@ -117,7 +117,6 @@ nyro/
 │           │   └── postgres/
 │           ├── db/
 │           ├── logging/
-│           ├── crypto/
 │           ├── cache/
 │           └── admin/                    # AdminService 管理面核心逻辑（按职责拆分）
 │               ├── mod.rs                # 公共类型、模块声明、AdminService 构造
@@ -486,7 +485,7 @@ API Key ──── (授权绑定) ──── Route
   └── 名称                      └── 访问控制开关
 ```
 
-Key 格式：`sk-<32位hex>`，AES-256-GCM 加密存储。
+Key 格式：`sk-<32位hex>`。
 
 ### 7.3 代理请求鉴权流程
 
@@ -548,7 +547,7 @@ CREATE TABLE providers (
     vendor       TEXT,              -- canonical vendor_id（custom / openai / ...）
     protocol     TEXT NOT NULL,     -- canonical protocol suite（openai-compatible / ...）
     base_url     TEXT NOT NULL,
-    api_key      TEXT NOT NULL      -- AES-256-GCM 加密存储
+    api_key      TEXT NOT NULL      -- 明文存储
 );
 
 -- 路由规则
@@ -598,7 +597,6 @@ CREATE TABLE request_logs (
 
 ### 9.3 安全
 
-- Provider API Key 使用 AES-256-GCM 加密存储，密钥派生自本机唯一标识
 - Desktop 模式下管理 API 仅监听 `127.0.0.1`，外部不可访问
 - Server 模式下管理端口与代理端口独立，可配置鉴权
 

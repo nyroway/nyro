@@ -51,7 +51,7 @@ Nyro ships as a **desktop app** (macOS / Windows / Linux) and a **standalone ser
 
 **Switch providers without touching your tools.** Change the target model or provider from Nyro's UI. Your tools never need reconfiguring.
 
-**Keep everything local.** API keys are encrypted at rest with AES-256-GCM. Requests stay on your machine. No cloud relay, no shared infrastructure.
+**Keep everything local.** API keys are stored locally. Requests stay on your machine. No cloud relay, no shared infrastructure.
 
 **One UI for everything.** Manage providers, routes, API keys, logs, and usage stats from a single interface — desktop app or browser.
 
@@ -107,7 +107,6 @@ Nyro ships as a **desktop app** (macOS / Windows / Linux) and a **standalone ser
 
 ### Security
 
-- AES-256-GCM encrypted API key storage
 - Independent proxy and admin bearer token controls
 - Default-deny route authorization — keys must be explicitly bound to routes
 - Per-key quotas: RPM / RPD / TPM / TPD
