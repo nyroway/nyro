@@ -143,7 +143,6 @@ def build_harness(work_dir: Path) -> None:
         use nyro_core::{logging, Gateway};
         use reqwest::StatusCode;
         use sqlx::postgres::PgPoolOptions;
-        use sqlx::mysql::MySqlPoolOptions;
 
         #[tokio::main]
         async fn main() -> anyhow::Result<()> {
