@@ -20,19 +20,15 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
-eventsource-stream = "0.2"
-async-stream = "0.3"
 tokio-stream = "0.1"
 futures = "0.3"
 bytes = "1"
-glob-match = "0.2"
 dirs = "6"
 base64 = "0.22"
 rand = "0.8"
 sha2 = "0.10"
 dashmap = "6"
 inventory = "0.3"
-arc-swap = "1"
 gcp_auth = "0.12.6"
 
 [dev-dependencies]
