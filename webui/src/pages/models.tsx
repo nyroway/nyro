@@ -755,7 +755,7 @@ export default function ModelsPage() {
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex h-5 items-center font-semibold text-slate-900">{route.name}</span>
+                      <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600">{route.name}</code>
                     {route.targets && route.targets.length > 1 && (
                       <Badge variant="success" className="connect-label-badge">
                         {isZh ? `共 ${route.targets.length} 个目标` : `${route.targets.length} Targets`}
