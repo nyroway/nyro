@@ -194,6 +194,17 @@ impl AdminService {
         &self,
         input: auth::CreateAuthSession,
     ) -> anyhow::Result<AuthSession> {
+        // NOTE (multi-replica): auth_sessions is an in-process HashMap. In a
+        // multi-replica deployment the OAuth callback HTTP request must reach
+        // the same replica that initiated the session (sticky session /
+        // session-affinity). A future improvement is to persist sessions in the
+        // shared DB, but for now callers must ensure session affinity.
+        if !self.gw.config.config_poll_interval.is_zero() {
+            tracing::debug!(
+                "creating oauth session in multi-replica mode \
+                 — ensure the callback reaches this replica (session affinity required)"
+            );
+        }
         let now = now_rfc3339();
         let session = AuthSession {
             id: uuid::Uuid::new_v4().to_string(),

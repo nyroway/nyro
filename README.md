@@ -240,6 +240,35 @@ export NYRO_MYSQL_DSN="mysql://user:pass@host:3306/db"
 ./nyro-server-linux-x86_64 --storage-backend mysql
 ```
 
+### Multi-replica Production Deployment
+
+When running multiple `nyro-server` replicas behind a load balancer, all replicas **must** share the same database and the same admin token:
+
+| Requirement | Detail |
+|---|---|
+| Shared DB | Use `--storage-backend postgres` or `mysql` pointing to the same DSN across all replicas. SQLite cannot be shared. |
+| Unified admin token | Set the same `--admin-token` / `NYRO_ADMIN_TOKEN` on every replica. |
+| Config sync | Replicas poll the shared DB for config changes every `--config-poll-interval` seconds (default: 3 s). Route/model/provider changes propagate within one poll interval. |
+| OAuth interactive flows | The OAuth authorization callback must reach the **same replica** that initiated the session. Configure sticky sessions (session affinity) on your load balancer for the admin port (`19531`). |
+
+**Health probes:**
+
+| Endpoint | Port | Use |
+|---|---|---|
+| `GET /healthz` | proxy + admin | Liveness — always `200` |
+| `GET /readyz` | proxy + admin | Readiness — `200` if DB reachable, `503` otherwise |
+
+**Key environment variables:**
+
+```bash
+NYRO_ADMIN_TOKEN=<secret>          # Required when admin host is not loopback
+NYRO_STORAGE_BACKEND=postgres      # postgres | mysql | sqlite (default)
+NYRO_POSTGRES_DSN=postgres://...   # Required when backend=postgres
+NYRO_MYSQL_DSN=mysql://...         # Required when backend=mysql
+NYRO_CONFIG_POLL_INTERVAL=3        # Seconds between config epoch polls (default: 3, 0=disabled)
+NYRO_WEBUI_DIR=/path/to/dist       # Serve WebUI from external directory instead of embedded assets
+```
+
 ### Docker
 
 Pre-built server images are distributed via the separate [nyroway/docker-nyro](https://github.com/nyroway/docker-nyro) repository and published to Docker Hub as [nyroway/nyro](https://hub.docker.com/r/nyroway/nyro).

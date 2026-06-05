@@ -2,6 +2,7 @@ use nyro_core::Gateway;
 use nyro_core::admin::CopyProviderOptions;
 use nyro_core::config::GatewayConfig;
 use nyro_core::db::models::*;
+use nyro_core::storage::StorageBootstrap as _;
 
 use std::path::PathBuf;
 
@@ -306,6 +307,127 @@ async fn build_gateway() -> anyhow::Result<Gateway> {
     };
     let (gw, _log_rx) = Gateway::new(config).await?;
     Ok(gw)
+}
+
+// ── config epoch tests ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn config_epoch_starts_at_zero_and_increments_on_model_create() -> anyhow::Result<()> {
+    let gw = build_gateway().await?;
+
+    let epoch_before: i64 = gw
+        .storage
+        .settings()
+        .get("config_epoch")
+        .await?
+        .as_deref()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let provider = gw
+        .admin()
+        .create_provider(api_key_provider_input("epoch-test-provider"))
+        .await?;
+    gw.admin()
+        .create_model(CreateModel {
+            name: "epoch-test-model".to_string(),
+            balance: Some("weighted".to_string()),
+            target_provider: provider.id.clone(),
+            target_model: "gpt-4".to_string(),
+            targets: vec![],
+            enable_auth: Some(false),
+            enable_payload: None,
+        })
+        .await?;
+
+    let epoch_after: i64 = gw
+        .storage
+        .settings()
+        .get("config_epoch")
+        .await?
+        .as_deref()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    assert!(
+        epoch_after > epoch_before,
+        "config_epoch should increment after create_model: before={epoch_before} after={epoch_after}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_epoch_increments_on_model_update_and_delete() -> anyhow::Result<()> {
+    let gw = build_gateway().await?;
+    let provider = gw
+        .admin()
+        .create_provider(api_key_provider_input("epoch-update-provider"))
+        .await?;
+    let model = gw
+        .admin()
+        .create_model(CreateModel {
+            name: "epoch-update-model".to_string(),
+            balance: Some("weighted".to_string()),
+            target_provider: provider.id.clone(),
+            target_model: "gpt-4".to_string(),
+            targets: vec![],
+            enable_auth: Some(false),
+            enable_payload: None,
+        })
+        .await?;
+
+    let epoch_before_update: i64 = gw
+        .storage
+        .settings()
+        .get("config_epoch")
+        .await?
+        .as_deref()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    gw.admin()
+        .update_model(
+            &model.id,
+            UpdateModel {
+                is_enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let epoch_after_update: i64 = gw
+        .storage
+        .settings()
+        .get("config_epoch")
+        .await?
+        .as_deref()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    assert!(epoch_after_update > epoch_before_update, "epoch should increment on update");
+
+    gw.admin().delete_model(&model.id).await?;
+
+    let epoch_after_delete: i64 = gw
+        .storage
+        .settings()
+        .get("config_epoch")
+        .await?
+        .as_deref()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    assert!(epoch_after_delete > epoch_after_update, "epoch should increment on delete");
+
+    Ok(())
+}
+
+// ── readyz (StorageBootstrap::health) ─────────────────────────────────────
+
+#[tokio::test]
+async fn storage_health_is_reachable_for_sqlite_gateway() -> anyhow::Result<()> {
+    let gw = build_gateway().await?;
+    let health = gw.storage.bootstrap().health().await?;
+    assert!(health.can_connect, "SQLite health check should report can_connect");
+    Ok(())
 }
 
 fn test_data_dir() -> PathBuf {

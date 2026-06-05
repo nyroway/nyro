@@ -41,6 +41,7 @@ impl AdminService {
             store.set_backends(&model.id, &backends).await?;
         }
         self.reload_model_cache().await?;
+        self.bump_config_epoch().await?;
         self.get_model_by_id(&model.id).await
     }
 
@@ -83,6 +84,7 @@ impl AdminService {
             store.set_backends(id, &backends).await?;
         }
         self.reload_model_cache().await?;
+        self.bump_config_epoch().await?;
         self.get_model_by_id(id).await
     }
 
@@ -92,6 +94,7 @@ impl AdminService {
         }
         self.gw.storage.models().delete(id).await?;
         self.reload_model_cache().await?;
+        self.bump_config_epoch().await?;
         Ok(())
     }
     async fn ensure_model_name_unique(

@@ -18,6 +18,7 @@ use nyro_core::{
 use rust_embed::RustEmbed;
 use tokio::sync::broadcast;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 
 mod admin_routes;
 mod yaml_config;
@@ -181,6 +182,24 @@ struct Args {
     )]
     mysql_idle_timeout: Option<u64>,
 
+    // ── Multi-replica ─────────────────────────────────────────────────────────
+    #[arg(
+        long,
+        default_value_t = 3,
+        env = "NYRO_CONFIG_POLL_INTERVAL",
+        help = "Seconds between config epoch polls for multi-replica cache sync (0 = disabled)",
+        help_heading = "Multi-replica"
+    )]
+    config_poll_interval: u64,
+
+    #[arg(
+        long,
+        env = "NYRO_WEBUI_DIR",
+        help = "Serve WebUI from this directory instead of the embedded assets (optional)",
+        help_heading = "Multi-replica"
+    )]
+    webui_dir: Option<PathBuf>,
+
     // ── Standalone ────────────────────────────────────────────────────────────
     #[arg(
         long = "config",
@@ -283,6 +302,7 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
         proxy_cors_origins,
         data_dir: PathBuf::from(data_dir),
         storage: build_storage_config(args)?,
+        config_poll_interval: Duration::from_secs(args.config_poll_interval),
         ..Default::default()
     };
 
@@ -309,9 +329,17 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
 
     let admin_router = admin_routes::create_router(gateway, admin_token.clone());
 
-    let app = admin_router
-        .fallback(serve_webui)
-        .layer(build_cors_layer(&admin_cors_origins));
+    let app = if let Some(ref webui_dir) = args.webui_dir {
+        let index = webui_dir.join("index.html");
+        tracing::info!("webui  serving from directory: {}", webui_dir.display());
+        admin_router
+            .fallback_service(ServeDir::new(webui_dir).not_found_service(ServeFile::new(index)))
+            .layer(build_cors_layer(&admin_cors_origins))
+    } else {
+        admin_router
+            .fallback(serve_webui)
+            .layer(build_cors_layer(&admin_cors_origins))
+    };
 
     let admin_addr = format!("{}:{}", args.admin_host, args.admin_port);
     let listener = tokio::net::TcpListener::bind(&admin_addr).await?;

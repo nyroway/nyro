@@ -78,6 +78,10 @@ pub struct GatewayConfig {
     pub data_dir: PathBuf,
     pub auth_key: Option<String>,
     pub storage: GatewayStorageConfig,
+    /// How often to poll the shared DB for a config epoch change and reload
+    /// `model_cache` when a change is detected. Set to `Duration::ZERO` to
+    /// disable (default for desktop / single-process deployments).
+    pub config_poll_interval: Duration,
 }
 
 impl Default for GatewayConfig {
@@ -89,6 +93,7 @@ impl Default for GatewayConfig {
             data_dir: default_data_dir(),
             auth_key: None,
             storage: GatewayStorageConfig::default(),
+            config_poll_interval: Duration::ZERO,
         }
     }
 }

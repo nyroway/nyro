@@ -240,6 +240,35 @@ export NYRO_MYSQL_DSN="mysql://user:pass@host:3306/db"
 ./nyro-server-linux-x86_64 --storage-backend mysql
 ```
 
+### 多副本生产部署
+
+在负载均衡器后运行多个 `nyro-server` 副本时，所有副本**必须**共享同一数据库和相同的 admin token：
+
+| 要求 | 说明 |
+|---|---|
+| 共享数据库 | 使用 `--storage-backend postgres` 或 `mysql`，所有副本指向同一 DSN。SQLite 不支持共享。 |
+| 统一 admin token | 每个副本设置相同的 `--admin-token` / `NYRO_ADMIN_TOKEN`。 |
+| 配置同步 | 副本通过 `--config-poll-interval`（默认 3 秒）轮询共享 DB 的配置变更，路由/模型/Provider 的修改在一个轮询周期内传播。 |
+| OAuth 交互式流程 | OAuth 授权回调必须路由到**发起该 session 的同一副本**。请在负载均衡器的管理端口（`19531`）上配置 sticky session（会话亲和）。 |
+
+**健康探针：**
+
+| 端点 | 端口 | 用途 |
+|---|---|---|
+| `GET /healthz` | proxy + admin | Liveness — 固定返回 `200` |
+| `GET /readyz` | proxy + admin | Readiness — DB 可达返回 `200`，否则返回 `503` |
+
+**关键环境变量：**
+
+```bash
+NYRO_ADMIN_TOKEN=<secret>          # 当 admin host 不是 loopback 时必须设置
+NYRO_STORAGE_BACKEND=postgres      # postgres | mysql | sqlite（默认）
+NYRO_POSTGRES_DSN=postgres://...   # backend=postgres 时必须设置
+NYRO_MYSQL_DSN=mysql://...         # backend=mysql 时必须设置
+NYRO_CONFIG_POLL_INTERVAL=3        # 配置 epoch 轮询间隔（秒，默认 3，0=禁用）
+NYRO_WEBUI_DIR=/path/to/dist       # 从外部目录提供 WebUI（不填则使用嵌入资源）
+```
+
 ### Docker
 
 预构建的服务端镜像在独立仓库 [nyroway/docker-nyro](https://github.com/nyroway/docker-nyro) 中维护，发布到 Docker Hub 的 [nyroway/nyro](https://hub.docker.com/r/nyroway/nyro)。

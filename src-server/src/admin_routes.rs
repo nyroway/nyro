@@ -125,7 +125,7 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
         .route("/status", get(get_status))
         .route("/config/export", get(export_config_handler))
         .route("/config/import", axum::routing::post(import_config_handler))
-        .with_state(gateway);
+        .with_state(gateway.clone());
 
     if let Some(token) = admin_token {
         if !token.is_empty() {
@@ -135,7 +135,27 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
         }
     }
 
-    Router::new().nest("/api/v1", api)
+    // Health probes are unauthenticated so K8s/load-balancers can reach them
+    // without an admin token.
+    let health_routes = Router::new()
+        .route("/healthz", get(healthz_handler))
+        .route("/readyz", get(readyz_handler))
+        .with_state(gateway);
+
+    Router::new()
+        .merge(health_routes)
+        .nest("/api/v1", api)
+}
+
+async fn healthz_handler() -> impl IntoResponse {
+    (StatusCode::OK, r#"{"status":"ok"}"#)
+}
+
+async fn readyz_handler(State(gw): State<Gateway>) -> impl IntoResponse {
+    match gw.storage.bootstrap().health().await {
+        Ok(h) if h.can_connect => (StatusCode::OK, r#"{"status":"ok"}"#),
+        _ => (StatusCode::SERVICE_UNAVAILABLE, r#"{"status":"unavailable"}"#),
+    }
 }
 
 // ── Providers ──

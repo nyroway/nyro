@@ -1,7 +1,8 @@
 use axum::Router;
-use axum::extract::DefaultBodyLimit;
-use axum::http::{HeaderValue, Method, header};
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware;
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -38,6 +39,8 @@ pub fn create_router(gateway: Gateway) -> Router {
         )
         .route("/v1/models", get(handler::models_list))
         .route("/health", get(health))
+        .route("/healthz", get(health))
+        .route("/readyz", get(readyz))
         .route("/", get(health));
 
     let cors = build_proxy_cors_layer(
@@ -55,6 +58,13 @@ pub fn create_router(gateway: Gateway) -> Router {
 
 async fn health() -> &'static str {
     r#"{"status":"ok"}"#
+}
+
+async fn readyz(State(gw): State<Gateway>) -> impl IntoResponse {
+    match gw.storage.bootstrap().health().await {
+        Ok(h) if h.can_connect => (StatusCode::OK, r#"{"status":"ok"}"#),
+        _ => (StatusCode::SERVICE_UNAVAILABLE, r#"{"status":"unavailable"}"#),
+    }
 }
 
 fn build_proxy_cors_layer(origins: &[String], proxy_port: u16) -> CorsLayer {

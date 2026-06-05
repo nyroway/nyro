@@ -29,7 +29,7 @@ mod models;
 mod oauth;
 mod observability;
 mod providers;
-mod settings;
+pub mod settings;
 
 use auth_data::*;
 use model_catalog::*;

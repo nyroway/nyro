@@ -203,12 +203,14 @@ impl AdminService {
             self.gw.clear_ollama_capability_cache_for_provider(id).await;
         }
 
+        self.bump_config_epoch().await?;
         Ok(provider)
     }
 
     pub async fn delete_provider(&self, id: &str) -> anyhow::Result<()> {
         self.gw.storage.providers().delete(id).await?;
         self.reload_model_cache().await?;
+        self.bump_config_epoch().await?;
         self.gw.clear_ollama_capability_cache_for_provider(id).await;
         Ok(())
     }

@@ -158,6 +158,10 @@ impl AdminService {
             settings_imported += 1;
         }
 
+        if providers_imported > 0 || models_imported > 0 {
+            self.bump_config_epoch().await?;
+        }
+
         Ok(ImportResult {
             providers_imported,
             models_imported,

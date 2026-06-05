@@ -217,6 +217,59 @@ impl Gateway {
             });
         }
 
+        if !gw.config.config_poll_interval.is_zero() {
+            let gw_poll = gw.clone();
+            let poll_interval = gw.config.config_poll_interval;
+            tokio::spawn(async move {
+                let mut known_epoch: i64 = gw_poll
+                    .storage
+                    .settings()
+                    .get(admin::settings::CONFIG_EPOCH_KEY)
+                    .await
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+
+                let mut interval = tokio::time::interval(poll_interval);
+                interval.tick().await; // consume the immediate first tick
+                loop {
+                    interval.tick().await;
+                    let current: i64 = match gw_poll
+                        .storage
+                        .settings()
+                        .get(admin::settings::CONFIG_EPOCH_KEY)
+                        .await
+                    {
+                        Ok(val) => val
+                            .as_deref()
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(0),
+                        Err(error) => {
+                            tracing::warn!("config epoch poll failed: {error}");
+                            continue;
+                        }
+                    };
+
+                    if current > known_epoch {
+                        known_epoch = current;
+                        if let Err(error) = gw_poll
+                            .model_cache
+                            .write()
+                            .await
+                            .reload(gw_poll.storage.snapshots())
+                            .await
+                        {
+                            tracing::warn!("config epoch reload failed: {error}");
+                        } else {
+                            tracing::debug!("model_cache reloaded (epoch={current})");
+                        }
+                    }
+                }
+            });
+        }
+
         Ok((gw, log_rx))
     }
 
