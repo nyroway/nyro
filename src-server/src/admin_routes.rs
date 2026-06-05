@@ -142,9 +142,7 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
         .route("/readyz", get(readyz_handler))
         .with_state(gateway);
 
-    Router::new()
-        .merge(health_routes)
-        .nest("/api/v1", api)
+    Router::new().merge(health_routes).nest("/api/v1", api)
 }
 
 async fn healthz_handler() -> impl IntoResponse {
@@ -154,7 +152,10 @@ async fn healthz_handler() -> impl IntoResponse {
 async fn readyz_handler(State(gw): State<Gateway>) -> impl IntoResponse {
     match gw.storage.bootstrap().health().await {
         Ok(h) if h.can_connect => (StatusCode::OK, r#"{"status":"ok"}"#),
-        _ => (StatusCode::SERVICE_UNAVAILABLE, r#"{"status":"unavailable"}"#),
+        _ => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"status":"unavailable"}"#,
+        ),
     }
 }
 

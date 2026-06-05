@@ -242,10 +242,7 @@ impl Gateway {
                         .get(admin::settings::CONFIG_EPOCH_KEY)
                         .await
                     {
-                        Ok(val) => val
-                            .as_deref()
-                            .and_then(|v| v.parse().ok())
-                            .unwrap_or(0),
+                        Ok(val) => val.as_deref().and_then(|v| v.parse().ok()).unwrap_or(0),
                         Err(error) => {
                             tracing::warn!("config epoch poll failed: {error}");
                             continue;

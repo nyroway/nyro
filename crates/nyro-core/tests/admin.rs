@@ -403,7 +403,10 @@ async fn config_epoch_increments_on_model_update_and_delete() -> anyhow::Result<
         .as_deref()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    assert!(epoch_after_update > epoch_before_update, "epoch should increment on update");
+    assert!(
+        epoch_after_update > epoch_before_update,
+        "epoch should increment on update"
+    );
 
     gw.admin().delete_model(&model.id).await?;
 
@@ -415,7 +418,10 @@ async fn config_epoch_increments_on_model_update_and_delete() -> anyhow::Result<
         .as_deref()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    assert!(epoch_after_delete > epoch_after_update, "epoch should increment on delete");
+    assert!(
+        epoch_after_delete > epoch_after_update,
+        "epoch should increment on delete"
+    );
 
     Ok(())
 }
@@ -426,7 +432,10 @@ async fn config_epoch_increments_on_model_update_and_delete() -> anyhow::Result<
 async fn storage_health_is_reachable_for_sqlite_gateway() -> anyhow::Result<()> {
     let gw = build_gateway().await?;
     let health = gw.storage.bootstrap().health().await?;
-    assert!(health.can_connect, "SQLite health check should report can_connect");
+    assert!(
+        health.can_connect,
+        "SQLite health check should report can_connect"
+    );
     Ok(())
 }
 
