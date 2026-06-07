@@ -279,13 +279,20 @@ fn decode_content(content: GoogleContent) -> Result<Message> {
                 });
             }
             GooglePart::FileData { file_data } => {
-                let mime = file_data.mime_type.unwrap_or_default();
-                let source = if mime.starts_with("image/") || mime.is_empty() {
-                    MediaSource::Url(file_data.file_uri)
+                let mime = file_data.mime_type.clone().filter(|m| !m.is_empty());
+                let is_image = mime.as_deref().is_some_and(|m| m.starts_with("image/"));
+                let source = MediaSource::Url(file_data.file_uri);
+                if is_image {
+                    blocks.push(ContentBlock::Image {
+                        source,
+                        cache_control: None,
+                    });
                 } else {
-                    MediaSource::Url(file_data.file_uri)
-                };
-                blocks.push(ContentBlock::File { source });
+                    blocks.push(ContentBlock::File {
+                        source,
+                        media_type: mime,
+                    });
+                }
             }
             GooglePart::FunctionCall { function_call } => {
                 let id = format!("call_{}", uuid::Uuid::new_v4().simple());
