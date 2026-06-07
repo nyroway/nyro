@@ -84,6 +84,8 @@ pub enum ContentBlock {
     },
     File {
         source: MediaSource,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
     },
 
     // ── Reasoning / thinking ─────────────────────────────────────────────────
