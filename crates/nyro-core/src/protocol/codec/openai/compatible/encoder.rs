@@ -513,7 +513,7 @@ fn encode_content_block_for_openai(b: &ContentBlock) -> Value {
             let url = media_source_to_url(source);
             serde_json::json!({"type": "input_audio", "input_audio": {"data": url}})
         }
-        ContentBlock::File { source } => {
+        ContentBlock::File { source, .. } => {
             let url = media_source_to_url(source);
             serde_json::json!({"type": "file", "file": {"url": url}})
         }
