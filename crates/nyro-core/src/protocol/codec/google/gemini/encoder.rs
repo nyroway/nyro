@@ -212,6 +212,45 @@ fn encode_content_block_for_gemini(b: &ContentBlock) -> Value {
                 serde_json::json!({"fileData": {"fileUri": file_id}})
             }
         },
+        ContentBlock::File { source, media_type } => match source {
+            MediaSource::Url(url) => {
+                let mut fd = serde_json::json!({
+                    "fileData": {
+                        "fileUri": url,
+                    }
+                });
+                if let Some(mt) = media_type {
+                    fd["fileData"]["mimeType"] = serde_json::Value::String(mt.clone());
+                }
+                fd
+            }
+            MediaSource::FileId { file_id, .. } => {
+                let mut fd = serde_json::json!({
+                    "fileData": {
+                        "fileUri": file_id,
+                    }
+                });
+                if let Some(mt) = media_type {
+                    fd["fileData"]["mimeType"] = serde_json::Value::String(mt.clone());
+                }
+                fd
+            }
+            MediaSource::Base64 {
+                media_type: b64_mime,
+                data,
+            } => {
+                let mut fd = serde_json::json!({
+                    "inlineData": {
+                        "mimeType": b64_mime,
+                        "data": data,
+                    }
+                });
+                if let Some(mt) = media_type {
+                    fd["inlineData"]["mimeType"] = serde_json::Value::String(mt.clone());
+                }
+                fd
+            }
+        },
         ContentBlock::ToolUse { name, input, .. } => {
             serde_json::json!({"functionCall": {"name": name, "args": input}})
         }
