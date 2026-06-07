@@ -20,8 +20,8 @@ use nyro_core::protocol::ids::{
 use nyro_core::protocol::ir::usage::Usage;
 use nyro_core::protocol::ir::{
     AiRequest, AiResponse as IrAiResponse, AiStreamDelta as IrStreamDelta,
-    ContentBlock as IrContentBlock, Message, MessageContent as IrMessageContent, Role as IrRole,
-    StreamConfig, ToolCall, ToolSpec,
+    ContentBlock as IrContentBlock, MediaSource, Message, MessageContent as IrMessageContent,
+    Role as IrRole, StreamConfig, ToolCall, ToolSpec,
 };
 use nyro_core::protocol::{
     RequestDecoder, RequestEncoder, ResponseDecoder, ResponseEncoder, StreamResponseDecoder,
@@ -1978,4 +1978,135 @@ fn codex_parallel_calls_with_intermediate_text_anthropic_egress() {
             );
         }
     }
+}
+
+#[test]
+fn gemini_file_data_round_trip_preserves_uri_and_mime_type() {
+    use nyro_core::protocol::codec::google::gemini::decoder::GoogleDecoder;
+
+    // Simulate an inbound request with a PDF fileData part.
+    let inbound = serde_json::json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{
+                "fileData": {
+                    "fileUri": "https://example.com/doc.pdf",
+                    "mimeType": "application/pdf"
+                }
+            }]
+        }]
+    });
+
+    // Decode to IR, then re-encode.
+    let mut req = GoogleDecoder.decode_request(inbound).expect("decode");
+    req.meta.source_protocol = Some(GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA);
+    let (outbound, _) = GoogleEncoder.encode_request(&req).expect("encode");
+
+    let parts = outbound["contents"][0]["parts"].as_array().expect("parts");
+    let fd = &parts[0]["fileData"];
+    assert_eq!(
+        fd["fileUri"].as_str(),
+        Some("https://example.com/doc.pdf"),
+        "fileUri must survive round-trip"
+    );
+    assert_eq!(
+        fd["mimeType"].as_str(),
+        Some("application/pdf"),
+        "mimeType must survive round-trip"
+    );
+}
+
+#[test]
+fn gemini_decoder_file_data_routes_image_to_image_block() {
+    use nyro_core::protocol::codec::google::gemini::decoder::GoogleDecoder;
+
+    let body = serde_json::json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{
+                "fileData": {
+                    "fileUri": "https://example.com/photo.jpg",
+                    "mimeType": "image/jpeg"
+                }
+            }]
+        }]
+    });
+
+    let decoder = GoogleDecoder;
+    let req = decoder.decode_request(body).expect("decode");
+
+    let msg = &req.messages[0];
+    match &msg.content {
+        IrMessageContent::Blocks(blocks) => {
+            assert_eq!(blocks.len(), 1);
+            match &blocks[0] {
+                IrContentBlock::Image { source, .. } => match source {
+                    MediaSource::Url(url) => {
+                        assert_eq!(url, "https://example.com/photo.jpg");
+                    }
+                    _ => panic!("expected MediaSource::Url"),
+                },
+                other => panic!("expected ContentBlock::Image for image/ mimeType, got {other:?}"),
+            }
+        }
+        other => panic!("expected Blocks, got {other:?}"),
+    }
+}
+
+#[test]
+fn gemini_encoder_file_data_without_mime_type_omits_mime_type() {
+    let messages = vec![Message {
+        role: IrRole::User,
+        content: IrMessageContent::Blocks(vec![IrContentBlock::File {
+            source: MediaSource::Url("https://example.com/unknown.bin".into()),
+            media_type: None,
+        }]),
+        tool_calls: None,
+        tool_call_id: None,
+        meta: None,
+    }];
+    let req = AiRequest::new("gemini-2.5-flash", messages);
+
+    let (body, _) = GoogleEncoder.encode_request(&req).expect("encode");
+
+    let parts = body["contents"][0]["parts"]
+        .as_array()
+        .expect("parts array");
+    let fd = &parts[0]["fileData"];
+    assert_eq!(
+        fd["fileUri"].as_str(),
+        Some("https://example.com/unknown.bin")
+    );
+    assert!(
+        fd.get("mimeType").is_none(),
+        "mimeType must be absent when media_type is None"
+    );
+}
+
+#[test]
+fn gemini_encoder_file_data_with_mime_type_emits_mime_type() {
+    let messages = vec![Message {
+        role: IrRole::User,
+        content: IrMessageContent::Blocks(vec![IrContentBlock::File {
+            source: MediaSource::Url("https://example.com/report.pdf".into()),
+            media_type: Some("application/pdf".into()),
+        }]),
+        tool_calls: None,
+        tool_call_id: None,
+        meta: None,
+    }];
+    let req = AiRequest::new("gemini-2.5-flash", messages);
+
+    let (body, _) = GoogleEncoder.encode_request(&req).expect("encode");
+
+    let parts = body["contents"][0]["parts"]
+        .as_array()
+        .expect("parts array");
+    assert_eq!(parts.len(), 1);
+    let fd = &parts[0]["fileData"];
+    assert_eq!(
+        fd["fileUri"].as_str(),
+        Some("https://example.com/report.pdf")
+    );
+    assert_eq!(fd["mimeType"].as_str(), Some("application/pdf"));
 }
