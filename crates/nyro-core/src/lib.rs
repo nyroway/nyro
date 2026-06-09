@@ -81,7 +81,7 @@ impl Gateway {
             Option<Pool<MySql>>,
         ) = match config.storage.backend {
             StorageBackendKind::Sqlite => {
-                let sqlite_storage = if config.storage.sqlite.migrate_on_start {
+                let sqlite_storage = if config.storage.migrate_on_start {
                     SqliteStorage::from_config(&config).await?
                 } else {
                     let pool = db::init_pool(&config.data_dir).await?;
@@ -123,7 +123,9 @@ impl Gateway {
         };
 
         storage.bootstrap().init().await?;
-        if !matches!(config.storage.backend, StorageBackendKind::Sqlite) {
+        if config.storage.migrate_on_start
+            && !matches!(config.storage.backend, StorageBackendKind::Sqlite)
+        {
             storage.bootstrap().migrate().await?;
         }
         let health = storage.bootstrap().health().await?;

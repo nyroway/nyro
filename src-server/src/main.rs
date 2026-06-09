@@ -13,10 +13,7 @@ use axum::response::Response;
 use clap::Parser;
 use nyro_core::{
     Gateway,
-    config::{
-        GatewayConfig, GatewayStorageConfig, SqlStorageConfig, SqliteStorageConfig,
-        StorageBackendKind,
-    },
+    config::{GatewayConfig, GatewayStorageConfig, SqlStorageConfig, StorageBackendKind},
     logging,
     storage::MemoryStorage,
 };
@@ -147,10 +144,20 @@ struct Args {
         long,
         default_value = "true",
         action = clap::ArgAction::Set,
-        help = "Run migrations on startup (true/false)",
+        env = "NYRO_MIGRATE_ON_START",
+        help = "Run schema migrations on startup for all backends (true/false). Set false to skip DDL at runtime and use --migrate-only separately.",
         help_heading = "Storage"
     )]
     migrate_on_start: bool,
+
+    #[arg(
+        long,
+        default_value = "false",
+        action = clap::ArgAction::SetTrue,
+        help = "Run database migrations then exit (useful as a K8S init Job or initContainer). Requires --storage-backend and corresponding DSN.",
+        help_heading = "Storage"
+    )]
+    migrate_only: bool,
 
     #[arg(
         long,
@@ -266,7 +273,39 @@ async fn main() -> anyhow::Result<()> {
         return run_standalone(config_path, &args).await;
     }
 
+    if args.migrate_only {
+        return run_migrate(&args).await;
+    }
+
     run_full(&args).await
+}
+
+// ── Migrate-only mode ─────────────────────────────────────────────────────────
+
+async fn run_migrate(args: &Args) -> anyhow::Result<()> {
+    let data_dir = shellexpand::tilde(&args.data_dir).to_string();
+
+    tracing::info!(
+        "migrate-only: connecting to {} backend",
+        args.storage_backend
+    );
+
+    let mut storage_config = build_storage_config(args)?;
+    // Ensure migrations run even if --migrate-on-start=false was passed
+    storage_config.migrate_on_start = true;
+
+    let config = GatewayConfig {
+        data_dir: PathBuf::from(data_dir),
+        storage: storage_config,
+        ..Default::default()
+    };
+
+    // Gateway::new connects to storage, runs init() + migrate(), then returns.
+    // Background tasks are spawned but the runtime exits immediately after.
+    let (_gateway, _log_rx) = Gateway::new(config).await?;
+
+    tracing::info!("migrate-only: migrations completed successfully");
+    Ok(())
 }
 
 // ── Standalone mode ───────────────────────────────────────────────────────────
@@ -614,9 +653,7 @@ fn build_storage_config(args: &Args) -> anyhow::Result<GatewayStorageConfig> {
 
     Ok(GatewayStorageConfig {
         backend,
-        sqlite: SqliteStorageConfig {
-            migrate_on_start: args.migrate_on_start,
-        },
+        migrate_on_start: args.migrate_on_start,
         postgres,
         mysql,
     })

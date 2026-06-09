@@ -2,8 +2,7 @@ use nyro_core::Gateway;
 use nyro_core::admin::CopyProviderOptions;
 use nyro_core::config::GatewayConfig;
 use nyro_core::db::models::*;
-use nyro_core::storage::StorageBootstrap as _;
-
+use nyro_core::storage::Storage as _;
 use std::path::PathBuf;
 
 use uuid::Uuid;
@@ -435,6 +434,31 @@ async fn storage_health_is_reachable_for_sqlite_gateway() -> anyhow::Result<()> 
     assert!(
         health.can_connect,
         "SQLite health check should report can_connect"
+    );
+    assert!(
+        health.schema_compatible,
+        "SQLite health check should report schema_compatible after migration"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn schema_compatible_is_false_when_migrations_skipped() -> anyhow::Result<()> {
+    // Create a SQLite pool on a fresh directory without running any migrations.
+    // Gateway::new() would fail at ModelCache load, so test directly at storage level.
+    let dir = tempfile::tempdir()?;
+    let pool = nyro_core::db::init_pool(dir.path()).await?;
+    let storage = nyro_core::storage::SqliteStorage::from_pool(pool);
+
+    let health = storage.bootstrap().health().await?;
+
+    assert!(
+        health.can_connect,
+        "should still connect to SQLite even without schema"
+    );
+    assert!(
+        !health.schema_compatible,
+        "schema_compatible must be false when models table has not been created"
     );
     Ok(())
 }

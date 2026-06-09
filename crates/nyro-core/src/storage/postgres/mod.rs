@@ -62,9 +62,16 @@ impl PostgresAdapter {
 
     pub async fn health(&self) -> PostgresHealth {
         let can_connect = self.ping().await.is_ok();
+        // schema_compatible: verify the final-state `models` table exists,
+        // which confirms migrations have completed (routes → models rename done).
+        let schema_compatible = if can_connect {
+            pg_table_exists(&self.pool, "models").await.unwrap_or(false)
+        } else {
+            false
+        };
         PostgresHealth {
             can_connect,
-            schema_compatible: can_connect,
+            schema_compatible,
         }
     }
 }

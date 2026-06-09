@@ -64,3 +64,17 @@ Nyro is a Rust workspace for a local AI protocol gateway with a Tauri desktop ap
 - WebUI uses React, Vite, TypeScript, Radix UI primitives, TanStack Query, and Zustand.
 
 <!-- MANUAL: Any manually added notes below this line are preserved on regeneration -->
+
+### Database Changes
+
+When modifying the database schema — including changes to `INIT_SQL`, `POSTGRES_INIT_SQL`, `MYSQL_INIT_SQL` constants or the `migrate()` function in any storage backend — you **must** also:
+
+1. Update `docs/database/schema.md` to reflect the new table/column definitions.
+2. Regenerate `deploy/schema/postgres.sql` and `deploy/schema/mysql.sql` to match the final post-migration state:
+   ```bash
+   nyro-tools dump-schema --backend postgres > deploy/schema/postgres.sql
+   nyro-tools dump-schema --backend mysql    > deploy/schema/mysql.sql
+   ```
+   These files are the authoritative reference schema for DBAs. They represent the **final state** after all migrations have run (with final table names: `models`, `model_backends`, `api_key_models`).
+
+> The SQL files in `deploy/schema/` are derived reference artifacts — do not manually edit them except to update the header comment. Always regenerate from the migration source of truth.

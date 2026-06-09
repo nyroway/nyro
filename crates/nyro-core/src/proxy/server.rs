@@ -62,7 +62,11 @@ async fn health() -> &'static str {
 
 async fn readyz(State(gw): State<Gateway>) -> impl IntoResponse {
     match gw.storage.bootstrap().health().await {
-        Ok(h) if h.can_connect => (StatusCode::OK, r#"{"status":"ok"}"#),
+        Ok(h) if h.can_connect && h.schema_compatible => (StatusCode::OK, r#"{"status":"ok"}"#),
+        Ok(h) if h.can_connect => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"status":"schema_pending"}"#,
+        ),
         _ => (
             StatusCode::SERVICE_UNAVAILABLE,
             r#"{"status":"unavailable"}"#,

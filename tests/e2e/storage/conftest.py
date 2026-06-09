@@ -164,7 +164,7 @@ def build_harness(work_dir: Path) -> None:
             match backend.as_str() {
                 "sqlite" => {
                     config.storage.backend = StorageBackendKind::Sqlite;
-                    config.storage.sqlite.migrate_on_start = true;
+                    config.storage.migrate_on_start = true;
                 }
                 "postgres" => {
                     let pg_url = env::var("NYRO_STORAGE_PG_URL").context("NYRO_STORAGE_PG_URL")?;

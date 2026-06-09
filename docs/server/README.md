@@ -33,7 +33,8 @@ nyro-server
 |------|----------|--------|------|
 | `--data-dir` | `NYRO_DATA_DIR` | `~/.nyro` | 数据存储目录（SQLite 数据库存放位置） |
 | `--storage-backend` | `NYRO_STORAGE_BACKEND` | `sqlite` | 存储后端：`sqlite` / `postgres` / `mysql` |
-| `--migrate-on-start` | — | `true` | 启动时自动运行数据库迁移 |
+| `--migrate-on-start` | `NYRO_MIGRATE_ON_START` | `true` | 启动时对所有后端自动运行 schema 迁移；设为 `false` 可跳过 DDL，搭配 `--migrate-only` 独立执行迁移（适合 K8S 分权部署）|
+| `--migrate-only` | — | `false` | 执行数据库迁移后退出，不启动服务（适合 K8S Job / initContainer）|
 | `--postgres-dsn` | `NYRO_POSTGRES_DSN` | 无 | PostgreSQL 连接字符串（`--storage-backend=postgres` 时必填） |
 | `--postgres-max-connections` | — | `10` | PostgreSQL 连接池最大连接数 |
 | `--postgres-min-connections` | — | `1` | PostgreSQL 连接池最小连接数 |

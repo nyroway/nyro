@@ -1179,12 +1179,25 @@ impl StorageBootstrap for SqliteBootstrap {
     }
 
     async fn health(&self) -> anyhow::Result<StorageHealth> {
-        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        let can_connect = sqlx::query("SELECT 1").execute(&self.pool).await.is_ok();
+        // schema_compatible: verify the final-state `models` table exists,
+        // which confirms migrations have completed (routes → models rename done).
+        let schema_compatible = if can_connect {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='models'",
+            )
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(0)
+                > 0
+        } else {
+            false
+        };
         Ok(StorageHealth {
             backend: StorageBackend::Sqlite,
-            can_connect: true,
-            schema_compatible: true,
-            writable: true,
+            can_connect,
+            schema_compatible,
+            writable: can_connect,
         })
     }
 }

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 
 mod fixture;
@@ -9,6 +9,9 @@ mod record;
 mod replay;
 mod scenarios;
 
+const POSTGRES_SCHEMA_SQL: &str = include_str!("../../../deploy/schema/postgres.sql");
+const MYSQL_SCHEMA_SQL: &str = include_str!("../../../deploy/schema/mysql.sql");
+
 #[derive(Parser)]
 #[command(
     name = "nyro-tools",
@@ -17,7 +20,8 @@ mod scenarios;
     long_about = "Three subcommands for protocol-conversion testing:\n\
                   - proxy:  transparent passthrough for local debugging\n\
                   - record: scenario-driven recording against real LLM endpoints\n\
-                  - replay: persistent stub upstream that replays fixtures by replay_model"
+                  - replay: persistent stub upstream that replays fixtures by replay_model\n\
+                  - dump-schema: print the final-state DDL for a storage backend"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -34,6 +38,23 @@ enum Command {
     Replay(replay::ReplayArgs),
     /// Print scenario metadata (anchor + expected_fields per protocol) as JSON — consumed by pytest
     PrintScenarios,
+    /// Print the final-state DDL schema for the given storage backend (postgres or mysql).
+    /// Useful for DBAs to pre-create the database or review schema changes.
+    /// The output matches deploy/schema/{backend}.sql in the repository.
+    DumpSchema(DumpSchemaArgs),
+}
+
+#[derive(Parser)]
+struct DumpSchemaArgs {
+    /// Storage backend to print the schema for
+    #[arg(long, value_enum)]
+    backend: SchemaBackend,
+}
+
+#[derive(ValueEnum, Clone)]
+enum SchemaBackend {
+    Postgres,
+    Mysql,
 }
 
 #[tokio::main]
@@ -45,6 +66,14 @@ async fn main() -> Result<()> {
         Command::Record(args) => record::run(args).await,
         Command::Replay(args) => replay::run(args).await,
         Command::PrintScenarios => print_scenarios(),
+        Command::DumpSchema(args) => {
+            let sql = match args.backend {
+                SchemaBackend::Postgres => POSTGRES_SCHEMA_SQL,
+                SchemaBackend::Mysql => MYSQL_SCHEMA_SQL,
+            };
+            print!("{sql}");
+            Ok(())
+        }
     }
 }
 

@@ -10,19 +10,6 @@ pub enum StorageBackendKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct SqliteStorageConfig {
-    pub migrate_on_start: bool,
-}
-
-impl Default for SqliteStorageConfig {
-    fn default() -> Self {
-        Self {
-            migrate_on_start: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct SqlStorageConfig {
     pub url: Option<String>,
     pub max_connections: u32,
@@ -54,7 +41,10 @@ impl Default for SqlStorageConfig {
 #[derive(Debug, Clone)]
 pub struct GatewayStorageConfig {
     pub backend: StorageBackendKind,
-    pub sqlite: SqliteStorageConfig,
+    /// Whether to run schema init + migrations on startup.
+    /// Defaults to `true` (all backends). Set to `false` to skip DDL at startup
+    /// and run migrations separately via `--migrate-only` (e.g. K8S init Job).
+    pub migrate_on_start: bool,
     pub postgres: SqlStorageConfig,
     pub mysql: SqlStorageConfig,
 }
@@ -63,7 +53,7 @@ impl Default for GatewayStorageConfig {
     fn default() -> Self {
         Self {
             backend: StorageBackendKind::Sqlite,
-            sqlite: SqliteStorageConfig::default(),
+            migrate_on_start: true,
             postgres: SqlStorageConfig::default(),
             mysql: SqlStorageConfig::default(),
         }
