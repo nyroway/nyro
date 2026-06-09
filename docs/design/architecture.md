@@ -18,12 +18,15 @@ Claude Code · Codex CLI · Gemini CLI · OpenCode
     MiniMax · xAI · Zhipu · Ollama · ...
 ```
 
-**两种部署形态：**
+**部署形态：**
 
 | 形态 | 实现 | 适用场景 |
 |---|---|---|
 | Desktop | Tauri v2 桌面应用（macOS / Windows / Linux） | 个人开发者，零部署，数据不离开本机 |
-| Server | 独立 Rust 二进制，HTTP 管理 API + WebUI | 自托管、团队共享 |
+| Server `--mode all` | 独立 Rust 二进制，Proxy + Admin API + 内嵌 WebUI | 自托管、团队共享（默认） |
+| Server `--mode proxy` | 同上，仅启动代理端口 `:19530` | 分布式纯调度节点，无管理面 |
+| Server `--mode admin` | 同上，仅启动管理端口 `:19531` | 公司内部系统对接控制面；可搭配 `--no-default-features`（slim）去除内嵌 WebUI |
+| Server Standalone | `--config config.yaml`，MemoryStorage，无 Admin | 边缘/最小化部署，YAML 静态配置 |
 
 核心原则：`nyro-core` 只暴露纯 Rust API（struct + async fn），**不感知传输层**。Desktop 版通过 Tauri IPC 调用，Server 版通过 HTTP REST 调用。
 

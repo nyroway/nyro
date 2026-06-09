@@ -20,4 +20,8 @@ anyhow = { workspace = true }
 serde_yaml = "0.9"
 indexmap = { version = "2", features = ["serde"] }
 chrono = { workspace = true }
-rust-embed = { version = "8", features = ["compression"] }
+rust-embed = { version = "8", features = ["compression"], optional = true }
+
+[features]
+default = ["embed-webui"]
+embed-webui = ["dep:rust-embed"]

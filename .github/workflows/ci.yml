@@ -58,6 +58,9 @@ jobs:
       - name: Build nyro-server (debug)
         run: cargo build -p nyro-server
 
+      - name: Check nyro-server slim build (no embed-webui, no webui/dist required)
+        run: cargo check -p nyro-server --no-default-features
+
       - name: Build nyro-tools (debug)
         run: cargo build -p nyro-tools
 

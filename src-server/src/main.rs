@@ -2,8 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
+#[cfg(feature = "embed-webui")]
 use axum::body::Body;
-use axum::http::{HeaderValue, Method, StatusCode, header};
+#[cfg(feature = "embed-webui")]
+use axum::http::StatusCode;
+use axum::http::{HeaderValue, Method, header};
+#[cfg(feature = "embed-webui")]
 use axum::response::Response;
 use clap::Parser;
 use nyro_core::{
@@ -15,22 +20,50 @@ use nyro_core::{
     logging,
     storage::MemoryStorage,
 };
-use rust_embed::RustEmbed;
 use tokio::sync::broadcast;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
+#[cfg(feature = "embed-webui")]
+use rust_embed::RustEmbed;
+
 mod admin_routes;
 mod yaml_config;
 
+#[cfg(feature = "embed-webui")]
 #[derive(RustEmbed)]
 #[folder = "../webui/dist/"]
 struct WebUiAssets;
+
+// ── Run mode ──────────────────────────────────────────────────────────────────
+
+#[derive(clap::ValueEnum, Clone, Default, PartialEq)]
+enum Mode {
+    /// Start both proxy and admin listeners (default).
+    #[default]
+    All,
+    /// Start only the proxy (data plane). Admin API and WebUI are disabled.
+    Proxy,
+    /// Start only the admin listener (control plane + optional WebUI). No proxy.
+    Admin,
+}
+
+// ── CLI ───────────────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
 #[command(name = "nyro-server", version, about = "Nyro AI Gateway — Server Mode")]
 struct Args {
     // ── Server ────────────────────────────────────────────────────────────────
+    #[arg(
+        long,
+        default_value = "all",
+        env = "NYRO_MODE",
+        value_enum,
+        help = "Run mode: all | proxy | admin",
+        help_heading = "Server"
+    )]
+    mode: Mode,
+
     #[arg(
         long,
         default_value = "127.0.0.1",
@@ -150,7 +183,7 @@ struct Args {
     )]
     postgres_idle_timeout: Option<u64>,
 
-    // ── MySQL ────────────────────────────────────────────────────────────────
+    // ── MySQL ─────────────────────────────────────────────────────────────────
     #[arg(
         long,
         env = "NYRO_MYSQL_DSN",
@@ -195,7 +228,7 @@ struct Args {
     #[arg(
         long,
         env = "NYRO_WEBUI_DIR",
-        help = "Serve WebUI from this directory instead of the embedded assets (optional)",
+        help = "Serve WebUI from this directory instead of the embedded assets (optional; applies to admin/all modes)",
         help_heading = "Multi-replica"
     )]
     webui_dir: Option<PathBuf>,
@@ -204,11 +237,13 @@ struct Args {
     #[arg(
         long = "config",
         short = 'c',
-        help = "Path to YAML config file for standalone mode (no DB, no admin API)",
+        help = "Path to YAML config file for standalone mode (no DB, no admin API); --mode is ignored when this flag is set",
         help_heading = "Standalone"
     )]
     config_file: Option<String>,
 }
+
+// ── Entry point ───────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -218,17 +253,28 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     if let Some(ref config_path) = args.config_file {
+        if args.mode != Mode::All {
+            tracing::warn!(
+                "standalone mode (--config) is active; --mode={} is ignored",
+                match args.mode {
+                    Mode::Proxy => "proxy",
+                    Mode::Admin => "admin",
+                    Mode::All => "all",
+                }
+            );
+        }
         return run_standalone(config_path, &args).await;
     }
 
     run_full(&args).await
 }
 
+// ── Standalone mode ───────────────────────────────────────────────────────────
+
 async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
     tracing::info!("standalone mode: loading {config_path}");
     let yaml = yaml_config::YamlConfig::load(config_path)?;
 
-    // Standalone mode: proxy address comes exclusively from YAML
     let proxy_host = yaml.server.proxy_host.clone();
     let proxy_port = yaml.server.proxy_port;
 
@@ -275,14 +321,29 @@ async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Full mode (DB-backed, mode-aware) ─────────────────────────────────────────
+
 async fn run_full(args: &Args) -> anyhow::Result<()> {
     let data_dir = shellexpand::tilde(&args.data_dir).to_string();
     let admin_token = args.admin_token.clone().filter(|t| !t.trim().is_empty());
 
-    if !is_loopback_host(&args.admin_host) && admin_token.is_none() {
-        anyhow::bail!(
-            "--admin-token is required when --admin-host is not loopback (localhost/127.0.0.1/::1)"
-        );
+    // Warn about args that are irrelevant in proxy-only mode.
+    if args.mode == Mode::Proxy {
+        if admin_token.is_some() {
+            tracing::warn!("--mode proxy: --admin-token is ignored (no admin listener)");
+        }
+        if args.webui_dir.is_some() {
+            tracing::warn!("--mode proxy: --webui-dir is ignored (no admin listener)");
+        }
+    }
+
+    // Admin token enforcement only when the admin listener is active.
+    if matches!(args.mode, Mode::Admin | Mode::All) {
+        if !is_loopback_host(&args.admin_host) && admin_token.is_none() {
+            anyhow::bail!(
+                "--admin-token is required when --admin-host is not loopback (localhost/127.0.0.1/::1)"
+            );
+        }
     }
 
     let admin_cors_origins = if args.admin_cors_origins.is_empty() {
@@ -308,64 +369,108 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
 
     let (gateway, log_rx) = Gateway::new(config).await?;
 
-    let gw_proxy = gateway.clone();
     let storage_for_logs = gateway.storage.clone();
-    let (shutdown_tx, _) = broadcast::channel::<()>(1);
-    let proxy_shutdown = shutdown_tx.subscribe();
-    let admin_shutdown_tx = shutdown_tx.clone();
-
-    let proxy_task = tokio::spawn(async move {
-        if let Err(e) = gw_proxy
-            .start_proxy_with_shutdown(wait_for_shutdown(proxy_shutdown))
-            .await
-        {
-            tracing::error!("proxy server error: {e}");
-        }
-    });
-
     tokio::spawn(async move {
         logging::run_collector(log_rx, storage_for_logs).await;
     });
 
-    let admin_router = admin_routes::create_router(gateway, admin_token.clone());
+    match args.mode {
+        Mode::Proxy => {
+            let proxy_addr = format!("{}:{}", args.proxy_host, args.proxy_port);
+            tracing::info!("mode=proxy  proxy → http://{proxy_addr}");
+            tracing::info!("admin API and WebUI are disabled in proxy mode");
+            gateway.start_proxy_with_shutdown(shutdown_signal()).await?;
+        }
 
-    let app = if let Some(ref webui_dir) = args.webui_dir {
-        let index = webui_dir.join("index.html");
-        tracing::info!("webui  serving from directory: {}", webui_dir.display());
-        admin_router
-            .fallback_service(ServeDir::new(webui_dir).not_found_service(ServeFile::new(index)))
-            .layer(build_cors_layer(&admin_cors_origins))
-    } else {
-        admin_router
-            .fallback(serve_webui)
-            .layer(build_cors_layer(&admin_cors_origins))
-    };
+        Mode::Admin => {
+            let admin_addr = format!("{}:{}", args.admin_host, args.admin_port);
+            let admin_router = admin_routes::create_router(gateway, admin_token.clone());
+            let app = build_admin_app(admin_router, &args.webui_dir, &admin_cors_origins);
+            let listener = tokio::net::TcpListener::bind(&admin_addr).await?;
+            tracing::info!("mode=admin  admin → http://{admin_addr}");
+            if admin_token.is_none() {
+                tracing::warn!("admin API auth disabled: set --admin-token for production");
+            }
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
+        }
 
-    let admin_addr = format!("{}:{}", args.admin_host, args.admin_port);
-    let listener = tokio::net::TcpListener::bind(&admin_addr).await?;
+        Mode::All => {
+            let (shutdown_tx, _) = broadcast::channel::<()>(1);
+            let proxy_shutdown = shutdown_tx.subscribe();
+            let admin_shutdown_tx = shutdown_tx.clone();
 
-    let proxy_bind_addr = format!("{}:{}", args.proxy_host, args.proxy_port);
-    tracing::info!("proxy  → http://{proxy_bind_addr}");
-    tracing::info!("webui  → http://{admin_addr}");
+            let gw_proxy = gateway.clone();
+            let proxy_task = tokio::spawn(async move {
+                if let Err(e) = gw_proxy
+                    .start_proxy_with_shutdown(wait_for_shutdown(proxy_shutdown))
+                    .await
+                {
+                    tracing::error!("proxy server error: {e}");
+                }
+            });
 
-    if admin_token.is_none() {
-        tracing::warn!("admin API auth disabled: set --admin-token for production");
+            let admin_router = admin_routes::create_router(gateway, admin_token.clone());
+            let app = build_admin_app(admin_router, &args.webui_dir, &admin_cors_origins);
+            let admin_addr = format!("{}:{}", args.admin_host, args.admin_port);
+            let listener = tokio::net::TcpListener::bind(&admin_addr).await?;
+
+            let proxy_addr = format!("{}:{}", args.proxy_host, args.proxy_port);
+            tracing::info!("mode=all  proxy → http://{proxy_addr}");
+            tracing::info!("mode=all  admin → http://{admin_addr}");
+
+            if admin_token.is_none() {
+                tracing::warn!("admin API auth disabled: set --admin-token for production");
+            }
+
+            let admin_result = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    shutdown_signal().await;
+                    let _ = admin_shutdown_tx.send(());
+                })
+                .await;
+
+            let _ = shutdown_tx.send(());
+            if let Err(error) = proxy_task.await {
+                tracing::error!("proxy server task failed: {error}");
+            }
+
+            admin_result?;
+        }
     }
-    let admin_result = axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            let _ = admin_shutdown_tx.send(());
-        })
-        .await;
 
-    let _ = shutdown_tx.send(());
-    if let Err(error) = proxy_task.await {
-        tracing::error!("proxy server task failed: {error}");
-    }
-
-    admin_result?;
     Ok(())
 }
+
+// ── Admin app builder (three-state webui) ─────────────────────────────────────
+
+fn build_admin_app(
+    admin_router: Router,
+    webui_dir: &Option<PathBuf>,
+    cors_origins: &[String],
+) -> Router {
+    if let Some(dir) = webui_dir {
+        let index = dir.join("index.html");
+        tracing::info!("webui  serving from directory: {}", dir.display());
+        admin_router
+            .fallback_service(ServeDir::new(dir).not_found_service(ServeFile::new(index)))
+            .layer(build_cors_layer(cors_origins))
+    } else {
+        #[cfg(feature = "embed-webui")]
+        {
+            admin_router
+                .fallback(serve_webui)
+                .layer(build_cors_layer(cors_origins))
+        }
+        #[cfg(not(feature = "embed-webui"))]
+        {
+            admin_router.layer(build_cors_layer(cors_origins))
+        }
+    }
+}
+
+// ── Shutdown helpers ──────────────────────────────────────────────────────────
 
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -399,8 +504,9 @@ async fn wait_for_shutdown(mut shutdown: broadcast::Receiver<()>) {
     let _ = shutdown.recv().await;
 }
 
-// ── WebUI (embedded) ──────────────────────────────────────────────────────────
+// ── WebUI (embedded, feature-gated) ──────────────────────────────────────────
 
+#[cfg(feature = "embed-webui")]
 async fn serve_webui(uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let file_path = if path.is_empty() { "index.html" } else { path };
@@ -413,22 +519,20 @@ async fn serve_webui(uri: axum::http::Uri) -> Response {
                 .body(Body::from(content.data.into_owned()))
                 .unwrap()
         }
-        None => {
-            // SPA fallback: serve index.html for any unmatched path
-            match WebUiAssets::get("index.html") {
-                Some(content) => Response::builder()
-                    .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-                    .body(Body::from(content.data.into_owned()))
-                    .unwrap(),
-                None => Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Body::empty())
-                    .unwrap(),
-            }
-        }
+        None => match WebUiAssets::get("index.html") {
+            Some(content) => Response::builder()
+                .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .body(Body::from(content.data.into_owned()))
+                .unwrap(),
+            None => Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::empty())
+                .unwrap(),
+        },
     }
 }
 
+#[cfg(feature = "embed-webui")]
 fn infer_mime(path: &str) -> &'static str {
     if path.ends_with(".html") {
         "text/html; charset=utf-8"

@@ -150,7 +150,14 @@ Nyro 会自动检测已安装工具，为所选路由生成正确配置并一键
 | Windows | x64 · ARM64 |
 | Linux | x86_64 · aarch64 |
 
-**服务端二进制** — 完整模式（DB + Admin API + 内嵌 WebUI）和 Standalone 模式（纯 YAML 配置，无 DB）
+**服务端二进制** — 支持三种运行模式，适配从单机到分布式的各类场景
+
+| 模式 | 启动方式 | 用途 |
+|---|---|---|
+| `all`（默认）| `--mode all` | Proxy + Admin API + 内嵌 WebUI，单进程全功能 |
+| `proxy` | `--mode proxy` | 仅代理调度，无 Admin、无 WebUI，适合纯流量转发节点 |
+| `admin` | `--mode admin` | 仅 Admin API（+ 可选 WebUI），适合公司内部系统对接控制面 |
+| Standalone | `--config config.yaml` | 纯 YAML 配置，无 DB、无 Admin，适合边缘/最小化部署 |
 
 | 平台 | 架构 | 访问 |
 |---|---|---|
@@ -196,7 +203,7 @@ irm https://raw.githubusercontent.com/nyroway/nyro/master/scripts/install/instal
 curl -LO https://github.com/nyroway/nyro/releases/latest/download/nyro-server-linux-x86_64
 chmod +x nyro-server-linux-x86_64
 
-# 启动（仅 localhost，无需鉴权）
+# 启动（仅 localhost，无需鉴权）— 默认 all 模式
 ./nyro-server-linux-x86_64
 
 # 启动（暴露到网络，必须鉴权）
@@ -205,7 +212,16 @@ chmod +x nyro-server-linux-x86_64
   --admin-host 0.0.0.0 \
   --admin-token YOUR_ADMIN_TOKEN
 
-# Standalone 模式（YAML 配置，无 DB/Admin/WebUI）
+# 仅代理模式 — 只启动 :19530，无 Admin API、无 WebUI
+./nyro-server-linux-x86_64 --mode proxy
+
+# 仅 Admin 模式 — 只启动 :19531（供内部系统对接控制面）
+./nyro-server-linux-x86_64 \
+  --mode admin \
+  --admin-host 0.0.0.0 \
+  --admin-token YOUR_ADMIN_TOKEN
+
+# Standalone 模式（YAML 配置，无 DB/Admin/WebUI；忽略 --mode）
 ./nyro-server-linux-x86_64 --config config.yaml
 ```
 
@@ -261,12 +277,13 @@ export NYRO_MYSQL_DSN="mysql://user:pass@host:3306/db"
 **关键环境变量：**
 
 ```bash
+NYRO_MODE=all                      # all（默认）| proxy | admin
 NYRO_ADMIN_TOKEN=<secret>          # 当 admin host 不是 loopback 时必须设置
 NYRO_STORAGE_BACKEND=postgres      # postgres | mysql | sqlite（默认）
 NYRO_POSTGRES_DSN=postgres://...   # backend=postgres 时必须设置
 NYRO_MYSQL_DSN=mysql://...         # backend=mysql 时必须设置
 NYRO_CONFIG_POLL_INTERVAL=3        # 配置 epoch 轮询间隔（秒，默认 3，0=禁用）
-NYRO_WEBUI_DIR=/path/to/dist       # 从外部目录提供 WebUI（不填则使用嵌入资源）
+NYRO_WEBUI_DIR=/path/to/dist       # 从外部目录提供 WebUI（不填则使用嵌入资源；仅 admin/all 模式）
 ```
 
 ### Docker

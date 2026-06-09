@@ -150,7 +150,14 @@ Nyro detects installed tools, generates the correct configuration for the select
 | Windows | x64 · ARM64 |
 | Linux | x86\_64 · aarch64 |
 
-**Server Binary** — full mode (DB + Admin API + embedded WebUI) and standalone mode (YAML config only, no DB)
+**Server Binary** — three run modes for everything from single-host to distributed deployments
+
+| Mode | Flag | Purpose |
+|---|---|---|
+| `all` (default) | `--mode all` | Proxy + Admin API + embedded WebUI in a single process |
+| `proxy` | `--mode proxy` | Data-plane only — no Admin API, no WebUI |
+| `admin` | `--mode admin` | Control-plane only — Admin API (+ optional WebUI), no proxy |
+| Standalone | `--config config.yaml` | YAML config, no DB, no Admin — minimal / edge deployments |
 
 | Platform | Architecture | Access |
 |---|---|---|
@@ -196,7 +203,7 @@ Download the latest installer for your platform from [GitHub Releases](https://g
 curl -LO https://github.com/nyroway/nyro/releases/latest/download/nyro-server-linux-x86_64
 chmod +x nyro-server-linux-x86_64
 
-# Start (localhost only, no auth required)
+# Start (localhost only, no auth required) — default all mode
 ./nyro-server-linux-x86_64
 
 # Start (network-exposed, auth required)
@@ -205,7 +212,16 @@ chmod +x nyro-server-linux-x86_64
   --admin-host 0.0.0.0 \
   --admin-token YOUR_ADMIN_TOKEN
 
-# Standalone mode (YAML config, no DB/Admin/WebUI)
+# Proxy-only mode — binds :19530 only, no Admin API, no WebUI
+./nyro-server-linux-x86_64 --mode proxy
+
+# Admin-only mode — binds :19531 only (for internal systems to consume the control plane)
+./nyro-server-linux-x86_64 \
+  --mode admin \
+  --admin-host 0.0.0.0 \
+  --admin-token YOUR_ADMIN_TOKEN
+
+# Standalone mode (YAML config, no DB/Admin/WebUI; --mode is ignored)
 ./nyro-server-linux-x86_64 --config config.yaml
 ```
 
@@ -261,12 +277,13 @@ When running multiple `nyro-server` replicas behind a load balancer, all replica
 **Key environment variables:**
 
 ```bash
+NYRO_MODE=all                      # all (default) | proxy | admin
 NYRO_ADMIN_TOKEN=<secret>          # Required when admin host is not loopback
 NYRO_STORAGE_BACKEND=postgres      # postgres | mysql | sqlite (default)
 NYRO_POSTGRES_DSN=postgres://...   # Required when backend=postgres
 NYRO_MYSQL_DSN=mysql://...         # Required when backend=mysql
 NYRO_CONFIG_POLL_INTERVAL=3        # Seconds between config epoch polls (default: 3, 0=disabled)
-NYRO_WEBUI_DIR=/path/to/dist       # Serve WebUI from external directory instead of embedded assets
+NYRO_WEBUI_DIR=/path/to/dist       # Serve WebUI from external directory instead of embedded assets (admin/all modes only)
 ```
 
 ### Docker
