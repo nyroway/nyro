@@ -1,4 +1,4 @@
-.PHONY: dev build server server-slim check fmt fmt-check clean webui smoke smoke-storage release-check help
+.PHONY: dev build server server-slim tools check fmt fmt-check clean webui smoke smoke-storage release-check help
 
 # Development — start Tauri desktop app with hot reload
 dev: webui-build
@@ -15,6 +15,10 @@ server: webui-build
 # Build slim server binary (release, no embedded webui, no pnpm build required)
 server-slim:
 	cargo build -p nyro-server --release --no-default-features
+
+# Build nyro-tools binary (release)
+tools:
+	cargo build -p nyro-tools --release
 
 # Run server binary locally (debug, webui embedded)
 server-dev: webui-build
@@ -60,6 +64,7 @@ help:
 	@echo "  make build        Build desktop app (release)"
 	@echo "  make server       Build server binary (release, webui embedded)"
 	@echo "  make server-slim  Build slim server binary (release, no embedded webui)"
+	@echo "  make tools        Build nyro-tools binary (release)"
 	@echo "  make server-dev   Run server binary (debug)"
 	@echo "  make webui-build  Build frontend only"
 	@echo "  make fmt          Format Rust code"
