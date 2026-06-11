@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::Result;
 use serde_json::Value;
 
@@ -100,6 +102,8 @@ impl ResponseDecoder for ResponsesResponseParser {
 pub struct ResponsesStreamParser {
     buffer: String,
     started: bool,
+    started_tool_call_indexes: HashSet<usize>,
+    streamed_tool_call_argument_indexes: HashSet<usize>,
 }
 
 impl Default for ResponsesStreamParser {
@@ -113,6 +117,8 @@ impl ResponsesStreamParser {
         Self {
             buffer: String::new(),
             started: false,
+            started_tool_call_indexes: HashSet::new(),
+            streamed_tool_call_argument_indexes: HashSet::new(),
         }
     }
 }
@@ -214,6 +220,7 @@ impl ResponsesStreamParser {
                 if let Some(arguments) = payload.get("delta").and_then(|v| v.as_str())
                     && !arguments.is_empty()
                 {
+                    self.streamed_tool_call_argument_indexes.insert(index);
                     deltas.push(AiStreamDelta::ToolCallDelta {
                         index,
                         arguments: arguments.to_string(),
@@ -239,7 +246,20 @@ impl ResponsesStreamParser {
                         .unwrap_or("")
                         .to_string();
                     if !id.is_empty() && !name.is_empty() {
-                        deltas.push(AiStreamDelta::ToolCallStart { index, id, name });
+                        if self.started_tool_call_indexes.insert(index) {
+                            deltas.push(AiStreamDelta::ToolCallStart { index, id, name });
+                        }
+                        if event == Some("response.output_item.done")
+                            && !self.streamed_tool_call_argument_indexes.contains(&index)
+                            && let Some(arguments) = item.get("arguments").and_then(|v| v.as_str())
+                            && !arguments.is_empty()
+                        {
+                            self.streamed_tool_call_argument_indexes.insert(index);
+                            deltas.push(AiStreamDelta::ToolCallDelta {
+                                index,
+                                arguments: arguments.to_string(),
+                            });
+                        }
                     }
                 }
             }
@@ -473,6 +493,78 @@ mod tests {
         assert!(
             has_done,
             "expected Done on [DONE] sentinel, got: {deltas:?}"
+        );
+    }
+
+    #[test]
+    fn test_stream_function_call_done_does_not_duplicate_start() {
+        let sse = [
+            sse_event(
+                "response.output_item.added",
+                r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_abc","name":"get_weather","arguments":"","status":"in_progress"}}"#,
+            ),
+            sse_event(
+                "response.function_call_arguments.delta",
+                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"city\":\"Par"}"#,
+            ),
+            sse_event(
+                "response.function_call_arguments.delta",
+                r#"{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"is\"}"}"#,
+            ),
+            sse_event(
+                "response.output_item.done",
+                r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_abc","name":"get_weather","arguments":"{\"city\":\"Paris\"}","status":"completed"}}"#,
+            ),
+        ]
+        .concat();
+
+        let mut parser = ResponsesStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let starts = deltas
+            .iter()
+            .filter(|d| matches!(d, AiStreamDelta::ToolCallStart { .. }))
+            .count();
+        let arguments = deltas
+            .iter()
+            .filter_map(|d| {
+                if let AiStreamDelta::ToolCallDelta { arguments, .. } = d {
+                    Some(arguments.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<String>();
+
+        assert_eq!(starts, 1, "expected one ToolCallStart, got: {deltas:?}");
+        assert_eq!(arguments, r#"{"city":"Paris"}"#);
+    }
+
+    #[test]
+    fn test_stream_function_call_done_emits_arguments_when_no_deltas() {
+        let sse = sse_event(
+            "response.output_item.done",
+            r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_abc","name":"get_weather","arguments":"{\"city\":\"Paris\"}","status":"completed"}}"#,
+        );
+
+        let mut parser = ResponsesStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        assert!(
+            deltas
+                .iter()
+                .any(|d| matches!(d, AiStreamDelta::ToolCallStart { id, name, .. } if id == "call_abc" && name == "get_weather")),
+            "expected ToolCallStart, got: {deltas:?}"
+        );
+        assert!(
+            deltas.iter().any(|d| {
+                matches!(
+                    d,
+                    AiStreamDelta::ToolCallDelta { arguments, .. }
+                    if arguments == r#"{"city":"Paris"}"#
+                )
+            }),
+            "expected ToolCallDelta with completed arguments, got: {deltas:?}"
         );
     }
 }
