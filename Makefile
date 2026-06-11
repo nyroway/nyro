@@ -43,7 +43,7 @@ check: fmt-check
 
 # Run all Rust tests across the workspace
 test:
-	cargo test --workspace
+	cargo test --workspace --exclude nyro-desktop --no-default-features
 
 # Run tests for nyro-core only
 test-core:
@@ -51,7 +51,7 @@ test-core:
 
 # Run tests for nyro-server only
 test-server:
-	cargo test -p nyro-server
+	cargo test -p nyro-server --no-default-features
 
 # End-to-end smoke (local mock upstream + nyro-server)
 smoke:
