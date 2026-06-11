@@ -1,4 +1,4 @@
-.PHONY: dev build server server-slim tools check fmt fmt-check clean webui smoke smoke-storage release-check help
+.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check help
 
 # Development — start Tauri desktop app with hot reload
 dev: webui-build
@@ -41,6 +41,18 @@ check: fmt-check
 	cargo check --workspace
 	cd webui && pnpm build
 
+# Run all Rust tests across the workspace
+test:
+	cargo test --workspace
+
+# Run tests for nyro-core only
+test-core:
+	cargo test -p nyro-core
+
+# Run tests for nyro-server only
+test-server:
+	cargo test -p nyro-server
+
 # End-to-end smoke (local mock upstream + nyro-server)
 smoke:
 	python3 scripts/smoke/server_smoke.py
@@ -70,6 +82,9 @@ help:
 	@echo "  make fmt          Format Rust code"
 	@echo "  make fmt-check    Check Rust formatting (CI)"
 	@echo "  make check        Type check Rust + TypeScript"
+	@echo "  make test         Run all Rust tests (workspace)"
+	@echo "  make test-core    Run nyro-core tests only"
+	@echo "  make test-server  Run nyro-server tests only"
 	@echo "  make smoke        Run local server smoke tests"
 	@echo "  make smoke-storage Run storage smoke tests (default sqlite + postgres)"
 	@echo "  make release-check Run check + smoke before release"
