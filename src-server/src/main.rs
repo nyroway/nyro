@@ -377,12 +377,13 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
     }
 
     // Admin token enforcement only when the admin listener is active.
-    if matches!(args.mode, Mode::Admin | Mode::All) {
-        if !is_loopback_host(&args.admin_host) && admin_token.is_none() {
-            anyhow::bail!(
-                "--admin-token is required when --admin-host is not loopback (localhost/127.0.0.1/::1)"
-            );
-        }
+    if matches!(args.mode, Mode::Admin | Mode::All)
+        && !is_loopback_host(&args.admin_host)
+        && admin_token.is_none()
+    {
+        anyhow::bail!(
+            "--admin-token is required when --admin-host is not loopback (localhost/127.0.0.1/::1)"
+        );
     }
 
     let admin_cors_origins = if args.admin_cors_origins.is_empty() {
@@ -589,9 +590,7 @@ fn infer_mime(path: &str) -> &'static str {
         "font/woff2"
     } else if path.ends_with(".woff") {
         "font/woff"
-    } else if path.ends_with(".json") {
-        "application/json"
-    } else if path.ends_with(".map") {
+    } else if path.ends_with(".json") || path.ends_with(".map") {
         "application/json"
     } else {
         "application/octet-stream"

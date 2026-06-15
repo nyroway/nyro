@@ -72,11 +72,11 @@ pub fn normalize_request_tool_results(req: &mut AiRequest) {
             has_linked_pending_call = true;
         }
 
-        if resolved_id.is_none() {
-            if let Some((call_id, _name)) = pending_calls.pop_front() {
-                resolved_id = Some(call_id);
-                has_linked_pending_call = true;
-            }
+        if resolved_id.is_none()
+            && let Some((call_id, _name)) = pending_calls.pop_front()
+        {
+            resolved_id = Some(call_id);
+            has_linked_pending_call = true;
         }
 
         if resolved_id.is_none() {

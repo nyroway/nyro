@@ -52,10 +52,8 @@ impl From<Value> for SchemaObject {
 fn normalize_type_strings(v: &mut Value, f: impl Fn(&str) -> String + Copy) {
     match v {
         Value::Object(map) => {
-            if let Some(t) = map.get_mut("type") {
-                if let Value::String(s) = t {
-                    *s = f(s);
-                }
+            if let Some(Value::String(s)) = map.get_mut("type") {
+                *s = f(s);
             }
             for val in map.values_mut() {
                 normalize_type_strings(val, f);

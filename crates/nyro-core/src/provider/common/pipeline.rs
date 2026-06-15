@@ -228,7 +228,6 @@ mod tests {
     use async_trait::async_trait;
     use reqwest::header::HeaderMap as ExtHeaderMap;
     use serde_json::Value;
-    use std::path::PathBuf;
     use uuid::Uuid;
 
     /// Stand-in vendor: injects `x-api-key: <ctx.api_key>`, mirroring
@@ -361,9 +360,10 @@ mod tests {
     }
 
     async fn build_test_gateway() -> Gateway {
-        let mut config = GatewayConfig::default();
-        config.data_dir = PathBuf::from(std::env::temp_dir())
-            .join(format!("nyro-pipeline-test-{}", Uuid::new_v4()));
+        let config = GatewayConfig {
+            data_dir: std::env::temp_dir().join(format!("nyro-pipeline-test-{}", Uuid::new_v4())),
+            ..Default::default()
+        };
         let (gw, _log_rx) = Gateway::new(config).await.expect("gateway init");
         gw
     }

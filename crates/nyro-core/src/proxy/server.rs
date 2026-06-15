@@ -127,18 +127,18 @@ fn parse_allow_origin(origins: &[String]) -> AllowOrigin {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use crate::config::GatewayConfig;
 
     use super::*;
 
     async fn spawn_proxy() -> String {
-        let mut config = GatewayConfig::default();
-        config.data_dir = PathBuf::from(std::env::temp_dir()).join(format!(
-            "nyro-proxy-body-limit-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let config = GatewayConfig {
+            data_dir: std::env::temp_dir().join(format!(
+                "nyro-proxy-body-limit-test-{}",
+                uuid::Uuid::new_v4()
+            )),
+            ..Default::default()
+        };
         let (gateway, _log_rx) = Gateway::new(config).await.expect("gateway init");
         let app = create_router(gateway);
 

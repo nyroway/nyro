@@ -127,12 +127,12 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
         .route("/config/import", axum::routing::post(import_config_handler))
         .with_state(gateway.clone());
 
-    if let Some(token) = admin_token {
-        if !token.is_empty() {
-            api = api
-                .layer(middleware::from_fn(admin_auth))
-                .layer(Extension(AdminToken(token)));
-        }
+    if let Some(token) = admin_token
+        && !token.is_empty()
+    {
+        api = api
+            .layer(middleware::from_fn(admin_auth))
+            .layer(Extension(AdminToken(token)));
     }
 
     // Health probes are unauthenticated so K8s/load-balancers can reach them

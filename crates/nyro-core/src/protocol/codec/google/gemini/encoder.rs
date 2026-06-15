@@ -188,10 +188,9 @@ fn encode_content(msg: &Message) -> Result<Value> {
                 vec![serde_json::json!({"text": t})]
             }
         }
-        MessageContent::Blocks(blocks) => blocks
-            .iter()
-            .map(|b| encode_content_block_for_gemini(b))
-            .collect(),
+        MessageContent::Blocks(blocks) => {
+            blocks.iter().map(encode_content_block_for_gemini).collect()
+        }
     };
 
     Ok(serde_json::json!({"role": role, "parts": parts}))

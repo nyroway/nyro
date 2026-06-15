@@ -13,7 +13,7 @@
 //!      b. Resolve egress protocol + base URL via `negotiate()`.
 //!      c. Look up `Vendor` from `VendorRegistry`.
 //!      d. Build outbound: `ProtocolMode::Native` + no mutations → `passthrough_run`;
-//!         else full 7-step `adapter.build_request`.
+//!      else full 7-step `adapter.build_request`.
 //!      e. Merge `runtime_binding` extra-headers.
 //!      f. HTTP call → `handle_non_stream` / `handle_stream`.
 //!      g. On success: record health, return; on retryable error: continue.
@@ -888,11 +888,13 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_logs_client_request_headers_redacted_when_route_missing() {
-        let mut config = crate::config::GatewayConfig::default();
-        config.data_dir = std::env::temp_dir().join(format!(
-            "nyro-client-header-redaction-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let config = crate::config::GatewayConfig {
+            data_dir: std::env::temp_dir().join(format!(
+                "nyro-client-header-redaction-test-{}",
+                uuid::Uuid::new_v4()
+            )),
+            ..Default::default()
+        };
         let (gw, mut log_rx) = Gateway::new(config).await.expect("gateway init");
         let mut envelope_headers = HashMap::new();
         envelope_headers.insert("authorization".into(), "Bearer client-secret".into());

@@ -223,7 +223,6 @@ impl GoogleDecoder {
             stop,
             frequency_penalty,
             presence_penalty,
-            ..Default::default()
         };
         ai_req.stream = StreamConfig {
             enabled: stream,

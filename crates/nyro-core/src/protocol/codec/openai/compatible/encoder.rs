@@ -461,7 +461,7 @@ fn encode_message(msg: &Message) -> Result<Value> {
                             ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }
                         ))
                 })
-                .map(|b| encode_content_block_for_openai(b))
+                .map(encode_content_block_for_openai)
                 .collect();
             map.insert("content".into(), Value::Array(parts));
         }

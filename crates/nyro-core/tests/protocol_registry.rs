@@ -230,7 +230,8 @@ fn embeddings_handler_advertises_passthrough_capabilities() {
 #[test]
 fn embeddings_routes_resolve_to_handler() {
     let reg = ProtocolRegistry::global();
-    for path in ["/v1/embeddings"] {
+    {
+        let path = "/v1/embeddings";
         let h = reg
             .find_by_ingress_route("POST", path)
             .unwrap_or_else(|| panic!("no handler for POST {path}"));

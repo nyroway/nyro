@@ -16,8 +16,6 @@
 //! Off-diagonal (Transform): `negotiate()` must return `ProtocolMode::Transform`
 //!   or `ProtocolMode::LossyTransform`.
 
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use nyro_core::Gateway;
 use nyro_core::config::GatewayConfig;
@@ -42,9 +40,10 @@ use std::time::Duration;
 use uuid::Uuid;
 
 async fn build_test_gateway() -> Gateway {
-    let mut config = GatewayConfig::default();
-    config.data_dir = PathBuf::from(std::env::temp_dir())
-        .join(format!("nyro-passthrough-test-{}", Uuid::new_v4()));
+    let config = GatewayConfig {
+        data_dir: std::env::temp_dir().join(format!("nyro-passthrough-test-{}", Uuid::new_v4())),
+        ..Default::default()
+    };
     let (gw, _log_rx) = Gateway::new(config).await.expect("gateway init");
     gw
 }

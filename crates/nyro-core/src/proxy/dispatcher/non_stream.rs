@@ -21,6 +21,7 @@ use super::{CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator, error
 
 // ── Non-streaming response handler ───────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_non_stream(
     client: ProxyClient,
     url: &str,
@@ -218,14 +219,14 @@ pub(super) async fn handle_non_stream(
         .with_client_response(None, response_body_full)
         .emit();
 
-    let response = (
+    (
         StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
         Json(output),
     )
-        .into_response();
-    response
+        .into_response()
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,9 +334,11 @@ mod tests {
         let url = serve_invalid_json_once().await;
         let base_url = url.split("/v1beta").next().unwrap().to_string();
         let provider = fake_provider(base_url);
-        let mut config = GatewayConfig::default();
-        config.data_dir =
-            std::env::temp_dir().join(format!("nyro-decode-log-test-{}", uuid::Uuid::new_v4()));
+        let config = GatewayConfig {
+            data_dir: std::env::temp_dir()
+                .join(format!("nyro-decode-log-test-{}", uuid::Uuid::new_v4())),
+            ..Default::default()
+        };
         let (gw, mut log_rx) = Gateway::new(config).await.expect("gateway init");
 
         let call_ctx = CallCtx {
@@ -548,10 +551,9 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
         .with_client_response(None, client_resp_body_str)
         .emit();
 
-    let response = (
+    (
         StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
         Json(output),
     )
-        .into_response();
-    response
+        .into_response()
 }

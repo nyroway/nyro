@@ -408,7 +408,7 @@ fn encode_message(msg: &Message) -> Result<Value> {
         MessageContent::Blocks(blocks) => {
             let arr: Vec<Value> = blocks
                 .iter()
-                .map(|b| encode_content_block_for_anthropic(b))
+                .map(encode_content_block_for_anthropic)
                 .collect();
             Value::Array(arr)
         }

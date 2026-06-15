@@ -1081,7 +1081,7 @@ mod tests {
             raw_str.contains("content_block_start"),
             "event type mismatch: {raw_str}"
         );
-        let data_part = raw_str.splitn(2, "\ndata: ").nth(1).unwrap_or("{}");
+        let data_part = raw_str.split_once("\ndata: ").map(|x| x.1).unwrap_or("{}");
         let data: serde_json::Value = serde_json::from_str(data_part).unwrap_or_default();
         assert_eq!(
             data.pointer("/content_block/type").and_then(|v| v.as_str()),

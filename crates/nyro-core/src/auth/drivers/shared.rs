@@ -204,16 +204,17 @@ fn parse_callback_like_value(raw: &str) -> OAuthCallbackPayload {
     // Claude's `code=true` flow displays the auth result as a bare
     // `<code>#<state>` string; recognize it here so it works whether pasted
     // into the callback-URL field or the code field.
-    if !raw.contains(' ') && !raw.contains('?') {
-        if let Some((code_part, state_part)) = raw.split_once('#') {
-            let code = code_part.trim();
-            let state = state_part.trim();
-            if !code.is_empty() && !state.is_empty() {
-                return OAuthCallbackPayload {
-                    code: Some(code.to_string()),
-                    state: Some(state.to_string()),
-                };
-            }
+    if !raw.contains(' ')
+        && !raw.contains('?')
+        && let Some((code_part, state_part)) = raw.split_once('#')
+    {
+        let code = code_part.trim();
+        let state = state_part.trim();
+        if !code.is_empty() && !state.is_empty() {
+            return OAuthCallbackPayload {
+                code: Some(code.to_string()),
+                state: Some(state.to_string()),
+            };
         }
     }
 

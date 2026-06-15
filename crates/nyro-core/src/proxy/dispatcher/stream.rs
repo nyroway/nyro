@@ -334,14 +334,13 @@ pub(super) async fn handle_stream(
     let stream = ReceiverStream::new(rx);
     let body = Body::from_stream(stream);
 
-    let response = Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
         .header(header::CACHE_CONTROL, "no-cache")
         .header(header::CONNECTION, "keep-alive")
         .body(body)
-        .unwrap();
-    response
+        .unwrap()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

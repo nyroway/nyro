@@ -273,15 +273,14 @@ impl OpenAIStreamParser {
             }
         }
 
-        if !self.done {
-            if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-                if !reason.is_empty() {
-                    self.done = true;
-                    deltas.push(AiStreamDelta::Done {
-                        stop_reason: reason.to_string(),
-                    });
-                }
-            }
+        if !self.done
+            && let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str())
+            && !reason.is_empty()
+        {
+            self.done = true;
+            deltas.push(AiStreamDelta::Done {
+                stop_reason: reason.to_string(),
+            });
         }
 
         let u = extract_usage(chunk);

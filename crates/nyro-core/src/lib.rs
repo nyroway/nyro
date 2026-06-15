@@ -73,6 +73,7 @@ struct ProxyClientCache {
 
 impl Gateway {
     pub async fn new(config: GatewayConfig) -> anyhow::Result<(Self, mpsc::Receiver<LogEntry>)> {
+        #[allow(clippy::type_complexity)]
         let (storage_kind, storage, sqlite_pool, postgres_pool, mysql_pool): (
             RuntimeStorageKind,
             DynStorage,

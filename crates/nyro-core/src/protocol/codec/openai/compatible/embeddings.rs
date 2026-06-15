@@ -174,10 +174,10 @@ impl RequestEncoder for EmbeddingsEncoder {
 
         if let Some(input) = ingress.get("__emb_input") {
             obj.insert("input".into(), input.clone());
-        } else if let Some(pb) = ingress.get(EMBEDDINGS_BODY_KEY) {
-            if let Some(inp) = pb.get("input") {
-                obj.insert("input".into(), inp.clone());
-            }
+        } else if let Some(pb) = ingress.get(EMBEDDINGS_BODY_KEY)
+            && let Some(inp) = pb.get("input")
+        {
+            obj.insert("input".into(), inp.clone());
         }
 
         if let Some(dims) = ingress.get("__emb_dimensions") {

@@ -99,50 +99,44 @@ impl RequestDecoder for ResponsesDecoder {
                     {
                         if let Some(summary) = item.get("summary").and_then(|v| v.as_array()) {
                             for s in summary {
-                                if let Some(text) = s.get("text").and_then(|v| v.as_str()) {
-                                    if !text.is_empty() {
-                                        pending_reasoning = Some(text.to_string());
-                                        break;
-                                    }
+                                if let Some(text) = s.get("text").and_then(|v| v.as_str())
+                                    && !text.is_empty()
+                                {
+                                    pending_reasoning = Some(text.to_string());
+                                    break;
                                 }
                             }
                         }
                         continue;
                     }
 
-                    match decode_input_item(item)? {
-                        Some(mut msg) => {
-                            if msg.role == Role::Assistant {
-                                if let Some(ref reasoning) = pending_reasoning {
-                                    let mut obj = match msg.meta.take() {
-                                        Some(Value::Object(m)) => m,
-                                        _ => serde_json::Map::new(),
-                                    };
-                                    obj.insert(
-                                        "reasoning_content".to_string(),
-                                        Value::String(reasoning.clone()),
-                                    );
-                                    msg.meta = Some(Value::Object(obj));
-                                }
-                            } else if msg.role == Role::User || msg.role == Role::System {
-                                if let Some(reasoning) = pending_reasoning.take() {
-                                    let mut extra = serde_json::Map::new();
-                                    extra.insert(
-                                        "reasoning_content".to_string(),
-                                        Value::String(reasoning),
-                                    );
-                                    messages.push(Message {
-                                        role: Role::Assistant,
-                                        content: MessageContent::Text(String::new()),
-                                        tool_calls: None,
-                                        tool_call_id: None,
-                                        meta: Some(Value::Object(extra)),
-                                    });
-                                }
+                    if let Some(mut msg) = decode_input_item(item)? {
+                        if msg.role == Role::Assistant {
+                            if let Some(ref reasoning) = pending_reasoning {
+                                let mut obj = match msg.meta.take() {
+                                    Some(Value::Object(m)) => m,
+                                    _ => serde_json::Map::new(),
+                                };
+                                obj.insert(
+                                    "reasoning_content".to_string(),
+                                    Value::String(reasoning.clone()),
+                                );
+                                msg.meta = Some(Value::Object(obj));
                             }
-                            messages.push(msg);
+                        } else if (msg.role == Role::User || msg.role == Role::System)
+                            && let Some(reasoning) = pending_reasoning.take()
+                        {
+                            let mut extra = serde_json::Map::new();
+                            extra.insert("reasoning_content".to_string(), Value::String(reasoning));
+                            messages.push(Message {
+                                role: Role::Assistant,
+                                content: MessageContent::Text(String::new()),
+                                tool_calls: None,
+                                tool_call_id: None,
+                                meta: Some(Value::Object(extra)),
+                            });
                         }
-                        None => {}
+                        messages.push(msg);
                     }
                 }
                 if let Some(reasoning) = pending_reasoning.take() {
@@ -437,16 +431,15 @@ fn parse_tool_choice(v: Value) -> ToolChoice {
             _ => ToolChoice::Raw(v),
         },
         Value::Object(obj) => {
-            if obj.get("type").and_then(|t| t.as_str()) == Some("function") {
-                if let Some(name) = obj
+            if obj.get("type").and_then(|t| t.as_str()) == Some("function")
+                && let Some(name) = obj
                     .get("function")
                     .and_then(|f| f.get("name"))
                     .and_then(|n| n.as_str())
-                {
-                    return ToolChoice::Named {
-                        name: name.to_string(),
-                    };
-                }
+            {
+                return ToolChoice::Named {
+                    name: name.to_string(),
+                };
             }
             ToolChoice::Raw(v)
         }

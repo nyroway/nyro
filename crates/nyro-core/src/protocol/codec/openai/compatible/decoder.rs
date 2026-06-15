@@ -194,7 +194,6 @@ impl RequestDecoder for OpenAIDecoder {
             stop,
             frequency_penalty: req.frequency_penalty,
             presence_penalty: req.presence_penalty,
-            ..Default::default()
         };
         ai_req.stream = StreamConfig {
             enabled: req.stream,
@@ -302,16 +301,15 @@ fn parse_tool_choice(v: Value) -> ToolChoice {
             _ => ToolChoice::Raw(v),
         },
         Value::Object(obj) => {
-            if obj.get("type").and_then(|t| t.as_str()) == Some("function") {
-                if let Some(name) = obj
+            if obj.get("type").and_then(|t| t.as_str()) == Some("function")
+                && let Some(name) = obj
                     .get("function")
                     .and_then(|f| f.get("name"))
                     .and_then(|n| n.as_str())
-                {
-                    return ToolChoice::Named {
-                        name: name.to_string(),
-                    };
-                }
+            {
+                return ToolChoice::Named {
+                    name: name.to_string(),
+                };
             }
             ToolChoice::Raw(v)
         }
@@ -342,16 +340,16 @@ fn parse_response_format(f: ResponseFormatWire) -> ResponseFormat {
 /// Parse a `data:<media_type>;base64,<data>` URL into a `MediaSource::Base64`.
 /// Falls back to `MediaSource::Url` if the format is not recognised.
 fn parse_data_url_source(url: String) -> MediaSource {
-    if let Some(rest) = url.strip_prefix("data:") {
-        if let Some(semi) = rest.find(';') {
-            let media_type = rest[..semi].to_string();
-            let after = &rest[semi + 1..];
-            if let Some(data) = after.strip_prefix("base64,") {
-                return MediaSource::Base64 {
-                    media_type,
-                    data: data.to_string(),
-                };
-            }
+    if let Some(rest) = url.strip_prefix("data:")
+        && let Some(semi) = rest.find(';')
+    {
+        let media_type = rest[..semi].to_string();
+        let after = &rest[semi + 1..];
+        if let Some(data) = after.strip_prefix("base64,") {
+            return MediaSource::Base64 {
+                media_type,
+                data: data.to_string(),
+            };
         }
     }
     MediaSource::Url(url)
