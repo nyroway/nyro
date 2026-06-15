@@ -78,3 +78,16 @@ When modifying the database schema — including changes to `INIT_SQL`, `POSTGRE
    These files are the authoritative reference schema for DBAs. They represent the **final state** after all migrations have run (with final table names: `models`, `model_backends`, `api_key_models`).
 
 > The SQL files in `deploy/schema/` are derived reference artifacts — do not manually edit them except to update the header comment. Always regenerate from the migration source of truth.
+
+### Release Process
+
+Local release work (cutting a `release/vX.Y.Z` branch off `master` through pushing it):
+
+1. Branch: `git checkout master && git pull && git checkout -b release/vX.Y.Z`.
+2. Bump the version in **3 places** (keep identical): `Cargo.toml` `[workspace.package].version`, `src-tauri/tauri.conf.json` `version`, `webui/package.json` `version`. Refresh `Cargo.lock` via `cargo update -w` (never edit it by hand).
+3. Changelog: summarize all commits since the last tag (`git log $(git describe --tags --abbrev=0)..HEAD --no-merges --oneline`) into a new version entry, and write it to **both** `CHANGELOG.md` (English, canonical) and `CHANGELOG_CN.md` (Chinese).
+4. Verify with `make check` and `make test`, then commit (`chore: release vX.Y.Z`) and push the branch.
+
+PR merge (`release/vX.Y.Z` → `master`) and tagging `vX.Y.Z` are done remotely on GitHub; pushing the tag triggers the release workflows.
+
+> See `docs/release.md` for the full local release runbook (source of truth).
