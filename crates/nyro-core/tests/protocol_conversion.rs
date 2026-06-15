@@ -181,7 +181,7 @@ fn openai_stream_formatter_sets_tool_calls_finish_reason_when_tool_calls_seen() 
     let last_json = events
         .iter()
         .filter_map(|e| serde_json::from_str::<serde_json::Value>(&e.data).ok())
-        .last()
+        .next_back()
         .expect("has final json");
     let finish_reason = last_json
         .get("choices")
@@ -2080,6 +2080,156 @@ fn gemini_encoder_file_data_without_mime_type_omits_mime_type() {
     assert!(
         fd.get("mimeType").is_none(),
         "mimeType must be absent when media_type is None"
+    );
+}
+
+// ── Claude Code >=2.1.154 mid-conversation system messages ────────────────────
+
+/// Basic: inline system role is decoded as Role::System and kept at its position.
+#[test]
+fn anthropic_inline_system_role_decodes_without_error() {
+    let body = serde_json::json!({
+        "model": "claude-opus-4-8",
+        "max_tokens": 32000,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "帮我查下当前目录结构"}
+                ]
+            },
+            {
+                "role": "system",
+                "content": "SessionStart hook additional context: you have superpowers."
+            },
+            {
+                "role": "user",
+                "content": "follow up question"
+            }
+        ]
+    });
+
+    let req = AnthropicDecoder
+        .decode_request(body)
+        .expect("should not fail on inline system role");
+
+    // Inline system decoded to Role::System at original position (index 1).
+    assert_eq!(req.messages.len(), 3);
+    assert_eq!(req.messages[0].role, IrRole::User);
+    assert_eq!(req.messages[1].role, IrRole::System);
+    assert_eq!(req.messages[2].role, IrRole::User);
+
+    // System content is preserved.
+    let sys_text = req.messages[1].content.to_text();
+    assert!(
+        sys_text.contains("superpowers"),
+        "system content must be preserved, got: {sys_text}"
+    );
+}
+
+/// Inline system with content blocks (cache_control present, mirroring the real log).
+#[test]
+fn anthropic_inline_system_role_with_blocks_decodes() {
+    let body = serde_json::json!({
+        "model": "claude-opus-4-8",
+        "max_tokens": 32000,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "first question"},
+                    {"type": "text", "text": "cached part", "cache_control": {"type": "ephemeral"}}
+                ]
+            },
+            {
+                "role": "system",
+                "content": [
+                    {"type": "text", "text": "injected system context from skill"}
+                ]
+            },
+            {
+                "role": "assistant",
+                "content": "sure"
+            }
+        ]
+    });
+
+    let req = AnthropicDecoder
+        .decode_request(body)
+        .expect("should handle inline system with surrounding cache_control blocks");
+
+    assert_eq!(req.messages.len(), 3);
+    assert_eq!(req.messages[1].role, IrRole::System);
+    let sys_text = req.messages[1].content.to_text();
+    assert!(sys_text.contains("injected system context"));
+}
+
+/// Anthropic encoder re-merges inline system into top-level system field,
+/// keeping the messages array clean for strict downstream endpoints.
+#[test]
+fn anthropic_inline_system_role_encodes_into_top_level_system() {
+    let body = serde_json::json!({
+        "model": "claude-opus-4-8",
+        "max_tokens": 1024,
+        "system": "base system prompt",
+        "messages": [
+            {"role": "user", "content": "hello"},
+            {"role": "system", "content": "mid-conversation system injection"},
+            {"role": "assistant", "content": "hi there"},
+            {"role": "user", "content": "next turn"}
+        ]
+    });
+
+    let ir = AnthropicDecoder.decode_request(body).expect("decode");
+
+    let (encoded, _) = AnthropicEncoder.encode_request(&ir).expect("encode");
+
+    // Top-level system should contain both base and injected text.
+    let system_val = encoded.get("system").expect("system field must exist");
+    let system_str = system_val.as_str().expect("system must be string");
+    assert!(
+        system_str.contains("base system prompt"),
+        "base system missing"
+    );
+    assert!(
+        system_str.contains("mid-conversation system injection"),
+        "injected system missing"
+    );
+
+    // messages must not contain any system role (strict endpoint safe).
+    let msgs = encoded["messages"].as_array().expect("messages array");
+    for m in msgs {
+        assert_ne!(
+            m["role"].as_str(),
+            Some("system"),
+            "re-encoded messages must not contain system role"
+        );
+    }
+    // user and assistant turns are preserved.
+    assert_eq!(msgs.len(), 3, "user + assistant + user");
+}
+
+/// Unknown roles (not system/user/assistant) still produce a hard error.
+#[test]
+fn anthropic_truly_unknown_role_still_errors() {
+    let body = serde_json::json!({
+        "model": "claude-opus-4-8",
+        "max_tokens": 1024,
+        "messages": [
+            {"role": "user", "content": "hello"},
+            {"role": "garbage_role", "content": "unexpected"}
+        ]
+    });
+
+    let result = AnthropicDecoder.decode_request(body);
+    assert!(
+        result.is_err(),
+        "truly unknown role must still be rejected with an error"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("unknown Anthropic role: garbage_role"),
+        "error message must identify the bad role, got: {err}"
     );
 }
 

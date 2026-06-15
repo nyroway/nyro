@@ -54,8 +54,16 @@ impl RequestDecoder for AnthropicDecoder {
             .unwrap_or(false);
 
         // Snapshot raw wire values before consuming req.
+        // Inline "system" role messages are filtered out of the snapshot so that
+        // the Anthropic encoder's raw-passthrough path (used when cache_control is
+        // present) never forwards non-standard roles to strict downstream endpoints.
         let raw_messages: Option<Value> = if needs_raw_msgs {
-            serde_json::to_value(&req.messages).ok()
+            let wire_msgs: Vec<&AnthropicMessage> = req
+                .messages
+                .iter()
+                .filter(|m| matches!(m.role.as_str(), "user" | "assistant"))
+                .collect();
+            serde_json::to_value(wire_msgs).ok()
         } else {
             None
         };
@@ -249,6 +257,10 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<Message>> {
     let role = match msg.role.as_str() {
         "user" => Role::User,
         "assistant" => Role::Assistant,
+        // Claude Code >=2.1.154 uses the official mid-conversation system messages feature,
+        // embedding {"role":"system"} inside the messages array for skill/hook context.
+        // See: https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
+        "system" => Role::System,
         other => anyhow::bail!("unknown Anthropic role: {other}"),
     };
 
