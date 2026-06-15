@@ -98,6 +98,7 @@ pub fn run() {
             commands::delete_api_key,
             commands::query_logs,
             commands::get_log,
+            commands::clear_logs,
             commands::get_stats_overview,
             commands::get_stats_hourly,
             commands::get_stats_by_model,

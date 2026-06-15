@@ -1039,6 +1039,13 @@ impl LogStore for MysqlLogStore {
         Ok(result.rows_affected())
     }
 
+    async fn clear_all(&self) -> anyhow::Result<u64> {
+        let result = sqlx::query("DELETE FROM request_logs")
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     async fn stats_overview(&self, hours: Option<i64>) -> anyhow::Result<StatsOverview> {
         let sql = if let Some(hours) = hours {
             format!(

@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, ScrollText } from "lucide-react";
+import { ChevronLeft, ChevronRight, ScrollText, Trash2 } from "lucide-react";
 
 import { backend } from "@/lib/backend";
 import type { LogPage, LogQuery, Provider, RequestLog } from "@/lib/types";
@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { LogDetailDialog } from "@/components/log-detail-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 const PAGE_SIZE = 11;
 const ALL_OPTION = "__all__";
@@ -26,10 +27,21 @@ const ALL_OPTION = "__all__";
 export default function LogsPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
+  const qc = useQueryClient();
 
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState<LogQuery>({ limit: PAGE_SIZE, offset: 0 });
   const [selected, setSelected] = useState<RequestLog | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const clearMut = useMutation({
+    mutationFn: () => backend("clear_logs"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["logs"] });
+      setPage(0);
+      setConfirmOpen(false);
+    },
+  });
 
   const query: LogQuery = { ...filter, limit: PAGE_SIZE, offset: page * PAGE_SIZE };
 
@@ -123,6 +135,16 @@ export default function LogsPage() {
               ))}
             </SelectContent>
           </Select>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-10 w-10"
+            title={isZh ? "清空日志" : "Clear Logs"}
+            disabled={total === 0}
+            onClick={() => setConfirmOpen(true)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
         </div>
       </div>
 
@@ -284,6 +306,20 @@ export default function LogsPage() {
         onOpenChange={(open) => {
           if (!open) setSelected(null);
         }}
+      />
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={isZh ? "清空所有日志" : "Clear All Logs"}
+        description={
+          isZh
+            ? "确认清空所有请求日志？此操作不可恢复。"
+            : "All request logs will be permanently deleted. This action cannot be undone."
+        }
+        confirmText={isZh ? "清空" : "Clear"}
+        cancelText={isZh ? "取消" : "Cancel"}
+        onConfirm={() => clearMut.mutate()}
       />
     </div>
   );

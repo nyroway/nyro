@@ -1102,6 +1102,13 @@ impl LogStore for SqliteLogStore {
         Ok(result.rows_affected())
     }
 
+    async fn clear_all(&self) -> anyhow::Result<u64> {
+        let result = sqlx::query("DELETE FROM request_logs")
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     async fn stats_overview(&self, hours: Option<i64>) -> anyhow::Result<StatsOverview> {
         if let Some(hours) = hours {
             Ok(sqlx::query_as::<_, StatsOverview>(

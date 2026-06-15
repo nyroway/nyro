@@ -13,6 +13,10 @@ impl AdminService {
     pub async fn get_log(&self, id: &str) -> anyhow::Result<Option<RequestLog>> {
         self.gw.storage.logs().find_by_id(id).await
     }
+
+    pub async fn clear_logs(&self) -> anyhow::Result<u64> {
+        self.gw.storage.logs().clear_all().await
+    }
     // ── Stats ──
 
     fn normalize_hours(hours: Option<i32>) -> Option<i32> {

@@ -115,7 +115,7 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
             get(list_api_keys_handler).post(create_api_key_handler),
         )
         .route("/api-keys/:id", api_keys_item)
-        .route("/logs", get(query_logs_handler))
+        .route("/logs", get(query_logs_handler).delete(clear_logs_handler))
         .route("/logs/:id", get(get_log_handler))
         .route("/stats/overview", get(stats_overview))
         .route("/stats/hourly", get(stats_hourly))
@@ -531,6 +531,13 @@ async fn query_logs_handler(
     };
     match gw.admin().query_logs(q).await {
         Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn clear_logs_handler(State(gw): State<Gateway>) -> impl IntoResponse {
+    match gw.admin().clear_logs().await {
+        Ok(deleted) => Json(serde_json::json!({ "data": { "deleted": deleted } })).into_response(),
         Err(e) => err(e),
     }
 }

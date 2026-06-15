@@ -128,6 +128,7 @@ pub trait LogStore: Send + Sync {
     async fn query(&self, query: LogQuery) -> anyhow::Result<LogPage>;
     async fn find_by_id(&self, id: &str) -> anyhow::Result<Option<RequestLog>>;
     async fn cleanup_before(&self, cutoff_expression: &str) -> anyhow::Result<u64>;
+    async fn clear_all(&self) -> anyhow::Result<u64>;
     async fn stats_overview(&self, hours: Option<i64>) -> anyhow::Result<StatsOverview>;
     async fn stats_hourly(&self, hours: i64) -> anyhow::Result<Vec<StatsHourly>>;
     async fn stats_by_model(&self, hours: Option<i64>) -> anyhow::Result<Vec<ModelStats>>;

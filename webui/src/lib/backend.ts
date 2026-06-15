@@ -154,6 +154,8 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
     }
     case "get_log":
       return { method: "GET", url: `${base}/logs/${args?.id}` };
+    case "clear_logs":
+      return { method: "DELETE", url: `${base}/logs` };
 
     case "get_stats_overview": {
       const hours = args?.hours;
