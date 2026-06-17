@@ -564,8 +564,8 @@ export default function ModelsPage() {
               title={isZh ? "访问控制" : "Access Control"}
               isZh={isZh}
               checked={createForm.enable_auth}
-              checkedMessage={isZh ? "仅允许绑定模型的 API Key 访问" : "Only API keys bound to this model are allowed"}
-              uncheckedMessage={isZh ? "仅允许携带 API Key 的请求访问" : "Only requests with an API key are allowed"}
+              checkedMessage={isZh ? "仅绑定该模型的 API Key 可访问" : "Only API keys bound to this model can access"}
+              uncheckedMessage={isZh ? "任何请求均可访问，无需 API Key" : "Any request can access without an API key"}
               switchId="create-route-enable-auth"
               onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, enable_auth: checked }))}
             />
@@ -698,8 +698,8 @@ export default function ModelsPage() {
                       title={isZh ? "访问控制" : "Access Control"}
                       isZh={isZh}
                       checked={editForm.enable_auth}
-                      checkedMessage={isZh ? "仅允许绑定模型的 API Key 访问" : "Only API keys bound to this model are allowed"}
-                      uncheckedMessage={isZh ? "仅允许携带 API Key 的请求访问" : "Only requests with an API key are allowed"}
+                      checkedMessage={isZh ? "仅绑定该模型的 API Key 可访问" : "Only API keys bound to this model can access"}
+                      uncheckedMessage={isZh ? "任何请求均可访问，无需 API Key" : "Any request can access without an API key"}
                       onCheckedChange={(checked) =>
                         setEditForm((prev) => (prev ? { ...prev, enable_auth: checked } : prev))
                       }
