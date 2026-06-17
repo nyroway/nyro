@@ -99,7 +99,12 @@ impl RequestEncoder for OpenAIEncoder {
         }
 
         // Passthrough any remaining unknown extra fields.
+        // Skip cross-protocol internal keys (e.g. __anthropic_*, __google_*)
+        // that are only meaningful to their respective codecs.
         for (k, v) in ingress {
+            if k.starts_with("__anthropic_") || k.starts_with("__google_") {
+                continue;
+            }
             obj.entry(k.clone()).or_insert_with(|| v.clone());
         }
 

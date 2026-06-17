@@ -153,8 +153,13 @@ impl RequestEncoder for ResponsesEncoder {
         }
 
         // Passthrough remaining unknown extra fields.
+        // Skip cross-protocol internal keys (e.g. __anthropic_*, __google_*)
+        // that are only meaningful to their respective codecs.
         for (k, v) in ingress {
-            if SKIP_FROM_EXTRA.contains(&k.as_str()) {
+            if SKIP_FROM_EXTRA.contains(&k.as_str())
+                || k.starts_with("__anthropic_")
+                || k.starts_with("__google_")
+            {
                 continue;
             }
             obj.entry(k.clone()).or_insert_with(|| v.clone());
