@@ -57,6 +57,7 @@ pub async fn handler(
         envelope,
         request,
         GOOGLE_GEMINI_GENERATE_CONTENT_V1BETA,
+        ctx.0,
     )
     .await
 }

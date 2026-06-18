@@ -14,6 +14,8 @@
 //! - **Protocol / routing fields** – filled in progressively as the request
 //!   moves through `intake → security → planner → dispatcher`.
 
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -184,6 +186,54 @@ impl Default for TraceSink {
     }
 }
 
+// ── ContextBag ──────────────────────────────────────────────────────────────────
+
+/// Type-keyed, request-scoped scratch space shared across all phases (Nyro's
+/// equivalent of OpenResty `ngx.ctx`). Values are keyed by their concrete type,
+/// so producers and consumers agree by type rather than stringly-typed keys.
+///
+/// The bag is shared across `RequestContext` clones (like `outcome` / `trace`)
+/// so a value inserted in one phase is visible to later phases.  `get` returns a
+/// clone to avoid borrowing through the internal lock.
+#[derive(Clone, Default)]
+pub struct ContextBag(Arc<Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>>);
+
+impl ContextBag {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert (or replace) the value stored for type `T`.
+    pub fn insert<T: Any + Send + Sync>(&self, value: T) {
+        if let Ok(mut guard) = self.0.lock() {
+            guard.insert(TypeId::of::<T>(), Box::new(value));
+        }
+    }
+
+    /// Fetch a clone of the value stored for type `T`, if present.
+    pub fn get<T: Any + Send + Sync + Clone>(&self) -> Option<T> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|guard| guard.get(&TypeId::of::<T>())?.downcast_ref::<T>().cloned())
+    }
+
+    /// Returns `true` if a value of type `T` is present.
+    pub fn contains<T: Any + Send + Sync>(&self) -> bool {
+        self.0
+            .lock()
+            .map(|guard| guard.contains_key(&TypeId::of::<T>()))
+            .unwrap_or(false)
+    }
+}
+
+impl std::fmt::Debug for ContextBag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let len = self.0.lock().map(|g| g.len()).unwrap_or(0);
+        f.debug_struct("ContextBag").field("len", &len).finish()
+    }
+}
+
 // ── RequestContext ────────────────────────────────────────────────────────────
 
 /// Unified per-request context.  Stored in `axum::Extension` and cloned into
@@ -221,6 +271,9 @@ pub struct RequestContext {
     pub outcome: Arc<OnceLock<RequestOutcome>>,
     /// Lightweight trace log.
     pub trace: TraceSink,
+    /// Type-keyed request-scoped scratch space (Nyro's `ngx.ctx`), shared
+    /// across clones and visible to every pipeline phase.
+    pub extensions: ContextBag,
 }
 
 impl RequestContext {
@@ -239,6 +292,7 @@ impl RequestContext {
             auth_subject: None,
             outcome: Arc::new(OnceLock::new()),
             trace: TraceSink::new(),
+            extensions: ContextBag::new(),
         }
     }
 

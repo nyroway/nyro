@@ -48,6 +48,7 @@ pub async fn handler(
         envelope,
         request,
         OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+        ctx.0,
     )
     .await
 }

@@ -71,6 +71,7 @@ pub async fn dispatch_pipeline(
     envelope: RawEnvelope,
     request: AiRequest,
     ingress: ProtocolId,
+    mut ctx: RequestContext,
 ) -> Response {
     // Derive logging strings from envelope.
     let method_owned = envelope.method.clone();
@@ -224,9 +225,11 @@ pub async fn dispatch_pipeline(
         };
 
         // Resolve egress protocol + base URL via negotiate().
+        // The request-scoped `ctx` is threaded end-to-end from the ingress
+        // middleware (no per-target throwaway context); negotiate records its
+        // trace/egress decision onto it.
         let provider_protocols = ProviderProtocols::from_provider(&provider);
-        let mut req_ctx = RequestContext::new(ingress, std::time::Duration::from_secs(30));
-        let plan = match negotiate(ingress, None, Some(&provider_protocols), &mut req_ctx) {
+        let plan = match negotiate(ingress, None, Some(&provider_protocols), &mut ctx) {
             Ok(p) => p,
             Err(e) => {
                 last_response = Some(e.render(None));
@@ -438,7 +441,7 @@ pub async fn dispatch(
     ingress: ProtocolId,
     method: &'static str,
     path: &'static str,
-    _ctx: &mut RequestContext,
+    ctx: &mut RequestContext,
 ) -> Response {
     let flat_headers: std::collections::HashMap<String, String> = headers
         .iter()
@@ -456,7 +459,7 @@ pub async fn dispatch(
         Err(e) => return log_decode_error(&gw, &envelope, ingress, e),
     };
 
-    dispatch_pipeline(gw, headers, envelope, request, ingress).await
+    dispatch_pipeline(gw, headers, envelope, request, ingress, ctx.clone()).await
 }
 
 // ── Handler context types ─────────────────────────────────────────────────────
@@ -914,6 +917,10 @@ mod tests {
             envelope,
             request,
             OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            crate::proxy::context::RequestContext::new(
+                OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+                std::time::Duration::from_secs(30),
+            ),
         )
         .await;
 

@@ -41,6 +41,7 @@ pub async fn handler(
         envelope,
         request,
         OPENAI_COMPATIBLE_EMBEDDINGS_V1,
+        ctx.0,
     )
     .await
 }

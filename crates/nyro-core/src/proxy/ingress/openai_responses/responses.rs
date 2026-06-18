@@ -33,5 +33,5 @@ pub async fn handler(
         Ok(r) => r,
         Err(e) => return log_decode_error(&gw, &envelope, OPENAI_RESPONSES_V1, e),
     };
-    dispatch_pipeline(gw, headers, envelope, request, OPENAI_RESPONSES_V1).await
+    dispatch_pipeline(gw, headers, envelope, request, OPENAI_RESPONSES_V1, ctx.0).await
 }

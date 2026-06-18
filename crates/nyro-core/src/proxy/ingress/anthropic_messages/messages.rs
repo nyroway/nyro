@@ -41,6 +41,7 @@ pub async fn handler(
         envelope,
         request,
         ANTHROPIC_MESSAGES_2023_06_01,
+        ctx.0,
     )
     .await
 }
