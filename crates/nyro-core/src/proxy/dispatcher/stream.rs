@@ -17,18 +17,24 @@ use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use serde_json::Value;
 use tokio_stream::wrappers::ReceiverStream;
 
+use std::sync::Arc;
+
+use crate::Gateway;
+use crate::plugin::phase::{HostContext, Phase, PhaseHook, PhaseHookRegistry, ResponseView};
 use crate::protocol::ids::ProtocolEndpoint;
-use crate::protocol::ir::AiStreamDelta;
+use crate::protocol::ir::{AiRequest, AiStreamDelta};
 use crate::proxy::client::ProxyClient;
+use crate::proxy::context::RequestContext;
 use crate::proxy::observability::headers_to_json;
 
 use super::{
     CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator, ai_response_to_deltas,
-    error_response,
+    error_response, run_phase_hooks_slice,
 };
 
 // ── Streaming response handler ────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_stream(
     client: ProxyClient,
     url: &str,
@@ -37,6 +43,10 @@ pub(super) async fn handle_stream(
     call_ctx: &CallCtx<'_>,
     req_extras: &RequestExtras,
     passthrough_resp: bool,
+    // Cloned into the streaming task for the per-chunk OnResponse phase; the
+    // spawned task outlives the borrow, so owned copies (not borrows) cross in.
+    req_ctx: &RequestContext,
+    req_ir: &AiRequest,
 ) -> Response {
     let egress = call_ctx.egress;
     let ingress = call_ctx.ingress;
@@ -236,7 +246,28 @@ pub(super) async fn handle_stream(
     let act_model_ir = log_ir.upstream_model.clone();
     let upstream_hdrs_owned = upstream_hdrs_str;
 
+    // OnResponse hooks for the streaming path. The registry returns `'static`
+    // references, resolved once here and re-applied per delta inside the task.
+    // The spawned task outlives this handler, so the request context / IR are
+    // cloned into owned copies (only when at least one hook is registered —
+    // otherwise we clone nothing and the per-delta path is skipped entirely).
+    let on_response_hooks = PhaseHookRegistry::global().for_phase(Phase::OnResponse);
+    let (mut hook_req_ctx, mut hook_req_ir, hook_gw): (
+        Option<RequestContext>,
+        Option<AiRequest>,
+        Option<Gateway>,
+    ) = if on_response_hooks.is_empty() {
+        (None, None, None)
+    } else {
+        (
+            Some(req_ctx.clone()),
+            Some(req_ir.clone()),
+            Some(call_ctx.gw.clone()),
+        )
+    };
+
     tokio::spawn(async move {
+        let on_response_host = hook_gw.as_ref().map(HostContext::new);
         let mut accumulator = StreamResponseAccumulator::default();
         let mut upstream_raw_buf: Vec<u8> = Vec::new();
         let mut client_sse_parts: Vec<String> = Vec::new();
@@ -266,7 +297,15 @@ pub(super) async fn handle_stream(
             chunks_count += 1;
             upstream_raw_buf.extend_from_slice(&bytes);
             let text = String::from_utf8_lossy(&bytes);
-            if let Ok(ai_deltas) = stream_parser.parse_chunk(&text) {
+            if let Ok(mut ai_deltas) = stream_parser.parse_chunk(&text) {
+                run_stream_on_response(
+                    &on_response_hooks,
+                    on_response_host.as_ref(),
+                    hook_req_ctx.as_mut(),
+                    hook_req_ir.as_mut(),
+                    &mut ai_deltas,
+                )
+                .await;
                 accumulator.apply_all(&ai_deltas);
                 let events = stream_formatter.format_deltas(&ai_deltas);
                 for ev in events {
@@ -279,7 +318,15 @@ pub(super) async fn handle_stream(
             }
         }
 
-        if let Ok(ai_deltas) = stream_parser.finish() {
+        if let Ok(mut ai_deltas) = stream_parser.finish() {
+            run_stream_on_response(
+                &on_response_hooks,
+                on_response_host.as_ref(),
+                hook_req_ctx.as_mut(),
+                hook_req_ir.as_mut(),
+                &mut ai_deltas,
+            )
+            .await;
             accumulator.apply_all(&ai_deltas);
             let events = stream_formatter.format_deltas(&ai_deltas);
             for ev in events {
@@ -341,6 +388,31 @@ pub(super) async fn handle_stream(
         .header(header::CONNECTION, "keep-alive")
         .body(body)
         .unwrap()
+}
+
+/// Apply the `OnResponse` phase to each streamed delta in place.
+///
+/// Streaming `OnResponse` is mutation-only: a hook may reshape the
+/// [`AiStreamDelta`], but `ShortCircuit` / `Reject` cannot replace an
+/// already-streaming response, so non-`Continue` outcomes are ignored. No-op
+/// when no hooks are registered or the owned context was not cloned in.
+async fn run_stream_on_response(
+    hooks: &[&Arc<dyn PhaseHook>],
+    host: Option<&HostContext<'_>>,
+    req_ctx: Option<&mut RequestContext>,
+    req_ir: Option<&mut AiRequest>,
+    deltas: &mut [AiStreamDelta],
+) {
+    if hooks.is_empty() {
+        return;
+    }
+    let (Some(host), Some(req_ctx), Some(req_ir)) = (host, req_ctx, req_ir) else {
+        return;
+    };
+    for delta in deltas.iter_mut() {
+        let _ =
+            run_phase_hooks_slice(hooks, req_ctx, req_ir, ResponseView::Stream(delta), host).await;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

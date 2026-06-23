@@ -13,7 +13,7 @@
 use std::sync::{Arc, OnceLock};
 
 use crate::error::GatewayError;
-use crate::protocol::ir::{AiRequest, AiResponse, AiStreamDelta};
+use crate::protocol::ir::{AiRequest, AiResponse, AiStreamDelta, Usage};
 use crate::proxy::context::RequestContext;
 use async_trait::async_trait;
 use axum::response::Response;
@@ -59,6 +59,29 @@ pub enum ResponseView<'a> {
     Full(&'a mut AiResponse),
     /// One streaming delta; the hook is called repeatedly.
     Stream(&'a mut AiStreamDelta),
+}
+
+/// Canonical response-side snapshot for one request, injected into
+/// [`RequestContext::extensions`] by the native `OnResponse` step so that
+/// `OnLog` (and `OnLogHook`) read a single consistent set of metrics rather than
+/// re-deriving them. See lifecycle RFC §4 ("响应侧状态注入 ctx").
+///
+/// Stored type-keyed in the [`crate::proxy::context::ContextBag`]; fetch with
+/// `ctx.extensions.get::<ResponseStats>()`.
+#[derive(Debug, Clone, Default)]
+pub struct ResponseStats {
+    /// Status code returned to the client.
+    pub client_status: u16,
+    /// Upstream provider status, when an upstream call was made.
+    pub upstream_status: Option<u16>,
+    /// Token usage as reported/accumulated for this response.
+    pub usage: Usage,
+    /// Upstream call latency in milliseconds, when measured.
+    pub upstream_latency_ms: Option<i64>,
+    /// Time-to-first-byte (first streamed chunk) in milliseconds.
+    pub ttfb_ms: Option<i64>,
+    /// Number of streamed chunks (0 for non-streaming responses).
+    pub stream_chunks: u32,
 }
 
 /// Stable host boundary handed to hooks: storage / config / metrics / http.

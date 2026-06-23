@@ -30,6 +30,7 @@ use self::non_stream::{handle_non_stream, handle_non_stream_via_upstream_stream}
 use self::stream::handle_stream;
 use self::util::*;
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use axum::http::HeaderMap;
@@ -40,7 +41,8 @@ use crate::Gateway;
 use crate::db::models::Provider;
 use crate::error::{AuthFailure, GatewayError};
 use crate::plugin::phase::{
-    HostContext, Phase, PhaseCtx, PhaseHookRegistry, PhaseOutcome, ResponseView,
+    HostContext, Phase, PhaseCtx, PhaseHook, PhaseHookRegistry, PhaseOutcome, ResponseStats,
+    ResponseView,
 };
 use crate::protocol::ProviderProtocols;
 use crate::protocol::ids::ProtocolId;
@@ -49,7 +51,7 @@ use crate::protocol::ir::{AiRequest, AiResponse, RawEnvelope};
 use crate::provider::VendorRegistry;
 use crate::provider::vendor::ProviderCtx;
 use crate::proxy::client::ProxyClient;
-use crate::proxy::context::RequestContext;
+use crate::proxy::context::{ContextBag, RequestContext};
 use crate::proxy::observability::{LogExtras, send_log};
 use crate::proxy::planner::{ProtocolMode, negotiate};
 use crate::router::TargetSelector;
@@ -76,6 +78,21 @@ async fn run_phase_hooks(
         return PhaseOutcome::Continue;
     }
     let hooks = registry.for_phase(phase);
+    run_phase_hooks_slice(&hooks, req_ctx, request, response, host).await
+}
+
+/// Run a precomputed list of phase hooks against one [`PhaseCtx`].
+///
+/// Used by the streaming `OnResponse` path, which resolves the hook list once
+/// and re-invokes it per [`crate::protocol::ir::AiStreamDelta`] from inside a
+/// spawned task — avoiding a registry query (and its allocation) per chunk.
+async fn run_phase_hooks_slice(
+    hooks: &[&Arc<dyn PhaseHook>],
+    req_ctx: &mut RequestContext,
+    request: &mut AiRequest,
+    response: ResponseView<'_>,
+    host: &HostContext<'_>,
+) -> PhaseOutcome {
     if hooks.is_empty() {
         return PhaseOutcome::Continue;
     }
@@ -116,6 +133,46 @@ pub async fn dispatch_pipeline(
     ingress: ProtocolId,
     mut ctx: RequestContext,
 ) -> Response {
+    // Stable host boundary; created here so the terminal OnLog phase can borrow
+    // it after the core pipeline (which owns a clone of `gw`) returns.
+    let host = HostContext::new(&gw);
+    let mut request = request;
+    let response = dispatch_pipeline_inner(
+        gw.clone(),
+        headers,
+        envelope,
+        &mut request,
+        ingress,
+        &mut ctx,
+        &host,
+    )
+    .await;
+
+    // ── OnLog phase ────────────────────────────────────────────────────────────
+    // Terminal, fire-and-forget: the client response is already materialised, so
+    // hooks observe (never mutate / short-circuit) the canonical `ResponseStats`
+    // snapshot in `ctx.extensions`. No-op when no OnLog hooks are registered, so
+    // this call site is behaviour-neutral until a plugin opts in.
+    let _ = run_phase_hooks(
+        Phase::OnLog,
+        &mut ctx,
+        &mut request,
+        ResponseView::Pending,
+        &host,
+    )
+    .await;
+    response
+}
+
+async fn dispatch_pipeline_inner(
+    gw: Gateway,
+    headers: HeaderMap,
+    envelope: RawEnvelope,
+    request: &mut AiRequest,
+    ingress: ProtocolId,
+    ctx: &mut RequestContext,
+    host: &HostContext<'_>,
+) -> Response {
     // Derive logging strings from envelope.
     let method_owned = envelope.method.clone();
     let path_owned = envelope.path.clone();
@@ -132,22 +189,15 @@ pub async fn dispatch_pipeline(
         headers: request_headers_str.clone(),
         body: request_body_str.clone(),
     };
-    let mut request = request;
     let start = Instant::now();
 
     // ── OnRequest phase ──────────────────────────────────────────────────────
     // Hooks run before the routing key is derived, so they may reshape the
     // request (e.g. rewrite `request.model`) before route lookup / auth.
-    let host = HostContext::new(&gw);
-    match run_phase_hooks(
-        Phase::OnRequest,
-        &mut ctx,
-        &mut request,
-        ResponseView::Pending,
-        &host,
-    )
-    .await
-    {
+    // Shared request-scoped extension bag, captured before the per-target
+    // `ProviderCtx` shadows `ctx`; handlers write `ResponseStats` into it.
+    let req_ctx_ext = ctx.extensions.clone();
+    match run_phase_hooks(Phase::OnRequest, ctx, request, ResponseView::Pending, host).await {
         PhaseOutcome::Continue => {}
         PhaseOutcome::ShortCircuit(resp) => return resp,
         PhaseOutcome::Reject(e) => return e.render(None),
@@ -206,7 +256,7 @@ pub async fn dispatch_pipeline(
             api_key_id: auth_key.id.clone(),
         };
         for hook in hook_registry.request_hooks() {
-            if let Err(e) = hook.on_request(&hook_ctx, &mut request).await {
+            if let Err(e) = hook.on_request(&hook_ctx, request).await {
                 tracing::warn!(hook = hook.name(), error = %e, "request hook rejected request");
                 LogBuilder::from_dispatch(
                     &gw,
@@ -227,15 +277,7 @@ pub async fn dispatch_pipeline(
     // ── OnAccess phase ───────────────────────────────────────────────────────
     // Identity (auth_key) and route are resolved; hooks may enforce access
     // policy and reject the request before any upstream work begins.
-    match run_phase_hooks(
-        Phase::OnAccess,
-        &mut ctx,
-        &mut request,
-        ResponseView::Pending,
-        &host,
-    )
-    .await
-    {
+    match run_phase_hooks(Phase::OnAccess, ctx, request, ResponseView::Pending, host).await {
         PhaseOutcome::Continue => {}
         PhaseOutcome::ShortCircuit(resp) => return resp,
         PhaseOutcome::Reject(e) => {
@@ -323,7 +365,7 @@ pub async fn dispatch_pipeline(
         // middleware (no per-target throwaway context); negotiate records its
         // trace/egress decision onto it.
         let provider_protocols = ProviderProtocols::from_provider(&provider);
-        let plan = match negotiate(ingress, None, Some(&provider_protocols), &mut ctx) {
+        let plan = match negotiate(ingress, None, Some(&provider_protocols), ctx) {
             Ok(p) => p,
             Err(e) => {
                 last_response = Some(e.render(None));
@@ -366,13 +408,12 @@ pub async fn dispatch_pipeline(
         // Target + vendor are selected but the upstream call has not happened.
         // Hooks may short-circuit here (e.g. cache hit) to skip the upstream.
         // Runs per-attempt inside the retry loop (see lifecycle RFC §5.1).
-        // NOTE: must run before `ctx` below shadows the threaded RequestContext.
         match run_phase_hooks(
             Phase::OnUpstream,
-            &mut ctx,
+            ctx,
             &mut request_for_target,
             ResponseView::Pending,
-            &host,
+            host,
         )
         .await
         {
@@ -385,7 +426,10 @@ pub async fn dispatch_pipeline(
         }
 
         let credential = provider_runtime.access_token.clone();
-        let ctx = ProviderCtx {
+        // Vendor-level provider context for codec ops. Named distinctly so it
+        // does NOT shadow the threaded `RequestContext` (`ctx`), which the
+        // handlers now need for the `OnResponse` phase.
+        let provider_ctx = ProviderCtx {
             provider: &provider,
             protocol: egress,
             egress_base_url: &egress_base_url,
@@ -406,7 +450,7 @@ pub async fn dispatch_pipeline(
             match crate::provider::common::pipeline::passthrough_run(
                 adapter.as_ref(),
                 raw,
-                &ctx,
+                &provider_ctx,
                 is_stream,
             )
             .await
@@ -418,7 +462,10 @@ pub async fn dispatch_pipeline(
                 }
             }
         } else {
-            match adapter.build_request(&mut request_for_target, &ctx).await {
+            match adapter
+                .build_request(&mut request_for_target, &provider_ctx)
+                .await
+            {
                 Ok(o) => o,
                 Err(e) => {
                     last_response = Some(e.render(None));
@@ -480,10 +527,11 @@ pub async fn dispatch_pipeline(
             is_stream,
             enable_payload: route.enable_payload,
             start,
+            req_ext: req_ctx_ext.clone(),
         };
-        // OnResponse / OnLog phase hooks are deferred to P2: OnResponse must
-        // handle per-chunk streaming mutations (`AiStreamDelta`) and OnLog needs
-        // the unified log-path (`ResponseStats` in ctx). Native handling below.
+        // `OnLog` runs once at the pipeline boundary (see `dispatch_pipeline`).
+        // The handlers run the `OnResponse` phase: non-stream paths see a full
+        // `AiResponse`, the streaming path is invoked per `AiStreamDelta`.
         let response = if is_stream {
             handle_stream(
                 client,
@@ -493,6 +541,8 @@ pub async fn dispatch_pipeline(
                 &call_ctx,
                 &req_extras,
                 passthrough_resp,
+                ctx,
+                &request_for_target,
             )
             .await
         } else if upstream_forces_stream {
@@ -502,6 +552,9 @@ pub async fn dispatch_pipeline(
                 outbound.headers,
                 outbound.body,
                 &call_ctx,
+                ctx,
+                &mut request_for_target,
+                host,
             )
             .await
         } else {
@@ -513,8 +566,11 @@ pub async fn dispatch_pipeline(
                 &call_ctx,
                 &req_extras,
                 adapter.as_ref(),
-                &ctx,
+                &provider_ctx,
                 passthrough_resp,
+                ctx,
+                &mut request_for_target,
+                host,
             )
             .await
         };
@@ -602,6 +658,9 @@ struct CallCtx<'a> {
     is_stream: bool,
     enable_payload: Option<bool>,
     start: Instant,
+    /// Shared request-scoped extension bag (clone of `RequestContext::extensions`);
+    /// handlers write the canonical `ResponseStats` snapshot here.
+    req_ext: ContextBag,
 }
 
 /// Owned request HTTP metadata kept for log entries. Used by the non-stream
@@ -642,6 +701,9 @@ struct LogBuilder {
     client_status_code: i32,
     usage: Usage,
     extras: LogExtras,
+    /// Optional request-scoped bag; when set, `emit` mirrors the final metrics
+    /// into a `ResponseStats` snapshot (lifecycle RFC OnResponse → ctx).
+    ext: Option<ContextBag>,
 }
 
 impl LogBuilder {
@@ -665,6 +727,7 @@ impl LogBuilder {
             client_status_code: 200,
             usage: Usage::default(),
             extras: LogExtras::default(),
+            ext: Some(call_ctx.req_ext.clone()),
         }
     }
 
@@ -696,6 +759,7 @@ impl LogBuilder {
             client_status_code: 200,
             usage: Usage::default(),
             extras: LogExtras::default(),
+            ext: None,
         }
     }
 
@@ -804,6 +868,18 @@ impl LogBuilder {
     fn emit(self) {
         use crate::logging::LogEntry;
         let latency_total_ms = self.start.elapsed().as_millis() as i64;
+        // OnResponse → ctx: mirror the final metrics into a single canonical
+        // snapshot so OnLog (and OnLogHook) read consistent values.
+        if let Some(ext) = &self.ext {
+            ext.insert(ResponseStats {
+                client_status: self.client_status_code.max(0) as u16,
+                upstream_status: self.extras.upstream_status_code.map(|c| c.max(0) as u16),
+                usage: self.usage.clone(),
+                upstream_latency_ms: self.extras.latency_upstream_ms,
+                ttfb_ms: self.extras.stream_first_chunk_ms,
+                stream_chunks: self.extras.stream_chunks_count.max(0) as u32,
+            });
+        }
         let entry = LogEntry {
             api_key_id: self.api_key_id,
             api_key_name: self.api_key_name,
@@ -1000,13 +1076,90 @@ pub(crate) fn error_response(status: u16, message: &str) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::dispatch_pipeline;
+    use super::{dispatch_pipeline, run_phase_hooks_slice};
     use crate::Gateway;
+    use crate::plugin::phase::{
+        HostContext, Phase, PhaseCtx, PhaseHook, PhaseHookRegistration, PhaseOutcome, ResponseView,
+    };
     use crate::protocol::ids::OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1;
-    use crate::protocol::ir::{AiRequest, RawEnvelope};
+    use crate::protocol::ir::{AiRequest, AiResponse, RawEnvelope};
+    use async_trait::async_trait;
     use axum::http::{HeaderMap, StatusCode};
+    use axum::response::IntoResponse;
     use serde_json::Value;
     use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // ── Example PhaseHook (validates the P1 lifecycle wiring end-to-end) ──────
+    //
+    // This hook is registered ONLY in `#[cfg(test)]` builds, so it has zero
+    // effect on production or on integration-test binaries (which link the lib
+    // without its test cfg). It serves as a copy-paste template for real hooks:
+    // implement `PhaseHook`, then `inventory::submit!` a registration.
+    //
+    // Behaviour: when a request targets the sentinel model, the OnRequest hook
+    // short-circuits with 200 *before* route lookup — proving the hook runs at
+    // the head of the pipeline and that `PhaseOutcome::ShortCircuit` is honoured.
+    // For every other model it returns `Continue`, leaving existing behaviour
+    // (and the other tests in this module) untouched.
+
+    const SENTINEL_MODEL: &str = "__nyro_onrequest_shortcircuit__";
+
+    struct SentinelShortCircuitHook;
+
+    #[async_trait]
+    impl PhaseHook for SentinelShortCircuitHook {
+        fn name(&self) -> &'static str {
+            "test-onrequest-shortcircuit"
+        }
+        fn phase(&self) -> Phase {
+            Phase::OnRequest
+        }
+        async fn run(&self, ctx: &mut PhaseCtx<'_>) -> PhaseOutcome {
+            if ctx.request.model == SENTINEL_MODEL {
+                PhaseOutcome::ShortCircuit(
+                    (StatusCode::OK, "short-circuited by phase hook").into_response(),
+                )
+            } else {
+                PhaseOutcome::Continue
+            }
+        }
+    }
+
+    inventory::submit! {
+        PhaseHookRegistration { make: || std::sync::Arc::new(SentinelShortCircuitHook) }
+    }
+
+    // ── Example OnLog hook (validates the terminal phase fires) ──────────────
+    //
+    // Records (test-only) that the OnLog phase ran for a sentinel-model request.
+    // OnLog is terminal and fire-and-forget, so the hook only observes and always
+    // returns `Continue`; it leaves other tests untouched.
+    const ONLOG_PROBE_MODEL: &str = "__nyro_onlog_probe__";
+    static ONLOG_RAN: AtomicBool = AtomicBool::new(false);
+
+    struct OnLogProbeHook;
+
+    #[async_trait]
+    impl PhaseHook for OnLogProbeHook {
+        fn name(&self) -> &'static str {
+            "test-onlog-probe"
+        }
+        fn phase(&self) -> Phase {
+            Phase::OnLog
+        }
+        async fn run(&self, ctx: &mut PhaseCtx<'_>) -> PhaseOutcome {
+            if ctx.request.model == ONLOG_PROBE_MODEL {
+                ONLOG_RAN.store(true, Ordering::SeqCst);
+            }
+            PhaseOutcome::Continue
+        }
+    }
+
+    inventory::submit! {
+        PhaseHookRegistration { make: || std::sync::Arc::new(OnLogProbeHook) }
+    }
 
     #[tokio::test]
     async fn dispatch_logs_client_request_headers_redacted_when_route_missing() {
@@ -1058,5 +1211,135 @@ mod tests {
         assert_eq!(parsed["content-type"], "application/json");
         assert!(!headers.contains("client-secret"));
         assert!(!headers.contains("client-key"));
+    }
+
+    #[tokio::test]
+    async fn on_request_phase_hook_short_circuits_before_route_lookup() {
+        let config = crate::config::GatewayConfig {
+            data_dir: std::env::temp_dir()
+                .join(format!("nyro-onrequest-hook-test-{}", uuid::Uuid::new_v4())),
+            ..Default::default()
+        };
+        let (gw, _log_rx) = Gateway::new(config).await.expect("gateway init");
+        let envelope = RawEnvelope::new(
+            Some(serde_json::json!({ "model": SENTINEL_MODEL })),
+            HashMap::new(),
+            "POST",
+            "/v1/chat/completions",
+        );
+        let request = AiRequest::new(SENTINEL_MODEL, Vec::new());
+
+        let response = dispatch_pipeline(
+            gw,
+            HeaderMap::new(),
+            envelope,
+            request,
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            crate::proxy::context::RequestContext::new(
+                OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+                std::time::Duration::from_secs(30),
+            ),
+        )
+        .await;
+
+        // No route is configured for the sentinel model — a normal request would
+        // 404 at route lookup. A 200 here proves the OnRequest hook ran first and
+        // its ShortCircuit response was returned through the real pipeline.
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn on_log_phase_hook_runs_at_pipeline_end() {
+        let config = crate::config::GatewayConfig {
+            data_dir: std::env::temp_dir()
+                .join(format!("nyro-onlog-hook-test-{}", uuid::Uuid::new_v4())),
+            ..Default::default()
+        };
+        let (gw, _log_rx) = Gateway::new(config).await.expect("gateway init");
+        let envelope = RawEnvelope::new(
+            Some(serde_json::json!({ "model": ONLOG_PROBE_MODEL })),
+            HashMap::new(),
+            "POST",
+            "/v1/chat/completions",
+        );
+        let request = AiRequest::new(ONLOG_PROBE_MODEL, Vec::new());
+
+        let response = dispatch_pipeline(
+            gw,
+            HeaderMap::new(),
+            envelope,
+            request,
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            crate::proxy::context::RequestContext::new(
+                OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+                std::time::Duration::from_secs(30),
+            ),
+        )
+        .await;
+
+        // No route for the probe model → 404, but OnLog is terminal and must fire
+        // unconditionally after the core pipeline returns.
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(
+            ONLOG_RAN.load(Ordering::SeqCst),
+            "OnLog phase hook should run at the pipeline boundary"
+        );
+    }
+
+    // OnResponse (full body) hook used to validate that the Full view is mutable
+    // and that the outcome is honoured. Not inventory-registered — driven
+    // directly via `run_phase_hooks_slice` so it never affects the live pipeline.
+    struct FullMutateHook;
+
+    #[async_trait]
+    impl PhaseHook for FullMutateHook {
+        fn name(&self) -> &'static str {
+            "test-onresponse-full-mutate"
+        }
+        fn phase(&self) -> Phase {
+            Phase::OnResponse
+        }
+        async fn run(&self, ctx: &mut PhaseCtx<'_>) -> PhaseOutcome {
+            if let ResponseView::Full(resp) = &mut ctx.response {
+                resp.model = "mutated-by-hook".to_string();
+            }
+            PhaseOutcome::Continue
+        }
+    }
+
+    #[tokio::test]
+    async fn on_response_full_hook_can_mutate_response_body() {
+        let config = crate::config::GatewayConfig {
+            data_dir: std::env::temp_dir().join(format!(
+                "nyro-onresponse-hook-test-{}",
+                uuid::Uuid::new_v4()
+            )),
+            ..Default::default()
+        };
+        let (gw, _log_rx) = Gateway::new(config).await.expect("gateway init");
+        let host = HostContext::new(&gw);
+        let mut req_ctx = crate::proxy::context::RequestContext::new(
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            std::time::Duration::from_secs(30),
+        );
+        let mut request = AiRequest::new("orig-model", Vec::new());
+        let mut resp = AiResponse::new("resp-1", "orig-model");
+
+        let hook: Arc<dyn PhaseHook> = Arc::new(FullMutateHook);
+        let hooks = [&hook];
+        let outcome = run_phase_hooks_slice(
+            &hooks,
+            &mut req_ctx,
+            &mut request,
+            ResponseView::Full(&mut resp),
+            &host,
+        )
+        .await;
+
+        assert!(matches!(outcome, PhaseOutcome::Continue));
+        assert_eq!(
+            resp.model, "mutated-by-hook",
+            "OnResponse Full hook must mutate the response in place"
+        );
     }
 }

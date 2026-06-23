@@ -12,12 +12,17 @@ use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use serde_json::Value;
 
 use crate::integrations::{HookContext, HookRegistry};
+use crate::plugin::phase::{HostContext, Phase, PhaseOutcome, ResponseView};
+use crate::protocol::ir::AiRequest;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::vendor::ProviderCtx;
 use crate::proxy::client::{ProxyClient, UpstreamResponseDecodeError};
+use crate::proxy::context::RequestContext;
 use crate::proxy::observability::headers_to_json;
 
-use super::{CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator, error_response};
+use super::{
+    CallCtx, LogBuilder, RequestExtras, StreamResponseAccumulator, error_response, run_phase_hooks,
+};
 
 // ── Non-streaming response handler ───────────────────────────────────────────
 
@@ -34,6 +39,10 @@ pub(super) async fn handle_non_stream(
     ctx: &ProviderCtx<'_>,
     // When true: Native protocol + no response mutations → skip IR round-trip.
     passthrough_resp: bool,
+    // Request-scoped context + IR + host boundary, threaded for the OnResponse phase.
+    req_ctx: &mut RequestContext,
+    req_ir: &mut AiRequest,
+    host: &HostContext<'_>,
 ) -> Response {
     let egress = call_ctx.egress;
     let ingress = call_ctx.ingress;
@@ -201,6 +210,25 @@ pub(super) async fn handle_non_stream(
         }
     }
 
+    // ── OnResponse phase (full body) ─────────────────────────────────────────
+    // Hooks see the buffered `AiResponse` and may reshape it before it is
+    // encoded for the client. ShortCircuit/Reject replace the response (the
+    // native success log below is then skipped; OnLog still fires at the
+    // pipeline boundary). No-op when no OnResponse hooks are registered.
+    match run_phase_hooks(
+        Phase::OnResponse,
+        req_ctx,
+        req_ir,
+        ResponseView::Full(&mut ai_resp),
+        host,
+    )
+    .await
+    {
+        PhaseOutcome::Continue => {}
+        PhaseOutcome::ShortCircuit(resp) => return resp,
+        PhaseOutcome::Reject(e) => return e.render(None),
+    }
+
     let usage = ai_resp.usage.clone();
     let formatter = ingress.handler().make_response_encoder();
     let output = formatter.format_response(&ai_resp);
@@ -341,6 +369,7 @@ mod tests {
         };
         let (gw, mut log_rx) = Gateway::new(config).await.expect("gateway init");
 
+        let req_ext = crate::proxy::context::ContextBag::new();
         let call_ctx = CallCtx {
             gw: gw.clone(),
             provider: &provider,
@@ -357,6 +386,7 @@ mod tests {
             is_stream: false,
             enable_payload: None,
             start: std::time::Instant::now(),
+            req_ext: req_ext.clone(),
         };
         let req_extras = RequestExtras {
             method: "POST".into(),
@@ -380,6 +410,13 @@ mod tests {
             HeaderValue::from_static("application/json"),
         );
 
+        let mut onresp_ctx = crate::proxy::context::RequestContext::new(
+            OPENAI_COMPATIBLE_CHAT_COMPLETIONS_V1,
+            std::time::Duration::from_secs(30),
+        );
+        let mut onresp_req = AiRequest::new("virtual-gemini", Vec::new());
+        let onresp_host = HostContext::new(&gw);
+
         let response = handle_non_stream(
             ProxyClient::new(reqwest::Client::new()),
             &url,
@@ -390,6 +427,9 @@ mod tests {
             &NoopVendor,
             &provider_ctx,
             false,
+            &mut onresp_ctx,
+            &mut onresp_req,
+            &onresp_host,
         )
         .await;
 
@@ -428,6 +468,14 @@ mod tests {
                 .as_deref()
                 .is_some_and(|b| b.contains("error decoding response body"))
         );
+
+        // OnResponse → ctx: a canonical ResponseStats snapshot is injected on emit.
+        let stats = req_ext
+            .get::<crate::plugin::phase::ResponseStats>()
+            .expect("ResponseStats snapshot injected into request context");
+        assert_eq!(stats.client_status, 502);
+        assert_eq!(stats.upstream_status, Some(200));
+        assert_eq!(stats.stream_chunks, 0);
     }
 }
 
@@ -436,12 +484,16 @@ mod tests {
 /// Consume a streaming upstream response and return a non-streaming client
 /// response. Used when the egress protocol forces `stream: true` upstream
 /// (e.g. Responses API) but the ingress client requested non-stream.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_non_stream_via_upstream_stream(
     client: ProxyClient,
     url: &str,
     headers: ReqwestHeaderMap,
     body: Value,
     call_ctx: &CallCtx<'_>,
+    req_ctx: &mut RequestContext,
+    req_ir: &mut AiRequest,
+    host: &HostContext<'_>,
 ) -> Response {
     let egress = call_ctx.egress;
     let ingress = call_ctx.ingress;
@@ -531,6 +583,24 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
     }
     if ai_resp.stop_reason.is_none() {
         ai_resp.stop_reason = Some("stop".to_string());
+    }
+
+    // ── OnResponse phase (full body) ─────────────────────────────────────────
+    // Force-stream collapses an upstream SSE into one buffered `AiResponse`, so
+    // hooks see it as a non-streaming full body (same contract as
+    // `handle_non_stream`).
+    match run_phase_hooks(
+        Phase::OnResponse,
+        req_ctx,
+        req_ir,
+        ResponseView::Full(&mut ai_resp),
+        host,
+    )
+    .await
+    {
+        PhaseOutcome::Continue => {}
+        PhaseOutcome::ShortCircuit(resp) => return resp,
+        PhaseOutcome::Reject(e) => return e.render(None),
     }
 
     let usage = ai_resp.usage.clone();
