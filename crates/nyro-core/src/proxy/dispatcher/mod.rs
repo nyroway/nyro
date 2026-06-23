@@ -241,11 +241,17 @@ pub async fn dispatch_pipeline(
         PhaseOutcome::Reject(e) => {
             let resp = e.render(None);
             let status = resp.status().as_u16() as i32;
-            LogBuilder::from_dispatch(&gw, &ingress_str, &request_model, auth_key.id.as_deref(), start)
-                .stream_flag(is_stream)
-                .status_i32(status)
-                .with_req_extras(&req_extras)
-                .emit();
+            LogBuilder::from_dispatch(
+                &gw,
+                &ingress_str,
+                &request_model,
+                auth_key.id.as_deref(),
+                start,
+            )
+            .stream_flag(is_stream)
+            .status_i32(status)
+            .with_req_extras(&req_extras)
+            .emit();
             return resp;
         }
     }
