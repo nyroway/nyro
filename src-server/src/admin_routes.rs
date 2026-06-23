@@ -52,6 +52,7 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
         .delete(delete_api_key_handler);
 
     let mut api = Router::new()
+        .route("/system/extensions", get(list_loaded_extensions))
         .route("/providers/presets", get(list_provider_presets))
         .route(
             "/providers",
@@ -174,6 +175,13 @@ async fn list_providers(State(gw): State<Gateway>) -> impl IntoResponse {
 
 async fn list_provider_presets(State(gw): State<Gateway>) -> impl IntoResponse {
     match gw.admin().list_provider_presets().await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn list_loaded_extensions(State(gw): State<Gateway>) -> impl IntoResponse {
+    match gw.admin().list_loaded_extensions().await {
         Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
         Err(e) => err(e),
     }

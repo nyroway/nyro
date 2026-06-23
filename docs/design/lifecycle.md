@@ -259,5 +259,9 @@ pub trait Plugin: Send + Sync + 'static {
   - `[plugin/mod.rs](../../crates/nyro-core/src/plugin/mod.rs)`:新增 `PluginKernel`(只读聚合 `HookRegistry`/`VendorRegistry`/`ProtocolRegistry`)+ `PluginManifest`/`CapabilityKind`,`lib.rs` 增 `pub mod plugin;`。
   - 验证:`cargo check`/`clippy --all-targets` 零告警,`cargo test -p nyro-core` 全绿,行为零变更。
 - **Phase 1**:落地五阶段 `PhaseHook` + `PhaseOutcome` + `PhaseCtx`,按五阶段重排 `dispatch_pipeline` 原生步骤;统一 manifest 与 admin "已加载扩展" 只读视图。
+  - **P1-a ✅ 已交付(类型骨架,纯新增)**:`[plugin/phase.rs](../../crates/nyro-core/src/plugin/phase.rs)` 定义 `Phase`/`PhaseOutcome`/`ResponseView`/`HostContext`/`PhaseCtx` + `PhaseHook` trait + `PhaseHookRegistration`(`inventory::collect!`)+ `PhaseHookRegistry`(`global()`/`all()`/`for_phase()`);`PluginKernel` 增 `CapabilityKind::PhaseHook` 并枚举 phase hook 槽位。**未接线 dispatch**,零行为变更;`clippy --all-targets` 零告警,新增 2 个单测通过。
+  - **P1-b ✅ 已交付(只读视图)**:`AdminService::list_loaded_extensions()`(聚合 `PluginKernel.manifests()` → `{id, capability}`)→ server `GET /api/v1/system/extensions` + tauri `get_loaded_extensions` 命令;WebUI 新增只读页 `[extensions.tsx](../../webui/src/pages/extensions.tsx)`(路由 `/extensions` + 侧栏入口,按 capability 分组展示)。
+  - **P1-c ✅ 已交付(请求侧三相位插点)**:`dispatch_pipeline` 在 `OnRequest`(派生路由键前)/`OnAccess`(鉴权后)/`OnUpstream`(选定 provider+vendor、构建 outbound 前,在 `ProviderCtx` 遮蔽 `RequestContext` 之前)三个原生边界插入 `run_phase_hooks()`,统一处理 `PhaseOutcome`(Continue / ShortCircuit→直接返回 / Reject→渲染+落日志)。空注册表时零分配 no-op,生产行为中性;`OnUpstream` 为 per-attempt(循环内)。
+  - **OnResponse / OnLog 插点归 P2**:`OnResponse` 需处理流式 per-chunk(`AiStreamDelta`),`OnLog` 需先统一日志路径(`ResponseStats` 入 ctx),已在响应处理处留 TODO。
 - **Phase 2**:补齐流式 `OnResponseHook`(`AiStreamDelta` per-chunk)与示例扩展(限流 / 语义缓存);按需引入 Hook 链优先级。
 - **Phase 3(留白)**:WASM 运行时,在稳定 `HostContext` 之上接入,业务与内置扩展零改动。

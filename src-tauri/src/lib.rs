@@ -70,6 +70,7 @@ pub fn run() {
             commands::get_providers,
             commands::get_provider,
             commands::get_provider_presets,
+            commands::get_loaded_extensions,
             commands::create_provider,
             commands::copy_provider,
             commands::update_provider,

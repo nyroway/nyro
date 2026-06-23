@@ -35,6 +35,16 @@ pub async fn get_provider_presets(
 }
 
 #[tauri::command]
+pub async fn get_loaded_extensions(
+    gw: State<'_, Gateway>,
+) -> Result<Vec<serde_json::Value>, String> {
+    gw.admin()
+        .list_loaded_extensions()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn create_provider(
     gw: State<'_, Gateway>,
     input: CreateProvider,

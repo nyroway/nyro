@@ -15,6 +15,13 @@
 //!
 //! See `docs/design/lifecycle.md` for the full framework design.
 
+pub mod phase;
+
+pub use phase::{
+    HostContext, Phase, PhaseCtx, PhaseHook, PhaseHookRegistration, PhaseHookRegistry,
+    PhaseOutcome, ResponseView,
+};
+
 use std::sync::OnceLock;
 
 use crate::integrations::HookRegistry;
@@ -28,6 +35,8 @@ use crate::provider::VendorRegistry;
 /// `TelemetryExporter` slots are reserved for later phases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityKind {
+    /// A lifecycle phase hook ([`phase::PhaseHook`]).
+    PhaseHook,
     /// A request-phase integration hook ([`crate::integrations::RequestHook`]).
     RequestHook,
     /// A response-phase integration hook ([`crate::integrations::ResponseHook`]).
@@ -41,6 +50,7 @@ pub enum CapabilityKind {
 impl CapabilityKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            CapabilityKind::PhaseHook => "phase_hook",
             CapabilityKind::RequestHook => "request_hook",
             CapabilityKind::ResponseHook => "response_hook",
             CapabilityKind::ProviderVendor => "provider_vendor",
@@ -63,6 +73,7 @@ pub struct PluginManifest {
 /// Cheap to build (it only borrows the global registries) and cached as a
 /// process-wide singleton via [`PluginKernel::global`].
 pub struct PluginKernel {
+    phase_hooks: &'static PhaseHookRegistry,
     hooks: &'static HookRegistry,
     vendors: &'static VendorRegistry,
     protocols: &'static ProtocolRegistry,
@@ -73,6 +84,7 @@ impl PluginKernel {
     pub fn global() -> &'static PluginKernel {
         static KERNEL: OnceLock<PluginKernel> = OnceLock::new();
         KERNEL.get_or_init(|| PluginKernel {
+            phase_hooks: PhaseHookRegistry::global(),
             hooks: HookRegistry::global(),
             vendors: VendorRegistry::global(),
             protocols: ProtocolRegistry::global(),
@@ -83,6 +95,12 @@ impl PluginKernel {
     pub fn manifests(&self) -> Vec<PluginManifest> {
         let mut out = Vec::new();
 
+        for hook in self.phase_hooks.all() {
+            out.push(PluginManifest {
+                id: hook.name().to_string(),
+                capability: CapabilityKind::PhaseHook,
+            });
+        }
         for hook in self.hooks.request_hooks() {
             out.push(PluginManifest {
                 id: hook.name().to_string(),

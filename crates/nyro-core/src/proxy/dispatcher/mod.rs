@@ -39,6 +39,9 @@ use serde_json::Value;
 use crate::Gateway;
 use crate::db::models::Provider;
 use crate::error::{AuthFailure, GatewayError};
+use crate::plugin::phase::{
+    HostContext, Phase, PhaseCtx, PhaseHookRegistry, PhaseOutcome, ResponseView,
+};
 use crate::protocol::ProviderProtocols;
 use crate::protocol::ids::ProtocolId;
 use crate::protocol::ir::Usage;
@@ -50,6 +53,46 @@ use crate::proxy::context::RequestContext;
 use crate::proxy::observability::{LogExtras, send_log};
 use crate::proxy::planner::{ProtocolMode, negotiate};
 use crate::router::TargetSelector;
+
+// ── Phase hook dispatch (lifecycle RFC P1-c) ────────────────────────────────────
+
+/// Run every registered [`crate::plugin::phase::PhaseHook`] for `phase` in
+/// deterministic order, threading the shared [`PhaseCtx`]. Returns the first
+/// non-`Continue` outcome (short-circuit / reject), or `Continue` when all hooks
+/// pass or none are registered.
+///
+/// Zero-overhead no-op when no phase hooks are registered, which is the default
+/// in production builds — so inserting these call sites is behaviour-neutral
+/// until a plugin opts in.
+async fn run_phase_hooks(
+    phase: Phase,
+    req_ctx: &mut RequestContext,
+    request: &mut AiRequest,
+    response: ResponseView<'_>,
+    host: &HostContext<'_>,
+) -> PhaseOutcome {
+    let registry = PhaseHookRegistry::global();
+    if registry.all().is_empty() {
+        return PhaseOutcome::Continue;
+    }
+    let hooks = registry.for_phase(phase);
+    if hooks.is_empty() {
+        return PhaseOutcome::Continue;
+    }
+    let mut pctx = PhaseCtx {
+        req_ctx,
+        request,
+        response,
+        host,
+    };
+    for hook in hooks {
+        match hook.run(&mut pctx).await {
+            PhaseOutcome::Continue => {}
+            outcome => return outcome,
+        }
+    }
+    PhaseOutcome::Continue
+}
 
 // ── Public entry points ───────────────────────────────────────────────────────
 
@@ -91,6 +134,25 @@ pub async fn dispatch_pipeline(
     };
     let mut request = request;
     let start = Instant::now();
+
+    // ── OnRequest phase ──────────────────────────────────────────────────────
+    // Hooks run before the routing key is derived, so they may reshape the
+    // request (e.g. rewrite `request.model`) before route lookup / auth.
+    let host = HostContext::new(&gw);
+    match run_phase_hooks(
+        Phase::OnRequest,
+        &mut ctx,
+        &mut request,
+        ResponseView::Pending,
+        &host,
+    )
+    .await
+    {
+        PhaseOutcome::Continue => {}
+        PhaseOutcome::ShortCircuit(resp) => return resp,
+        PhaseOutcome::Reject(e) => return e.render(None),
+    }
+
     let request_model = request.model.clone();
     let is_stream = request.stream.enabled;
     let ingress_str = ingress.to_string();
@@ -159,6 +221,32 @@ pub async fn dispatch_pipeline(
                 .emit();
                 return error_response(500, &e.to_string());
             }
+        }
+    }
+
+    // ── OnAccess phase ───────────────────────────────────────────────────────
+    // Identity (auth_key) and route are resolved; hooks may enforce access
+    // policy and reject the request before any upstream work begins.
+    match run_phase_hooks(
+        Phase::OnAccess,
+        &mut ctx,
+        &mut request,
+        ResponseView::Pending,
+        &host,
+    )
+    .await
+    {
+        PhaseOutcome::Continue => {}
+        PhaseOutcome::ShortCircuit(resp) => return resp,
+        PhaseOutcome::Reject(e) => {
+            let resp = e.render(None);
+            let status = resp.status().as_u16() as i32;
+            LogBuilder::from_dispatch(&gw, &ingress_str, &request_model, auth_key.id.as_deref(), start)
+                .stream_flag(is_stream)
+                .status_i32(status)
+                .with_req_extras(&req_extras)
+                .emit();
+            return resp;
         }
     }
 
@@ -268,6 +356,28 @@ pub async fn dispatch_pipeline(
             }
         };
 
+        // ── OnUpstream phase ─────────────────────────────────────────────────
+        // Target + vendor are selected but the upstream call has not happened.
+        // Hooks may short-circuit here (e.g. cache hit) to skip the upstream.
+        // Runs per-attempt inside the retry loop (see lifecycle RFC §5.1).
+        // NOTE: must run before `ctx` below shadows the threaded RequestContext.
+        match run_phase_hooks(
+            Phase::OnUpstream,
+            &mut ctx,
+            &mut request_for_target,
+            ResponseView::Pending,
+            &host,
+        )
+        .await
+        {
+            PhaseOutcome::Continue => {}
+            PhaseOutcome::ShortCircuit(resp) => return resp,
+            PhaseOutcome::Reject(e) => {
+                last_response = Some(e.render(None));
+                continue;
+            }
+        }
+
         let credential = provider_runtime.access_token.clone();
         let ctx = ProviderCtx {
             provider: &provider,
@@ -365,6 +475,9 @@ pub async fn dispatch_pipeline(
             enable_payload: route.enable_payload,
             start,
         };
+        // OnResponse / OnLog phase hooks are deferred to P2: OnResponse must
+        // handle per-chunk streaming mutations (`AiStreamDelta`) and OnLog needs
+        // the unified log-path (`ResponseStats` in ctx). Native handling below.
         let response = if is_stream {
             handle_stream(
                 client,
