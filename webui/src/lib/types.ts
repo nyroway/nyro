@@ -288,6 +288,7 @@ export interface LogQuery {
   limit?: number;
   offset?: number;
   provider?: string;
+  model?: string;
   status_min?: number;
   status_max?: number;
 }

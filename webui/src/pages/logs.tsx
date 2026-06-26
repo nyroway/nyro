@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, ScrollText, Trash2 } from "lucide-react";
 
 import { backend } from "@/lib/backend";
-import type { LogPage, LogQuery, Provider, RequestLog } from "@/lib/types";
+import type { LogPage, LogQuery, ModelStats, Provider, RequestLog } from "@/lib/types";
 import { getRouteType } from "@/lib/types";
 import { formatDuration, formatLogTime, formatTokenCount } from "@/lib/format";
 import { prettyName } from "@/lib/protocol";
@@ -54,6 +54,10 @@ export default function LogsPage() {
     queryKey: ["providers"],
     queryFn: () => backend("get_providers"),
   });
+  const { data: modelStats = [] } = useQuery<ModelStats[]>({
+    queryKey: ["stats", "models", "log-filter"],
+    queryFn: () => backend("get_stats_by_model"),
+  });
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -66,6 +70,15 @@ export default function LogsPage() {
     ],
     [providers, isZh],
   );
+  const modelOptions = useMemo(
+    () => [
+      { value: "", label: isZh ? "全部模型" : "All Models" },
+      ...modelStats
+        .filter((m) => (m.model ?? "").trim())
+        .map((m) => ({ value: m.model, label: m.model })),
+    ],
+    [modelStats, isZh],
+  );
   const statusOptions = useMemo(
     () => [
       { value: "", label: isZh ? "全部状态" : "All Status" },
@@ -76,6 +89,7 @@ export default function LogsPage() {
   );
 
   const providerFilterValue = filter.provider ?? ALL_OPTION;
+  const modelFilterValue = filter.model ?? ALL_OPTION;
   const statusFilterValue =
     (filter.status_min ?? null) === 200 && (filter.status_max ?? null) === 299
       ? "ok"
@@ -106,6 +120,24 @@ export default function LogsPage() {
             <SelectContent>
               {providerOptions.map((option) => (
                 <SelectItem key={`provider-${option.value || "all"}`} value={option.value || ALL_OPTION}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={modelFilterValue}
+            onValueChange={(value) => {
+              setFilter({ ...filter, model: value === ALL_OPTION ? undefined : value });
+              setPage(0);
+            }}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder={isZh ? "模型过滤" : "Model Filter"} />
+            </SelectTrigger>
+            <SelectContent>
+              {modelOptions.map((option) => (
+                <SelectItem key={`model-${option.value || "all"}`} value={option.value || ALL_OPTION}>
                   {option.label}
                 </SelectItem>
               ))}
