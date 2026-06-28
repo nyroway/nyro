@@ -9,7 +9,7 @@ use crate::config::GatewayConfig;
 use crate::db;
 use crate::db::models::{
     ApiKey, ApiKeyWithBindings, CreateApiKey, CreateModel, CreateModelBackend, CreateProvider,
-    LogPage, LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats,
+    LogPage, LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats, ApiKeyStats,
     RequestLog, StatsHourly, StatsOverview, UpdateApiKey, UpdateModel, UpdateProvider,
     UpsertOAuthCredential, is_valid_provider_auth_mode,
 };
@@ -1168,6 +1168,23 @@ impl LogStore for SqliteLogStore {
         } else {
             Ok(sqlx::query_as::<_, ProviderStats>(
                 "SELECT COALESCE(provider_name, provider_id, '') AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(latency_total_ms), 0.0) AS avg_duration_ms FROM request_logs GROUP BY COALESCE(provider_name, provider_id, '') ORDER BY request_count DESC",
+            )
+            .fetch_all(&self.pool)
+            .await?)
+        }
+    }
+
+    async fn stats_by_api_key(&self, hours: Option<i64>) -> anyhow::Result<Vec<ApiKeyStats>> {
+        if let Some(hours) = hours {
+            Ok(sqlx::query_as::<_, ApiKeyStats>(
+                "SELECT COALESCE(api_key_id, '') AS api_key_id, COALESCE(api_key_name, api_key_id, '') AS api_key_name, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, MAX(created_at) AS last_used_at FROM request_logs WHERE api_key_id IS NOT NULL AND api_key_id <> '' AND created_at >= CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000 GROUP BY api_key_id, api_key_name ORDER BY request_count DESC",
+            )
+            .bind(format!("-{hours} hours"))
+            .fetch_all(&self.pool)
+            .await?)
+        } else {
+            Ok(sqlx::query_as::<_, ApiKeyStats>(
+                "SELECT COALESCE(api_key_id, '') AS api_key_id, COALESCE(api_key_name, api_key_id, '') AS api_key_name, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, MAX(created_at) AS last_used_at FROM request_logs WHERE api_key_id IS NOT NULL AND api_key_id <> '' GROUP BY api_key_id, api_key_name ORDER BY request_count DESC",
             )
             .fetch_all(&self.pool)
             .await?)

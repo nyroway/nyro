@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::db::models::{
     CreateModel, CreateProvider, LogPage, LogQuery, Model, ModelStats, OAuthCredential, Provider,
-    ProviderStats, RequestLog, StatsHourly, StatsOverview, UpdateModel, UpdateProvider,
+    ProviderStats, ApiKeyStats, RequestLog, StatsHourly, StatsOverview, UpdateModel, UpdateProvider,
     UpsertOAuthCredential,
 };
 use crate::logging::LogEntry;
@@ -232,6 +232,10 @@ impl LogStore for MemoryStorage {
     }
 
     async fn stats_by_provider(&self, _hours: Option<i64>) -> anyhow::Result<Vec<ProviderStats>> {
+        Ok(vec![])
+    }
+
+    async fn stats_by_api_key(&self, _hours: Option<i64>) -> anyhow::Result<Vec<ApiKeyStats>> {
         Ok(vec![])
     }
 }

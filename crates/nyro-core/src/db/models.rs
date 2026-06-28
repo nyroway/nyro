@@ -424,6 +424,17 @@ pub struct ProviderStats {
     pub avg_duration_ms: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ApiKeyStats {
+    pub api_key_id: String,
+    pub api_key_name: String,
+    pub request_count: i64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub last_used_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestResult {
     pub success: bool,

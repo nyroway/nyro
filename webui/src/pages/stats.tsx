@@ -2,9 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from "recharts";
 import { backend } from "@/lib/backend";
-import type { StatsOverview, StatsHourly, ModelStats, ProviderStats } from "@/lib/types";
+import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, ApiKeyStats } from "@/lib/types";
 import { Zap, Clock, Activity } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
+import { formatLogTime } from "@/lib/format";
 import {
   Select,
   SelectContent,
@@ -55,6 +56,12 @@ export default function StatsPage() {
   const { data: providerStats = [] } = useQuery<ProviderStats[]>({
     queryKey: ["stats-providers", hours],
     queryFn: () => backend("get_stats_by_provider", { hours }),
+    refetchInterval: 30_000,
+  });
+
+  const { data: apiKeyStats = [] } = useQuery<ApiKeyStats[]>({
+    queryKey: ["stats-apikeys", hours],
+    queryFn: () => backend("get_stats_by_api_key", { hours }),
     refetchInterval: 30_000,
   });
 
@@ -212,6 +219,45 @@ export default function StatsPage() {
                   <td className="px-4 py-2.5 text-right">{fmtLatency(p.avg_duration_ms)}</td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="glass rounded-2xl p-6">
+        <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "秘钥调用统计" : "API Key Usage"}</h3>
+        <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
+          <table className="w-full text-sm">
+            <thead className="bg-white/70 text-slate-500">
+              <tr>
+                <th className="px-4 py-2.5 text-left font-medium">{isZh ? "密钥" : "API Key"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "请求数" : "Requests"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "输入 Token" : "Input Tokens"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "输出 Token" : "Output Tokens"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "缓存命中" : "Cache Hits"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "最后调用" : "Last Used"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {apiKeyStats.length === 0 && (
+                <tr><td className="px-4 py-6 text-center text-slate-400" colSpan={6}>{isZh ? "暂无数据" : "No data"}</td></tr>
+              )}
+              {apiKeyStats.slice(0, 8).map((k) => {
+                const cacheRate = k.total_input_tokens > 0 ? Math.round((k.cache_read_tokens / k.total_input_tokens) * 100) : 0;
+                return (
+                  <tr key={k.api_key_id} className="border-t border-white/70 text-slate-700">
+                    <td className="px-4 py-2.5 font-medium">{k.api_key_name || k.api_key_id}</td>
+                    <td className="px-4 py-2.5 text-right">{fmt(k.request_count)}</td>
+                    <td className="px-4 py-2.5 text-right">{fmt(k.total_input_tokens)}</td>
+                    <td className="px-4 py-2.5 text-right">{fmt(k.total_output_tokens)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span>{fmt(k.cache_read_tokens)}</span>
+                      {cacheRate > 0 && <span className="ml-1 text-[11px] text-slate-400">{cacheRate}%</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-xs text-slate-500 whitespace-nowrap">{formatLogTime(k.last_used_at)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

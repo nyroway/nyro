@@ -184,6 +184,13 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
         url: `${base}/stats/providers${hours != null ? `?hours=${hours}` : ""}`,
       };
     }
+    case "get_stats_by_api_key": {
+      const hours = args?.hours;
+      return {
+        method: "GET",
+        url: `${base}/stats/api-keys${hours != null ? `?hours=${hours}` : ""}`,
+      };
+    }
 
     case "get_setting":
       return { method: "GET", url: `${base}/settings/${args?.key}` };

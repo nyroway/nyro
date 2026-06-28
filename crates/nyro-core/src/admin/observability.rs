@@ -57,4 +57,12 @@ impl AdminService {
             .stats_by_provider(Self::normalize_hours(hours).map(i64::from))
             .await
     }
+
+    pub async fn get_stats_by_api_key(&self, hours: Option<i32>) -> anyhow::Result<Vec<ApiKeyStats>> {
+        self.gw
+            .storage
+            .logs()
+            .stats_by_api_key(Self::normalize_hours(hours).map(i64::from))
+            .await
+    }
 }

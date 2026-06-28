@@ -5,7 +5,7 @@ use async_trait::async_trait;
 
 use crate::db::models::{
     ApiKeyWithBindings, CreateApiKey, CreateModel, CreateModelBackend, CreateProvider, LogPage,
-    LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats,
+    LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats, ApiKeyStats,
     RequestLog, StatsHourly, StatsOverview, UpdateApiKey, UpdateModel, UpdateProvider,
     UpsertOAuthCredential,
 };
@@ -133,6 +133,7 @@ pub trait LogStore: Send + Sync {
     async fn stats_hourly(&self, hours: i64) -> anyhow::Result<Vec<StatsHourly>>;
     async fn stats_by_model(&self, hours: Option<i64>) -> anyhow::Result<Vec<ModelStats>>;
     async fn stats_by_provider(&self, hours: Option<i64>) -> anyhow::Result<Vec<ProviderStats>>;
+    async fn stats_by_api_key(&self, hours: Option<i64>) -> anyhow::Result<Vec<ApiKeyStats>>;
 }
 
 #[async_trait]

@@ -149,6 +149,16 @@ export interface ProviderStats {
   avg_duration_ms: number;
 }
 
+export interface ApiKeyStats {
+  api_key_id: string;
+  api_key_name: string;
+  request_count: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  cache_read_tokens: number;
+  last_used_at: number;
+}
+
 export interface TestResult {
   success: boolean;
   latency_ms: number;
