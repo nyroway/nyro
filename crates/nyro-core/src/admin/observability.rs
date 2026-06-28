@@ -58,7 +58,10 @@ impl AdminService {
             .await
     }
 
-    pub async fn get_stats_by_api_key(&self, hours: Option<i32>) -> anyhow::Result<Vec<ApiKeyStats>> {
+    pub async fn get_stats_by_api_key(
+        &self,
+        hours: Option<i32>,
+    ) -> anyhow::Result<Vec<ApiKeyStats>> {
         self.gw
             .storage
             .logs()

@@ -4,8 +4,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use crate::db::models::{
-    ApiKeyWithBindings, CreateApiKey, CreateModel, CreateModelBackend, CreateProvider, LogPage,
-    LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats, ApiKeyStats,
+    ApiKeyStats, ApiKeyWithBindings, CreateApiKey, CreateModel, CreateModelBackend, CreateProvider,
+    LogPage, LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats,
     RequestLog, StatsHourly, StatsOverview, UpdateApiKey, UpdateModel, UpdateProvider,
     UpsertOAuthCredential,
 };

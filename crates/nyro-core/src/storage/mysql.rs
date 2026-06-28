@@ -6,10 +6,10 @@ use sqlx::{MySql, Pool};
 use std::time::Duration;
 
 use crate::db::models::{
-    ApiKey, ApiKeyWithBindings, CreateApiKey, CreateModel, CreateModelBackend, CreateProvider,
-    LogPage, LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider, ProviderStats, ApiKeyStats,
-    RequestLog, StatsHourly, StatsOverview, UpdateApiKey, UpdateModel, UpdateProvider,
-    UpsertOAuthCredential, is_valid_provider_auth_mode,
+    ApiKey, ApiKeyStats, ApiKeyWithBindings, CreateApiKey, CreateModel, CreateModelBackend,
+    CreateProvider, LogPage, LogQuery, Model, ModelBackend, ModelStats, OAuthCredential, Provider,
+    ProviderStats, RequestLog, StatsHourly, StatsOverview, UpdateApiKey, UpdateModel,
+    UpdateProvider, UpsertOAuthCredential, is_valid_provider_auth_mode,
 };
 use crate::logging::LogEntry;
 use crate::storage::sql::config::SqlBackendConfig;

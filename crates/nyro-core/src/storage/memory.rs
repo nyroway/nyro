@@ -5,9 +5,9 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use crate::db::models::{
-    CreateModel, CreateProvider, LogPage, LogQuery, Model, ModelStats, OAuthCredential, Provider,
-    ProviderStats, ApiKeyStats, RequestLog, StatsHourly, StatsOverview, UpdateModel, UpdateProvider,
-    UpsertOAuthCredential,
+    ApiKeyStats, CreateModel, CreateProvider, LogPage, LogQuery, Model, ModelStats,
+    OAuthCredential, Provider, ProviderStats, RequestLog, StatsHourly, StatsOverview, UpdateModel,
+    UpdateProvider, UpsertOAuthCredential,
 };
 use crate::logging::LogEntry;
 
