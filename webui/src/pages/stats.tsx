@@ -243,7 +243,8 @@ export default function StatsPage() {
                 <tr><td className="px-4 py-6 text-center text-slate-400" colSpan={6}>{isZh ? "暂无数据" : "No data"}</td></tr>
               )}
               {apiKeyStats.slice(0, 8).map((k) => {
-                const cacheRate = k.total_input_tokens > 0 ? Math.round((k.cache_read_tokens / k.total_input_tokens) * 100) : 0;
+                const cacheTotal = k.total_input_tokens + k.cache_read_tokens;
+                const cacheRate = cacheTotal > 0 ? Math.round((k.cache_read_tokens / cacheTotal) * 100) : 0;
                 return (
                   <tr key={k.api_key_id} className="border-t border-white/70 text-slate-700">
                     <td className="px-4 py-2.5 font-medium">{k.api_key_name || k.api_key_id}</td>
