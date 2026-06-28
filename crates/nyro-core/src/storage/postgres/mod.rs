@@ -959,6 +959,12 @@ impl LogStore for PostgresLogStore {
             bind_values.push(status_max.to_string());
             idx += 1;
         }
+        if let Some(api_key) = query.api_key.filter(|v| !v.is_empty()) {
+            count_sql.push_str(&format!(" AND api_key_id = ${idx}"));
+            data_sql.push_str(&format!(" AND api_key_id = ${idx}"));
+            bind_values.push(api_key);
+            idx += 1;
+        }
 
         data_sql.push_str(&format!(
             " ORDER BY created_at DESC LIMIT ${idx} OFFSET ${}",

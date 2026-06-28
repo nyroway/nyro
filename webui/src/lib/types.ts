@@ -291,6 +291,7 @@ export interface LogQuery {
   model?: string;
   status_min?: number;
   status_max?: number;
+  api_key?: string;
 }
 
 export interface ExportData {

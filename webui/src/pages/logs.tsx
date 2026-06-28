@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, ScrollText, Trash2 } from "lucide-react";
 
 import { backend } from "@/lib/backend";
-import type { LogPage, LogQuery, ModelStats, Provider, RequestLog } from "@/lib/types";
+import type { ApiKey, LogPage, LogQuery, ModelStats, Provider, RequestLog } from "@/lib/types";
 import { getRouteType } from "@/lib/types";
 import { formatDuration, formatLogTime, formatTokenCount } from "@/lib/format";
 import { prettyName } from "@/lib/protocol";
@@ -58,6 +58,10 @@ export default function LogsPage() {
     queryKey: ["stats", "models", "log-filter"],
     queryFn: () => backend("get_stats_by_model"),
   });
+  const { data: apiKeys = [] } = useQuery<ApiKey[]>({
+    queryKey: ["api-keys", "log-filter"],
+    queryFn: () => backend("list_api_keys"),
+  });
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -87,8 +91,16 @@ export default function LogsPage() {
     ],
     [isZh],
   );
+  const apiKeyOptions = useMemo(
+    () => [
+      { value: "", label: isZh ? "全部密钥" : "All API Keys" },
+      ...apiKeys.map((k) => ({ value: k.id, label: k.name })),
+    ],
+    [apiKeys, isZh],
+  );
 
   const providerFilterValue = filter.provider ?? ALL_OPTION;
+  const apiKeyFilterValue = filter.api_key ?? ALL_OPTION;
   const modelFilterValue = filter.model ?? ALL_OPTION;
   const statusFilterValue =
     (filter.status_min ?? null) === 200 && (filter.status_max ?? null) === 299
@@ -107,6 +119,24 @@ export default function LogsPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Select
+            value={apiKeyFilterValue}
+            onValueChange={(value) => {
+              setFilter({ ...filter, api_key: value === ALL_OPTION ? undefined : value });
+              setPage(0);
+            }}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder={isZh ? "密钥过滤" : "API Key Filter"} />
+            </SelectTrigger>
+            <SelectContent>
+              {apiKeyOptions.map((option) => (
+                <SelectItem key={`api-key-${option.value || "all"}`} value={option.value || ALL_OPTION}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Select
             value={providerFilterValue}
             onValueChange={(value) => {
@@ -199,6 +229,9 @@ export default function LogsPage() {
                   <th className="px-3 py-2.5 text-left font-medium">
                     {isZh ? "状态" : "Status"}
                   </th>
+                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">
+                    {isZh ? "密钥" : "API Key"}
+                  </th>
                   <th className="px-3 py-2.5 text-left font-medium">
                     {isZh ? "模型" : "Model"}
                   </th>
@@ -237,6 +270,9 @@ export default function LogsPage() {
                         >
                           {log.client_status_code ?? "–"}
                         </span>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap">
+                        {log.api_key_name ?? "–"}
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex flex-col leading-tight">

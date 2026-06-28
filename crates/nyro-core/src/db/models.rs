@@ -379,6 +379,7 @@ pub struct LogQuery {
     pub model: Option<String>,
     pub status_min: Option<i32>,
     pub status_max: Option<i32>,
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

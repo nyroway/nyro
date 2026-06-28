@@ -1053,6 +1053,11 @@ impl LogStore for SqliteLogStore {
             data_sql.push_str(" AND client_status_code <= ?");
             bind_values.push(status_max.to_string());
         }
+        if let Some(api_key) = query.api_key.filter(|v| !v.is_empty()) {
+            count_sql.push_str(" AND api_key_id = ?");
+            data_sql.push_str(" AND api_key_id = ?");
+            bind_values.push(api_key);
+        }
 
         data_sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
         let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
