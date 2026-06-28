@@ -296,7 +296,14 @@ fn decode_input_item(item: &Value) -> Result<Option<Message>> {
                 .unwrap_or("{}")
                 .to_string();
             if call_id.trim().is_empty() || name.trim().is_empty() {
-                anyhow::bail!("function_call item missing call_id or name");
+                // Tolerate malformed `function_call` input items instead of
+                // rejecting the whole request. Some clients (e.g. Codex
+                // Desktop) emit a duplicate item that carries the arguments
+                // under a fresh `call_id` but with an empty `name`; skipping
+                // matches the streaming parser (see parser.rs) and lets any
+                // orphaned `function_call_output` be reconciled downstream by
+                // `normalize_request_tool_results`.
+                return Ok(None);
             }
             Ok(Some(Message {
                 role: Role::Assistant,

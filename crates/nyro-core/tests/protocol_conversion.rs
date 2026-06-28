@@ -2379,3 +2379,71 @@ fn anthropic_to_openai_strips_tool_use_from_content_array() {
         Some("Bash")
     );
 }
+
+// Regression: Codex Desktop sometimes emits a `function_call` input item
+// whose `name` is empty but whose `arguments` carry the full call payload
+// (paired with a separate item that has the real name). The decoder must
+// tolerate the empty-name item rather than bail with 400.
+#[test]
+fn responses_decoder_tolerates_empty_name_function_call_item() {
+    let body = serde_json::json!({
+        "model": "gpt-5.4",
+        "input": [
+            {"type": "message", "role": "user",
+                "content": [{"type":"input_text","text":"run a command"}]},
+            // well-formed call (real name, empty args placeholder)
+            {"type": "function_call", "call_id": "call_w3HMgoP4RtEnGpxdTe2eQVEZ",
+                "name": "exec_command", "arguments": ""},
+            // malformed duplicate: full args, empty name, fresh hex call_id
+            {"type": "function_call", "call_id": "call_aec52c641b094ce0aae3ce3cc526068c",
+                "name": "",
+                "arguments": "{\"cmd\":\"git status --short\"}"},
+            {"type": "function_call_output", "call_id": "call_w3HMgoP4RtEnGpxdTe2eQVEZ",
+                "output": "On branch master"},
+            // orphaned output for the skipped empty-name call; normalize step
+            // will synthesize a matching assistant tool_call.
+            {"type": "function_call_output", "call_id": "call_aec52c641b094ce0aae3ce3cc526068c",
+                "output": "unsupported call: "}
+        ]
+    });
+
+    let mut req: AiRequest = ResponsesDecoder
+        .decode_request(body)
+        .expect("decoder must tolerate empty-name function_call item");
+
+    // Exactly one assistant tool_call should survive (the well-formed one).
+    let assistant_calls: Vec<&ToolCall> = req
+        .messages
+        .iter()
+        .filter(|m| m.role == IrRole::Assistant)
+        .flat_map(|m| m.tool_calls.iter().flatten())
+        .collect();
+    assert_eq!(
+        assistant_calls.len(),
+        1,
+        "empty-name function_call item must be skipped, not duplicated"
+    );
+    assert_eq!(assistant_calls[0].id, "call_w3HMgoP4RtEnGpxdTe2eQVEZ");
+    assert_eq!(assistant_calls[0].name, "exec_command");
+
+    // normalize_request_tool_results must reconcile the orphaned output
+    // without panicking.
+    normalize_request_tool_results(&mut req);
+
+    // Every tool result must end up linked to a non-empty tool_call_id.
+    let orphan_tool_msgs: Vec<_> = req
+        .messages
+        .iter()
+        .filter(|m| m.role == IrRole::Tool)
+        .filter(|m| {
+            m.tool_call_id
+                .as_ref()
+                .map(|id| id.trim().is_empty())
+                .unwrap_or(true)
+        })
+        .collect();
+    assert!(
+        orphan_tool_msgs.is_empty(),
+        "all tool results should be correlated after normalize"
+    );
+}
