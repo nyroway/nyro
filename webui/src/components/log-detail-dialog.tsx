@@ -5,7 +5,7 @@ import { Check, Copy, Download, Loader2 } from "lucide-react";
 import { backend } from "@/lib/backend";
 import { useLocale } from "@/lib/i18n";
 import type { RequestLog } from "@/lib/types";
-import { formatDuration, formatLogTime, formatTokenCount, tryPrettyJson } from "@/lib/format";
+import { computeTps, formatDuration, formatLogTime, formatTokenCount, formatTps, generationMsOf, tryPrettyJson } from "@/lib/format";
 import { prettyName } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 import {
@@ -50,6 +50,9 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
   // is_stream is the canonical flag (declared by the client). Fall back to
   // stream_chunks_count for older log rows that pre-date the field.
   const isStream = log?.is_stream ?? (log?.stream_chunks_count ?? 0) > 0;
+
+  const generationMs = generationMsOf(log);
+  const tps = computeTps(log);
   const isCrossProtocol =
     log?.client_protocol &&
     log?.upstream_protocol &&
@@ -74,6 +77,7 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
       `# Method: ${method}  Path: ${path}`,
       `# Client Status: ${log.client_status_code ?? "–"}  Upstream Status: ${log.upstream_status_code ?? "–"}`,
       `# Latency Total: ${formatDuration(log.latency_total_ms)}  Upstream: ${formatDuration(log.latency_upstream_ms)}`,
+      `# TPS: ${tps != null ? formatTps(tps) : "–"}  (gen ${formatDuration(generationMs)})`,
       `# Provider: ${log.provider_name ?? log.provider_id ?? "–"}  Model: ${log.model_name ?? log.model_id ?? "–"}  ApiKey: ${log.api_key_name ?? log.api_key_id ?? "–"}`,
       `# Client Model: ${log.client_model ?? "–"}  Upstream Model: ${log.upstream_model ?? "–"}`,
       `# Protocol: ${proto}`,
@@ -165,6 +169,14 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
           ) : null}
           {log?.latency_total_ms != null ? (
             <span className="text-slate-500">{formatDuration(log.latency_total_ms)}</span>
+          ) : null}
+          {tps != null ? (
+            <span
+              className="text-slate-500"
+              title={isZh ? "净生成速度(剥离首字节前等待)" : "Net generation speed (excludes prefill wait)"}
+            >
+              {formatTps(tps)}
+            </span>
           ) : null}
           {log ? (
             <span className="inline-flex items-center gap-2">

@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, ScrollText, Trash2 } from "lucide-react";
 import { backend } from "@/lib/backend";
 import type { ApiKey, LogPage, LogQuery, ModelStats, Provider, RequestLog } from "@/lib/types";
 import { getRouteType } from "@/lib/types";
-import { formatDuration, formatLogTime, formatTokenCount } from "@/lib/format";
+import { computeTps, formatDuration, formatLogTime, formatTokenCount, formatTps } from "@/lib/format";
 import { prettyName } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
@@ -242,6 +242,9 @@ export default function LogsPage() {
                     {isZh ? "耗时" : "Latency"}
                   </th>
                   <th className="px-3 py-2.5 text-left font-medium">Token</th>
+                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">
+                    {isZh ? "速度" : "TPS"}
+                  </th>
                   <th className="px-3 py-2.5 text-left font-medium">
                     {isZh ? "类型" : "Type"}
                   </th>
@@ -316,6 +319,12 @@ export default function LogsPage() {
                             </span>
                           )}
                         </div>
+                      </td>
+                      <td
+                        className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap tabular-nums"
+                        title={isZh ? "净生成速度" : "Net generation speed"}
+                      >
+                        {formatTps(computeTps(log))}
                       </td>
                       <td className="px-3 py-2">
                         {isStream ? (
