@@ -31,9 +31,16 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 	var usage ir.Usage
 	model := storage.Model{}
 	provider := storage.Provider{}
+	lc := logCtx{
+		method:         r.Method,
+		path:           r.URL.Path,
+		clientProtocol: ingress.Endpoint().String(),
+		clientModel:    req.Model,
+		isStream:       req.Stream.Enabled,
+	}
 
 	defer plugin.RunPhaseHooks(plugin.PhaseOnLog, &plugin.PhaseContext{Ctx: r.Context()})
-	defer func() { g.appendLog(model, provider, apiKeyID, started, rec.status, usage) }()
+	defer func() { g.appendLog(model, provider, apiKeyID, started, rec.status, usage, lc) }()
 
 	plugin.RunPhaseHooks(plugin.PhaseOnRequest, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
 
@@ -55,7 +62,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 
 	// inbound auth + OnAccess
 	plugin.RunPhaseHooks(plugin.PhaseOnAccess, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
-	if status, msg := checkAccess(g.Storage, model, r, &apiKeyID); status != 0 {
+	if status, msg := checkAccess(g.Storage, model, r, &apiKeyID, &lc.apiKeyName); status != 0 {
 		writeJSONError(rec, status, msg)
 		return
 	}
@@ -120,19 +127,32 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		}
 		plugin.RunPhaseHooks(plugin.PhaseOnUpstream, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
 
-		resp, err := g.callUpstream(r, outbound)
-		if err != nil {
+		client, cErr := g.httpClientFor(p.UseProxy)
+		if cErr != nil {
 			g.Router.Record(router.KeyOf(target), false, 0)
+			continue
+		}
+		upStart := time.Now()
+		resp, err := g.callUpstream(client, r, outbound)
+		latencyMs := float64(time.Since(upStart).Microseconds()) / 1000
+		if err != nil {
+			g.Router.Record(router.KeyOf(target), false, latencyMs)
 			continue // network error → next backend
 		}
 		if resp.StatusCode >= 500 {
 			resp.Body.Close()
-			g.Router.Record(router.KeyOf(target), false, 0)
+			g.Router.Record(router.KeyOf(target), false, latencyMs)
 			continue // server error → retryable
 		}
 		// usable response (2xx or 4xx client error) → serve, no more failover
 		provider = *p
-		g.Router.Record(router.KeyOf(target), true, 0)
+		lc.upstreamModel = actualModel
+		lc.upstreamProtocol = egressHandler.Endpoint().String()
+		us := int32(resp.StatusCode)
+		lc.upstreamStatus = &us
+		um := int64(latencyMs)
+		lc.latencyUpstreamMs = &um
+		g.Router.Record(router.KeyOf(target), true, latencyMs)
 		switch {
 		case resp.StatusCode >= 400:
 			forwardError(rec, resp)
@@ -156,7 +176,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 // client), so the dispatcher can fail over before committing a response.
 // The outbound already has the full URL + auth headers set by the vendor
 // pipeline or the fallback path.
-func (g *Gateway) callUpstream(r *http.Request, outbound codec.OutboundRequest) (*http.Response, error) {
+func (g *Gateway) callUpstream(client *http.Client, r *http.Request, outbound codec.OutboundRequest) (*http.Response, error) {
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), outbound.Method, outbound.Path, bytes.NewReader(outbound.Body))
 	if err != nil {
 		return nil, err
@@ -167,7 +187,7 @@ func (g *Gateway) callUpstream(r *http.Request, outbound codec.OutboundRequest) 
 	if upstreamReq.Header.Get("Content-Type") == "" {
 		upstreamReq.Header.Set("Content-Type", "application/json")
 	}
-	return g.HTTPClient.Do(upstreamReq)
+	return client.Do(upstreamReq)
 }
 
 // serveStream decodes upstream SSE → IR deltas → re-encodes to client SSE in
@@ -282,11 +302,4 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 		"error": map[string]any{"message": message, "type": "gateway_error"},
 	})
 	_, _ = w.Write(body)
-}
-
-func firstDelta(deltas []ir.StreamDelta) ir.StreamDelta {
-	if len(deltas) > 0 {
-		return deltas[0]
-	}
-	return nil
 }

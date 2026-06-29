@@ -186,6 +186,17 @@ type ProviderStats struct {
 	AvgDurationMs float64 `json:"avg_duration_ms"`
 }
 
+// ApiKeyStats aggregates request/token/cache stats per API key.
+type ApiKeyStats struct {
+	APIKeyID          string `json:"api_key_id"`
+	APIKeyName        string `json:"api_key_name"`
+	RequestCount      int64  `json:"request_count"`
+	TotalInputTokens  int64  `json:"total_input_tokens"`
+	TotalOutputTokens int64  `json:"total_output_tokens"`
+	CacheReadTokens   int64  `json:"cache_read_tokens"`
+	LastUsedAt        int64  `json:"last_used_at"`
+}
+
 // StatsHourly aggregates request/token/error per hour bucket.
 type StatsHourly struct {
 	Hour              string  `json:"hour"`

@@ -29,6 +29,15 @@ func NewRouter(gw *Gateway) *gin.Engine {
 	r.Use(gin.Recovery())
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	// GET /readyz — readiness probe gated on storage health (CanConnect + Writable).
+	r.GET("/readyz", func(c *gin.Context) {
+		h, err := gw.Storage.Bootstrap().Health()
+		if err != nil || !h.CanConnect || !h.Writable {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unready", "backend": h.Backend})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ready", "backend": h.Backend})
+	})
 
 	// GET /v1/models — OpenAI-compatible client discovery (API-key-aware).
 	r.GET("/v1/models", func(c *gin.Context) { handleModelsList(c, gw) })

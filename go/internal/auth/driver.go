@@ -2,14 +2,11 @@
 // refreshing upstream OAuth tokens. (Inbound API-key auth lives in the proxy
 // package; this package owns outbound OAuth.)
 //
-// Ported (framework only in P3d-step1) from crates/nyro-core/src/auth/. The
-// AuthDriver interface + scheme + registry are the seam; the runtime token USE
-// is wired (proxy.Gateway.resolveCredential reads stored tokens via
-// storage.OAuthCredentials). The concrete driver flows — Claude PKCE,
-// OpenAI/Codex device-code, Vertex service-account — plus the admin OAuth
-// session endpoints and the background refresh loop are the remaining P3d work
-// (they impersonate specific CLI clients and need exact wire parity, best
-// validated against the parity harness).
+// Ported from crates/nyro-core/src/auth/. The AuthDriver interface + scheme +
+// registry are the seam; the concrete drivers (Claude PKCE, Codex device-code,
+// Vertex service-account) live in the drivers subpackage; the admin OAuth
+// session endpoints are wired in admin/oauth.go and the background CAS-locked
+// refresh loop runs in proxy/oauth_refresh.go.
 package auth
 
 import (

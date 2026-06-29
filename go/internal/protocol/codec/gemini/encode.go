@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/nyroway/nyro/go/internal/protocol/codec"
 	"github.com/nyroway/nyro/go/internal/protocol/ir"
@@ -47,7 +48,7 @@ func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 		gc.Logprobs = e.Logprobs
 		gc.ResponseMimeType = e.ResponseMimeType
 		if len(e.ResponseJSONSchema) > 0 {
-			gc.ResponseSchema = e.ResponseJSONSchema
+			gc.ResponseSchema = sanitizeGeminiSchema(e.ResponseJSONSchema)
 		}
 		if len(e.ThinkingConfig) > 0 {
 			gc.ThinkingConfig = e.ThinkingConfig
@@ -182,6 +183,9 @@ func sanitizeSchemaValue(v any) any {
 			switch k {
 			case "$schema", "$ref", "ref", "definitions", "$defs", "additionalProperties":
 				continue
+			case "type":
+				out[k] = sanitizeSchemaType(val)
+				continue
 			}
 			out[k] = sanitizeSchemaValue(val)
 		}
@@ -194,5 +198,27 @@ func sanitizeSchemaValue(v any) any {
 		return out
 	default:
 		return v
+	}
+}
+
+// sanitizeSchemaType upper-cases Gemini's schema "type" values, which must be
+// uppercase (STRING/OBJECT/ARRAY/...) per the function-declaration + response
+// schema spec. Accepts a single string or an array of strings.
+func sanitizeSchemaType(val any) any {
+	switch t := val.(type) {
+	case string:
+		return strings.ToUpper(t)
+	case []any:
+		out := make([]any, len(t))
+		for i, s := range t {
+			if str, ok := s.(string); ok {
+				out[i] = strings.ToUpper(str)
+			} else {
+				out[i] = sanitizeSchemaValue(s)
+			}
+		}
+		return out
+	default:
+		return sanitizeSchemaValue(val)
 	}
 }

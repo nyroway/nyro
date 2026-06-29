@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/auth"
@@ -199,6 +198,3 @@ func expiresAtAfter(expiresIn int) string {
 
 // Verify interface compliance.
 var _ auth.AuthDriver = (*ClaudeDriver)(nil)
-
-// Suppress unused import warnings for strings (used in callback parsing path).
-var _ = strings.TrimSpace

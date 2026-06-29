@@ -98,9 +98,11 @@ type LogStore interface {
 	Query(q LogQuery) (LogPage, error)
 	FindByID(id string) (*RequestLog, error)
 	ClearAll() (int64, error)
-	StatsOverview() (StatsOverview, error)
-	StatsByModel() ([]ModelStats, error)
-	StatsByProvider() ([]ProviderStats, error)
+	DeleteBefore(cutoffMs int64) (int64, error)
+	StatsOverview(hours int64) (StatsOverview, error)
+	StatsByModel(hours int64) ([]ModelStats, error)
+	StatsByProvider(hours int64) ([]ProviderStats, error)
+	StatsByApiKey(hours int64) ([]ApiKeyStats, error)
 	StatsHourly(hours int64) ([]StatsHourly, error)
 }
 

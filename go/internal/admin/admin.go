@@ -240,24 +240,39 @@ func Mount(r gin.IRouter, s storage.Storage, adminToken string) {
 	})
 
 	// ── stats ──
+	parseHours := func(c *gin.Context) int64 {
+		h, _ := strconv.ParseInt(c.DefaultQuery("hours", "0"), 10, 64)
+		if h < 0 {
+			h = 0
+		}
+		return h
+	}
 	g.GET("/stats/overview", func(c *gin.Context) {
-		st, err := s.Logs().StatsOverview()
+		st, err := s.Logs().StatsOverview(parseHours(c))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, st)
 	})
-	g.GET("/stats/by-model", func(c *gin.Context) {
-		st, err := s.Logs().StatsByModel()
+	g.GET("/stats/models", func(c *gin.Context) {
+		st, err := s.Logs().StatsByModel(parseHours(c))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, st)
 	})
-	g.GET("/stats/by-provider", func(c *gin.Context) {
-		st, err := s.Logs().StatsByProvider()
+	g.GET("/stats/providers", func(c *gin.Context) {
+		st, err := s.Logs().StatsByProvider(parseHours(c))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, st)
+	})
+	g.GET("/stats/api-keys", func(c *gin.Context) {
+		st, err := s.Logs().StatsByApiKey(parseHours(c))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

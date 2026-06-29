@@ -826,10 +826,14 @@ func (s logStore) ClearAll() (int64, error) {
 	return res.RowsAffected, res.Error
 }
 
-func (s logStore) StatsOverview() (storage.StatsOverview, error) {
+func (s logStore) StatsOverview(hours int64) (storage.StatsOverview, error) {
 	var st storage.StatsOverview
-	err := s.b.db.Model(&storage.RequestLog{}).Select(
+	q := s.b.db.Model(&storage.RequestLog{}).Select(
 		"COUNT(*) AS total_requests, COALESCE(SUM(input_tokens),0) AS total_input_tokens, COALESCE(SUM(output_tokens),0) AS total_output_tokens, COALESCE(AVG(latency_total_ms),0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END),0) AS error_count",
-	).Scan(&st).Error
+	)
+	if cutoff := statsCutoffMs(hours); cutoff > 0 {
+		q = q.Where("created_at >= ?", cutoff)
+	}
+	err := q.Scan(&st).Error
 	return st, err
 }

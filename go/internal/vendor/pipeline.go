@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/nyroway/nyro/go/internal/protocol/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/ids"
 	"github.com/nyroway/nyro/go/internal/protocol/ir"
 )
 
@@ -85,30 +84,4 @@ func ParseResponse(v Vendor, body []byte, pctx *ProviderCtx, egress codec.Endpoi
 	}
 
 	return resp, nil
-}
-
-// AuthHeadersForProtocol is a convenience that resolves the vendor from the
-// protocol and delegates to its AuthHeaders. Used by the dispatcher as a
-// fallback when no vendor is explicitly resolved.
-func AuthHeadersForProtocol(protocol, credential string) map[string]string {
-	v := Global().Resolve("", protocol)
-	if v == nil {
-		return defaultAuthHeaders(protocol, credential)
-	}
-	return v.AuthHeaders(&VendorCtx{APIKey: credential})
-}
-
-// defaultAuthHeaders is the protocol-based fallback when no vendor is registered.
-func defaultAuthHeaders(protocol, credential string) map[string]string {
-	if credential == "" {
-		return nil
-	}
-	switch ids.Protocol(protocol) {
-	case ids.ProtocolGoogleGemini:
-		return map[string]string{"x-goog-api-key": credential}
-	case ids.ProtocolAnthropicMessages:
-		return map[string]string{"x-api-key": credential}
-	default:
-		return map[string]string{"Authorization": "Bearer " + credential}
-	}
 }

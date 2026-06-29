@@ -7,16 +7,26 @@ import (
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
-func (s logStore) StatsByModel() ([]storage.ModelStats, error) {
+// statsCutoff returns the created_at millisecond cutoff for a hours window,
+// or 0 (no filter) when hours <= 0.
+func statsCutoff(hours int64) int64 {
+	if hours <= 0 {
+		return 0
+	}
+	return time.Now().UnixMilli() - hours*3_600_000
+}
+
+func (s logStore) StatsByModel(hours int64) ([]storage.ModelStats, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()
+	cutoff := statsCutoff(hours)
 	type agg struct {
 		cnt, in, out, errN, latN int64
 		latSum                   float64
 	}
 	m := map[string]*agg{}
 	for _, l := range s.b.logs {
-		if l.ModelName == "" {
+		if l.ModelName == "" || (cutoff > 0 && l.CreatedAt < cutoff) {
 			continue
 		}
 		a := m[l.ModelName]
@@ -43,16 +53,17 @@ func (s logStore) StatsByModel() ([]storage.ModelStats, error) {
 	return out, nil
 }
 
-func (s logStore) StatsByProvider() ([]storage.ProviderStats, error) {
+func (s logStore) StatsByProvider(hours int64) ([]storage.ProviderStats, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()
+	cutoff := statsCutoff(hours)
 	type agg struct {
 		cnt, errN, latN int64
 		latSum          float64
 	}
 	m := map[string]*agg{}
 	for _, l := range s.b.logs {
-		if l.ProviderName == "" {
+		if l.ProviderName == "" || (cutoff > 0 && l.CreatedAt < cutoff) {
 			continue
 		}
 		a := m[l.ProviderName]
@@ -72,6 +83,50 @@ func (s logStore) StatsByProvider() ([]storage.ProviderStats, error) {
 	out := make([]storage.ProviderStats, 0, len(m))
 	for name, a := range m {
 		out = append(out, storage.ProviderStats{Provider: name, RequestCount: a.cnt, ErrorCount: a.errN, AvgDurationMs: avgMs(a.latSum, a.latN)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RequestCount > out[j].RequestCount })
+	return out, nil
+}
+
+func (s logStore) StatsByApiKey(hours int64) ([]storage.ApiKeyStats, error) {
+	s.b.mu.RLock()
+	defer s.b.mu.RUnlock()
+	cutoff := statsCutoff(hours)
+	type agg struct {
+		cnt, in, out, cache int64
+		last                int64
+	}
+	m := map[string]*agg{}
+	names := map[string]string{}
+	for _, l := range s.b.logs {
+		if l.APIKeyID == "" || (cutoff > 0 && l.CreatedAt < cutoff) {
+			continue
+		}
+		a := m[l.APIKeyID]
+		if a == nil {
+			a = &agg{}
+			m[l.APIKeyID] = a
+		}
+		a.cnt++
+		a.in += int64(l.InputTokens)
+		a.out += int64(l.OutputTokens)
+		a.cache += int64(l.CacheReadTokens)
+		if l.CreatedAt > a.last {
+			a.last = l.CreatedAt
+		}
+		name := l.APIKeyName
+		if name == "" {
+			name = l.APIKeyID
+		}
+		names[l.APIKeyID] = name
+	}
+	out := make([]storage.ApiKeyStats, 0, len(m))
+	for id, a := range m {
+		out = append(out, storage.ApiKeyStats{
+			APIKeyID: id, APIKeyName: names[id],
+			RequestCount: a.cnt, TotalInputTokens: a.in, TotalOutputTokens: a.out,
+			CacheReadTokens: a.cache, LastUsedAt: a.last,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RequestCount > out[j].RequestCount })
 	return out, nil

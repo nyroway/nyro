@@ -16,7 +16,10 @@ func TestSanitizeGeminiSchema(t *testing.T) {
 			t.Errorf("sanitized schema still contains %q: %s", bad, s)
 		}
 	}
-	if !strings.Contains(s, `"type":"object"`) || !strings.Contains(s, `"name"`) {
-		t.Errorf("valid keys were stripped: %s", s)
+	if !strings.Contains(s, `"type":"OBJECT"`) || !strings.Contains(s, `"name"`) {
+		t.Errorf("valid keys stripped or top-level type not upper-cased: %s", s)
+	}
+	if !strings.Contains(s, `"type":"STRING"`) {
+		t.Errorf("nested property type not upper-cased: %s", s)
 	}
 }

@@ -118,6 +118,14 @@ func (r *Router) Record(k Key, success bool, latencyMs float64) {
 	h.cooldownUntil = now.Add(backoff)
 }
 
+// Latency returns the current EMA latency (ms) recorded for a backend, or 0
+// if no observation has been recorded. Read-only, for observability and tests.
+func (r *Router) Latency(k Key) float64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.latency[k]
+}
+
 // IsHealthy reports whether a backend is currently out of cooldown.
 func (r *Router) IsHealthy(k Key) bool {
 	r.mu.RLock()

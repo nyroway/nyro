@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -66,8 +67,31 @@ func main() {
 	sessions := auth.NewSessionStore()
 	// Periodic cleanup of expired sessions.
 	go func() {
-		for range time.Tick(5 * time.Minute) {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
 			sessions.Cleanup(10 * time.Minute)
+		}
+	}()
+
+	// Periodic log retention cleanup (default 7 days, configurable via the
+	// log_retention_days setting). Prevents unbounded storage growth.
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			retentionDays := 7
+			if v, _ := st.Settings().Get("log_retention_days"); v != "" {
+				if d, err := strconv.Atoi(v); err == nil && d > 0 {
+					retentionDays = d
+				}
+			}
+			cutoff := time.Now().UnixMilli() - int64(retentionDays)*24*60*60*1000
+			if n, err := st.Logs().DeleteBefore(cutoff); err != nil {
+				slog.Warn("log retention cleanup failed", "error", err)
+			} else if n > 0 {
+				slog.Info("log retention cleanup", "deleted", n, "retention_days", retentionDays)
+			}
 		}
 	}()
 

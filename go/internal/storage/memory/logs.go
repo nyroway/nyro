@@ -79,13 +79,33 @@ func (s logStore) ClearAll() (int64, error) {
 	return n, nil
 }
 
-func (s logStore) StatsOverview() (storage.StatsOverview, error) {
+func (s logStore) DeleteBefore(cutoffMs int64) (int64, error) {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	kept := make([]storage.RequestLog, 0, len(s.b.logs))
+	var n int64
+	for _, l := range s.b.logs {
+		if l.CreatedAt < cutoffMs {
+			n++
+			continue
+		}
+		kept = append(kept, l)
+	}
+	s.b.logs = kept
+	return n, nil
+}
+
+func (s logStore) StatsOverview(hours int64) (storage.StatsOverview, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()
 	var st storage.StatsOverview
 	var latencySum float64
 	var latencyCount int64
+	cutoff := statsCutoff(hours)
 	for _, l := range s.b.logs {
+		if cutoff > 0 && l.CreatedAt < cutoff {
+			continue
+		}
 		st.TotalRequests++
 		st.TotalInputTokens += int64(l.InputTokens)
 		st.TotalOutputTokens += int64(l.OutputTokens)

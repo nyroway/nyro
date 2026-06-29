@@ -12,7 +12,7 @@ import (
 // it always allows. Otherwise it validates the API key, expiry, model binding,
 // and the rpm/rpd/tpm/tpd quotas. Returns (0, "") to allow, or (statusCode,
 // message) to deny. Ported from proxy/dispatcher/auth.rs.
-func checkAccess(s storage.Storage, model storage.Model, r *http.Request, apiKeyID *string) (int, string) {
+func checkAccess(s storage.Storage, model storage.Model, r *http.Request, apiKeyID *string, apiKeyName *string) (int, string) {
 	if !model.EnableAuth {
 		return 0, ""
 	}
@@ -25,6 +25,7 @@ func checkAccess(s storage.Storage, model storage.Model, r *http.Request, apiKey
 		return http.StatusUnauthorized, "invalid API key"
 	}
 	*apiKeyID = rec.ID
+	*apiKeyName = rec.Name
 	if !rec.IsEnabled {
 		return http.StatusForbidden, "API key is disabled"
 	}

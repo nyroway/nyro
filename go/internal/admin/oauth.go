@@ -188,7 +188,6 @@ func MountOAuth(g gin.IRouter, s storage.Storage, reg *auth.Registry, sessions *
 
 		// Store the credential.
 		cred := *sess.Credential
-		cred.ProviderID = providerID
 		_, err = s.OAuthCredentials().Upsert(providerID, storage.UpsertOAuthCredential{
 			DriverKey:    cred.DriverKey,
 			Scheme:       cred.Scheme,
