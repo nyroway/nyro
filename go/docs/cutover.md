@@ -8,7 +8,7 @@ dual-run shadow phase and the cutover from the Rust gateway. It is an
 
 ```bash
 cd go
-go build -o /tmp/nyro-server ./cmd/nyro-server
+go build -o /tmp/nyro .
 # optional UI:
 (cd ../webui && pnpm install && pnpm build)
 ```
@@ -16,13 +16,13 @@ go build -o /tmp/nyro-server ./cmd/nyro-server
 ## 1. Stand up both gateways side-by-side
 
 - Rust gateway on the production port (e.g. `:19530`).
-- Go gateway on a shadow port (e.g. `:19529`):
+- Go gateway on shadow ports (data plane + control plane share one storage/DB):
 
 ```bash
-/tmp/nyro-server \
-  --addr 127.0.0.1:19529 \
-  --webui-dir ../webui/dist \
-  --admin-token <token>
+# data plane (shadow):
+/tmp/nyro gateway --addr 127.0.0.1:19529
+# control plane (admin API + WebUI):
+/tmp/nyro admin --addr 127.0.0.1:19531 --webui-dir ../webui/dist --admin-token <token>
 ```
 
 Both read the same upstream config (point the Go gateway at the same providers;
