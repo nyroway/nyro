@@ -1,0 +1,118 @@
+package storage
+
+import (
+	"errors"
+	"time"
+)
+
+// ErrNotFound is returned by Update/Delete when no row matches the id.
+var ErrNotFound = errors.New("storage: not found")
+
+// StorageHealth describes a backend's runtime status.
+type StorageHealth struct {
+	Backend          string // "sqlite" | "postgres" | "mysql" | "memory"
+	CanConnect       bool
+	SchemaCompatible bool
+	Writable         bool
+}
+
+// ProviderStore covers provider CRUD.
+type ProviderStore interface {
+	List() ([]Provider, error)
+	Get(id string) (*Provider, error) // nil, nil = not found
+	Create(in CreateProvider) (Provider, error)
+	Update(id string, in UpdateProvider) (Provider, error)
+	Delete(id string) error
+	ExistsByName(name, excludeID string) (bool, error)
+	RecordTestResult(providerID string, result ProviderTestResult) error
+}
+
+// ModelStore covers model-route CRUD (backends are managed via ModelBackendStore).
+type ModelStore interface {
+	List() ([]Model, error)
+	Get(id string) (*Model, error)
+	ByName(name string) (*Model, error)
+	Create(in CreateModel) (Model, error)
+	Update(id string, in UpdateModel) (Model, error)
+	Delete(id string) error
+	ExistsByName(name, excludeID string) (bool, error)
+}
+
+// ModelBackendStore manages the upstream targets of a model.
+type ModelBackendStore interface {
+	ListByModel(modelID string) ([]ModelBackend, error)
+	SetBackends(modelID string, backends []CreateModelBackend) ([]ModelBackend, error)
+	DeleteByModel(modelID string) error
+}
+
+// SettingsStore is the key-value config store.
+type SettingsStore interface {
+	Get(key string) (string, error) // "", nil = absent
+	Set(key, value string) error
+	ListAll() ([]Setting, error)
+}
+
+// Bootstrap handles schema initialization, migration, and health.
+type Bootstrap interface {
+	Init() error
+	Migrate() error
+	Health() (StorageHealth, error)
+}
+
+// ApiKeyStore covers gateway API-key CRUD (with model bindings).
+type ApiKeyStore interface {
+	List() ([]ApiKeyWithBindings, error)
+	Get(id string) (*ApiKeyWithBindings, error)
+	Create(in CreateApiKey) (ApiKeyWithBindings, error)
+	Update(id string, in UpdateApiKey) (ApiKeyWithBindings, error)
+	Delete(id string) error
+	ExistsByName(name, excludeID string) (bool, error)
+}
+
+// AuthAccessStore is the read side used by the inbound access check: key
+// lookup, model binding, and per-window quota counters (counters derive from
+// the request logs).
+type AuthAccessStore interface {
+	FindAPIKey(rawKey string) (*ApiKeyAccessRecord, error)
+	ModelBindingExists(apiKeyID, modelID string) (bool, error)
+	ListBoundModelIDs(apiKeyID string) ([]string, error)
+	RequestCountSince(apiKeyID string, window UsageWindow) (int64, error)
+	TokenCountSince(apiKeyID string, window UsageWindow) (int64, error)
+}
+
+// OAuthCredentialStore holds upstream OAuth tokens with CAS-locked refresh.
+type OAuthCredentialStore interface {
+	Get(providerID string) (*OAuthCredential, error)
+	Upsert(providerID string, in UpsertOAuthCredential) (OAuthCredential, error)
+	Delete(providerID string) error
+	TryBeginRefresh(providerID string, expectedVersion int32) (*OAuthCredential, error)
+	CompleteRefresh(providerID string, in UpsertOAuthCredential) (OAuthCredential, error)
+	FailRefresh(providerID string, errorMessage string) error
+	ListExpiring(before time.Duration) ([]OAuthCredential, error)
+	RecoverStaleRefreshing(timeout time.Duration) (int64, error)
+}
+
+// LogStore is the request-audit sink + query surface.
+type LogStore interface {
+	AppendBatch(entries []RequestLog) error
+	Query(q LogQuery) (LogPage, error)
+	FindByID(id string) (*RequestLog, error)
+	ClearAll() (int64, error)
+	StatsOverview() (StatsOverview, error)
+	StatsByModel() ([]ModelStats, error)
+	StatsByProvider() ([]ProviderStats, error)
+	StatsHourly(hours int64) ([]StatsHourly, error)
+}
+
+// Storage is the aggregate persistence interface.
+type Storage interface {
+	Providers() ProviderStore
+	Models() ModelStore
+	ModelBackends() ModelBackendStore
+	Settings() SettingsStore
+	APIKeys() ApiKeyStore
+	Auth() AuthAccessStore
+	OAuthCredentials() OAuthCredentialStore
+	Logs() LogStore
+	Bootstrap() Bootstrap
+}

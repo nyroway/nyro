@@ -1,0 +1,10 @@
+# Go build artifacts
+/bin/
+*.exe
+*.test
+*.out
+coverage.out
+go.work.sum
+
+# Editor / OS
+.DS_Store

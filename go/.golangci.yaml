@@ -1,0 +1,14 @@
+# golangci-lint config for the Nyro Go gateway.
+# Baseline linter is `go vet` (always available); this enables the standard
+# default set. Run: golangci-lint run   (or `make -C go vet` for plain vet).
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
