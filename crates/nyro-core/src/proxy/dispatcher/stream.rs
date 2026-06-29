@@ -61,11 +61,11 @@ pub(super) async fn handle_stream(
         Err(e) => {
             log.status(502)
                 .resp_body(Some(
-                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } })
+                    serde_json::json!({ "error": { "message": format!("upstream error: {e:#}") } })
                         .to_string(),
                 ))
                 .emit();
-            return error_response(502, &format!("upstream error: {e}"));
+            return error_response(502, &format!("upstream error: {e:#}"));
         }
     };
     let upstream_req_hdrs_str = crate::proxy::observability::reqwest_headers_to_json(&headers);

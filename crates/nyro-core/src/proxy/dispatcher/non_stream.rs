@@ -75,19 +75,19 @@ pub(super) async fn handle_non_stream(
                         Some(upstream_latency_ms),
                     )
                     .resp_body(Some(
-                        serde_json::json!({ "error": { "message": format!("upstream error: {e}") } })
+                        serde_json::json!({ "error": { "message": format!("upstream error: {e:#}") } })
                             .to_string(),
                     ))
                     .emit();
             } else {
                 log.status(502)
                     .resp_body(Some(
-                        serde_json::json!({ "error": { "message": format!("upstream error: {e}") } })
+                        serde_json::json!({ "error": { "message": format!("upstream error: {e:#}") } })
                             .to_string(),
                     ))
                     .emit();
             }
-            return error_response(502, &format!("upstream error: {e}"));
+            return error_response(502, &format!("upstream error: {e:#}"));
         }
     };
     let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
@@ -506,11 +506,11 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
         Err(e) => {
             log.status(502)
                 .resp_body(Some(
-                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } })
+                    serde_json::json!({ "error": { "message": format!("upstream error: {e:#}") } })
                         .to_string(),
                 ))
                 .emit();
-            return error_response(502, &format!("upstream error: {e}"));
+            return error_response(502, &format!("upstream error: {e:#}"));
         }
     };
     let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
