@@ -47,6 +47,7 @@ type ApiKeyAccessRecord struct {
 // CreateApiKey holds the fields for creating an API key.
 type CreateApiKey struct {
 	Name      string   `json:"name"`
+	Token     string   `json:"token,omitempty"` // optional explicit token; empty → auto-generated
 	RPM       *int32   `json:"rpm,omitempty"`
 	RPD       *int32   `json:"rpd,omitempty"`
 	TPM       *int32   `json:"tpm,omitempty"`

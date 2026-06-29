@@ -45,8 +45,12 @@ func (s apiKeyStore) Create(in storage.CreateApiKey) (storage.ApiKeyWithBindings
 	s.b.mu.Lock()
 	defer s.b.mu.Unlock()
 	now := nowISO()
+	token := in.Token
+	if token == "" {
+		token = newToken()
+	}
 	k := storage.ApiKey{
-		ID: newID(), Token: newToken(), Name: in.Name,
+		ID: newID(), Token: token, Name: in.Name,
 		RPM: in.RPM, RPD: in.RPD, TPM: in.TPM, TPD: in.TPD,
 		IsEnabled: true, ExpiresAt: in.ExpiresAt, CreatedAt: now, UpdatedAt: now,
 	}
