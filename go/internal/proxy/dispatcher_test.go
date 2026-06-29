@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -71,7 +70,6 @@ func nonStreamUpstream(t *testing.T) *httptest.Server {
 }
 
 func TestDispatchStreamEndToEnd(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	upstream := streamUpstream(t)
 	defer upstream.Close()
 
@@ -101,7 +99,6 @@ func TestDispatchStreamEndToEnd(t *testing.T) {
 }
 
 func TestDispatchNonStreamEndToEnd(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	upstream := nonStreamUpstream(t)
 	defer upstream.Close()
 
@@ -125,7 +122,6 @@ func TestDispatchNonStreamEndToEnd(t *testing.T) {
 }
 
 func TestDispatchModelNotFound(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	upstream := streamUpstream(t)
 	defer upstream.Close()
 

@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
 	"github.com/spf13/cobra"
 
 	"github.com/nyroway/nyro/go/internal/admin"
@@ -47,7 +48,11 @@ func NewCmd() *cobra.Command {
 		engine.Use(gin.Recovery())
 		admin.Mount(engine, st, adminToken)
 		admin.MountOAuth(engine, st, reg, sessions)
-		proxy.MountWebui(engine, webuiDir)
+		// proxy.MountWebui now wires a chi router; bridge it onto the gin
+		// engine's catch-all until the admin command is migrated to chi.
+		webuiRouter := chi.NewRouter()
+		proxy.MountWebui(webuiRouter, webuiDir)
+		engine.NoRoute(func(c *gin.Context) { webuiRouter.ServeHTTP(c.Writer, c.Request) })
 		return bootstrap.RunServer(engine, addr)
 	}
 	return cmd

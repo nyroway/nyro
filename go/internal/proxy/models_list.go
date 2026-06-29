@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/nyroway/nyro/go/internal/web"
 )
 
 // handleModelsList serves GET /v1/models — the OpenAI-compatible client
@@ -15,9 +15,9 @@ import (
 // valid, enabled, non-expired key bound to them. Output mirrors the Rust
 // proxy/handler.rs models_list: {object:"list", data:[{id, object:"model",
 // created:0, owned_by:"Nyro"}]}, de-duplicated and sorted by name.
-func handleModelsList(c *gin.Context, gw *Gateway) {
+func handleModelsList(w http.ResponseWriter, r *http.Request, gw *Gateway) {
 	accessible := map[string]struct{}{}
-	if raw := extractKey(c.Request); raw != "" {
+	if raw := extractKey(r); raw != "" {
 		if rec, err := gw.Storage.Auth().FindAPIKey(raw); err == nil && rec != nil && rec.IsEnabled {
 			if rec.ExpiresAt == "" || !expired(rec.ExpiresAt) {
 				if bound, err := gw.Storage.Auth().ListBoundModelIDs(rec.ID); err == nil {
@@ -50,9 +50,9 @@ func handleModelsList(c *gin.Context, gw *Gateway) {
 	}
 	sort.Strings(names)
 
-	data := make([]gin.H, 0, len(names))
+	data := make([]map[string]any, 0, len(names))
 	for _, n := range names {
-		data = append(data, gin.H{"id": n, "object": "model", "created": 0, "owned_by": "Nyro"})
+		data = append(data, map[string]any{"id": n, "object": "model", "created": 0, "owned_by": "Nyro"})
 	}
-	c.JSON(http.StatusOK, gin.H{"object": "list", "data": data})
+	web.JSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }

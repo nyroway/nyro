@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -17,7 +16,6 @@ func boolPtr(b bool) *bool { return &b }
 // TestInboundAuthStatusCodes verifies the distinct deny codes: 401 missing/invalid,
 // 403 disabled, 200 valid. Ported parity for proxy/dispatcher/auth.rs.
 func TestInboundAuthStatusCodes(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

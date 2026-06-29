@@ -7,17 +7,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestMountWebui(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>SPA</html>"), 0o644)
 	_ = os.MkdirAll(filepath.Join(dir, "assets"), 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "assets", "app.js"), []byte("console.log(1)"), 0o644)
 
-	r := gin.New()
+	r := chi.NewRouter()
 	MountWebui(r, dir)
 
 	mustContain := func(method, path, want string, wantCode int) {

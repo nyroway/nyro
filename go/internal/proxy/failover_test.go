@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -15,7 +14,6 @@ import (
 // TestDispatchFailover verifies the dispatcher retries the next backend when
 // the first returns 5xx: priority-1 backend 500s, priority-2 backend 200s.
 func TestDispatchFailover(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	up1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, `{"error":{"message":"boom"}}`)

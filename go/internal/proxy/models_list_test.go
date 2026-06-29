@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -16,7 +15,6 @@ import (
 // caller presents a valid API key bound to them. Output is the OpenAI-compatible
 // {object:"list", data:[{id,object:"model",created:0,owned_by:"Nyro"}]}.
 func TestModelsList(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	st := memory.New()
 	prov, _ := st.Providers().Create(storage.CreateProvider{
 		Name: "p", Protocol: "openai-compatible", BaseURL: "http://up", APIKey: "k",

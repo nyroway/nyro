@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -18,7 +17,6 @@ import (
 // "text-embedding-3-small" and forwards the body; the upstream response is
 // returned to the client verbatim.
 func TestDispatchEmbeddingsEndToEnd(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	var receivedModel string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)

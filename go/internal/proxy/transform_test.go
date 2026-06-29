@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -17,7 +16,6 @@ import (
 // provider. The gateway decodes Anthropic → IR → encodes OpenAI → upstream
 // returns OpenAI → parses with OpenAI decoder → formats with Anthropic encoder.
 func TestCrossProtocolAnthropicToOpenAI(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The egress codec (OpenAI) sends to /v1/chat/completions.
 		if r.URL.Path != "/v1/chat/completions" {

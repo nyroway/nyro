@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/gin-gonic/gin"
 )
 
 // geminiStreamUpstream simulates a Gemini streamGenerateContent SSE stream.
@@ -31,7 +29,6 @@ func geminiStreamUpstream(t *testing.T) *httptest.Server {
 }
 
 func TestDispatchGeminiStreamEndToEnd(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	upstream := geminiStreamUpstream(t)
 	defer upstream.Close()
 
@@ -58,7 +55,6 @@ func TestDispatchGeminiStreamEndToEnd(t *testing.T) {
 }
 
 func TestDispatchGeminiModelNotFound(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	upstream := geminiStreamUpstream(t)
 	defer upstream.Close()
 

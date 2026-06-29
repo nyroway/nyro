@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/nyroway/nyro/go/internal/router"
 )
 
@@ -15,7 +14,6 @@ import (
 // BalanceLatency strategy can actually reorder backends. Previously every
 // Record(...) call passed 0, leaving the EMA permanently 0.
 func TestDispatchRecordsUpstreamLatency(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	upstream := nonStreamUpstream(t)
 	defer upstream.Close()
 	gw := newTestGateway(t, upstream.URL)

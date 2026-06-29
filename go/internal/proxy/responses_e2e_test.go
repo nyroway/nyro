@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/gin-gonic/gin"
 )
 
 // responsesStreamUpstream simulates an OpenAI Responses SSE stream.
@@ -34,7 +32,6 @@ func responsesStreamUpstream(t *testing.T) *httptest.Server {
 }
 
 func TestDispatchResponsesStreamEndToEnd(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	upstream := responsesStreamUpstream(t)
 	defer upstream.Close()
 

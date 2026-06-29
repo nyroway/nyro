@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/gin-gonic/gin"
 )
 
 // anthropicStreamUpstream simulates an Anthropic SSE message stream.
@@ -41,7 +39,6 @@ func anthropicStreamUpstream(t *testing.T) *httptest.Server {
 }
 
 func TestDispatchAnthropicStreamEndToEnd(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	upstream := anthropicStreamUpstream(t)
 	defer upstream.Close()
 
