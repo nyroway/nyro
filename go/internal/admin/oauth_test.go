@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
 	"github.com/nyroway/nyro/go/internal/auth"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
@@ -43,7 +43,6 @@ func (f *fakeDeviceDriver) PollWithDeviceCode(_ context.Context, _ string) (auth
 // session to complete when the upstream authorizes. The prior code returned a
 // hard-coded "pending" (cutover blocker B4).
 func TestOAuthDevicePolling(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	st := memory.New()
 	reg := auth.NewRegistry()
 	fake := &fakeDeviceDriver{
@@ -56,7 +55,7 @@ func TestOAuthDevicePolling(t *testing.T) {
 	reg.Register("fake", fake)
 	sessions := auth.NewSessionStore()
 
-	r := gin.New()
+	r := chi.NewRouter()
 	MountOAuth(r, st.Storage(), reg, sessions)
 
 	// Start a device-code session.

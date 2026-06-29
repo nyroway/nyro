@@ -7,21 +7,20 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
-func newEngine(t *testing.T, token string) (*gin.Engine, *memory.Backend) {
+func newEngine(t *testing.T, token string) (chi.Router, *memory.Backend) {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
 	st := memory.New()
-	r := gin.New()
+	r := chi.NewRouter()
 	Mount(r, st.Storage(), token)
 	return r, st
 }
 
-func do(r *gin.Engine, method, path, token string, body []byte) *httptest.ResponseRecorder {
+func do(r http.Handler, method, path, token string, body []byte) *httptest.ResponseRecorder {
 	var reader *bytes.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
