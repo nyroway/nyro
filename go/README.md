@@ -29,8 +29,7 @@ until parity is reached (P0–P6 migration plan).
 | `internal/auth/` | `auth/` + `admin/oauth.rs` | inbound API key + quotas; outbound OAuth drivers (Claude/Codex/Vertex) |
 | `internal/storage/` | `db/` + `storage/` | `Storage` interface, idempotent migrations, sqlite/pg/mysql/memory |
 | `internal/logging/` | `logging/` | async request-log collector + retention |
-| `cmd/nyro-server/` | `src-server/` | server binary (proxy + admin HTTP surfaces) |
-| `cmd/nyro-tools/` | `crates/nyro-tools/` | CLI (e.g. `dump-schema`) |
+| `nyro.go` | `src-server/` + `crates/nyro-tools/` | unified CLI: `nyro gateway` (data plane) / `nyro admin` (control plane) / `nyro tool` (utilities) |
 
 ## Library mapping (Rust → Go)
 
@@ -53,7 +52,7 @@ by `modernc.org/sqlite`. Added with the storage layer in P3.
 
 ```bash
 go build ./...
-go run ./cmd/nyro-server            # listens on 127.0.0.1:19530
+go run . gateway                    # data plane, listens on 127.0.0.1:19530
 go test ./...
 go vet ./...
 ```

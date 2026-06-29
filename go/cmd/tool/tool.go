@@ -1,6 +1,6 @@
-// Package tool implements the `nyro tool` subcommand (successor to the old
-// standalone nyro-tools binary). Hosts operational subcommands; the parity
-// record/replay + diff harness lands here in a later iteration.
+// Package tool implements the `nyro tool` subcommand of the unified nyro CLI.
+// Hosts operational subcommands; the parity record/replay + diff harness lands
+// here in a later iteration.
 package tool
 
 import (

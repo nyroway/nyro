@@ -20,4 +20,4 @@ tidy:
 	go mod tidy
 
 run:
-	go run ./cmd/nyro-server
+	go run . gateway
