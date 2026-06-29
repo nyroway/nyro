@@ -1,0 +1,121 @@
+// Package bootstrap holds the shared startup wiring used by the nyro gateway
+// and admin commands: storage backend selection, OAuth driver registration,
+// log retention, and the signal-driven HTTP server runner.
+package bootstrap
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"github.com/nyroway/nyro/go/internal/auth"
+	"github.com/nyroway/nyro/go/internal/auth/drivers"
+	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/storage/memory"
+	"github.com/nyroway/nyro/go/internal/storage/sqlite"
+)
+
+// OpenStorage selects and opens the storage backend. "memory" (the default) is
+// ephemeral; "sqlite"/"postgres"/"mysql" open a persistent DB and apply the
+// schema via Migrate.
+func OpenStorage(backend, dsn string) (storage.Storage, error) {
+	switch backend {
+	case "", "memory":
+		return memory.New().Storage(), nil
+	case "sqlite":
+		b, err := sqlite.New(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("open sqlite: %w", err)
+		}
+		return bootstrapSQL(b.Storage())
+	case "postgres":
+		b, err := sqlite.NewPostgres(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("open postgres: %w", err)
+		}
+		return bootstrapSQL(b.Storage())
+	case "mysql":
+		b, err := sqlite.NewMySQL(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("open mysql: %w", err)
+		}
+		return bootstrapSQL(b.Storage())
+	default:
+		return nil, fmt.Errorf("unknown storage backend %q (want memory|sqlite|postgres|mysql)", backend)
+	}
+}
+
+func bootstrapSQL(st storage.Storage) (storage.Storage, error) {
+	if err := st.Bootstrap().Init(); err != nil {
+		return nil, fmt.Errorf("storage init: %w", err)
+	}
+	if err := st.Bootstrap().Migrate(); err != nil {
+		return nil, fmt.Errorf("storage migrate: %w", err)
+	}
+	return st, nil
+}
+
+// RegisterDrivers wires the outbound OAuth drivers: Claude, Codex, Vertex.
+func RegisterDrivers(reg *auth.Registry) {
+	reg.Register("claude-code", drivers.NewClaudeDriver())
+	reg.Register("codex", drivers.NewCodexDriver())
+	reg.Register("vertexai", drivers.NewVertexDriver())
+}
+
+// StartRetentionLoop periodically deletes request logs older than
+// log_retention_days (default 7). Cancels with ctx.
+func StartRetentionLoop(ctx context.Context, st storage.Storage) {
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				retentionDays := 7
+				if v, _ := st.Settings().Get("log_retention_days"); v != "" {
+					if d, err := strconv.Atoi(v); err == nil && d > 0 {
+						retentionDays = d
+					}
+				}
+				cutoff := time.Now().UnixMilli() - int64(retentionDays)*24*60*60*1000
+				if n, err := st.Logs().DeleteBefore(cutoff); err != nil {
+					slog.Warn("log retention cleanup failed", "error", err)
+				} else if n > 0 {
+					slog.Info("log retention cleanup", "deleted", n, "retention_days", retentionDays)
+				}
+			}
+		}
+	}()
+}
+
+// RunServer serves handler on addr until SIGINT/SIGTERM, then graceful-shutdown.
+func RunServer(handler http.Handler, addr string) error {
+	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	errCh := make(chan error, 1)
+	go func() {
+		slog.Info("nyro starting", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop:
+		slog.Info("shutdown signal received")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return srv.Shutdown(ctx)
+}
