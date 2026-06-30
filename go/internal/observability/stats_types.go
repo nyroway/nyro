@@ -27,13 +27,13 @@ type ProviderStats struct {
 }
 
 type ApiKeyStats struct {
-	APIKeyID         string `json:"api_key_id"`
-	APIKeyName       string `json:"api_key_name"`
-	RequestCount     int64  `json:"request_count"`
-	TotalInputTokens int64  `json:"total_input_tokens"`
-	TotalOutputTokens int64 `json:"total_output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	LastUsedAt       int64  `json:"last_used_at"`
+	APIKeyID          string `json:"api_key_id"`
+	APIKeyName        string `json:"api_key_name"`
+	RequestCount      int64  `json:"request_count"`
+	TotalInputTokens  int64  `json:"total_input_tokens"`
+	TotalOutputTokens int64  `json:"total_output_tokens"`
+	CacheReadTokens   int64  `json:"cache_read_tokens"`
+	LastUsedAt        int64  `json:"last_used_at"`
 }
 
 type StatsHourly struct {

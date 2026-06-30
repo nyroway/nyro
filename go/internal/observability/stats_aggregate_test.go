@@ -9,7 +9,7 @@ func sampleReq(model, provider, apikey, status string, n int) []MetricSample {
 	var out []MetricSample
 	for i := 0; i < n; i++ {
 		out = append(out, MetricSample{
-			Ts:   1, Name: "nyro_requests_total", Kind: "counter", Value: 1,
+			Ts: 1, Name: "nyro_requests_total", Kind: "counter", Value: 1,
 			LabelsJSON: labels(model, provider, apikey, status),
 		})
 	}
@@ -159,7 +159,7 @@ func TestAggregateStatsLatency(t *testing.T) {
 // carry correct request/error counts.
 func TestAggregateStatsProviderKeyShape(t *testing.T) {
 	samples := append(sampleReq("gpt", "openai", "k1", "2xx", 4),
-		sampleReq("gpt", "openai", "k1", "5xx", 1)...)           // openai: 5 req, 1 err
+		sampleReq("gpt", "openai", "k1", "5xx", 1)...) // openai: 5 req, 1 err
 	samples = append(samples, sampleReq("claude", "anthropic", "k2", "4xx", 2)...) // anthropic: 2 req, 2 err
 	_, _, provs, keys, err := AggregateStats(samples, 0)
 	if err != nil {

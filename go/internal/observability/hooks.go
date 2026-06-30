@@ -32,8 +32,8 @@ const (
 // span-context in the bag for the OnLog hook to finish.
 type onRequestHook struct{ tracer trace.Tracer }
 
-func (h onRequestHook) Name() string         { return "obs.on_request" }
-func (h onRequestHook) Phase() plugin.Phase   { return plugin.PhaseOnRequest }
+func (h onRequestHook) Name() string        { return "obs.on_request" }
+func (h onRequestHook) Phase() plugin.Phase { return plugin.PhaseOnRequest }
 func (h onRequestHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 	ctx, span := h.tracer.Start(pctx.Ctx, "dispatch")
 	pctx.Bag.Set(BagSpanCtx, ctx)
@@ -49,8 +49,8 @@ type onLogHook struct {
 	handles *Handles
 }
 
-func (h onLogHook) Name() string         { return "obs.on_log" }
-func (h onLogHook) Phase() plugin.Phase   { return plugin.PhaseOnLog }
+func (h onLogHook) Name() string        { return "obs.on_log" }
+func (h onLogHook) Phase() plugin.Phase { return plugin.PhaseOnLog }
 func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 	bag := pctx.Bag
 	span, _ := pluginGet(bag, BagSpan).(trace.Span)

@@ -93,12 +93,12 @@ func logRecordFromOTLP(lr *logsv1.LogRecord) LogRecord {
 		ClientProtocol:   m.str("nyro.client_protocol"),
 		UpstreamProtocol: m.str("nyro.upstream_protocol"),
 		ProviderID:       m.str("nyro.provider_id"), ProviderName: m.str("nyro.provider_name"),
-		ModelID:          m.str("nyro.model_id"), ModelName: m.str("nyro.model_name"),
-		ClientModel:      m.str("nyro.client_model"), UpstreamModel: m.str("nyro.upstream_model"),
-		Method:           m.str("nyro.method"), Path: m.str("nyro.path"),
-		APIKeyID:         m.str("nyro.api_key_id"), APIKeyName: m.str("nyro.api_key_name"),
-		InputTokens:      int32(m.i("nyro.input_tokens")), OutputTokens: int32(m.i("nyro.output_tokens")),
-		CacheReadTokens:  int32(m.i("nyro.cache_read_tokens")),
+		ModelID: m.str("nyro.model_id"), ModelName: m.str("nyro.model_name"),
+		ClientModel: m.str("nyro.client_model"), UpstreamModel: m.str("nyro.upstream_model"),
+		Method: m.str("nyro.method"), Path: m.str("nyro.path"),
+		APIKeyID: m.str("nyro.api_key_id"), APIKeyName: m.str("nyro.api_key_name"),
+		InputTokens: int32(m.i("nyro.input_tokens")), OutputTokens: int32(m.i("nyro.output_tokens")),
+		CacheReadTokens: int32(m.i("nyro.cache_read_tokens")),
 	}
 	if v, ok := m.lookupInt("nyro.log.created_ms"); ok {
 		rec.CreatedAt = v

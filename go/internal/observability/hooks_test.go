@@ -53,7 +53,10 @@ func TestHooksOnRequestStoresSpan(t *testing.T) {
 
 	cl := &captureLogger{}
 	RegisterHooks(tracer, cl, handles)
-	t.Cleanup(func() { _ = tracerProvider.Shutdown(context.Background()); _ = meterProvider.Shutdown(context.Background()) })
+	t.Cleanup(func() {
+		_ = tracerProvider.Shutdown(context.Background())
+		_ = meterProvider.Shutdown(context.Background())
+	})
 
 	bag := plugin.NewContextBag()
 	out := runPhase(t, plugin.PhaseOnRequest, bag)
@@ -90,7 +93,10 @@ func TestHooksOnLogRecordsMetricsTokensAndSpan(t *testing.T) {
 
 	cl := &captureLogger{}
 	RegisterHooks(tracer, cl, handles)
-	t.Cleanup(func() { _ = tracerProvider.Shutdown(context.Background()); _ = meterProvider.Shutdown(context.Background()) })
+	t.Cleanup(func() {
+		_ = tracerProvider.Shutdown(context.Background())
+		_ = meterProvider.Shutdown(context.Background())
+	})
 
 	// Seed the bag with the request state the dispatcher (T3.3) will set.
 	bag := plugin.NewContextBag()
@@ -271,7 +277,10 @@ func TestHooksOnLog5xxMarksSpanError(t *testing.T) {
 
 	cl := &captureLogger{}
 	RegisterHooks(tracer, cl, handles)
-	t.Cleanup(func() { _ = tracerProvider.Shutdown(context.Background()); _ = meterProvider.Shutdown(context.Background()) })
+	t.Cleanup(func() {
+		_ = tracerProvider.Shutdown(context.Background())
+		_ = meterProvider.Shutdown(context.Background())
+	})
 
 	bag := plugin.NewContextBag()
 	bag.Set(BagModel, storage.Model{ID: "m", Name: "gpt-test"})
