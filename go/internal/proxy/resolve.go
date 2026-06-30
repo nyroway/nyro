@@ -9,8 +9,6 @@ import (
 
 // resolvedCredential caches the provider's effective credential (API key or OAuth
 // access token) and is the Go equivalent of the Rust ResolvedProviderRuntime.
-// When an OAuth token is expired, the resolve path refreshes it via CAS-locked
-// try_begin_refresh → driver.Refresh → complete_refresh.
 type ResolvedRuntime struct {
 	ProviderID string
 	Credential string // the effective Bearer/API-key to use
@@ -18,10 +16,14 @@ type ResolvedRuntime struct {
 
 // resolveProviderRuntime is the per-request credential resolver. For api-key
 // providers it returns the stored key. For OAuth providers it returns the
-// stored access token, refreshing it via CAS lock if expired.
+// current access token from the config cache (or the local refresh overlay),
+// refreshing it locally under a per-process mutex if expired.
 //
-// This is the hot path equivalent of the Rust
-// admin/oauth.rs::resolve_provider_runtime.
+// xDS P3b: the gateway no longer reads OAuth from storage or coordinates
+// refresh via cross-replica DB CAS. Each gateway replica refreshes its own
+// copy: a per-provider in-process mutex ensures only one refresh runs at a
+// time, and the refreshed token is held in an in-memory overlay (checked
+// before the immutable cache snapshot) until the next snapshot supersedes it.
 func (g *Gateway) resolveProviderRuntime(ctx context.Context, p storage.Provider) ResolvedRuntime {
 	if p.AuthMode != "oauth" {
 		if p.APIKey == "" {
@@ -30,53 +32,129 @@ func (g *Gateway) resolveProviderRuntime(ctx context.Context, p storage.Provider
 		return ResolvedRuntime{ProviderID: p.ID, Credential: p.APIKey}
 	}
 
-	cred, _ := g.Storage.OAuthCredentials().Get(p.ID)
+	cred := g.oauthCredential(p.ID)
 	if cred == nil {
 		return ResolvedRuntime{}
 	}
 
-	// Check expiry.
+	// Still valid → use as-is.
 	if cred.ExpiresAt != "" && !isExpired(cred.ExpiresAt) {
 		return ResolvedRuntime{ProviderID: p.ID, Credential: cred.AccessToken}
 	}
 
-	// Token expired (or near-expiry) → CAS-locked refresh.
-	// Phase 1: try_begin_refresh (optimistic lock on status_version).
-	locked, _ := g.Storage.OAuthCredentials().TryBeginRefresh(p.ID, cred.StatusVersion)
-	if locked == nil {
-		// Another goroutine/replica is already refreshing — use whatever we have.
+	// Expired (or near-expiry) → refresh locally, one refresh per provider.
+	refreshed := g.refreshOAuth(ctx, *cred)
+	if refreshed.AccessToken == "" {
 		return ResolvedRuntime{ProviderID: p.ID, Credential: cred.AccessToken}
 	}
+	return ResolvedRuntime{ProviderID: p.ID, Credential: refreshed.AccessToken}
+}
 
-	// Phase 2: refresh via driver (if registered).
-	// The driver registry is set up by the server startup via SetDriverRegistry.
+// oauthCredential returns the effective OAuth credential for providerID: the
+// fresher of the local refresh overlay and the cache snapshot wins. Comparing
+// expiry timestamps means an xDS push that carries a newer token (e.g. the
+// admin reconnected the provider in the DB) supersedes a stale local refresh,
+// while a local refresh that is newer than the snapshot still wins.
+func (g *Gateway) oauthCredential(providerID string) *storage.OAuthCredential {
+	g.oauthMu.Lock()
+	ov, hasOverlay := g.oauthOverlay[providerID]
+	g.oauthMu.Unlock()
+	snap := g.snapshot().OAuthGet(providerID)
+	if !hasOverlay {
+		return snap
+	}
+	if snap == nil {
+		c := ov
+		return &c
+	}
+	// Both present: pick the one with the later expiry. Unparseable/empty
+	// expiry is treated as the oldest, so a parseable expiry always wins.
+	if expiryTime(ov.ExpiresAt).After(expiryTime(snap.ExpiresAt)) {
+		c := ov
+		return &c
+	}
+	return snap
+}
+
+// expiryTime parses an RFC3339 timestamp, returning the zero time on failure.
+func expiryTime(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
+}
+
+// refreshOAuth refreshes cred locally under a per-process mutex. If another
+// goroutine is already refreshing this provider, it waits for that result
+// rather than issuing a duplicate upstream refresh. On success the refreshed
+// credential is written to the overlay and returned; on failure the original
+// cred is returned unchanged.
+func (g *Gateway) refreshOAuth(ctx context.Context, cred storage.OAuthCredential) storage.OAuthCredential {
+	g.oauthMu.Lock()
+	// Already a refresh in flight for this provider → wait for it.
+	if wait, ok := g.oauthRefreshInFlight[cred.ProviderID]; ok {
+		g.oauthMu.Unlock()
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return cred
+		}
+		// Re-read whatever the holder produced.
+		if c, ok := g.overlayGet(cred.ProviderID); ok {
+			return c
+		}
+		return cred
+	}
+
+	// Take ownership of the refresh.
+	done := make(chan struct{})
+	g.oauthRefreshInFlight[cred.ProviderID] = done
+	g.oauthMu.Unlock()
+
+	refreshed := g.doRefreshOAuth(ctx, cred)
+	if refreshed.AccessToken != "" {
+		g.overlaySet(refreshed)
+	}
+
+	// Release the slot and wake any waiters.
+	g.oauthMu.Lock()
+	delete(g.oauthRefreshInFlight, cred.ProviderID)
+	g.oauthMu.Unlock()
+	close(done)
+
+	if refreshed.AccessToken == "" {
+		return cred
+	}
+	return refreshed
+}
+
+// doRefreshOAuth performs the actual driver refresh. Returns the input cred
+// (empty AccessToken signals failure) when no driver/registry is available or
+// the refresh errors.
+func (g *Gateway) doRefreshOAuth(ctx context.Context, cred storage.OAuthCredential) storage.OAuthCredential {
 	if g.driverRegistry == nil {
-		_ = g.Storage.OAuthCredentials().FailRefresh(p.ID, "no driver registry configured")
-		return ResolvedRuntime{ProviderID: p.ID, Credential: cred.AccessToken}
+		return storage.OAuthCredential{}
 	}
-
 	driver, ok := g.driverRegistry.Get(cred.DriverKey)
 	if !ok {
-		_ = g.Storage.OAuthCredentials().FailRefresh(p.ID, "unknown driver: "+cred.DriverKey)
-		return ResolvedRuntime{ProviderID: p.ID, Credential: cred.AccessToken}
+		return storage.OAuthCredential{}
 	}
-
-	refreshed, err := driver.Refresh(ctx, *cred)
+	refreshed, err := driver.Refresh(ctx, cred)
 	if err != nil {
-		_ = g.Storage.OAuthCredentials().FailRefresh(p.ID, err.Error())
-		return ResolvedRuntime{ProviderID: p.ID, Credential: cred.AccessToken}
+		return storage.OAuthCredential{}
 	}
+	return refreshed
+}
 
-	// Phase 3: complete_refresh (update stored token).
-	_, _ = g.Storage.OAuthCredentials().CompleteRefresh(p.ID, storage.UpsertOAuthCredential{
-		DriverKey:    refreshed.DriverKey,
-		Scheme:       refreshed.Scheme,
-		AccessToken:  refreshed.AccessToken,
-		RefreshToken: refreshed.RefreshToken,
-		ExpiresAt:    refreshed.ExpiresAt,
-	})
+func (g *Gateway) overlayGet(providerID string) (storage.OAuthCredential, bool) {
+	g.oauthMu.Lock()
+	defer g.oauthMu.Unlock()
+	c, ok := g.oauthOverlay[providerID]
+	return c, ok
+}
 
-	return ResolvedRuntime{ProviderID: p.ID, Credential: refreshed.AccessToken}
+func (g *Gateway) overlaySet(c storage.OAuthCredential) {
+	g.oauthMu.Lock()
+	g.oauthOverlay[c.ProviderID] = c
+	g.oauthMu.Unlock()
 }
 
 // resolveCredential is the legacy shortcut used by callUpstream (pre-vendor).

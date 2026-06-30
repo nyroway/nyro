@@ -674,6 +674,14 @@ func (s oauthStore) Get(providerID string) (*storage.OAuthCredential, error) {
 	return &c, nil
 }
 
+func (s oauthStore) ListAll() ([]storage.OAuthCredential, error) {
+	var out []storage.OAuthCredential
+	if err := s.b.db.Order("provider_id ASC").Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s oauthStore) Upsert(providerID string, in storage.UpsertOAuthCredential) (storage.OAuthCredential, error) {
 	existing, _ := s.Get(providerID)
 	now := nowISO()

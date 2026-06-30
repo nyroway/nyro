@@ -169,6 +169,17 @@ func (s oauthStore) Get(providerID string) (*storage.OAuthCredential, error) {
 	return &c, nil
 }
 
+func (s oauthStore) ListAll() ([]storage.OAuthCredential, error) {
+	s.b.mu.RLock()
+	defer s.b.mu.RUnlock()
+	out := make([]storage.OAuthCredential, 0, len(s.b.oauth))
+	for _, c := range s.b.oauth {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProviderID < out[j].ProviderID })
+	return out, nil
+}
+
 func (s oauthStore) Upsert(providerID string, in storage.UpsertOAuthCredential) (storage.OAuthCredential, error) {
 	s.b.mu.Lock()
 	defer s.b.mu.Unlock()

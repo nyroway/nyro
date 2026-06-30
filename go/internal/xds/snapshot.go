@@ -22,6 +22,10 @@ type ConfigSnapshot struct {
 	bindings map[string]map[string]bool
 	// settings holds the gateway-relevant key/value settings (proxy_*).
 	settings map[string]string
+	// oauth maps provider ID → stored OAuth credential. Populated by the xDS
+	// snapshot (Phase 3b); the gateway refreshes these locally under a
+	// per-process mutex instead of cross-replica DB CAS.
+	oauth map[string]storage.OAuthCredential
 }
 
 // ModelByName returns the model registered under name (nil if absent).
@@ -84,6 +88,27 @@ func (s *ConfigSnapshot) SettingGet(key string) (string, bool) {
 	return v, ok
 }
 
+// OAuthGet returns the stored OAuth credential for providerID (nil if absent).
+// This is the cache read path for the gateway's OAuth resolve + refresh (P3b);
+// it replaces the former storage.OAuthCredentials().Get read.
+func (s *ConfigSnapshot) OAuthGet(providerID string) *storage.OAuthCredential {
+	c, ok := s.oauth[providerID]
+	if !ok {
+		return nil
+	}
+	return &c
+}
+
+// OAuthList returns every stored OAuth credential. Used by the background
+// refresh loop to find tokens expiring within its horizon.
+func (s *ConfigSnapshot) OAuthList() []storage.OAuthCredential {
+	out := make([]storage.OAuthCredential, 0, len(s.oauth))
+	for _, c := range s.oauth {
+		out = append(out, c)
+	}
+	return out
+}
+
 // Snapshot is a build helper for constructing a ConfigSnapshot incrementally
 // (used by standalone YAML config). Call Done to freeze it into a ConfigSnapshot.
 // Maps are lazily allocated so callers can set only the sections they have.
@@ -93,6 +118,7 @@ type Snapshot struct {
 	apikeys   map[string]storage.ApiKeyAccessRecord
 	bindings  map[string]map[string]bool
 	settings  map[string]string
+	oauth     map[string]storage.OAuthCredential
 }
 
 // SetProvider adds (or replaces) a provider keyed by ID.
@@ -132,6 +158,14 @@ func (b *Snapshot) SetSetting(key, value string) {
 	b.settings[key] = value
 }
 
+// SetOAuth adds (or replaces) an OAuth credential keyed by provider ID.
+func (b *Snapshot) SetOAuth(c storage.OAuthCredential) {
+	if b.oauth == nil {
+		b.oauth = map[string]storage.OAuthCredential{}
+	}
+	b.oauth[c.ProviderID] = c
+}
+
 // Done freezes the builder into an immutable ConfigSnapshot.
 func (b *Snapshot) Done() *ConfigSnapshot {
 	if b.providers == nil {
@@ -149,11 +183,15 @@ func (b *Snapshot) Done() *ConfigSnapshot {
 	if b.settings == nil {
 		b.settings = map[string]string{}
 	}
+	if b.oauth == nil {
+		b.oauth = map[string]storage.OAuthCredential{}
+	}
 	return &ConfigSnapshot{
 		providers: b.providers,
 		models:    b.models,
 		apikeys:   b.apikeys,
 		bindings:  b.bindings,
 		settings:  b.settings,
+		oauth:     b.oauth,
 	}
 }

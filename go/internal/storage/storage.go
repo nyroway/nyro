@@ -78,9 +78,18 @@ type AuthAccessStore interface {
 	ListBoundModelIDs(apiKeyID string) ([]string, error)
 }
 
-// OAuthCredentialStore holds upstream OAuth tokens with CAS-locked refresh.
+// OAuthCredentialStore holds upstream OAuth tokens.
+//
+// The CAS methods (TryBeginRefresh/CompleteRefresh/FailRefresh/ListExpiring/
+// RecoverStaleRefreshing) coordinate cross-replica refresh via the shared DB.
+// The gateway stopped using them in xDS P3b: it now reads OAuth from its
+// ConfigCache snapshot and refreshes locally under a per-process mutex. They
+// remain on the interface because the admin process still drives DB-backed
+// reconnect/refresh flows. ListAll is the full-table snapshot used to populate
+// the xDS ConfigSnapshot (admin → gateway).
 type OAuthCredentialStore interface {
 	Get(providerID string) (*OAuthCredential, error)
+	ListAll() ([]OAuthCredential, error)
 	Upsert(providerID string, in UpsertOAuthCredential) (OAuthCredential, error)
 	Delete(providerID string) error
 	TryBeginRefresh(providerID string, expectedVersion int32) (*OAuthCredential, error)

@@ -8,10 +8,8 @@ import (
 )
 
 // SnapshotFromProto converts a wire ConfigSnapshot into the gateway's internal
-// read model. Providers, models (with targets), API keys + bindings, and
-// settings are carried. OAuth credentials are intentionally dropped here (P3
-// moves OAuth into the cache); the pb snapshot still carries them so a later
-// phase can apply them without a proto change.
+// read model. Providers, models (with targets), API keys + bindings, settings,
+// and OAuth credentials are all carried into the cache (P3b).
 func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
 	snap := &ConfigSnapshot{
 		providers: map[string]storage.Provider{},
@@ -19,6 +17,7 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
 		apikeys:   map[string]storage.ApiKeyAccessRecord{},
 		bindings:  map[string]map[string]bool{},
 		settings:  map[string]string{},
+		oauth:     map[string]storage.OAuthCredential{},
 	}
 	if in == nil {
 		return snap
@@ -100,6 +99,22 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
 		snap.settings[k] = v
 	}
 
+	for _, o := range in.GetOauthCredentials() {
+		if o == nil || o.GetProviderId() == "" {
+			continue
+		}
+		snap.oauth[o.GetProviderId()] = storage.OAuthCredential{
+			ProviderID:    o.GetProviderId(),
+			DriverKey:     o.GetDriverKey(),
+			Scheme:        o.GetScheme(),
+			AccessToken:   o.GetAccessToken(),
+			RefreshToken:  o.GetRefreshToken(),
+			ExpiresAt:     o.GetExpiresAt(),
+			Status:        o.GetStatus(),
+			StatusVersion: o.GetStatusVersion(),
+		}
+	}
+
 	return snap
 }
 
@@ -152,10 +167,19 @@ func SnapshotFromStorage(s storage.Storage, version int64) (*pb.ConfigSnapshot, 
 		})
 	}
 
-	// OAuth credentials are intentionally NOT populated in P2: the gateway
-	// drops them on conversion (P3 moves OAuth into the cache), and the storage
-	// interface has no full-list method. The pb snapshot still carries the field
-	// so a later phase can populate it without a proto change.
+	// OAuth credentials are populated via ListAll so the gateway receives the
+	// full set in one snapshot (P3b) and can refresh locally without DB reads.
+	creds, err := s.OAuthCredentials().ListAll()
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range creds {
+		out.OauthCredentials = append(out.OauthCredentials, &pb.OAuthCredential{
+			ProviderId: c.ProviderID, DriverKey: c.DriverKey, Scheme: c.Scheme,
+			AccessToken: c.AccessToken, RefreshToken: c.RefreshToken, ExpiresAt: c.ExpiresAt,
+			Status: c.Status, StatusVersion: c.StatusVersion,
+		})
+	}
 
 	settings, err := s.Settings().ListAll()
 	if err != nil {

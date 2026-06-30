@@ -24,9 +24,9 @@ func (c *ConfigCache) Swap(s *ConfigSnapshot) { c.snap.Store(s) }
 func (c *ConfigCache) Ready() bool { return c.snap.Load() != nil }
 
 // LoadFromStorage builds a snapshot by querying storage once. It is the
-// transitional DB-backed populator used in Phase 1: providers, models (with
-// targets), API keys + bindings, and all settings. OAuth is intentionally NOT
-// loaded (it stays on storage this phase).
+// transitional DB-backed populator: providers, models (with targets), API keys
+// + bindings, all settings, and OAuth credentials (P3b moved OAuth into the
+// cache so the gateway refreshes locally instead of via DB CAS).
 //
 // Models().List() already returns each model with its targets attached, so no
 // separate ModelBackends() call is needed; APIKeys().List() carries each key's
@@ -38,6 +38,7 @@ func LoadFromStorage(s storage.Storage) (*ConfigSnapshot, error) {
 		apikeys:   map[string]storage.ApiKeyAccessRecord{},
 		bindings:  map[string]map[string]bool{},
 		settings:  map[string]string{},
+		oauth:     map[string]storage.OAuthCredential{},
 	}
 
 	providers, err := s.Providers().List()
@@ -87,6 +88,14 @@ func LoadFromStorage(s storage.Storage) (*ConfigSnapshot, error) {
 	}
 	for _, kv := range settings {
 		snap.settings[kv.Key] = kv.Value
+	}
+
+	creds, err := s.OAuthCredentials().ListAll()
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range creds {
+		snap.oauth[c.ProviderID] = c
 	}
 
 	return snap, nil

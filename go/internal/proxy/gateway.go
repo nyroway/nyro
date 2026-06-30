@@ -18,12 +18,12 @@ import (
 )
 
 // Gateway holds the runtime dependencies for dispatching requests. Config reads
-// (models, providers, API keys, bindings, proxy settings) go through Cache, an
-// in-memory snapshot published by a background loader; Quota is the in-memory
-// rpm/rpd/tpm/tpd sliding window (decoupled from request_logs in P3a, so the
-// quota path no longer touches storage); Storage is retained for OAuth
-// credential refresh and log writes (those migrate off storage in later phases).
-// Router selects among a model's backends and tracks failover.
+// (models, providers, API keys, bindings, proxy settings, OAuth credentials)
+// go through Cache, an in-memory snapshot published by a background loader;
+// Quota is the in-memory rpm/rpd/tpm/tpd sliding window (decoupled from
+// request_logs in P3a, so the quota path no longer touches storage); Storage is
+// retained only for request-log writes and the /readyz health probe (P3c cuts
+// those). Router selects among a model's backends and tracks failover.
 type Gateway struct {
 	HTTPClient     *http.Client
 	Storage        storage.Storage
@@ -35,6 +35,16 @@ type Gateway struct {
 	proxyMu        sync.Mutex
 	proxyClient    *http.Client
 	proxyClientKey string
+
+	// OAuth refresh overlay (P3b). The cache snapshot is immutable, so a
+	// locally-refreshed token is held in oauthOverlay (providerID → refreshed
+	// cred) and checked before the snapshot. oauthMu serializes refresh per
+	// provider: oauthRefreshInFlight[providerID] is held while one goroutine
+	// refreshes that provider, so concurrent requests reuse the same token
+	// instead of each spawning an upstream refresh.
+	oauthMu              sync.Mutex
+	oauthOverlay         map[string]storage.OAuthCredential
+	oauthRefreshInFlight map[string]chan struct{}
 }
 
 // NewGateway builds a Gateway backed by the given storage. It creates an empty
@@ -60,11 +70,13 @@ func NewGatewayWithCache(s storage.Storage, cache *xds.ConfigCache) *Gateway {
 
 func newGateway(s storage.Storage, cache *xds.ConfigCache) *Gateway {
 	return &Gateway{
-		HTTPClient: &http.Client{Timeout: 5 * time.Minute},
-		Storage:    s,
-		Cache:      cache,
-		Quota:      quota.New(),
-		Router:     router.New(),
+		HTTPClient:           &http.Client{Timeout: 5 * time.Minute},
+		Storage:              s,
+		Cache:                cache,
+		Quota:                quota.New(),
+		Router:               router.New(),
+		oauthOverlay:         map[string]storage.OAuthCredential{},
+		oauthRefreshInFlight: map[string]chan struct{}{},
 	}
 }
 

@@ -9,9 +9,13 @@ import (
 )
 
 // StartOAuthRefreshLoop launches a background goroutine that proactively
-// refreshes OAuth credentials expiring within 5 minutes and recovers stuck
-// "refreshing" states older than 60 seconds. Runs every 2 minutes.
-// Ported from admin/oauth.rs::refresh_oauth_providers.
+// refreshes OAuth credentials expiring within 5 minutes. Runs every 2 minutes.
+//
+// xDS P3b: refresh is now local. The loop reads credentials from the config
+// cache snapshot and refreshes each expiring one under the same per-process
+// mutex as the request path (resolveProviderRuntime). There is no cross-replica
+// CAS and no storage read: each gateway replica refreshes its own in-memory
+// copy and holds the refreshed token in the overlay until the next snapshot.
 func (g *Gateway) StartOAuthRefreshLoop(ctx context.Context) {
 	if g.driverRegistry == nil {
 		return
@@ -31,48 +35,40 @@ func (g *Gateway) StartOAuthRefreshLoop(ctx context.Context) {
 }
 
 func (g *Gateway) refreshExpiringCredentials(ctx context.Context) {
-	// Step 1: recover stuck refreshing states.
-	if recovered, err := g.Storage.OAuthCredentials().RecoverStaleRefreshing(60 * time.Second); err == nil && recovered > 0 {
-		slog.Info("recovered stale OAuth refresh states", "count", recovered)
-	}
-
-	// Step 2: proactively refresh tokens expiring within 5 minutes.
-	expiring, err := g.Storage.OAuthCredentials().ListExpiring(5 * time.Minute)
-	if err != nil {
-		return
-	}
-	for _, cred := range expiring {
+	for _, cred := range g.snapshot().OAuthList() {
+		if cred.ExpiresAt == "" {
+			continue
+		}
+		if !isExpiredIn(cred.ExpiresAt, 5*time.Minute) {
+			continue
+		}
 		g.proactiveRefresh(ctx, cred)
 	}
 }
 
 func (g *Gateway) proactiveRefresh(ctx context.Context, cred storage.OAuthCredential) {
-	driver, ok := g.driverRegistry.Get(cred.DriverKey)
-	if !ok {
+	// The overlay may already hold a fresher token than the snapshot; if it is
+	// still valid, skip the refresh entirely.
+	if c, ok := g.overlayGet(cred.ProviderID); ok && c.ExpiresAt != "" && !isExpired(c.ExpiresAt) {
 		return
 	}
-
-	// CAS lock — skip if another goroutine is already refreshing this provider.
-	locked, _ := g.Storage.OAuthCredentials().TryBeginRefresh(cred.ProviderID, cred.StatusVersion)
-	if locked == nil {
-		return // already being refreshed
-	}
-
-	refreshed, err := driver.Refresh(ctx, cred)
-	if err != nil {
+	refreshed := g.refreshOAuth(ctx, cred)
+	if refreshed.AccessToken == "" {
 		slog.Warn("proactive OAuth refresh failed",
-			"provider", cred.ProviderID, "driver", cred.DriverKey, "error", err)
-		_ = g.Storage.OAuthCredentials().FailRefresh(cred.ProviderID, err.Error())
+			"provider", cred.ProviderID, "driver", cred.DriverKey)
 		return
 	}
-
-	_, _ = g.Storage.OAuthCredentials().CompleteRefresh(cred.ProviderID, storage.UpsertOAuthCredential{
-		DriverKey:    refreshed.DriverKey,
-		Scheme:       refreshed.Scheme,
-		AccessToken:  refreshed.AccessToken,
-		RefreshToken: refreshed.RefreshToken,
-		ExpiresAt:    refreshed.ExpiresAt,
-	})
 	slog.Info("proactively refreshed OAuth credential",
 		"provider", cred.ProviderID, "driver", cred.DriverKey)
+}
+
+// isExpiredIn reports whether expiresAt is within horizon of now (past or
+// future). Unparseable timestamps are treated as not-expiring (safe default:
+// avoids churn from malformed data).
+func isExpiredIn(expiresAt string, horizon time.Duration) bool {
+	t, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		return false
+	}
+	return time.Now().After(t.Add(-horizon))
 }
