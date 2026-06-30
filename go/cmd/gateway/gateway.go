@@ -5,6 +5,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -44,6 +45,8 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		gw.StartOAuthRefreshLoop(ctx)
+		stopConfigLoader := gw.StartConfigLoader(10 * time.Second)
+		defer stopConfigLoader()
 		bootstrap.StartRetentionLoop(ctx, st)
 
 		engine := proxy.NewRouter(gw)

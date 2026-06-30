@@ -6,13 +6,16 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/xds"
 )
 
 // checkAccess is the inbound access check. For open models (EnableAuth=false)
-// it always allows. Otherwise it validates the API key, expiry, model binding,
-// and the rpm/rpd/tpm/tpd quotas. Returns (0, "") to allow, or (statusCode,
-// message) to deny. Ported from proxy/dispatcher/auth.rs.
-func checkAccess(s storage.Storage, model storage.Model, r *http.Request, apiKeyID *string, apiKeyName *string) (int, string) {
+// it always allows. Otherwise it validates the API key, expiry, and model
+// binding against the in-memory config snapshot, then checks the rpm/rpd/tpm/
+// tpd quotas against storage (the counters still derive from the request log).
+// Returns (0, "") to allow, or (statusCode, message) to deny. Ported from
+// proxy/dispatcher/auth.rs.
+func checkAccess(snap *xds.ConfigSnapshot, s storage.Storage, model storage.Model, r *http.Request, apiKeyID *string, apiKeyName *string) (int, string) {
 	if !model.EnableAuth {
 		return 0, ""
 	}
@@ -20,8 +23,8 @@ func checkAccess(s storage.Storage, model storage.Model, r *http.Request, apiKey
 	if raw == "" {
 		return http.StatusUnauthorized, "missing API key"
 	}
-	rec, err := s.Auth().FindAPIKey(raw)
-	if err != nil || rec == nil {
+	rec := snap.FindAPIKey(raw)
+	if rec == nil {
 		return http.StatusUnauthorized, "invalid API key"
 	}
 	*apiKeyID = rec.ID
@@ -32,7 +35,7 @@ func checkAccess(s storage.Storage, model storage.Model, r *http.Request, apiKey
 	if rec.ExpiresAt != "" && expired(rec.ExpiresAt) {
 		return http.StatusForbidden, "API key has expired"
 	}
-	if bound, _ := s.Auth().ModelBindingExists(rec.ID, model.ID); !bound {
+	if !snap.ModelBindingExists(rec.ID, model.ID) {
 		return http.StatusForbidden, "API key is not bound to this model"
 	}
 	if status, msg := quotaExceeded(s, rec); status != 0 {

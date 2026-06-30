@@ -24,6 +24,7 @@ func TestGatewayHTTPClientForProxy(t *testing.T) {
 
 	// use_proxy=true but proxy disabled → direct client.
 	st.Settings().Set("proxy_enabled", "false")
+	_ = gw.ReloadCache() // reflect the settings change in the in-memory cache
 	if c, err := gw.httpClientFor(true); err != nil || c != direct {
 		t.Errorf("proxy disabled: want direct client, got %v err=%v", c, err)
 	}
@@ -31,6 +32,7 @@ func TestGatewayHTTPClientForProxy(t *testing.T) {
 	// use_proxy=true + enabled + proxy_url → distinct proxied client.
 	st.Settings().Set("proxy_enabled", "true")
 	st.Settings().Set("proxy_url", "http://proxy.example:8080")
+	_ = gw.ReloadCache()
 	c, err := gw.httpClientFor(true)
 	if err != nil {
 		t.Fatalf("proxied client: %v", err)
@@ -54,6 +56,7 @@ func TestGatewayHTTPClientForProxy(t *testing.T) {
 
 	// empty proxy_url → error.
 	st.Settings().Set("proxy_url", "")
+	_ = gw.ReloadCache()
 	if _, err := gw.httpClientFor(true); err == nil {
 		t.Error("empty proxy_url: want error, got nil")
 	}

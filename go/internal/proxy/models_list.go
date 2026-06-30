@@ -17,19 +17,18 @@ import (
 // created:0, owned_by:"Nyro"}]}, de-duplicated and sorted by name.
 func handleModelsList(w http.ResponseWriter, r *http.Request, gw *Gateway) {
 	accessible := map[string]struct{}{}
+	snap := gw.snapshot()
 	if raw := extractKey(r); raw != "" {
-		if rec, err := gw.Storage.Auth().FindAPIKey(raw); err == nil && rec != nil && rec.IsEnabled {
+		if rec := snap.FindAPIKey(raw); rec != nil && rec.IsEnabled {
 			if rec.ExpiresAt == "" || !expired(rec.ExpiresAt) {
-				if bound, err := gw.Storage.Auth().ListBoundModelIDs(rec.ID); err == nil {
-					for _, id := range bound {
-						accessible[id] = struct{}{}
-					}
+				for _, id := range snap.ListBoundModelIDs(rec.ID) {
+					accessible[id] = struct{}{}
 				}
 			}
 		}
 	}
 
-	models, _ := gw.Storage.Models().List()
+	models := snap.ModelsList()
 	seen := map[string]struct{}{}
 	var names []string
 	for _, m := range models {

@@ -44,9 +44,9 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 
 	plugin.RunPhaseHooks(plugin.PhaseOnRequest, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
 
-	// route: model name → model (with backends)
-	m, err := g.Storage.Models().ByName(req.Model)
-	if err != nil || m == nil {
+	// route: model name → model (with backends) — read from the in-memory cache.
+	m := g.snapshot().ModelByName(req.Model)
+	if m == nil {
 		writeJSONError(rec, http.StatusNotFound, "model not found: "+req.Model)
 		return
 	}
@@ -62,7 +62,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 
 	// inbound auth + OnAccess
 	plugin.RunPhaseHooks(plugin.PhaseOnAccess, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
-	if status, msg := checkAccess(g.Storage, model, r, &apiKeyID, &lc.apiKeyName); status != 0 {
+	if status, msg := checkAccess(g.snapshot(), g.Storage, model, r, &apiKeyID, &lc.apiKeyName); status != 0 {
 		writeJSONError(rec, status, msg)
 		return
 	}
@@ -72,8 +72,8 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 	ordered := g.Router.Select(model.Targets, model.Balance)
 	served := false
 	for _, target := range ordered {
-		p, perr := g.Storage.Providers().Get(target.ProviderID)
-		if perr != nil || p == nil || !p.IsEnabled {
+		p := g.snapshot().ProviderGet(target.ProviderID)
+		if p == nil || !p.IsEnabled {
 			continue
 		}
 		actualModel := target.Model
@@ -100,6 +100,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		// vendor is registered; otherwise fallback to direct codec encode.
 		v := vendor.Global().Resolve(p.Vendor, p.Protocol)
 		var outbound codec.OutboundRequest
+		var err error
 		if v == nil {
 			// Fallback: direct codec encode + protocol-based auth + URL.
 			outbound, err = egressHandler.MakeRequestEncoder().Encode(req)
