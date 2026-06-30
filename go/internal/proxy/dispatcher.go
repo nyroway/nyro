@@ -40,7 +40,15 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 	}
 
 	defer plugin.RunPhaseHooks(plugin.PhaseOnLog, &plugin.PhaseContext{Ctx: r.Context()})
-	defer func() { g.appendLog(model, provider, apiKeyID, started, rec.status, usage, lc) }()
+	defer func() {
+		g.appendLog(model, provider, apiKeyID, started, rec.status, usage, lc)
+		// Record into the in-memory quota sliding window. apiKeyID is empty for
+		// unauthenticated/open requests — skip those. For requests that failed
+		// before usage was captured, usage is zero so only the request counts.
+		if apiKeyID != "" {
+			g.Quota.Record(apiKeyID, 1, int64(usage.PromptTokens+usage.CompletionTokens))
+		}
+	}()
 
 	plugin.RunPhaseHooks(plugin.PhaseOnRequest, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
 
@@ -62,7 +70,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 
 	// inbound auth + OnAccess
 	plugin.RunPhaseHooks(plugin.PhaseOnAccess, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
-	if status, msg := checkAccess(g.snapshot(), g.Storage, model, r, &apiKeyID, &lc.apiKeyName); status != 0 {
+	if status, msg := checkAccess(g.snapshot(), g.Quota, model, r, &apiKeyID, &lc.apiKeyName); status != 0 {
 		writeJSONError(rec, status, msg)
 		return
 	}

@@ -155,40 +155,6 @@ func (s authAccessStore) ListBoundModelIDs(apiKeyID string) ([]string, error) {
 	return append([]string(nil), s.b.bindings[apiKeyID]...), nil
 }
 
-func (s authAccessStore) RequestCountSince(apiKeyID string, window storage.UsageWindow) (int64, error) {
-	cutoff := windowCutoffMs(window)
-	s.b.mu.RLock()
-	defer s.b.mu.RUnlock()
-	var n int64
-	for _, l := range s.b.logs {
-		if l.APIKeyID == apiKeyID && l.CreatedAt >= cutoff {
-			n++
-		}
-	}
-	return n, nil
-}
-
-func (s authAccessStore) TokenCountSince(apiKeyID string, window storage.UsageWindow) (int64, error) {
-	cutoff := windowCutoffMs(window)
-	s.b.mu.RLock()
-	defer s.b.mu.RUnlock()
-	var n int64
-	for _, l := range s.b.logs {
-		if l.APIKeyID == apiKeyID && l.CreatedAt >= cutoff {
-			n += int64(l.InputTokens) + int64(l.OutputTokens)
-		}
-	}
-	return n, nil
-}
-
-func windowCutoffMs(w storage.UsageWindow) int64 {
-	now := time.Now().UnixMilli()
-	if w == storage.WindowDay {
-		return now - 86_400_000
-	}
-	return now - 60_000
-}
-
 // ── oauthStore ──
 
 type oauthStore struct{ b *Backend }

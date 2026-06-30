@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/auth"
+	"github.com/nyroway/nyro/go/internal/proxy/quota"
 	"github.com/nyroway/nyro/go/internal/router"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/xds"
@@ -18,14 +19,16 @@ import (
 
 // Gateway holds the runtime dependencies for dispatching requests. Config reads
 // (models, providers, API keys, bindings, proxy settings) go through Cache, an
-// in-memory snapshot published by a background loader; Storage is retained for
-// OAuth credential refresh, request-log quota counters, and log writes (those
-// migrate off storage in later phases). Router selects among a model's backends
-// and tracks failover.
+// in-memory snapshot published by a background loader; Quota is the in-memory
+// rpm/rpd/tpm/tpd sliding window (decoupled from request_logs in P3a, so the
+// quota path no longer touches storage); Storage is retained for OAuth
+// credential refresh and log writes (those migrate off storage in later phases).
+// Router selects among a model's backends and tracks failover.
 type Gateway struct {
 	HTTPClient     *http.Client
 	Storage        storage.Storage
 	Cache          *xds.ConfigCache
+	Quota          *quota.Counter
 	Router         *router.Router
 	driverRegistry *auth.Registry
 
@@ -60,6 +63,7 @@ func newGateway(s storage.Storage, cache *xds.ConfigCache) *Gateway {
 		HTTPClient: &http.Client{Timeout: 5 * time.Minute},
 		Storage:    s,
 		Cache:      cache,
+		Quota:      quota.New(),
 		Router:     router.New(),
 	}
 }

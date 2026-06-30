@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/proxy/quota"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/xds"
 )
@@ -12,10 +13,10 @@ import (
 // checkAccess is the inbound access check. For open models (EnableAuth=false)
 // it always allows. Otherwise it validates the API key, expiry, and model
 // binding against the in-memory config snapshot, then checks the rpm/rpd/tpm/
-// tpd quotas against storage (the counters still derive from the request log).
-// Returns (0, "") to allow, or (statusCode, message) to deny. Ported from
-// proxy/dispatcher/auth.rs.
-func checkAccess(snap *xds.ConfigSnapshot, s storage.Storage, model storage.Model, r *http.Request, apiKeyID *string, apiKeyName *string) (int, string) {
+// tpd quotas against the in-memory sliding-window counter (P3a: no longer reads
+// request_logs). Returns (0, "") to allow, or (statusCode, message) to deny.
+// Ported from proxy/dispatcher/auth.rs.
+func checkAccess(snap *xds.ConfigSnapshot, qc *quota.Counter, model storage.Model, r *http.Request, apiKeyID *string, apiKeyName *string) (int, string) {
 	if !model.EnableAuth {
 		return 0, ""
 	}
@@ -38,7 +39,7 @@ func checkAccess(snap *xds.ConfigSnapshot, s storage.Storage, model storage.Mode
 	if !snap.ModelBindingExists(rec.ID, model.ID) {
 		return http.StatusForbidden, "API key is not bound to this model"
 	}
-	if status, msg := quotaExceeded(s, rec); status != 0 {
+	if status, msg := quotaExceeded(qc, rec); status != 0 {
 		return status, msg
 	}
 	return 0, ""
@@ -67,27 +68,30 @@ func expired(iso string) bool {
 	return time.Now().After(t)
 }
 
-// quotaExceeded checks all four quota windows. Token quotas (tpm/tpd) count
-// accumulated past usage from the request log; they begin enforcing once token
-// accounting is captured into RequestLog. Ported from auth.rs quota block.
-func quotaExceeded(s storage.Storage, rec *storage.ApiKeyAccessRecord) (int, string) {
+// quotaExceeded checks all four quota windows against the in-memory sliding
+// counter. Limits come from the API-key access record (already in the config
+// snapshot); counts come from the per-process window. Token quotas (tpm/tpd)
+// count accumulated past usage; they begin enforcing once the dispatcher
+// records token usage into the counter (after a successful upstream response).
+// Ported from auth.rs quota block.
+func quotaExceeded(qc *quota.Counter, rec *storage.ApiKeyAccessRecord) (int, string) {
 	if rec.RPM != nil {
-		if n, _ := s.Auth().RequestCountSince(rec.ID, storage.WindowMinute); n >= int64(*rec.RPM) {
+		if qc.Requests(rec.ID, quota.WindowMinute) >= int64(*rec.RPM) {
 			return http.StatusTooManyRequests, "api key rpm quota exceeded"
 		}
 	}
 	if rec.RPD != nil {
-		if n, _ := s.Auth().RequestCountSince(rec.ID, storage.WindowDay); n >= int64(*rec.RPD) {
+		if qc.Requests(rec.ID, quota.WindowDay) >= int64(*rec.RPD) {
 			return http.StatusTooManyRequests, "api key rpd quota exceeded"
 		}
 	}
 	if rec.TPM != nil {
-		if n, _ := s.Auth().TokenCountSince(rec.ID, storage.WindowMinute); n >= int64(*rec.TPM) {
+		if qc.Tokens(rec.ID, quota.WindowMinute) >= int64(*rec.TPM) {
 			return http.StatusTooManyRequests, "api key tpm quota exceeded"
 		}
 	}
 	if rec.TPD != nil {
-		if n, _ := s.Auth().TokenCountSince(rec.ID, storage.WindowDay); n >= int64(*rec.TPD) {
+		if qc.Tokens(rec.ID, quota.WindowDay) >= int64(*rec.TPD) {
 			return http.StatusTooManyRequests, "api key tpd quota exceeded"
 		}
 	}

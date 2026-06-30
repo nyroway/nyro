@@ -80,16 +80,14 @@ func TestSQLiteProviderModelSettings(t *testing.T) {
 		t.Errorf("upsert: %q", v)
 	}
 
-	// logging + quota counting
+	// logging (quota counters moved off storage in P3a — into the in-memory
+	// proxy/quota counter, exercised in its own package tests).
 	_ = st.Logs().AppendBatch([]storage.RequestLog{{
 		ID: "r1", CreatedAt: time.Now().UnixMilli(), APIKeyID: k.ID, ModelID: m.ID,
 		InputTokens: 10, OutputTokens: 5,
 	}})
-	if n, _ := st.Auth().RequestCountSince(k.ID, storage.WindowMinute); n != 1 {
-		t.Errorf("request count=%d", n)
-	}
-	if tok, _ := st.Auth().TokenCountSince(k.ID, storage.WindowMinute); tok != 15 {
-		t.Errorf("token count=%d", tok)
+	if logs, _ := st.Logs().Query(storage.LogQuery{Limit: 100}); len(logs.Items) != 1 {
+		t.Errorf("log query items=%d, want 1", len(logs.Items))
 	}
 
 	// cascade delete

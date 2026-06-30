@@ -1,13 +1,5 @@
 package storage
 
-// UsageWindow selects a quota window for the auth-access counters.
-type UsageWindow int
-
-const (
-	WindowMinute UsageWindow = iota
-	WindowDay
-)
-
 // ApiKey is a gateway access token with optional rate/token quotas.
 type ApiKey struct {
 	ID        string `json:"id" gorm:"column:id;primaryKey"`

@@ -69,15 +69,13 @@ type ApiKeyStore interface {
 	ExistsByName(name, excludeID string) (bool, error)
 }
 
-// AuthAccessStore is the read side used by the inbound access check: key
-// lookup, model binding, and per-window quota counters (counters derive from
-// the request logs).
+// AuthAccessStore is the read side used by the inbound access check: key lookup
+// and model binding. Per-window quota counters used to live here too (backed by
+// request_logs) but moved to the in-memory quota.Counter in P3a.
 type AuthAccessStore interface {
 	FindAPIKey(rawKey string) (*ApiKeyAccessRecord, error)
 	ModelBindingExists(apiKeyID, modelID string) (bool, error)
 	ListBoundModelIDs(apiKeyID string) ([]string, error)
-	RequestCountSince(apiKeyID string, window UsageWindow) (int64, error)
-	TokenCountSince(apiKeyID string, window UsageWindow) (int64, error)
 }
 
 // OAuthCredentialStore holds upstream OAuth tokens with CAS-locked refresh.
