@@ -103,11 +103,11 @@ func NewCmd() *cobra.Command {
 		// matching the gateway→admin push contract).
 		rcv.Mount(engine)
 
-		// admin.Mount passes nil,nil for the parquet-backed log/stats sources
-		// (T2.2 dual-write): the handlers keep reading s.Logs() (the legacy
-		// request_logs table). T2.3/T2.4 swap the handler bodies onto real
-		// parquet-backed sources and pass them here.
-		admin.Mount(engine, st, adminToken, nil, nil)
+		// admin.Mount now wires a parquet-backed LogSource (T2.3): /logs reads
+		// the parquet store and falls back to s.Logs() (the legacy
+		// request_logs table) when parquet is empty — the dual-write read path.
+		// StatsSource stays nil until T2.4; /stats/* still reads s.Logs().
+		admin.Mount(engine, st, adminToken, admin.NewParquetLogSource(obsCfg.DataDir, st), nil)
 		admin.MountOAuth(engine, st, reg, sessions)
 		proxy.MountWebui(engine, webuiDir)
 

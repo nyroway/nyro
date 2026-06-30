@@ -239,11 +239,14 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 
 		// ── logs ──
+		// When a LogSource is wired (T2.3, parquet with old-table fallback), the
+		// /logs handlers read from it; otherwise they fall back to s.Logs() (the
+		// legacy request_logs table). nil preserves the pre-T2.3 behavior.
 		g.Get("/logs", func(w http.ResponseWriter, r *http.Request) {
 			q := storage.LogQuery{Provider: r.URL.Query().Get("provider"), Model: r.URL.Query().Get("model")}
 			q.Limit, _ = strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
 			q.Offset, _ = strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
-			page, err := s.Logs().Query(q)
+			page, err := queryLogs(logs, s, q)
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -251,7 +254,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, page)
 		})
 		g.Get("/logs/{id}", func(w http.ResponseWriter, r *http.Request) {
-			l, err := s.Logs().FindByID(chi.URLParam(r, "id"))
+			l, err := findLogByID(logs, s, chi.URLParam(r, "id"))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -263,7 +266,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, l)
 		})
 		g.Delete("/logs", func(w http.ResponseWriter, r *http.Request) {
-			n, err := s.Logs().ClearAll()
+			n, err := clearLogs(logs, s)
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
