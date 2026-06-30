@@ -285,7 +285,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			return h
 		}
 		g.Get("/stats/overview", func(w http.ResponseWriter, r *http.Request) {
-			st, err := s.Logs().StatsOverview(parseHours(r))
+			st, err := statsOverview(stats, s, parseHours(r))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -293,7 +293,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/models", func(w http.ResponseWriter, r *http.Request) {
-			st, err := s.Logs().StatsByModel(parseHours(r))
+			st, err := statsByModel(stats, s, parseHours(r))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -301,7 +301,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/providers", func(w http.ResponseWriter, r *http.Request) {
-			st, err := s.Logs().StatsByProvider(parseHours(r))
+			st, err := statsByProvider(stats, s, parseHours(r))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -309,7 +309,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/api-keys", func(w http.ResponseWriter, r *http.Request) {
-			st, err := s.Logs().StatsByApiKey(parseHours(r))
+			st, err := statsByApiKey(stats, s, parseHours(r))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -325,7 +325,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			if hours <= 0 {
 				hours = 24
 			}
-			st, err := s.Logs().StatsHourly(hours)
+			st, err := statsHourly(stats, s, hours)
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
