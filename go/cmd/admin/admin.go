@@ -53,7 +53,6 @@ func NewCmd() *cobra.Command {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		bootstrap.StartRetentionLoop(ctx, st)
 
 		// ── Observability sinks (admin side) ──
 		// Three parquet sinks (logs/metrics/traces) feed the OTLP/HTTP receiver.
@@ -103,13 +102,12 @@ func NewCmd() *cobra.Command {
 		// matching the gateway→admin push contract).
 		rcv.Mount(engine)
 
-		// admin.Mount wires parquet-backed read sources (observability refactor):
-		//   - LogSource (T2.3): /logs reads parquet, falls back to s.Logs() when empty.
-		//   - StatsSource (T2.4): /stats/* reads metrics parquet, falls back to
-		//     s.Logs().Stats* when the metrics parquet is empty — the dual-write
-		//     read path that preserves behavior while the gateway still writes
-		//     both stores.
-		admin.Mount(engine, st, adminToken, admin.NewParquetLogSource(obsCfg.DataDir, st), admin.NewParquetStatsSource(obsCfg.DataDir, st))
+		// admin.Mount wires the parquet-backed read sources:
+		//   - LogSource:   /logs reads the parquet observability store.
+		//   - StatsSource: /stats/* reads the metrics parquet store.
+		// The request_logs table was removed in Phase 4; these are the only
+		// request-log/metrics read paths.
+		admin.Mount(engine, st, adminToken, admin.NewParquetLogSource(obsCfg.DataDir), admin.NewParquetStatsSource(obsCfg.DataDir))
 		admin.MountOAuth(engine, st, reg, sessions)
 		proxy.MountWebui(engine, webuiDir)
 

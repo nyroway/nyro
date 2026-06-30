@@ -10,43 +10,39 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/plugin"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/web"
 )
 
-// LogSource is the read side for /logs. Backed by parquet (observability.Logs)
-// in the new path; the legacy storage.LogStore satisfies it during dual-write.
-//
-// During dual-write (T2.2) the log/stats handlers still read from s.Logs()
-// (the old request_logs table). When a non-nil LogSource is passed (T2.3), the
-// handlers will switch to it. nil preserves the legacy behavior exactly.
+// LogSource is the read side for /logs. Backed by parquet
+// (observability.Logs) — the only request-log store after the Phase 4 removal
+// of the request_logs table. The types are observability.* (JSON tags are
+// identical to the old storage.* copies, so the WebUI contract is unchanged).
 type LogSource interface {
-	Query(q storage.LogQuery) (storage.LogPage, error)
-	FindByID(id string) (*storage.RequestLog, error)
+	Query(q observability.LogQuery) (observability.LogPage, error)
+	FindByID(id string) (*observability.LogRecord, error)
 	ClearAll() (int64, error)
 }
 
-// StatsSource is the read side for /stats/*.
-//
-// Same dual-write contract as LogSource: nil → handlers use s.Logs(); non-nil
-// (T2.4) → handlers use this source instead.
+// StatsSource is the read side for /stats/*. Backed by metrics parquet
+// (observability.AggregateStats / AggregateHourly).
 type StatsSource interface {
-	StatsOverview(hours int64) (storage.StatsOverview, error)
-	StatsByModel(hours int64) ([]storage.ModelStats, error)
-	StatsByProvider(hours int64) ([]storage.ProviderStats, error)
-	StatsByApiKey(hours int64) ([]storage.ApiKeyStats, error)
-	StatsHourly(hours int64) ([]storage.StatsHourly, error)
+	StatsOverview(hours int64) (observability.StatsOverview, error)
+	StatsByModel(hours int64) ([]observability.ModelStats, error)
+	StatsByProvider(hours int64) ([]observability.ProviderStats, error)
+	StatsByApiKey(hours int64) ([]observability.ApiKeyStats, error)
+	StatsHourly(hours int64) ([]observability.StatsHourly, error)
 }
 
 // Mount registers the admin REST API under /api/v1 on r. If adminToken is
 // non-empty, every admin route requires Authorization: Bearer <adminToken>.
 //
-// logs/stats are the parquet-backed read sources introduced by the
-// observability refactor. Pass nil for either to keep using s.Logs() (the old
-// request_logs table) — this is the dual-write fallback and the default in
-// T2.2; T2.3/T2.4 wire the real parquet-backed sources.
+// logs/stats are the parquet-backed read sources (the observability store) —
+// the only request-log/metrics path after the Phase 4 removal of the
+// request_logs table. cmd/admin wires the real parquet-backed sources.
 func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, stats StatsSource) {
 	r.Route("/api/v1", func(g chi.Router) {
 		if adminToken != "" {
@@ -239,14 +235,13 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 
 		// ── logs ──
-		// When a LogSource is wired (T2.3, parquet with old-table fallback), the
-		// /logs handlers read from it; otherwise they fall back to s.Logs() (the
-		// legacy request_logs table). nil preserves the pre-T2.3 behavior.
+		// /logs reads exclusively from the parquet LogSource (the request_logs
+		// table was removed in Phase 4).
 		g.Get("/logs", func(w http.ResponseWriter, r *http.Request) {
-			q := storage.LogQuery{Provider: r.URL.Query().Get("provider"), Model: r.URL.Query().Get("model")}
+			q := observability.LogQuery{Provider: r.URL.Query().Get("provider"), Model: r.URL.Query().Get("model")}
 			q.Limit, _ = strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
 			q.Offset, _ = strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
-			page, err := queryLogs(logs, s, q)
+			page, err := logs.Query(q)
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -254,7 +249,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, page)
 		})
 		g.Get("/logs/{id}", func(w http.ResponseWriter, r *http.Request) {
-			l, err := findLogByID(logs, s, chi.URLParam(r, "id"))
+			l, err := logs.FindByID(chi.URLParam(r, "id"))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -266,7 +261,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, l)
 		})
 		g.Delete("/logs", func(w http.ResponseWriter, r *http.Request) {
-			n, err := clearLogs(logs, s)
+			n, err := logs.ClearAll()
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -285,7 +280,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			return h
 		}
 		g.Get("/stats/overview", func(w http.ResponseWriter, r *http.Request) {
-			st, err := statsOverview(stats, s, parseHours(r))
+			st, err := stats.StatsOverview(parseHours(r))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -293,7 +288,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/models", func(w http.ResponseWriter, r *http.Request) {
-			st, err := statsByModel(stats, s, parseHours(r))
+			st, err := stats.StatsByModel(parseHours(r))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -301,7 +296,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/providers", func(w http.ResponseWriter, r *http.Request) {
-			st, err := statsByProvider(stats, s, parseHours(r))
+			st, err := stats.StatsByProvider(parseHours(r))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -309,7 +304,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/api-keys", func(w http.ResponseWriter, r *http.Request) {
-			st, err := statsByApiKey(stats, s, parseHours(r))
+			st, err := stats.StatsByApiKey(parseHours(r))
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -325,7 +320,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			if hours <= 0 {
 				hours = 24
 			}
-			st, err := statsHourly(stats, s, hours)
+			st, err := stats.StatsHourly(hours)
 			if err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return

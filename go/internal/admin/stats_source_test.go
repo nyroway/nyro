@@ -9,19 +9,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
-	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
 // newStatsEngine mounts the admin API with a parquet-backed StatsSource rooted
-// at obsDir (and the old request_logs table as fallback). Mirrors newEngine but
-// injects the real parquetStatsSource so /stats/* reads metrics parquet.
-func newStatsEngine(t *testing.T, obsDir string) (chi.Router, *memory.Backend) {
+// at obsDir. Mirrors newEngine but injects the real parquetStatsSource so
+// /stats/* reads metrics parquet.
+func newStatsEngine(t *testing.T, obsDir string) chi.Router {
 	t.Helper()
-	st := memory.New()
 	r := chi.NewRouter()
-	Mount(r, st.Storage(), "", nil, NewParquetStatsSource(obsDir, st.Storage()))
-	return r, st
+	Mount(r, memory.New().Storage(), "", nil, NewParquetStatsSource(obsDir))
+	return r
 }
 
 // flushMetrics writes MetricSamples into the parquet metrics dir and flushes so
@@ -54,11 +52,11 @@ func metricLabelsJSON(model, provider, apikey, statusClass, direction string) st
 }
 
 // TestStatsParquetRead asserts that when metrics parquet has samples, /stats/*
-// reads the new path (not the old table). Seeds parquet with 3 requests for
-// gpt-4o + tokens; expects /stats/overview counts and /stats/models row.
+// reads them. Seeds parquet with 3 requests for gpt-4o + tokens; expects
+// /stats/overview counts and /stats/models row.
 func TestStatsParquetRead(t *testing.T) {
 	obsDir := t.TempDir()
-	r, _ := newStatsEngine(t, obsDir)
+	r := newStatsEngine(t, obsDir)
 
 	// Production writes MetricSample.Ts as unix-nanoseconds (OTLP
 	// p.GetTimeUnixNano), so the tests seed nanos to exercise the real path.
@@ -79,7 +77,7 @@ func TestStatsParquetRead(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/stats/overview → %d %s", rec.Code, rec.Body.String())
 	}
-	var ov storage.StatsOverview
+	var ov observability.StatsOverview
 	if err := json.Unmarshal(rec.Body.Bytes(), &ov); err != nil {
 		t.Fatal(err)
 	}
@@ -101,104 +99,12 @@ func TestStatsParquetRead(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/stats/models → %d %s", rec.Code, rec.Body.String())
 	}
-	var models []storage.ModelStats
+	var models []observability.ModelStats
 	if err := json.Unmarshal(rec.Body.Bytes(), &models); err != nil {
 		t.Fatal(err)
 	}
 	if len(models) != 1 || models[0].Model != "gpt-4o" || models[0].RequestCount != 3 {
 		t.Errorf("/stats/models unexpected: %+v", models)
-	}
-}
-
-// TestStatsParquetWinsOverOldTable asserts that when BOTH parquet and the old
-// table have data, the parquet path is used (the new path takes precedence
-// during dual-write). Seeds a different count in the old table and checks the
-// parquet value comes through.
-func TestStatsParquetWinsOverOldTable(t *testing.T) {
-	obsDir := t.TempDir()
-	r, st := newStatsEngine(t, obsDir)
-
-	// Parquet seeds use unix-nanoseconds (the production write unit); the legacy
-	// request_logs.CreatedAt stays unix-milliseconds (its own contract).
-	nowNs := time.Now().UnixNano()
-	nowMs := time.Now().UnixMilli()
-	// Parquet: 2 requests for gpt-4o.
-	flushMetrics(t, obsDir,
-		observability.MetricSample{Ts: nowNs, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: metricLabelsJSON("gpt-4o", "openai", "k1", "2xx", "")},
-		observability.MetricSample{Ts: nowNs, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: metricLabelsJSON("gpt-4o", "openai", "k1", "2xx", "")},
-	)
-	// Old table: 1 request for a DIFFERENT model (would show up only if fallback used).
-	code200 := int32(200)
-	if err := st.Logs().AppendBatch([]storage.RequestLog{
-		{ID: "old-1", CreatedAt: nowMs, ModelName: "legacy-only-model", ClientStatusCode: &code200},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	rec := do(r, "GET", "/api/v1/stats/models", "", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("/stats/models → %d %s", rec.Code, rec.Body.String())
-	}
-	var models []storage.ModelStats
-	if err := json.Unmarshal(rec.Body.Bytes(), &models); err != nil {
-		t.Fatal(err)
-	}
-	for _, m := range models {
-		if m.Model == "legacy-only-model" {
-			t.Errorf("fallback was used though parquet had data; models=%+v", models)
-		}
-	}
-	if len(models) != 1 || models[0].Model != "gpt-4o" || models[0].RequestCount != 2 {
-		t.Errorf("expected parquet gpt-4o x2, got %+v", models)
-	}
-}
-
-// TestStatsFallbackWhenParquetEmpty asserts the dual-write fallback: with an
-// empty metrics parquet store, /stats/* reads the legacy request_logs table.
-func TestStatsFallbackWhenParquetEmpty(t *testing.T) {
-	obsDir := t.TempDir()
-	r, st := newStatsEngine(t, obsDir)
-
-	// Seed ONLY the old table (CreatedAt is unix-millis, its own contract);
-	// parquet is empty so the fallback fires.
-	now := time.Now().UnixMilli()
-	code200 := int32(200)
-	if err := st.Logs().AppendBatch([]storage.RequestLog{
-		{ID: "old-1", CreatedAt: now, ModelName: "legacy-model", ProviderName: "openai", APIKeyID: "k1", APIKeyName: "key-one", InputTokens: 42, OutputTokens: 7, ClientStatusCode: &code200},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// /stats/models → the legacy model shows up via fallback.
-	rec := do(r, "GET", "/api/v1/stats/models", "", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("/stats/models → %d %s", rec.Code, rec.Body.String())
-	}
-	var models []storage.ModelStats
-	if err := json.Unmarshal(rec.Body.Bytes(), &models); err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, m := range models {
-		if m.Model == "legacy-model" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("fallback did not surface legacy-model; models=%+v", models)
-	}
-
-	// /stats/overview → fallback total_requests reflects the legacy row.
-	rec = do(r, "GET", "/api/v1/stats/overview", "", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("/stats/overview → %d %s", rec.Code, rec.Body.String())
-	}
-	var ov storage.StatsOverview
-	if err := json.Unmarshal(rec.Body.Bytes(), &ov); err != nil {
-		t.Fatal(err)
-	}
-	if ov.TotalRequests != 1 || ov.TotalInputTokens != 42 {
-		t.Errorf("fallback overview unexpected: %+v", ov)
 	}
 }
 
@@ -209,7 +115,7 @@ func TestStatsFallbackWhenParquetEmpty(t *testing.T) {
 // Also asserts the /stats/api-keys LastUsedAt is returned in millis (not nanos).
 func TestStatsHoursWindow(t *testing.T) {
 	obsDir := t.TempDir()
-	r, _ := newStatsEngine(t, obsDir)
+	r := newStatsEngine(t, obsDir)
 
 	// Seed in nanoseconds — matches the receiver's p.GetTimeUnixNano write path.
 	now := time.Now().UnixNano()
@@ -224,7 +130,7 @@ func TestStatsHoursWindow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/stats/models?hours=1 → %d %s", rec.Code, rec.Body.String())
 	}
-	var models []storage.ModelStats
+	var models []observability.ModelStats
 	if err := json.Unmarshal(rec.Body.Bytes(), &models); err != nil {
 		t.Fatal(err)
 	}
@@ -235,17 +141,17 @@ func TestStatsHoursWindow(t *testing.T) {
 	}
 
 	// /stats/api-keys?hours=1 → only k1 survives; its LastUsedAt must be in the
-	// millisecond range (the legacy contract), NOT nanoseconds. A raw-nano value
+	// millisecond range (the WebUI contract), NOT nanoseconds. A raw-nano value
 	// (~1.7e18) would land ~1e6x too big.
 	rec = do(r, "GET", "/api/v1/stats/api-keys?hours=1", "", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/stats/api-keys?hours=1 → %d %s", rec.Code, rec.Body.String())
 	}
-	var keys []storage.ApiKeyStats
+	var keys []observability.ApiKeyStats
 	if err := json.Unmarshal(rec.Body.Bytes(), &keys); err != nil {
 		t.Fatal(err)
 	}
-	var k1 *storage.ApiKeyStats
+	var k1 *observability.ApiKeyStats
 	for i := range keys {
 		if keys[i].APIKeyID == "k1" {
 			k1 = &keys[i]
