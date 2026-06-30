@@ -135,6 +135,13 @@ func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 		log.Int64("nyro.cache_read_tokens", cacheRead(usage)),
 		log.Bool("nyro.is_stream", lc.IsStream),
 	)
+	// Optional upstream audit fields. Emitted only when the pointer is non-nil
+	// AND non-zero — matching the admin receiver's lookupInt semantics (a 0
+	// int is treated as absent, same as client_status/latency_total_ms). A nil
+	// pointer (no upstream status/latency captured, e.g. a request that never
+	// reached the upstream) omits the attribute entirely so the receiver leaves
+	// the parquet optional column null.
+	rec.AddAttributes(upstreamLogAttrs(lc)...)
 	h.logger.Emit(emitCtx, rec)
 
 	// --- finish the span (status for 5xx, then End) ---
@@ -154,6 +161,24 @@ func cacheRead(u ir.Usage) int64 {
 		return int64(*u.CacheReadTokens)
 	}
 	return 0
+}
+
+// upstreamLogAttrs builds the optional upstream audit attributes for the audit
+// LogRecord. nyro.upstream_status and nyro.latency_upstream_ms are emitted only
+// when their LogCtx pointer is non-nil AND the dereferenced value is non-zero —
+// matching the admin receiver's lookupInt contract (a zero int is treated as
+// absent). A nil pointer (no upstream status/latency captured) yields no
+// attribute, so the receiver leaves the parquet optional column null rather
+// than writing a spurious 0.
+func upstreamLogAttrs(lc LogCtx) []log.KeyValue {
+	var attrs []log.KeyValue
+	if lc.UpstreamStatus != nil && *lc.UpstreamStatus != 0 {
+		attrs = append(attrs, log.Int64("nyro.upstream_status", int64(*lc.UpstreamStatus)))
+	}
+	if lc.LatencyUpstreamMs != nil && *lc.LatencyUpstreamMs != 0 {
+		attrs = append(attrs, log.Int64("nyro.latency_upstream_ms", *lc.LatencyUpstreamMs))
+	}
+	return attrs
 }
 
 // classify maps an HTTP status to its 2xx/4xx/5xx class label.

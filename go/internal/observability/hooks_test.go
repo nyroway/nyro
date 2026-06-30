@@ -187,6 +187,79 @@ func TestHooksOnLogRecordsMetricsTokensAndSpan(t *testing.T) {
 	}
 }
 
+// TestHooksOnLogEmitsUpstreamAuditAttrs asserts the OnLog hook emits the two
+// optional upstream audit attributes (nyro.upstream_status and
+// nyro.latency_upstream_ms) when LogCtx carries non-nil, non-zero pointers —
+// closing the data-loss gap vs the legacy audit (T3.2 review finding). Also
+// verifies a nil-pointer LogCtx omits them (parquet optional column stays null).
+func TestHooksOnLogEmitsUpstreamAuditAttrs(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tracerProvider.Tracer("nyro-test")
+
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	handles := NewHandles(meterProvider.Meter("nyro-test"))
+
+	cl := &captureLogger{}
+	RegisterHooks(tracer, cl, handles)
+	t.Cleanup(func() {
+		_ = tracerProvider.Shutdown(context.Background())
+		_ = meterProvider.Shutdown(context.Background())
+	})
+	_ = reader // silence unused; metrics are not the focus of this test
+
+	// --- case 1: non-nil upstream status + latency → both attributes emitted. ---
+	upstreamStatus := int32(429)
+	upstreamLatency := int64(312)
+	lc := LogCtx{
+		UpstreamStatus:    &upstreamStatus,
+		LatencyUpstreamMs: &upstreamLatency,
+	}
+	bag := plugin.NewContextBag()
+	bag.Set(BagModel, storage.Model{ID: "m", Name: "gpt-test"})
+	bag.Set(BagProvider, storage.Provider{ID: "p", Name: "openai"})
+	bag.Set(BagAPIKeyID, "ak")
+	bag.Set(BagUsage, ir.Usage{})
+	bag.Set(BagStarted, time.Now().Add(-5*time.Millisecond))
+	bag.Set(BagStatus, 200)
+	bag.Set(BagLogCtx, lc)
+
+	runPhase(t, plugin.PhaseOnRequest, bag)
+	runPhase(t, plugin.PhaseOnLog, bag)
+
+	if len(cl.records) != 1 {
+		t.Fatalf("case 1 emitted log records: want 1, got %d", len(cl.records))
+	}
+	attrMap := logRecordAttrs(t, &cl.records[0])
+	assertLogAttrInt64(t, attrMap, "nyro.upstream_status", 429)
+	assertLogAttrInt64(t, attrMap, "nyro.latency_upstream_ms", 312)
+
+	// --- case 2: nil pointers → attributes must be absent. ---
+	cl.records = nil
+	bag2 := plugin.NewContextBag()
+	bag2.Set(BagModel, storage.Model{ID: "m", Name: "gpt-test"})
+	bag2.Set(BagProvider, storage.Provider{ID: "p", Name: "openai"})
+	bag2.Set(BagAPIKeyID, "ak")
+	bag2.Set(BagUsage, ir.Usage{})
+	bag2.Set(BagStarted, time.Now().Add(-5*time.Millisecond))
+	bag2.Set(BagStatus, 200)
+	bag2.Set(BagLogCtx, LogCtx{}) // nil UpstreamStatus / LatencyUpstreamMs
+
+	runPhase(t, plugin.PhaseOnRequest, bag2)
+	runPhase(t, plugin.PhaseOnLog, bag2)
+
+	if len(cl.records) != 1 {
+		t.Fatalf("case 2 emitted log records: want 1, got %d", len(cl.records))
+	}
+	attrMap2 := logRecordAttrs(t, &cl.records[0])
+	for _, key := range []string{"nyro.upstream_status", "nyro.latency_upstream_ms"} {
+		if _, ok := attrMap2[key]; ok {
+			t.Errorf("case 2: nil-pointer LogCtx must omit %q, but it was emitted", key)
+		}
+	}
+}
+
 func TestHooksOnLog5xxMarksSpanError(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
