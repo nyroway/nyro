@@ -28,7 +28,7 @@ func TestDispatchRecordsUpstreamLatency(t *testing.T) {
 		t.Fatalf("dispatch → %d %s", rec.Code, rec.Body.String())
 	}
 
-	m, _ := gw.Storage.Models().ByName("gpt-4o")
+	m := gw.snapshot().ModelByName("gpt-4o")
 	if m == nil || len(m.Targets) == 0 {
 		t.Fatalf("model/backends missing: %+v", m)
 	}

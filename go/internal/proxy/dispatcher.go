@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/plugin"
 	"github.com/nyroway/nyro/go/internal/protocol/codec"
 	"github.com/nyroway/nyro/go/internal/protocol/ids"
@@ -21,9 +22,15 @@ import (
 
 // Dispatch is the single orchestration entry point. The ingress shell
 // (handleProxy) has already decoded the wire body into IR; Dispatch runs the
-// lifecycle phases, resolves the model→backend→provider from Storage, forwards
-// to the upstream (Native path, ingress codec for egress), and converts the
-// response back. Ported from dispatch_pipeline.
+// lifecycle phases, resolves the model→backend→provider from the in-memory
+// cache, forwards to the upstream (Native path, ingress codec for egress), and
+// converts the response back. Ported from dispatch_pipeline.
+//
+// Telemetry (audit log record + metrics + dispatch span) is emitted by the
+// OnLog phase hook, which reads per-request state from a ContextBag populated
+// here as the data becomes known. The hook is registered once at process start
+// (cmd/gateway); in tests no hooks are registered so Dispatch is telemetry-free
+// but otherwise functional.
 func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiRequest, ingress codec.EndpointHandler) {
 	started := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
@@ -31,17 +38,28 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 	var usage ir.Usage
 	model := storage.Model{}
 	provider := storage.Provider{}
-	lc := logCtx{
-		method:         r.Method,
-		path:           r.URL.Path,
-		clientProtocol: ingress.Endpoint().String(),
-		clientModel:    req.Model,
-		isStream:       req.Stream.Enabled,
+	lc := observability.LogCtx{
+		Method:         r.Method,
+		Path:           r.URL.Path,
+		ClientProtocol: ingress.Endpoint().String(),
+		ClientModel:    req.Model,
+		IsStream:       req.Stream.Enabled,
 	}
+	bag := plugin.NewContextBag()
 
-	defer plugin.RunPhaseHooks(plugin.PhaseOnLog, &plugin.PhaseContext{Ctx: r.Context()})
+	// Defer ordering is LIFO: the bag-populating defer (registered second)
+	// runs FIRST, then the OnLog hook defer (registered first) reads the
+	// fully-populated bag and emits. This guarantees the hook sees usage,
+	// status, provider, etc. even when the request exits early.
+	defer plugin.RunPhaseHooks(plugin.PhaseOnLog, &plugin.PhaseContext{Ctx: r.Context(), Bag: bag})
 	defer func() {
-		g.appendLog(model, provider, apiKeyID, started, rec.status, usage, lc)
+		bag.Set(string(observability.BagStarted), started)
+		bag.Set(string(observability.BagStatus), rec.status)
+		bag.Set(string(observability.BagModel), model)
+		bag.Set(string(observability.BagProvider), provider)
+		bag.Set(string(observability.BagAPIKeyID), apiKeyID)
+		bag.Set(string(observability.BagLogCtx), lc)
+		bag.Set(string(observability.BagUsage), usage)
 		// Record into the in-memory quota sliding window. apiKeyID is empty for
 		// unauthenticated/open requests — skip those. For requests that failed
 		// before usage was captured, usage is zero so only the request counts.
@@ -50,7 +68,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		}
 	}()
 
-	plugin.RunPhaseHooks(plugin.PhaseOnRequest, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
+	plugin.RunPhaseHooks(plugin.PhaseOnRequest, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
 
 	// route: model name → model (with backends) — read from the in-memory cache.
 	m := g.snapshot().ModelByName(req.Model)
@@ -59,6 +77,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		return
 	}
 	model = *m
+	bag.Set(string(observability.BagModel), model)
 	if !model.IsEnabled {
 		writeJSONError(rec, http.StatusServiceUnavailable, "model disabled: "+req.Model)
 		return
@@ -69,8 +88,8 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 	}
 
 	// inbound auth + OnAccess
-	plugin.RunPhaseHooks(plugin.PhaseOnAccess, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
-	if status, msg := checkAccess(g.snapshot(), g.Quota, model, r, &apiKeyID, &lc.apiKeyName); status != 0 {
+	plugin.RunPhaseHooks(plugin.PhaseOnAccess, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
+	if status, msg := checkAccess(g.snapshot(), g.Quota, model, r, &apiKeyID, &lc.APIKeyName); status != 0 {
 		writeJSONError(rec, status, msg)
 		return
 	}
@@ -134,7 +153,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 			writeJSONError(rec, http.StatusInternalServerError, "encode request: "+err.Error())
 			return
 		}
-		plugin.RunPhaseHooks(plugin.PhaseOnUpstream, &plugin.PhaseContext{Ctx: r.Context(), Request: req})
+		plugin.RunPhaseHooks(plugin.PhaseOnUpstream, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
 
 		client, cErr := g.httpClientFor(p.UseProxy)
 		if cErr != nil {
@@ -153,14 +172,16 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 			g.Router.Record(router.KeyOf(target), false, latencyMs)
 			continue // server error → retryable
 		}
-		// usable response (2xx or 4xx client error) → serve, no more failover
+		// usable response (2xx or 4xx client error) → serve, no more failover.
+		// Populate provider + upstream logCtx fields + bag now that they're known.
 		provider = *p
-		lc.upstreamModel = actualModel
-		lc.upstreamProtocol = egressHandler.Endpoint().String()
+		lc.UpstreamModel = actualModel
+		lc.UpstreamProtocol = egressHandler.Endpoint().String()
 		us := int32(resp.StatusCode)
-		lc.upstreamStatus = &us
+		lc.UpstreamStatus = &us
 		um := int64(latencyMs)
-		lc.latencyUpstreamMs = &um
+		lc.LatencyUpstreamMs = &um
+		bag.Set(string(observability.BagProvider), provider)
 		g.Router.Record(router.KeyOf(target), true, latencyMs)
 		switch {
 		case resp.StatusCode >= 400:
@@ -168,9 +189,9 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		case ingress.Endpoint() == ids.OpenAICompatibleEmbeddingsV1:
 			copyResponse(rec, resp)
 		case req.Stream.Enabled:
-			g.serveStream(r.Context(), rec, resp.Body, egressHandler, ingress, &usage)
+			g.serveStream(r.Context(), rec, resp.Body, egressHandler, ingress, &usage, bag)
 		default:
-			g.serveNonStream(r.Context(), rec, resp.Body, egressHandler, ingress, req, &usage)
+			g.serveNonStream(r.Context(), rec, resp.Body, egressHandler, ingress, req, &usage, bag)
 		}
 		resp.Body.Close()
 		served = true
@@ -201,7 +222,7 @@ func (g *Gateway) callUpstream(client *http.Client, r *http.Request, outbound co
 
 // serveStream decodes upstream SSE → IR deltas → re-encodes to client SSE in
 // real time, flushing after each frame.
-func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, upstream io.Reader, decHandler codec.EndpointHandler, encHandler codec.EndpointHandler, outUsage *ir.Usage) {
+func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, upstream io.Reader, decHandler codec.EndpointHandler, encHandler codec.EndpointHandler, outUsage *ir.Usage, bag *plugin.ContextBag) {
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -237,7 +258,7 @@ func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, upstre
 				usage = u.Usage
 			}
 			// Per-delta OnResponse: run hooks on every delta (not just the first).
-			plugin.RunPhaseHooks(plugin.PhaseOnResponse, &plugin.PhaseContext{Ctx: ctx, Delta: d})
+			plugin.RunPhaseHooks(plugin.PhaseOnResponse, &plugin.PhaseContext{Ctx: ctx, Delta: d, Bag: bag})
 		}
 		frames, _ := enc.FormatDeltas(deltas)
 		writeSSE(w, frames, flusher)
@@ -252,7 +273,7 @@ func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, upstre
 }
 
 // serveNonStream decodes the full upstream body → AiResponse → formats it.
-func (g *Gateway) serveNonStream(ctx context.Context, w http.ResponseWriter, upstream io.Reader, decHandler codec.EndpointHandler, encHandler codec.EndpointHandler, req *ir.AiRequest, outUsage *ir.Usage) {
+func (g *Gateway) serveNonStream(ctx context.Context, w http.ResponseWriter, upstream io.Reader, decHandler codec.EndpointHandler, encHandler codec.EndpointHandler, req *ir.AiRequest, outUsage *ir.Usage, bag *plugin.ContextBag) {
 	raw, err := io.ReadAll(upstream)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "read upstream: "+err.Error())
@@ -263,7 +284,7 @@ func (g *Gateway) serveNonStream(ctx context.Context, w http.ResponseWriter, ups
 		writeJSONError(w, http.StatusBadGateway, "parse upstream: "+err.Error())
 		return
 	}
-	plugin.RunPhaseHooks(plugin.PhaseOnResponse, &plugin.PhaseContext{Ctx: ctx, Request: req, Response: resp})
+	plugin.RunPhaseHooks(plugin.PhaseOnResponse, &plugin.PhaseContext{Ctx: ctx, Request: req, Response: resp, Bag: bag})
 	out, err := encHandler.MakeResponseEncoder().Format(resp)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "format response: "+err.Error())

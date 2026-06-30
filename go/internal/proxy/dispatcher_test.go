@@ -16,6 +16,20 @@ func newTestGateway(t *testing.T, upstreamURL string) *Gateway {
 	return newTestGatewayProto(t, upstreamURL, "openai-compatible")
 }
 
+// newTestGatewayFromStorage builds a storage-less Gateway and populates its
+// config cache from the given (typically in-memory) storage. This is the test
+// equivalent of the old NewGateway(s) one-shot LoadFromStorage: production no
+// longer reads the DB for config (xDS / YAML), so tests seed the cache via the
+// same LoadAndSwap the xDS loader uses.
+func newTestGatewayFromStorage(t *testing.T, s storage.Storage) *Gateway {
+	t.Helper()
+	gw := NewGateway()
+	if err := gw.Cache.LoadAndSwap(s); err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	return gw
+}
+
 func newTestGatewayProto(t *testing.T, upstreamURL, protocol string) *Gateway {
 	t.Helper()
 	st := memory.New()
@@ -26,7 +40,11 @@ func newTestGatewayProto(t *testing.T, upstreamURL, protocol string) *Gateway {
 		Name:    "gpt-4o",
 		Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "gpt-4o"}},
 	})
-	return NewGateway(st.Storage())
+	gw := NewGateway()
+	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	return gw
 }
 
 // streamUpstream simulates an OpenAI SSE chat-completion stream.

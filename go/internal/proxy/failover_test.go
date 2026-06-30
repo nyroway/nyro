@@ -37,7 +37,7 @@ func TestDispatchFailover(t *testing.T) {
 			{ProviderID: p2.ID, Model: "gpt-4o", Priority: 2},
 		},
 	})
-	engine := NewRouter(NewGateway(st.Storage()))
+	engine := NewRouter(newTestGatewayFromStorage(t, st.Storage()))
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))

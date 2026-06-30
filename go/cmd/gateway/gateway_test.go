@@ -26,7 +26,7 @@ func TestBuildGateway_ConfigAndXdsAreMutuallyExclusive(t *testing.T) {
 	// NOTE: buildGateway itself does NOT enforce XOR (it picks --config when both
 	// are set). The XOR is enforced in the cobra RunE. We exercise it via RunE
 	// below. This test documents that buildGateway picks config when both given.
-	_, _, err := buildGateway(context.Background(), "missing.yaml", "localhost:9999", "memory", "")
+	_, _, _, err := buildGateway(context.Background(), "missing.yaml", "localhost:9999")
 	// missing.yaml → file error, proving the config branch was selected.
 	if err == nil {
 		t.Error("expected error selecting config branch with both flags; buildGateway must prefer --config")
@@ -70,12 +70,19 @@ api_keys:
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gw, stopXDS, err := buildGateway(context.Background(), path, "", "memory", "")
+	gw, stopXDS, obs, err := buildGateway(context.Background(), path, "")
 	if err != nil {
 		t.Fatalf("buildGateway: %v", err)
 	}
 	if stopXDS != nil {
 		t.Error("standalone mode should not start an xDS client")
+	}
+	if obs == nil {
+		t.Error("standalone mode should construct an observability provider")
+	} else {
+		// Drain the stdout log exporter (default sink) so Shutdown is exercised
+		// and the test leaves no dangling periodic-reader goroutine.
+		_ = obs.Shutdown(context.Background())
 	}
 	if !gw.Cache.Ready() {
 		t.Error("cache should be ready after YAML build")

@@ -9,7 +9,6 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/auth"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/internal/storage/memory"
 	"github.com/nyroway/nyro/go/internal/xds"
 )
 
@@ -49,7 +48,6 @@ func (f *fakeDriver) Refresh(ctx context.Context, cred storage.OAuthCredential) 
 // under the cred's DriverKey.
 func newGatewayWithOAuth(t *testing.T, calls *atomic.Int64) (*Gateway, *fakeDriver) {
 	t.Helper()
-	st := memory.New()
 	cache := &xds.ConfigCache{}
 	builder := &xds.Snapshot{}
 	builder.SetProvider(storage.Provider{ID: "prov", AuthMode: "oauth"})
@@ -58,7 +56,7 @@ func newGatewayWithOAuth(t *testing.T, calls *atomic.Int64) (*Gateway, *fakeDriv
 		ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), // expired
 	})
 	cache.Swap(builder.Done())
-	g := NewGatewayWithCache(st.Storage(), cache)
+	g := NewGatewayWithCache(cache)
 	drv := &fakeDriver{key: "drv", calls: calls}
 	reg := auth.NewRegistry()
 	reg.Register("drv", drv)

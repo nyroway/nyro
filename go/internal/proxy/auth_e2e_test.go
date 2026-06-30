@@ -31,9 +31,9 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 		Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "gpt-4o"}},
 	})
 	key, _ := st.APIKeys().Create(storage.CreateApiKey{Name: "test", ModelIDs: []string{m.ID}})
-	gw := NewGateway(st.Storage())
-	if err := gw.ReloadCache(); err != nil {
-		t.Fatalf("reload cache: %v", err)
+	gw := NewGateway()
+	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
+		t.Fatalf("load cache: %v", err)
 	}
 	engine := NewRouter(gw)
 
@@ -62,7 +62,7 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 	if _, err := st.APIKeys().Update(key.ID, storage.UpdateApiKey{IsEnabled: boolPtr(false)}); err != nil {
 		t.Fatalf("disable key: %v", err)
 	}
-	if err := gw.ReloadCache(); err != nil { // reflect the storage change in the in-memory cache
+	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil { // reflect the storage change in the in-memory cache
 		t.Fatalf("reload cache: %v", err)
 	}
 	if c := post(key.Token); c != http.StatusForbidden {

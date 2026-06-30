@@ -33,14 +33,15 @@ func NewRouter(gw *Gateway) chi.Router {
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		web.JSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
-	// GET /readyz — readiness probe gated on storage health (CanConnect + Writable).
+	// GET /readyz — readiness probe gated on config-cache fill. The gateway no
+	// longer holds a storage handle (P3c), so readiness is "has a config
+	// snapshot been published (xDS push / YAML build)?" — nil means not ready.
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		h, err := gw.Storage.Bootstrap().Health()
-		if err != nil || !h.CanConnect || !h.Writable {
-			web.JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "unready", "backend": h.Backend})
+		if gw.Cache.Load() == nil {
+			web.JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "unready"})
 			return
 		}
-		web.JSON(w, http.StatusOK, map[string]any{"status": "ready", "backend": h.Backend})
+		web.JSON(w, http.StatusOK, map[string]any{"status": "ready"})
 	})
 
 	// GET /v1/models — OpenAI-compatible client discovery (API-key-aware).

@@ -39,7 +39,7 @@ func TestDispatchEmbeddingsEndToEnd(t *testing.T) {
 		Name:    "text-embedding",
 		Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "text-embedding-3-small"}},
 	})
-	engine := NewRouter(NewGateway(st.Storage()))
+	engine := NewRouter(newTestGatewayFromStorage(t, st.Storage()))
 
 	body := `{"model":"text-embedding","input":"hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(body))

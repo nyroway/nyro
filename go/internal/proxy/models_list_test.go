@@ -41,7 +41,10 @@ func TestModelsList(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gw := NewGateway(st.Storage())
+	gw := NewGateway()
+	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
 	r := NewRouter(gw)
 
 	// No API key → only open models.

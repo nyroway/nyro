@@ -38,7 +38,7 @@ func TestCrossProtocolAnthropicToOpenAI(t *testing.T) {
 		Name:    "claude-sonnet",
 		Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "gpt-4o"}},
 	})
-	engine := NewRouter(NewGateway(st.Storage()))
+	engine := NewRouter(newTestGatewayFromStorage(t, st.Storage()))
 
 	// Client sends an Anthropic Messages request.
 	body := `{"model":"claude-sonnet","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`

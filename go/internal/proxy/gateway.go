@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/auth"
+	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/proxy/quota"
 	"github.com/nyroway/nyro/go/internal/router"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -18,18 +19,25 @@ import (
 )
 
 // Gateway holds the runtime dependencies for dispatching requests. Config reads
-// (models, providers, API keys, bindings, proxy settings, OAuth credentials)
-// go through Cache, an in-memory snapshot published by a background loader;
+// (models, providers, API keys, bindings, proxy settings, OAuth credentials) go
+// through Cache, an in-memory snapshot published by xDS or built once from YAML;
 // Quota is the in-memory rpm/rpd/tpm/tpd sliding window (decoupled from
-// request_logs in P3a, so the quota path no longer touches storage); Storage is
-// retained only for request-log writes and the /readyz health probe (P3c cuts
-// those). Router selects among a model's backends and tracks failover.
+// request_logs in P3a). The gateway holds NO storage handle: per-request
+// telemetry flows through the OTel phase hooks (Obs/Handles, registered once at
+// startup) → configured sink (none/stdout/otlp). Router selects among a model's
+// backends and tracks failover.
 type Gateway struct {
-	HTTPClient     *http.Client
-	Storage        storage.Storage
-	Cache          *xds.ConfigCache
-	Quota          *quota.Counter
-	Router         *router.Router
+	HTTPClient *http.Client
+	Cache      *xds.ConfigCache
+	Quota      *quota.Counter
+	Router     *router.Router
+
+	// Obs is the OTel provider (logger/meter/tracer). Populated by cmd/gateway
+	// once at startup; nil in unit tests (the dispatcher still works, the
+	// phase hooks simply aren't registered so no telemetry is emitted).
+	Obs     *observability.ObsProvider
+	Handles *observability.Handles
+
 	driverRegistry *auth.Registry
 
 	proxyMu        sync.Mutex
@@ -47,31 +55,21 @@ type Gateway struct {
 	oauthRefreshInFlight map[string]chan struct{}
 }
 
-// NewGateway builds a Gateway backed by the given storage. It creates an empty
-// ConfigCache and seeds it with a one-shot LoadFromStorage so config reads work
-// immediately; call StartConfigLoader to keep it fresh while the DB is the
-// source of truth (Phase 1).
-func NewGateway(s storage.Storage) *Gateway {
-	cache := &xds.ConfigCache{}
-	if snap, err := xds.LoadFromStorage(s); err == nil {
-		cache.Swap(snap)
-	}
-	return newGateway(s, cache)
+// NewGateway builds a Gateway with a fresh, empty ConfigCache. Tests use this
+// and populate the cache directly via Cache.LoadAndSwap / Cache.Swap. Production
+// callers (cmd/gateway) use NewGatewayWithCache with a snapshot built from YAML
+// or filled by the xDS stream.
+func NewGateway() *Gateway {
+	return NewGatewayWithCache(&xds.ConfigCache{})
 }
 
-// NewGatewayWithCache builds a Gateway using a caller-provided, pre-populated
-// ConfigCache. This is the standalone-YAML and xDS path: the caller (cmd/gateway)
-// builds the snapshot from YAML or from the xDS stream and swaps it in, so the
-// gateway never needs to read the DB for config. storage is still retained for
-// OAuth/quota/logs until Phase 3.
-func NewGatewayWithCache(s storage.Storage, cache *xds.ConfigCache) *Gateway {
-	return newGateway(s, cache)
-}
-
-func newGateway(s storage.Storage, cache *xds.ConfigCache) *Gateway {
+// NewGatewayWithCache builds a Gateway using a caller-provided ConfigCache
+// (standalone-YAML and xDS path): the caller builds the snapshot from YAML or
+// from the xDS stream and swaps it in, so the gateway never needs storage for
+// config. Obs/Handles are attached by cmd/gateway after construction.
+func NewGatewayWithCache(cache *xds.ConfigCache) *Gateway {
 	return &Gateway{
 		HTTPClient:           &http.Client{Timeout: 5 * time.Minute},
-		Storage:              s,
 		Cache:                cache,
 		Quota:                quota.New(),
 		Router:               router.New(),
@@ -82,18 +80,6 @@ func newGateway(s storage.Storage, cache *xds.ConfigCache) *Gateway {
 
 // SetDriverRegistry wires the OAuth driver registry (for token refresh).
 func (g *Gateway) SetDriverRegistry(r *auth.Registry) { g.driverRegistry = r }
-
-// ReloadCache rebuilds the config snapshot from storage and publishes it. Tests
-// call this after mutating storage to reflect their changes at the read path;
-// in production the background loader (StartConfigLoader) keeps it fresh.
-func (g *Gateway) ReloadCache() error { return g.Cache.LoadAndSwap(g.Storage) }
-
-// StartConfigLoader starts a background loop that refreshes the ConfigCache
-// from storage at the given interval. Pass a positive interval (<=0 defaults to
-// 10s). Returns a stop function; the loop also exits when the process ends.
-func (g *Gateway) StartConfigLoader(interval time.Duration) func() {
-	return g.Cache.StartLoaderLoop(g.Storage, interval, nil)
-}
 
 // snapshot returns the current config snapshot, falling back to an empty one so
 // callers never see a nil pointer (readers on an empty snapshot simply report

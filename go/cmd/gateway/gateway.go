@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,21 +15,21 @@ import (
 	"github.com/nyroway/nyro/go/internal/auth"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/config"
+	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/proxy"
-	"github.com/nyroway/nyro/go/internal/storage/memory"
 	"github.com/nyroway/nyro/go/internal/xds"
 )
 
 // NewCmd builds the gateway (data-plane) subcommand.
 //
-// Config sources (exactly one):
+// Config sources (exactly one is required):
 //   - --config: standalone YAML (no admin/DB needed). The snapshot is built once
 //     at startup and never refreshed; edit + restart to change config.
 //   - --xds-addr: admin's gRPC endpoint. The gateway subscribes to a long-lived
 //     config stream and hot-reloads on every admin config change.
 //
-// If NEITHER flag is set, the gateway falls back to the transitional Phase-1
-// DB-poll loader (kept for dev compatibility; Phase 3 removes it).
+// Phase 3 removed the transitional Phase-1 DB-poll default — exactly one of
+// --config / --xds-addr must now be set.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "gateway",
@@ -40,9 +42,10 @@ func NewCmd() *cobra.Command {
 		addr, _ := cmd.Flags().GetString("addr")
 		cfgPath, _ := cmd.Flags().GetString("config")
 		xdsAddr, _ := cmd.Flags().GetString("xds-addr")
-		storageBackend, _ := cmd.Flags().GetString("storage")
-		dbDSN, _ := cmd.Flags().GetString("db-dsn")
 
+		if cfgPath == "" && xdsAddr == "" {
+			return errors.New("exactly one of --config or --xds-addr is required (the legacy DB-poll default was removed in Phase 3)")
+		}
 		if cfgPath != "" && xdsAddr != "" {
 			return errors.New("--config and --xds-addr are mutually exclusive (set exactly one)")
 		}
@@ -50,12 +53,21 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		gw, stopXDS, err := buildGateway(ctx, cfgPath, xdsAddr, storageBackend, dbDSN)
+		gw, stopXDS, obsProvider, err := buildGateway(ctx, cfgPath, xdsAddr)
 		if err != nil {
 			return err
 		}
 		if stopXDS != nil {
 			defer stopXDS()
+		}
+		if obsProvider != nil {
+			defer func() {
+				shutCtx, shutCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+				defer shutCancel()
+				if err := obsProvider.Shutdown(shutCtx); err != nil {
+					slog.Warn("observability provider shutdown failed", "error", err)
+				}
+			}()
 		}
 
 		reg := auth.NewRegistry()
@@ -63,7 +75,6 @@ func NewCmd() *cobra.Command {
 		gw.SetDriverRegistry(reg)
 
 		gw.StartOAuthRefreshLoop(ctx)
-		bootstrap.StartRetentionLoop(ctx, gw.Storage)
 
 		engine := proxy.NewRouter(gw)
 		return bootstrap.RunServer(engine, addr)
@@ -71,48 +82,137 @@ func NewCmd() *cobra.Command {
 	return cmd
 }
 
-// buildGateway selects the config source and returns a ready Gateway plus an
-// optional xDS-client stop function (nil unless --xds-addr).
-func buildGateway(ctx context.Context, cfgPath, xdsAddr, backend, dsn string) (gw *proxy.Gateway, stopXDS func(), err error) {
+// shutdownTimeout bounds the OTel provider flush on graceful exit.
+const shutdownTimeout = 5 * time.Second
+
+// buildGateway selects the config source and returns a ready, storage-free
+// Gateway plus an optional xDS-client stop function (nil unless --xds-addr) and
+// the OTel provider (always non-nil on success — telemetry is wired in every
+// mode). It constructs the ObsProvider + Handles and calls RegisterHooks exactly
+// ONCE per process (the plugin registry accumulates appends, so re-registering
+// would double-emit). /readyz reflects cache fill, not storage health.
+func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gateway, stopXDS func(), obs *observability.ObsProvider, err error) {
 	switch {
 	case cfgPath != "":
-		// Standalone YAML: build snapshot directly, memory storage for OAuth/quota/logs.
-		st := memory.New()
+		// Standalone YAML: build the config snapshot directly (no DB). The
+		// observability config comes from env (OTEL_EXPORTER_OTLP_ENDPOINT /
+		// OTEL_*_EXPORTER); defaults are logs→stdout, metrics/traces→none.
 		cfg, err := config.LoadYAML(cfgPath)
 		if err != nil {
-			return nil, nil, err
-		}
-		if err := cfg.ApplyTo(st); err != nil {
-			return nil, nil, fmt.Errorf("apply config: %w", err)
+			return nil, nil, nil, err
 		}
 		snap, err := cfg.BuildSnapshot()
 		if err != nil {
-			return nil, nil, fmt.Errorf("build snapshot: %w", err)
+			return nil, nil, nil, fmt.Errorf("build snapshot: %w", err)
 		}
 		cache := &xds.ConfigCache{}
 		cache.Swap(snap)
-		return proxy.NewGatewayWithCache(st.Storage(), cache), nil, nil
+		gw = proxy.NewGatewayWithCache(cache)
+
+		obsCfg := observability.LoadConfig(standaloneObsGet)
+		prov, perr := observability.NewProvider(ctx, obsCfg)
+		if perr != nil {
+			return nil, nil, nil, fmt.Errorf("observability provider: %w", perr)
+		}
+		attachObservability(gw, prov)
+		return gw, nil, prov, nil
 
 	case xdsAddr != "":
-		// xDS hot-reload: DB storage (for OAuth/quota/logs), empty cache filled by the stream.
-		st, err := bootstrap.OpenStorage(backend, dsn)
-		if err != nil {
-			return nil, nil, err
-		}
+		// xDS hot-reload: empty cache is filled by the stream. Observability
+		// config is read from the cache snapshot (published by the admin) once
+		// it arrives; for the provider we read synchronously at startup and
+		// accept that env overrides apply. The default is all→otlp via
+		// obs_otlp_endpoint from settings; env can override.
 		cache := &xds.ConfigCache{}
 		client := xds.NewConfigClient(xdsAddr, cache)
 		go func() { _ = client.Run(ctx) }()
-		return proxy.NewGatewayWithCache(st, cache), nil, nil
+		gw = proxy.NewGatewayWithCache(cache)
+
+		// Read obs settings from the cache snapshot when present; fall back to
+		// env so the provider can be built before the first xDS push lands.
+		obsCfg := observability.LoadConfig(cacheObsGet(cache))
+		if obsCfg.Sink == "" && obsCfg.LogsSink == "" && obsCfg.MetricsSink == "" && obsCfg.TracesSink == "" && obsCfg.OTLPEndpoint == "" {
+			// No xDS settings yet → env-based defaults (all→otlp if
+			// OTEL_EXPORTER_OTLP_ENDPOINT is set, else none).
+			obsCfg = observability.LoadConfig(standaloneObsGet)
+		}
+		prov, perr := observability.NewProvider(ctx, obsCfg)
+		if perr != nil {
+			return nil, nil, nil, fmt.Errorf("observability provider: %w", perr)
+		}
+		attachObservability(gw, prov)
+		return gw, nil, prov, nil
 
 	default:
-		// Transitional Phase-1 DB-poll mode. Kept for dev compatibility; Phase 3
-		// removes it in favor of an explicit choice between YAML and xDS.
-		st, err := bootstrap.OpenStorage(backend, dsn)
-		if err != nil {
-			return nil, nil, err
-		}
-		gw := proxy.NewGateway(st)
-		stopLoader := gw.StartConfigLoader(10 * time.Second)
-		return gw, stopLoader, nil
+		// Unreachable: RunE enforces the XOR. Guard anyway.
+		return nil, nil, nil, errors.New("exactly one of --config or --xds-addr is required")
 	}
+}
+
+// attachObservability wires the ObsProvider + Handles into the Gateway and
+// registers the OTel phase hooks ONCE per process. Safe to call exactly once.
+func attachObservability(gw *proxy.Gateway, prov *observability.ObsProvider) {
+	gw.Obs = prov
+	gw.Handles = observability.NewHandles(prov.Meter)
+	observability.RegisterHooks(prov.Tracer, prov.Logger, gw.Handles)
+}
+
+// standaloneObsGet maps OTel-standard env vars onto the observability settings
+// keys, so the standalone YAML path (which has no settings store) can still
+// configure the sinks via env. Defaults: logs→stdout, metrics/traces→none. If
+// OTEL_EXPORTER_OTLP_ENDPOINT is set, every signal whose exporter resolves to
+// "otlp" routes there; per-signal OTEL_<SIGNAL>_EXPORTER=none|console|otlp wins
+// over the global endpoint default.
+func standaloneObsGet(key string) (string, error) {
+	// Per-key mapping onto the obs_* settings keys that LoadConfig reads.
+	switch key {
+	case "obs_otlp_endpoint":
+		return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), nil
+	case "obs_logs_sink":
+		return resolveSinkEnv("OTEL_LOGS_EXPORTER", "stdout"), nil
+	case "obs_metrics_sink":
+		return resolveSinkEnv("OTEL_METRICS_EXPORTER", "none"), nil
+	case "obs_traces_sink":
+		return resolveSinkEnv("OTEL_TRACES_EXPORTER", "none"), nil
+	case "obs_sink":
+		// No global default in standalone mode (per-signal defaults above win).
+		return "", nil
+	}
+	return "", nil
+}
+
+// cacheObsGet returns a get-func that reads obs_* settings from the xDS-published
+// snapshot, falling back to "" (absent) before the first push lands.
+func cacheObsGet(cache *xds.ConfigCache) func(string) (string, error) {
+	return func(key string) (string, error) {
+		if s := cache.Load(); s != nil {
+			if v, ok := s.SettingGet(key); ok {
+				return v, nil
+			}
+		}
+		return "", nil
+	}
+}
+
+// resolveSinkEnv maps an OTEL_<SIGNAL>_EXPORTER value onto an obs sink name
+// (console≡stdout), applying def when the env var is unset/empty.
+func resolveSinkEnv(envVar, def string) string {
+	v := os.Getenv(envVar)
+	switch v {
+	case "":
+		// If an OTLP endpoint is configured and the signal didn't pin its own
+		// exporter, follow the endpoint (otlp). Otherwise keep the per-signal
+		// default.
+		if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+			return "otlp"
+		}
+		return def
+	case "otlp":
+		return "otlp"
+	case "console":
+		return "stdout"
+	case "none":
+		return "none"
+	}
+	return def
 }
