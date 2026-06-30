@@ -88,6 +88,81 @@ func TestLogsQueryFiltersSortsPaginates(t *testing.T) {
 	}
 }
 
+// TestLogsQueryStatusNilExcluded is a regression test for the contract that
+// rows with a nil ClientStatusCode must be EXCLUDED when StatusMin/StatusMax is
+// set (mirrors the legacy memory + sqlite backends, where NULL >= x is unknown).
+func TestLogsQueryStatusNilExcluded(t *testing.T) {
+	dir := t.TempDir()
+	writeLogs(t, dir, []LogRecord{
+		{ID: "nil-status", ProviderID: "anthropic", ModelID: "claude", ClientStatusCode: nil, CreatedAt: 1000},
+		{ID: "ok-200", ProviderID: "anthropic", ModelID: "claude", ClientStatusCode: int32p(200), CreatedAt: 2000},
+		{ID: "err-500", ProviderID: "anthropic", ModelID: "claude", ClientStatusCode: int32p(500), CreatedAt: 3000},
+	})
+	logs := NewLogs(dir)
+
+	// StatusMin set: nil-status row must be excluded; matching 200/500 kept.
+	page, err := logs.Query(LogQuery{StatusMin: int32p(200), Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 {
+		t.Fatalf("StatusMin=200: want total 2 (nil excluded), got %d", page.Total)
+	}
+	for _, r := range page.Items {
+		if r.ID == "nil-status" {
+			t.Errorf("StatusMin=200: nil-status row should be EXCLUDED, but it appeared in results")
+		}
+	}
+	got := map[string]bool{}
+	for _, r := range page.Items {
+		got[r.ID] = true
+	}
+	if !got["ok-200"] || !got["err-500"] {
+		t.Errorf("StatusMin=200: want ok-200 and err-500 present, got %v", got)
+	}
+
+	// StatusMax set: nil-status row must be excluded; matching 200 kept.
+	page, _ = logs.Query(LogQuery{StatusMax: int32p(499), Limit: 100})
+	if page.Total != 1 {
+		t.Fatalf("StatusMax=499: want total 1 (nil + 500 excluded), got %d", page.Total)
+	}
+	if page.Items[0].ID != "ok-200" {
+		t.Errorf("StatusMax=499: want ok-200, got %s", page.Items[0].ID)
+	}
+
+	// No status filter: nil-status row is kept (only filtered by status bounds).
+	page, _ = logs.Query(LogQuery{Limit: 100})
+	if page.Total != 3 {
+		t.Errorf("no status filter: want total 3 (nil kept), got %d", page.Total)
+	}
+}
+
+// TestLogsQueryNegativeOffset is a regression test: a negative Offset must be
+// clamped to 0 rather than panicking on filtered[start:end].
+func TestLogsQueryNegativeOffset(t *testing.T) {
+	dir := t.TempDir()
+	writeLogs(t, dir, []LogRecord{
+		{ID: "a", ProviderID: "anthropic", CreatedAt: 1000},
+		{ID: "b", ProviderID: "anthropic", CreatedAt: 2000},
+	})
+	logs := NewLogs(dir)
+
+	page, err := logs.Query(LogQuery{Limit: 10, Offset: -5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 {
+		t.Fatalf("negative offset: want total 2, got %d", page.Total)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("negative offset clamped to 0: want 2 items, got %d", len(page.Items))
+	}
+	// Sorted desc by CreatedAt: b(2000), a(1000).
+	if page.Items[0].ID != "b" || page.Items[1].ID != "a" {
+		t.Errorf("negative offset: want [b,a], got %v", ids(page.Items))
+	}
+}
+
 func TestLogsFindByID(t *testing.T) {
 	dir := t.TempDir()
 	writeLogs(t, dir, []LogRecord{

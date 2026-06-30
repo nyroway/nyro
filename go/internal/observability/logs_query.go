@@ -50,10 +50,13 @@ func (l *Logs) Query(q LogQuery) (LogPage, error) {
 		if q.Model != "" && r.ModelID != q.Model {
 			continue
 		}
-		if q.StatusMin != nil && r.ClientStatusCode != nil && *r.ClientStatusCode < *q.StatusMin {
+		// Mirror the legacy memory/sqlite contract: when a status bound is set,
+		// rows with a nil ClientStatusCode are EXCLUDED (NULL >= x is unknown in
+		// SQL; the memory backend treats nil the same way).
+		if q.StatusMin != nil && (r.ClientStatusCode == nil || *r.ClientStatusCode < *q.StatusMin) {
 			continue
 		}
-		if q.StatusMax != nil && r.ClientStatusCode != nil && *r.ClientStatusCode > *q.StatusMax {
+		if q.StatusMax != nil && (r.ClientStatusCode == nil || *r.ClientStatusCode > *q.StatusMax) {
 			continue
 		}
 		filtered = append(filtered, r)
@@ -65,6 +68,9 @@ func (l *Logs) Query(q LogQuery) (LogPage, error) {
 		limit = 50
 	}
 	start := q.Offset
+	if start < 0 {
+		start = 0
+	}
 	if start > total {
 		start = total
 	}
