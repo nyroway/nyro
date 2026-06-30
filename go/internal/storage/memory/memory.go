@@ -28,7 +28,6 @@ type Backend struct {
 	apiKeys   map[string]storage.ApiKey
 	bindings  map[string][]string                // apiKeyID → []modelID
 	oauth     map[string]storage.OAuthCredential // providerID → cred
-	logs      []storage.RequestLog
 }
 
 // New creates an empty in-memory backend.
@@ -55,7 +54,6 @@ func (b *Backend) Settings() storage.SettingsStore                { return setti
 func (b *Backend) APIKeys() storage.ApiKeyStore                   { return apiKeyStore{b} }
 func (b *Backend) Auth() storage.AuthAccessStore                  { return authAccessStore{b} }
 func (b *Backend) OAuthCredentials() storage.OAuthCredentialStore { return oauthStore{b} }
-func (b *Backend) Logs() storage.LogStore                         { return logStore{b} }
 func (b *Backend) Bootstrap() storage.Bootstrap                   { return b }
 
 // Bootstrap

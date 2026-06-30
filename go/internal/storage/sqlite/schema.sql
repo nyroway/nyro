@@ -1,8 +1,10 @@
 -- Nyro gateway schema (SQLite). Applied idempotently on bootstrap.
 -- AutoMigrate is OFF; this file is the source of truth. Columns match the
 -- Rust post-migration final schema (db/mod.rs INIT_SQL + renames:
--- routes→models, route_targets→model_backends, settings.name, request_logs
--- 31-column spec) so a Go gateway can read a Rust DB after cutover.
+-- routes→models, route_targets→model_backends, settings.name) so a Go
+-- gateway can read a Rust DB after cutover. The request_logs table was
+-- removed in Phase 4 (request logs now live in the parquet observability
+-- store); Migrate() drops any leftover copy.
 
 CREATE TABLE IF NOT EXISTS providers (
   id TEXT PRIMARY KEY,
@@ -92,42 +94,3 @@ CREATE TABLE IF NOT EXISTS provider_oauth_credentials (
   created_at TEXT,
   updated_at TEXT
 );
-
-CREATE TABLE IF NOT EXISTS request_logs (
-  id TEXT PRIMARY KEY,
-  created_at INTEGER NOT NULL DEFAULT 0,
-  api_key_id TEXT,
-  api_key_name TEXT,
-  client_protocol TEXT,
-  upstream_protocol TEXT,
-  provider_id TEXT,
-  provider_name TEXT,
-  model_id TEXT,
-  model_name TEXT,
-  upstream_url TEXT,
-  client_model TEXT,
-  upstream_model TEXT,
-  method TEXT,
-  path TEXT,
-  client_request_headers TEXT,
-  client_request_body TEXT,
-  client_response_headers TEXT,
-  client_response_body TEXT,
-  upstream_request_headers TEXT,
-  upstream_request_body TEXT,
-  upstream_response_headers TEXT,
-  upstream_response_body TEXT,
-  upstream_status_code INTEGER,
-  client_status_code INTEGER,
-  latency_total_ms INTEGER,
-  latency_upstream_ms INTEGER,
-  input_tokens INTEGER NOT NULL DEFAULT 0,
-  output_tokens INTEGER NOT NULL DEFAULT 0,
-  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-  is_stream INTEGER NOT NULL DEFAULT 0,
-  stream_chunks_count INTEGER NOT NULL DEFAULT 0,
-  stream_first_chunk_ms INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at);
-CREATE INDEX IF NOT EXISTS idx_request_logs_api_key_id ON request_logs(api_key_id);

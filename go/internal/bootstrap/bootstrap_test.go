@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"context"
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/auth"
@@ -46,13 +45,4 @@ func TestOpenStorage(t *testing.T) {
 			t.Error("expected error for bogus backend")
 		}
 	})
-}
-
-func TestStartRetentionLoopDoesNotBlock(t *testing.T) {
-	// 仅验证它能启动并立即返回（不阻塞）；真实清理逻辑在 storage 层已测。
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	// 不 panic 即可（用 memory backend）
-	st, _ := OpenStorage("memory", "")
-	StartRetentionLoop(ctx, st)
 }

@@ -1,6 +1,6 @@
 // Package bootstrap holds the shared startup wiring used by the nyro gateway
 // and admin commands: storage backend selection, OAuth driver registration,
-// log retention, and the signal-driven HTTP server runner.
+// and the signal-driven HTTP server runner.
 package bootstrap
 
 import (
@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -67,34 +66,6 @@ func RegisterDrivers(reg *auth.Registry) {
 	reg.Register("claude-code", drivers.NewClaudeDriver())
 	reg.Register("codex", drivers.NewCodexDriver())
 	reg.Register("vertexai", drivers.NewVertexDriver())
-}
-
-// StartRetentionLoop periodically deletes request logs older than
-// log_retention_days (default 7). Cancels with ctx.
-func StartRetentionLoop(ctx context.Context, st storage.Storage) {
-	go func() {
-		ticker := time.NewTicker(10 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				retentionDays := 7
-				if v, _ := st.Settings().Get("log_retention_days"); v != "" {
-					if d, err := strconv.Atoi(v); err == nil && d > 0 {
-						retentionDays = d
-					}
-				}
-				cutoff := time.Now().UnixMilli() - int64(retentionDays)*24*60*60*1000
-				if n, err := st.Logs().DeleteBefore(cutoff); err != nil {
-					slog.Warn("log retention cleanup failed", "error", err)
-				} else if n > 0 {
-					slog.Info("log retention cleanup", "deleted", n, "retention_days", retentionDays)
-				}
-			}
-		}
-	}()
 }
 
 // RunServer serves handler on addr until SIGINT/SIGTERM, then graceful-shutdown.

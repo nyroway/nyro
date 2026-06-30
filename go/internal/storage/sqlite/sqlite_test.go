@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"testing"
-	"time"
 
 	"github.com/nyroway/nyro/go/internal/storage"
 )
@@ -80,15 +79,8 @@ func TestSQLiteProviderModelSettings(t *testing.T) {
 		t.Errorf("upsert: %q", v)
 	}
 
-	// logging (quota counters moved off storage in P3a — into the in-memory
-	// proxy/quota counter, exercised in its own package tests).
-	_ = st.Logs().AppendBatch([]storage.RequestLog{{
-		ID: "r1", CreatedAt: time.Now().UnixMilli(), APIKeyID: k.ID, ModelID: m.ID,
-		InputTokens: 10, OutputTokens: 5,
-	}})
-	if logs, _ := st.Logs().Query(storage.LogQuery{Limit: 100}); len(logs.Items) != 1 {
-		t.Errorf("log query items=%d, want 1", len(logs.Items))
-	}
+	// logging (request_logs table removed in Phase 4; the request-audit sink is
+	// now the parquet observability store, exercised in its own package tests).
 
 	// cascade delete
 	_ = st.Models().Delete(m.ID)

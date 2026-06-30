@@ -71,7 +71,8 @@ type ApiKeyStore interface {
 
 // AuthAccessStore is the read side used by the inbound access check: key lookup
 // and model binding. Per-window quota counters used to live here too (backed by
-// request_logs) but moved to the in-memory quota.Counter in P3a.
+// the now-removed request_logs table) but moved to the in-memory quota.Counter
+// in P3a.
 type AuthAccessStore interface {
 	FindAPIKey(rawKey string) (*ApiKeyAccessRecord, error)
 	ModelBindingExists(apiKeyID, modelID string) (bool, error)
@@ -99,21 +100,12 @@ type OAuthCredentialStore interface {
 	RecoverStaleRefreshing(timeout time.Duration) (int64, error)
 }
 
-// LogStore is the request-audit sink + query surface.
-type LogStore interface {
-	AppendBatch(entries []RequestLog) error
-	Query(q LogQuery) (LogPage, error)
-	FindByID(id string) (*RequestLog, error)
-	ClearAll() (int64, error)
-	DeleteBefore(cutoffMs int64) (int64, error)
-	StatsOverview(hours int64) (StatsOverview, error)
-	StatsByModel(hours int64) ([]ModelStats, error)
-	StatsByProvider(hours int64) ([]ProviderStats, error)
-	StatsByApiKey(hours int64) ([]ApiKeyStats, error)
-	StatsHourly(hours int64) ([]StatsHourly, error)
-}
-
 // Storage is the aggregate persistence interface.
+//
+// The request-audit sink (LogStore) lived here through Phase 3 (dual-write);
+// Phase 4 removed it — request logs now live exclusively in the parquet
+// observability store (internal/observability), surfaced to the admin via
+// admin.LogSource/admin.StatsSource.
 type Storage interface {
 	Providers() ProviderStore
 	Models() ModelStore
@@ -122,6 +114,5 @@ type Storage interface {
 	APIKeys() ApiKeyStore
 	Auth() AuthAccessStore
 	OAuthCredentials() OAuthCredentialStore
-	Logs() LogStore
 	Bootstrap() Bootstrap
 }

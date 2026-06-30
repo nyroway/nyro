@@ -82,7 +82,6 @@ func (b *Backend) Settings() storage.SettingsStore                { return setti
 func (b *Backend) APIKeys() storage.ApiKeyStore                   { return apiKeyStore{b} }
 func (b *Backend) Auth() storage.AuthAccessStore                  { return authStore{b} }
 func (b *Backend) OAuthCredentials() storage.OAuthCredentialStore { return oauthStore{b} }
-func (b *Backend) Logs() storage.LogStore                         { return logStore{b} }
 func (b *Backend) Bootstrap() storage.Bootstrap                   { return b }
 
 // Bootstrap
@@ -94,7 +93,14 @@ func (b *Backend) Migrate() error {
 	if err := execAll(b.db, schemaSQL); err != nil {
 		return err
 	}
-	return b.migrateLegacyColumns()
+	if err := b.migrateLegacyColumns(); err != nil {
+		return err
+	}
+	// Phase 4: the request_logs table was removed (request logs now live in
+	// the parquet observability store). Drop any leftover copy so an upgrading
+	// DB does not carry dead data. Idempotent; errors are non-fatal.
+	b.db.Exec("DROP TABLE IF EXISTS request_logs")
+	return nil
 }
 
 // migrateLegacyTables renames pre-migration Rust table names to the final
@@ -761,68 +767,4 @@ func (s oauthStore) RecoverStaleRefreshing(timeout time.Duration) (int64, error)
 		Where("status = ? AND updated_at < ?", "refreshing", cutoff).
 		Updates(map[string]any{"status": "error", "last_error": "stale refresh recovery", "updated_at": nowISO()})
 	return result.RowsAffected, result.Error
-}
-
-// ── logStore ──
-
-type logStore struct{ b *Backend }
-
-func (s logStore) AppendBatch(entries []storage.RequestLog) error {
-	if len(entries) == 0 {
-		return nil
-	}
-	return s.b.db.Create(&entries).Error
-}
-
-func (s logStore) Query(q storage.LogQuery) (storage.LogPage, error) {
-	tx := s.b.db.Model(&storage.RequestLog{})
-	if q.Provider != "" {
-		tx = tx.Where("provider_id = ?", q.Provider)
-	}
-	if q.Model != "" {
-		tx = tx.Where("model_id = ?", q.Model)
-	}
-	if q.StatusMin != nil {
-		tx = tx.Where("client_status_code >= ?", *q.StatusMin)
-	}
-	if q.StatusMax != nil {
-		tx = tx.Where("client_status_code <= ?", *q.StatusMax)
-	}
-	var total int64
-	tx.Count(&total)
-
-	limit, offset := q.Limit, q.Offset
-	if limit <= 0 {
-		limit = 50
-	}
-	var items []storage.RequestLog
-	tx.Order("created_at desc").Limit(int(limit)).Offset(int(offset)).Find(&items)
-	return storage.LogPage{Items: items, Total: total}, nil
-}
-
-func (s logStore) FindByID(id string) (*storage.RequestLog, error) {
-	var l storage.RequestLog
-	if err := s.b.db.First(&l, "id = ?", id).Error; isNotFound(err) {
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	return &l, nil
-}
-
-func (s logStore) ClearAll() (int64, error) {
-	res := s.b.db.Where("1 = 1").Delete(&storage.RequestLog{})
-	return res.RowsAffected, res.Error
-}
-
-func (s logStore) StatsOverview(hours int64) (storage.StatsOverview, error) {
-	var st storage.StatsOverview
-	q := s.b.db.Model(&storage.RequestLog{}).Select(
-		"COUNT(*) AS total_requests, COALESCE(SUM(input_tokens),0) AS total_input_tokens, COALESCE(SUM(output_tokens),0) AS total_output_tokens, COALESCE(AVG(latency_total_ms),0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END),0) AS error_count",
-	)
-	if cutoff := statsCutoffMs(hours); cutoff > 0 {
-		q = q.Where("created_at >= ?", cutoff)
-	}
-	err := q.Scan(&st).Error
-	return st, err
 }
