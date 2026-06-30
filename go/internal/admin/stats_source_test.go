@@ -60,7 +60,9 @@ func TestStatsParquetRead(t *testing.T) {
 	obsDir := t.TempDir()
 	r, _ := newStatsEngine(t, obsDir)
 
-	now := time.Now().UnixMilli()
+	// Production writes MetricSample.Ts as unix-nanoseconds (OTLP
+	// p.GetTimeUnixNano), so the tests seed nanos to exercise the real path.
+	now := time.Now().UnixNano()
 	// 3 request counters (2x 2xx, 1x 5xx) for gpt-4o/openai/k1; tokens in=100/out=200.
 	reqLabels := metricLabelsJSON("gpt-4o", "openai", "k1", "2xx", "")
 	errLabels := metricLabelsJSON("gpt-4o", "openai", "k1", "5xx", "")
@@ -116,16 +118,19 @@ func TestStatsParquetWinsOverOldTable(t *testing.T) {
 	obsDir := t.TempDir()
 	r, st := newStatsEngine(t, obsDir)
 
-	now := time.Now().UnixMilli()
+	// Parquet seeds use unix-nanoseconds (the production write unit); the legacy
+	// request_logs.CreatedAt stays unix-milliseconds (its own contract).
+	nowNs := time.Now().UnixNano()
+	nowMs := time.Now().UnixMilli()
 	// Parquet: 2 requests for gpt-4o.
 	flushMetrics(t, obsDir,
-		observability.MetricSample{Ts: now, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: metricLabelsJSON("gpt-4o", "openai", "k1", "2xx", "")},
-		observability.MetricSample{Ts: now, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: metricLabelsJSON("gpt-4o", "openai", "k1", "2xx", "")},
+		observability.MetricSample{Ts: nowNs, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: metricLabelsJSON("gpt-4o", "openai", "k1", "2xx", "")},
+		observability.MetricSample{Ts: nowNs, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: metricLabelsJSON("gpt-4o", "openai", "k1", "2xx", "")},
 	)
 	// Old table: 1 request for a DIFFERENT model (would show up only if fallback used).
 	code200 := int32(200)
 	if err := st.Logs().AppendBatch([]storage.RequestLog{
-		{ID: "old-1", CreatedAt: now, ModelName: "legacy-only-model", ClientStatusCode: &code200},
+		{ID: "old-1", CreatedAt: nowMs, ModelName: "legacy-only-model", ClientStatusCode: &code200},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +159,8 @@ func TestStatsFallbackWhenParquetEmpty(t *testing.T) {
 	obsDir := t.TempDir()
 	r, st := newStatsEngine(t, obsDir)
 
-	// Seed ONLY the old table; parquet is empty.
+	// Seed ONLY the old table (CreatedAt is unix-millis, its own contract);
+	// parquet is empty so the fallback fires.
 	now := time.Now().UnixMilli()
 	code200 := int32(200)
 	if err := st.Logs().AppendBatch([]storage.RequestLog{
@@ -196,17 +202,22 @@ func TestStatsFallbackWhenParquetEmpty(t *testing.T) {
 	}
 }
 
-// TestStatsHoursWindow asserts the ?hours window filters old samples out.
+// TestStatsHoursWindow asserts the ?hours window filters old samples out. It
+// seeds MetricSample.Ts in unix-nanoseconds (the production write unit from OTLP
+// p.GetTimeUnixNano); if the per-row cutoff were accidentally in millis, the
+// 48h-old sample would survive the ?hours=1 filter and legacy-old would appear.
+// Also asserts the /stats/api-keys LastUsedAt is returned in millis (not nanos).
 func TestStatsHoursWindow(t *testing.T) {
 	obsDir := t.TempDir()
 	r, _ := newStatsEngine(t, obsDir)
 
-	now := time.Now().UnixMilli()
-	old := now - 48*60*60*1000 // 48h ago
-	// recent: gpt-4o; old: legacy-old (48h old).
+	// Seed in nanoseconds — matches the receiver's p.GetTimeUnixNano write path.
+	now := time.Now().UnixNano()
+	old := now - 48*60*60*1_000_000_000 // 48h ago (nanoseconds)
+	// recent: gpt-4o/k1; old: legacy-old (48h old), under a different api key.
 	flushMetrics(t, obsDir,
 		observability.MetricSample{Ts: now, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: metricLabelsJSON("gpt-4o", "openai", "k1", "2xx", "")},
-		observability.MetricSample{Ts: old, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: metricLabelsJSON("legacy-old", "openai", "k1", "2xx", "")},
+		observability.MetricSample{Ts: old, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: metricLabelsJSON("legacy-old", "openai", "k-old", "2xx", "")},
 	)
 
 	rec := do(r, "GET", "/api/v1/stats/models?hours=1", "", nil)
@@ -221,5 +232,32 @@ func TestStatsHoursWindow(t *testing.T) {
 		if m.Model == "legacy-old" {
 			t.Errorf("?hours=1 should exclude legacy-old; models=%+v", models)
 		}
+	}
+
+	// /stats/api-keys?hours=1 → only k1 survives; its LastUsedAt must be in the
+	// millisecond range (the legacy contract), NOT nanoseconds. A raw-nano value
+	// (~1.7e18) would land ~1e6x too big.
+	rec = do(r, "GET", "/api/v1/stats/api-keys?hours=1", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/stats/api-keys?hours=1 → %d %s", rec.Code, rec.Body.String())
+	}
+	var keys []storage.ApiKeyStats
+	if err := json.Unmarshal(rec.Body.Bytes(), &keys); err != nil {
+		t.Fatal(err)
+	}
+	var k1 *storage.ApiKeyStats
+	for i := range keys {
+		if keys[i].APIKeyID == "k1" {
+			k1 = &keys[i]
+		}
+	}
+	if k1 == nil {
+		t.Fatalf("k1 not in api-keys response (hours=1); keys=%+v", keys)
+	}
+	if k1.LastUsedAt < 1_700_000_000_000 || k1.LastUsedAt > 1_700_000_000_000_000 {
+		t.Errorf("LastUsedAt=%d is not in the unix-millisecond range; want ~%d (millis)", k1.LastUsedAt, time.Now().UnixMilli())
+	}
+	if delta := k1.LastUsedAt - time.Now().UnixMilli(); delta < -60_000 || delta > 5_000 {
+		t.Errorf("LastUsedAt=%d drifts >60s from now(ms)=%d", k1.LastUsedAt, time.Now().UnixMilli())
 	}
 }

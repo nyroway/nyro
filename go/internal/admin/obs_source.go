@@ -207,35 +207,39 @@ func NewParquetStatsSource(dir string, fallback storage.Storage) StatsSource {
 }
 
 // readMetricSamples reads the metrics parquet within the hours window. hours<=0
-// reads everything. The returned cutoff is the per-row millisecond cutoff (0
-// when unfiltered) so callers can drop rows whose Ts predates the window
-// (ReadSince only filters at hour-bucket granularity).
+// reads everything. The returned cutoff is the per-row nanosecond cutoff (0 when
+// unfiltered) so callers can drop rows whose Ts predates the window (ReadSince
+// only filters at hour-bucket granularity).
+//
+// Unit note: the production receiver writes MetricSample.Ts as unix-nanoseconds
+// (OTLP p.GetTimeUnixNano), so the per-row cutoff MUST be nanoseconds too. A
+// milli cutoff compared against nano Ts is always-true and filters nothing.
 func (p *parquetStatsSource) readMetricSamples(hours int64) ([]observability.MetricSample, int64, error) {
 	var sinceHour int64
-	cutoffMs := int64(0)
+	cutoffNs := int64(0)
 	if hours > 0 {
-		cutoffMs = time.Now().UnixMilli() - hours*3_600_000
+		cutoffNs = time.Now().Add(-time.Duration(hours) * time.Hour).UnixNano()
 		// ReadSince compares against the file's hour bucket (the hour's unix-nano,
-		// as parsed from the file name). Convert the cutoff the same way — the
-		// hour index of the cutoff — so files whose whole hour is older than the
-		// window are skipped, while the boundary hour (which may contain in-window
-		// rows) is still read.
-		sinceHour = (cutoffMs / 3_600_000) * int64(time.Hour)
+		// as parsed from the file name). Align the cutoff down to its hour index
+		// (in nanos) so files whose whole hour is older than the window are
+		// skipped, while the boundary hour (which may contain in-window rows) is
+		// still read.
+		sinceHour = (cutoffNs / int64(time.Hour)) * int64(time.Hour)
 	}
 	samples, err := parquet.ReadSince[observability.MetricSample](p.dir, "metrics", sinceHour)
 	if err != nil {
 		return nil, 0, err
 	}
-	if cutoffMs > 0 {
+	if cutoffNs > 0 {
 		filtered := samples[:0]
 		for _, s := range samples {
-			if s.Ts >= cutoffMs {
+			if s.Ts >= cutoffNs {
 				filtered = append(filtered, s)
 			}
 		}
 		samples = filtered
 	}
-	return samples, cutoffMs, nil
+	return samples, cutoffNs, nil
 }
 
 // parquetEmpty reports whether the metrics parquet has no in-window samples.
@@ -428,7 +432,12 @@ func toStorageApiKeyStats(k observability.ApiKeyStats) storage.ApiKeyStats {
 		TotalInputTokens:  k.TotalInputTokens,
 		TotalOutputTokens: k.TotalOutputTokens,
 		CacheReadTokens:   k.CacheReadTokens,
-		LastUsedAt:        k.LastUsedAt,
+		// MetricSample.Ts (and thus ApiKeyStats.LastUsedAt from AggregateStats)
+		// is unix-nanoseconds; the legacy storage.ApiKeyStats.LastUsedAt contract
+		// is unix-milliseconds (it comes from request_logs.created_at =
+		// started.UnixMilli()). Normalize at this boundary so the WebUI sees the
+		// same unit it always has.
+		LastUsedAt: k.LastUsedAt / 1_000_000,
 	}
 }
 
