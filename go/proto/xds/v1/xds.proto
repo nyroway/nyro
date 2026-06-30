@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package nyro.xds.v1;
+
+option go_package = "github.com/nyroway/nyro/go/internal/xds/pb;xds";
+
+// ConfigService is the xDS-style control-plane API. The admin (control plane,
+// sole DB reader) serves it; the gateway (data plane, no DB) subscribes.
+service ConfigService {
+  // StreamConfig: the gateway sends its last-applied version (0 = full resync,
+  // e.g. on connect/reconnect). The admin streams a full ConfigSnapshot
+  // whenever config changes (each push increments version). Long-lived stream;
+  // on drop the gateway reconnects with version=0 for a full resync.
+  rpc StreamConfig(Subscribe) returns (stream ConfigSnapshot);
+}
+
+message Subscribe {
+  int64 version = 1;  // gateway's last-applied version; 0 = full resync
+}
+
+// ConfigSnapshot is a full, immutable configuration snapshot. The gateway swaps
+// its in-memory ConfigCache atomically on each received snapshot. Full-snapshot
+// push (not incremental): small config, atomic swap, no merge bugs. The version
+// field is the hook for future delta support.
+message ConfigSnapshot {
+  int64 version = 1;
+  repeated Provider providers = 2;
+  repeated Model models = 3;
+  repeated ApiKey api_keys = 4;
+  repeated OAuthCredential oauth_credentials = 5;
+  map<string, string> settings = 6;
+}
+
+message Provider {
+  string id = 1;
+  string name = 2;
+  string vendor = 3;
+  string protocol = 4;
+  string base_url = 5;
+  string preset_key = 6;
+  string channel = 7;
+  string models_source = 8;
+  string static_models = 9;
+  string api_key = 10;
+  string auth_mode = 11;
+  bool use_proxy = 12;
+  bool is_enabled = 13;
+}
+
+message ModelBackend {
+  string id = 1;
+  string model_id = 2;
+  string provider_id = 3;
+  string model = 4;
+  int32 weight = 5;
+  int32 priority = 6;
+}
+
+message Model {
+  string id = 1;
+  string name = 2;
+  string balance = 3;
+  bool enable_auth = 4;
+  bool is_enabled = 5;
+  repeated ModelBackend targets = 6;
+}
+
+message ApiKey {
+  string id = 1;
+  string token = 2;
+  string name = 3;
+  optional int32 rpm = 4;
+  optional int32 rpd = 5;
+  optional int32 tpm = 6;
+  optional int32 tpd = 7;
+  bool is_enabled = 8;
+  string expires_at = 9;
+  repeated string bound_model_ids = 10;
+}
+
+message OAuthCredential {
+  string provider_id = 1;
+  string driver_key = 2;
+  string scheme = 3;
+  string access_token = 4;
+  string refresh_token = 5;
+  string expires_at = 6;
+  int32 status_version = 7;
+  string status = 8;
+}
