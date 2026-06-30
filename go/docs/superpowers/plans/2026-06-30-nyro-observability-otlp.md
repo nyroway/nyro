@@ -6,7 +6,7 @@
 
 **Architecture:** OTLP collector model. The gateway is a stateless data plane: OTel SDK (logs/metrics/traces) emitted via configurable exporters (`none`/`stdout`/`otlp`); default in xDS mode = OTLP/HTTP push to admin. The admin is a self-hosted observability backend: a hand-written OTLP/HTTP receiver (3 POST routes on its existing chi router) decodes the official OTLP protobuf and writes hourly-rotated, atomically-renamed parquet files; `/logs` reads logs-parquet, `/stats/*` reads metrics-parquet (Go aggregation). tpm/tpd quota stays in gateway memory (done in P3a, untouched). The gateway never writes parquet.
 
-**Tech Stack:** Go 1.25; `github.com/parquet-go/parquet-go` (pure-Go, zstd via struct tags); `go.opentelemetry.io/otel` + `/sdk` + `/metric` + `/sdk/log` + exporters `otlp{log,metric,trace}http` and `stdout{log,metric,trace}`; `go.opentelemetry.io/proto/opentelemetry/proto/collector/{logs,metrics,trace}/v1` (decode). No CGO. chi (already in tree).
+**Tech Stack:** Go 1.25; `github.com/parquet-go/parquet-go` (pure-Go, zstd via struct tags); `go.opentelemetry.io/otel` + `/sdk` + `/metric` + `/sdk/log` + exporters `otlp{log,metric,trace}http` and `stdout{log,metric,trace}`; `go.opentelemetry.io/proto/otlp/collector/{logs,metrics,trace}/v1` (decode). No CGO. chi (already in tree).
 
 **Spec:** `docs/superpowers/specs/2026-06-30-nyro-observability-otlp-design.md` (commit `12054cd`).
 
@@ -1117,9 +1117,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
-	collectlogs "go.opentelemetry.io/proto/opentelemetry/proto/collector/logs/v1"
-	logsv1 "go.opentelemetry.io/proto/opentelemetry/proto/logs/v1"
-	commonv1 "go.opentelemetry.io/proto/opentelemetry/proto/common/v1"
+	collectlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
+	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -1213,13 +1213,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
-	collectlogs "go.opentelemetry.io/proto/opentelemetry/proto/collector/logs/v1"
-	collectmetrics "go.opentelemetry.io/proto/opentelemetry/proto/collector/metrics/v1"
-	collecttrace "go.opentelemetry.io/proto/opentelemetry/proto/collector/trace/v1"
-	logsv1 "go.opentelemetry.io/proto/opentelemetry/proto/logs/v1"
-	metricsv1 "go.opentelemetry.io/proto/opentelemetry/proto/metrics/v1"
-	tracev1 "go.opentelemetry.io/proto/opentelemetry/proto/trace/v1"
-	commonv1 "go.opentelemetry.io/proto/opentelemetry/proto/common/v1"
+	collectlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	collectmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	collecttrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
+	metricsv1 "go.opentelemetry.io/proto/otlp/metrics/v1"
+	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
+	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	"google.golang.org/protobuf/proto"
 
 	"encoding/hex"
