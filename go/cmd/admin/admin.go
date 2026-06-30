@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -12,6 +13,8 @@ import (
 	"github.com/nyroway/nyro/go/internal/admin"
 	"github.com/nyroway/nyro/go/internal/auth"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
+	"github.com/nyroway/nyro/go/internal/observability"
+	"github.com/nyroway/nyro/go/internal/observability/parquet"
 	"github.com/nyroway/nyro/go/internal/proxy"
 	"github.com/nyroway/nyro/go/internal/xds"
 )
@@ -52,6 +55,33 @@ func NewCmd() *cobra.Command {
 		defer cancel()
 		bootstrap.StartRetentionLoop(ctx, st)
 
+		// ── Observability sinks (admin side) ──
+		// Three parquet sinks (logs/metrics/traces) feed the OTLP/HTTP receiver.
+		// The receiver decodes the official OTLP protobuf and buffers rows; each
+		// sink rotates its parquet file on its own (maxRows) and on Flush below.
+		obsCfg := observability.LoadConfig(st.Settings().Get)
+		logSink, err := parquet.NewSink[observability.LogRecord](obsCfg.DataDir, "logs", 50000)
+		if err != nil {
+			return err
+		}
+		metricSink, err := parquet.NewSink[observability.MetricSample](obsCfg.DataDir, "metrics", 50000)
+		if err != nil {
+			return err
+		}
+		traceSink, err := parquet.NewSink[observability.SpanSnapshot](obsCfg.DataDir, "traces", 50000)
+		if err != nil {
+			return err
+		}
+		rcv := observability.NewReceiver(logSink, metricSink, traceSink)
+
+		// Janitor sweeps aged parquet files per signal on an hourly tick; exits
+		// when ctx is cancelled (server shutdown).
+		observability.StartJanitor(ctx, obsCfg.DataDir, observability.SignalRetention{
+			Logs:    obsCfg.LogsRetentionDays,
+			Metrics: obsCfg.MetricsRetentionDays,
+			Traces:  obsCfg.TracesRetentionDays,
+		}, time.Hour)
+
 		// Optionally start the gRPC xDS server and wire it as the config-push
 		// target so every admin config write reaches connected gateways.
 		if grpcAddr != "" {
@@ -66,9 +96,25 @@ func NewCmd() *cobra.Command {
 
 		engine := chi.NewRouter()
 		engine.Use(middleware.Recoverer)
-		admin.Mount(engine, st, adminToken)
+
+		// Mount the OTLP receiver at the TOP LEVEL (/v1/{logs,metrics,traces})
+		// BEFORE the bearer-protected /api/v1 group — these routes are NOT behind
+		// the admin token (the auth boundary is the network/admin deployment,
+		// matching the gateway→admin push contract).
+		rcv.Mount(engine)
+
+		// admin.Mount passes nil,nil for the parquet-backed log/stats sources
+		// (T2.2 dual-write): the handlers keep reading s.Logs() (the legacy
+		// request_logs table). T2.3/T2.4 swap the handler bodies onto real
+		// parquet-backed sources and pass them here.
+		admin.Mount(engine, st, adminToken, nil, nil)
 		admin.MountOAuth(engine, st, reg, sessions)
 		proxy.MountWebui(engine, webuiDir)
+
+		// Best-effort flush of buffered OTLP rows on shutdown; do not block
+		// shutdown — the sinks' own rotation already bounds data loss.
+		defer rcv.Flush(ctx)
+
 		return bootstrap.RunServer(engine, addr)
 	}
 	return cmd

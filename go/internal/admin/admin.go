@@ -16,9 +16,38 @@ import (
 	"github.com/nyroway/nyro/go/internal/web"
 )
 
+// LogSource is the read side for /logs. Backed by parquet (observability.Logs)
+// in the new path; the legacy storage.LogStore satisfies it during dual-write.
+//
+// During dual-write (T2.2) the log/stats handlers still read from s.Logs()
+// (the old request_logs table). When a non-nil LogSource is passed (T2.3), the
+// handlers will switch to it. nil preserves the legacy behavior exactly.
+type LogSource interface {
+	Query(q storage.LogQuery) (storage.LogPage, error)
+	FindByID(id string) (*storage.RequestLog, error)
+	ClearAll() (int64, error)
+}
+
+// StatsSource is the read side for /stats/*.
+//
+// Same dual-write contract as LogSource: nil → handlers use s.Logs(); non-nil
+// (T2.4) → handlers use this source instead.
+type StatsSource interface {
+	StatsOverview(hours int64) (storage.StatsOverview, error)
+	StatsByModel(hours int64) ([]storage.ModelStats, error)
+	StatsByProvider(hours int64) ([]storage.ProviderStats, error)
+	StatsByApiKey(hours int64) ([]storage.ApiKeyStats, error)
+	StatsHourly(hours int64) ([]storage.StatsHourly, error)
+}
+
 // Mount registers the admin REST API under /api/v1 on r. If adminToken is
 // non-empty, every admin route requires Authorization: Bearer <adminToken>.
-func Mount(r chi.Router, s storage.Storage, adminToken string) {
+//
+// logs/stats are the parquet-backed read sources introduced by the
+// observability refactor. Pass nil for either to keep using s.Logs() (the old
+// request_logs table) — this is the dual-write fallback and the default in
+// T2.2; T2.3/T2.4 wire the real parquet-backed sources.
+func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, stats StatsSource) {
 	r.Route("/api/v1", func(g chi.Router) {
 		if adminToken != "" {
 			g.Use(bearerAuth(adminToken))

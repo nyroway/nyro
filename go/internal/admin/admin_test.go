@@ -16,7 +16,7 @@ func newEngine(t *testing.T, token string) (chi.Router, *memory.Backend) {
 	t.Helper()
 	st := memory.New()
 	r := chi.NewRouter()
-	Mount(r, st.Storage(), token)
+	Mount(r, st.Storage(), token, nil, nil)
 	return r, st
 }
 
