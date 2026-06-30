@@ -11,10 +11,13 @@ import "go.opentelemetry.io/otel/metric"
 // dispatcher/cmd wires it (T3.3/T3.4) — no process-wide side effects from
 // importing this package.
 type Handles struct {
-	requests metric.Int64Counter       // nyro_requests_total: +1 per request, attr model/provider/apikey/status_class
-	tokens   metric.Int64Counter       // nyro_tokens_total: prompt+completion, attr model/apikey/direction
-	latency  metric.Float64Histogram   // nyro_request_latency_ms: total latency, attr model/provider
-	inFlight metric.Int64UpDownCounter // nyro_in_flight: current concurrent requests (currently unused by the OnLog hook; reserved for OnRequest/OnLog pairing)
+	requests metric.Int64Counter     // nyro_requests_total: +1 per request, attr model/provider/apikey/status_class
+	tokens   metric.Int64Counter     // nyro_tokens_total: prompt+completion, attr model/apikey/direction
+	latency  metric.Float64Histogram // nyro_request_latency_ms: total latency, attr model/provider
+	// nyro_in_flight (Int64UpDownCounter) is intentionally NOT created here: the
+	// OnRequest/OnLog hooks do not yet Inc/Dec a concurrency gauge, so emitting
+	// it would publish a constant 0 (misleading). Reintroduce when a hook pair
+	// actually tracks in-flight requests.
 }
 
 // NewHandles creates the named instruments from m. Errors are intentionally
@@ -27,6 +30,5 @@ func NewHandles(m metric.Meter) *Handles {
 	h.requests, _ = m.Int64Counter("nyro_requests_total")
 	h.tokens, _ = m.Int64Counter("nyro_tokens_total")
 	h.latency, _ = m.Float64Histogram("nyro_request_latency_ms", metric.WithUnit("ms"))
-	h.inFlight, _ = m.Int64UpDownCounter("nyro_in_flight")
 	return h
 }

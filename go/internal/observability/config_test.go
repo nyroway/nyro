@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -102,5 +103,42 @@ func TestLoadConfigIgnoresBadRetention(t *testing.T) {
 	}
 	if cfg.MetricsRetentionDays != 30 {
 		t.Errorf("zero metrics retention should default to 30, got %d", cfg.MetricsRetentionDays)
+	}
+}
+
+// TestLoadConfigEndpointFollowing mirrors the documented xDS default: the admin
+// pushes ONLY obs_otlp_endpoint (no obs_sink / obs_*_sink keys). Every signal's
+// resolved sink must follow the endpoint to "otlp" — NOT stay empty/none, which
+// would silently drop telemetry (and the fail-fast guard would not catch it
+// because no resolved sink reads as "otlp"). This rule lives in LoadConfig so
+// BOTH the standalone env path and the xDS cache path apply it consistently.
+func TestLoadConfigEndpointFollowing(t *testing.T) {
+	cfg := LoadConfig(func(k string) (string, error) {
+		if k == "obs_otlp_endpoint" {
+			return "http://collector:4318", nil
+		}
+		return "", nil // no obs_sink, no per-signal sinks
+	})
+
+	if cfg.OTLPEndpoint != "http://collector:4318" {
+		t.Errorf("OTLPEndpoint: got %q", cfg.OTLPEndpoint)
+	}
+	if cfg.LogsSink != "otlp" {
+		t.Errorf("endpoint-following: LogsSink=%q want otlp (not none)", cfg.LogsSink)
+	}
+	if cfg.MetricsSink != "otlp" {
+		t.Errorf("endpoint-following: MetricsSink=%q want otlp (not none)", cfg.MetricsSink)
+	}
+	if cfg.TracesSink != "otlp" {
+		t.Errorf("endpoint-following: TracesSink=%q want otlp (not none)", cfg.TracesSink)
+	}
+
+	// The provider's fail-fast guard must STILL fire when a sink resolves to
+	// otlp but the endpoint is somehow empty (here we strip it post-LoadConfig
+	// to simulate the guard's own check, proving the resolved sinks are otlp).
+	empty := cfg
+	empty.OTLPEndpoint = ""
+	if _, err := NewProvider(context.Background(), empty); err == nil {
+		t.Error("fail-fast guard: otlp sink + empty endpoint must error")
 	}
 }

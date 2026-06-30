@@ -30,11 +30,29 @@ func parseLabels(s string) metricLabels {
 
 // AggregateStats rolls up a slice of MetricSamples (a window of metric-history
 // parquet rows) into the four real-time stat shapes. hours<=0 means "all".
+//
+// Metric temporality: the gateway exports metrics with DELTA temporality (see
+// provider.go's NewProvider), so each parquet row's Value/hist_sum/hist_count
+// is the increment recorded during a single export window — NOT a lifetime
+// running total. The plain sums below are therefore correct for delta samples.
+// (Cumulative samples would be double-counted as R×(N+1)/2.)
 func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []ModelStats, []ProviderStats, []ApiKeyStats, error) {
 	var ov StatsOverview
-	type mAcc struct{ req, in, out int64; lat time.Duration; latCnt int64 }
-	type pAcc struct{ req, err int64; lat time.Duration; latCnt int64 }
-	type kAcc struct{ name string; req, in, out, cache int64; lastTs int64 }
+	type mAcc struct {
+		req, in, out int64
+		lat          time.Duration
+		latCnt       int64
+	}
+	type pAcc struct {
+		req, err int64
+		lat      time.Duration
+		latCnt   int64
+	}
+	type kAcc struct {
+		name                string
+		req, in, out, cache int64
+		lastTs              int64
+	}
 	mmodels := map[string]*mAcc{}
 	mprov := map[string]*pAcc{}
 	mkey := map[string]*kAcc{}
@@ -157,7 +175,11 @@ func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []ModelStat
 
 // AggregateHourly buckets samples into UTC hour buckets (ISO hour label).
 func AggregateHourly(samples []MetricSample, _ int64) ([]StatsHourly, error) {
-	type b struct{ req, err, in, out int64; latSum float64; latCnt int64 }
+	type b struct {
+		req, err, in, out int64
+		latSum            float64
+		latCnt            int64
+	}
 	buckets := map[string]*b{}
 	for _, s := range samples {
 		hour := time.Unix(0, s.Ts).UTC().Truncate(time.Hour).Format("2006-01-02T15:00:00Z")

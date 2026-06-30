@@ -59,6 +59,13 @@ func resolve(cfg ObsConfig, logs, metrics, traces string) (string, string, strin
 // is returned — the gateway must not start in a configuration that would drop
 // exported signals silently.
 //
+// Metric temporality: the metric PeriodicReaders use DELTA temporality (not the
+// OTel-default Cumulative). Each ~5s export therefore contains only the
+// increments since the last export. The admin receiver persists every export as
+// a fresh parquet row and AggregateStats/AggregateHourly SUM the Value/hist_sum
+// fields — correct for deltas. (Cumulative would double-count: R×(N+1)/2.) See
+// also stats_aggregate.go.
+//
 // Global registration: the trace and meter providers are registered globally
 // via otel.Set*Provider so libraries instrumented against the OTel API (rather
 // than against this struct's fields) also report. Tests construct their own
@@ -103,10 +110,19 @@ func NewProvider(ctx context.Context, cfg ObsConfig) (*ObsProvider, error) {
 	}
 
 	// --- metrics ---
+	// Delta temporality: each export carries only the increments recorded since
+	// the previous export, so AggregateStats' plain sum is correct. In this SDK
+	// version the PeriodicReader derives its temporality from the EXPORTER's
+	// Temporality method (not a reader option), so we configure it on the
+	// exporter via WithTemporalitySelector. See the metric-temporality note on
+	// NewProvider above.
 	var mp *sdkmetric.MeterProvider
 	switch metricSink {
 	case "otlp":
-		exp, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(cfg.OTLPEndpoint))
+		exp, err := otlpmetrichttp.New(ctx,
+			otlpmetrichttp.WithEndpointURL(cfg.OTLPEndpoint),
+			otlpmetrichttp.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -115,7 +131,7 @@ func NewProvider(ctx context.Context, cfg ObsConfig) (*ObsProvider, error) {
 			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp, sdkmetric.WithInterval(cfg.ExportInterval))),
 		)
 	case "stdout":
-		exp, err := stdoutmetric.New()
+		exp, err := stdoutmetric.New(stdoutmetric.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector))
 		if err != nil {
 			return nil, err
 		}
