@@ -1815,9 +1815,9 @@ func (p *ObsProvider) Shutdown(ctx context.Context) error {
 | `obs.status` | `int` | dispatcher (via statusRecorder) | OnLog |
 | `obs.logctx` | `logCtx` | dispatcher | OnLog (protocols/model names/path/method) |
 
-- [ ] **Step 1: Move `LogCtx`/`NewRequestID`; write `metrics_handles.go`**
+- [ ] **Step 1: Add `LogCtx`/`NewRequestID` to observability; write `metrics_handles.go`**
 
-Move `logCtx` + `newRequestID` out of `internal/proxy/logrec.go` into `internal/observability` (exported `LogCtx` with exported fields; `NewRequestID`). `proxy` imports them from `observability` (breaks the would-be `observability → proxy` cycle). Add to `signals.go`:
+Add `LogCtx` (exported fields) and `NewRequestID` to `internal/observability/signals.go` as NEW symbols. The proxy's existing unexported `logCtx`/`newRequestID` STAY in place for now — T3.3 switches the dispatcher to these observability copies and removes the proxy originals, so both tasks stay green. Add to `signals.go`:
 
 ```go
 type LogCtx struct {
@@ -2004,11 +2004,11 @@ func RegisterHooks(tracer trace.Tracer, logger log.Logger, handles *Handles) {
 
 **Files:**
 - Modify: `internal/proxy/dispatcher.go`
-- Modify: `internal/proxy/logrec.go` (move `logCtx`+`newRequestID` to observability; delete `Storage.Logs().AppendBatch` call)
+- Modify: `internal/proxy/logrec.go` (remove the now-superseded `logCtx`+`newRequestID`; delete `Storage.Logs().AppendBatch` call)
 - Modify: `internal/proxy/gateway.go` (drop `Storage` field; add `Obs *observability.ObsProvider`, `Handles *observability.Handles`)
 
-- [ ] **Step 1: Move `logCtx` + `newRequestID`** from `internal/proxy/logrec.go` into `internal/observability` (export as `LogCtx`, `NewRequestID`). Keep `statusRecorder` in `proxy` (it's HTTP-mux machinery).
-- [ ] **Step 2: `Gateway` struct + constructor** — remove `Storage storage.Storage` field; `NewGateway` no longer takes storage. Add `Obs *observability.ObsProvider` and `Handles *observability.Handures`. The two existing `NewGateway`/`NewGatewayWithCache` call sites move to `cmd/gateway` (T3.4).
+- [ ] **Step 1: Switch dispatcher to `observability.LogCtx`; remove proxy's old `logCtx`/`newRequestID`.** The observability `LogCtx`/`NewRequestID` were added in T3.2 Step 1. Here: change the dispatcher's `lc := logCtx{...}` literal to `observability.LogCtx{...}`, remove the old `proxy.logCtx` + `proxy.newRequestID` from `logrec.go` (now superseded), and delete the `Storage.Logs().AppendBatch` call. Keep `statusRecorder` in `proxy` (HTTP-mux machinery).
+- [ ] **Step 2: `Gateway` struct + constructor** — remove `Storage storage.Storage` field; `NewGateway` no longer takes storage. Add `Obs *observability.ObsProvider` and `Handles *observability.Handles`. The two existing `NewGateway`/`NewGatewayWithCache` call sites move to `cmd/gateway` (T3.4).
 - [ ] **Step 3: `Dispatch`** — allocate `bag := plugin.NewContextBag()` at entry; pass `Bag: bag` in all five `RunPhaseHooks` `PhaseContext`s. In the `defer` block, replace `g.appendLog(...)` with bag population only:
 
 ```go
