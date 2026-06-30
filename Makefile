@@ -1,4 +1,4 @@
-.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check help
+.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-tidy go-run help
 
 # Development — start Tauri desktop app with hot reload
 dev: webui-build
@@ -64,6 +64,31 @@ smoke-storage:
 # Pre-release verification gate
 release-check: check smoke
 
+# ── Go (nyro/go) — gateway + admin (data plane + control plane) ──
+# Build the Go nyro CLI into go/bin/nyro
+go-build:
+	cd go && mkdir -p bin && go build -o bin/nyro .
+
+# Run all Go tests
+go-test:
+	cd go && go test ./...
+
+# Vet Go code
+go-vet:
+	cd go && go vet ./...
+
+# Format Go code
+go-fmt:
+	cd go && go fmt ./...
+
+# Tidy go.mod / go.sum
+go-tidy:
+	cd go && go mod tidy
+
+# Run the Go gateway (data plane) locally
+go-run:
+	cd go && go run . gateway
+
 # Clean all build artifacts
 clean:
 	cargo clean
@@ -88,4 +113,12 @@ help:
 	@echo "  make smoke        Run local server smoke tests"
 	@echo "  make smoke-storage Run storage smoke tests (default sqlite + postgres)"
 	@echo "  make release-check Run check + smoke before release"
+	@echo ""
+	@echo "  Go (nyro/go):"
+	@echo "  make go-build     Build Go nyro CLI → go/bin/nyro"
+	@echo "  make go-test      Run Go tests"
+	@echo "  make go-vet       Vet Go code"
+	@echo "  make go-fmt       Format Go code"
+	@echo "  make go-tidy      Tidy go.mod/go.sum"
+	@echo "  make go-run       Run Go gateway (data plane)"
 	@echo "  make clean        Remove build artifacts"

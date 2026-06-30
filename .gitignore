@@ -24,6 +24,11 @@ src-tauri/icons/ios/
 go/data/
 go/bin/
 go/docs/superpowers/
+# Go build/test artifacts (consolidated from go/.gitignore)
+*.exe
+*.test
+*.out
+go.work.sum
 
 # OS
 .DS_Store
