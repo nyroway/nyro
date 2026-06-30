@@ -1,5 +1,42 @@
 package observability
 
+import (
+	"crypto/rand"
+	"encoding/hex"
+)
+
+// LogCtx carries the per-request fields captured across the dispatch lifecycle
+// (protocols, models, method/path, upstream status/latency) so the OnLog hook
+// can populate the audit LogRecord + metric/span attributes. Mirrors the Rust
+// LogBuilder shape; fields are EXPORTED so the dispatcher (package proxy) can
+// populate them when wiring T3.3.
+//
+// This is the observability copy. The proxy package retains its own unexported
+// logCtx for now (T3.3 switches the dispatcher to this one and deletes the
+// proxy original, keeping T3.2 and T3.3 independently green).
+type LogCtx struct {
+	APIKeyName        string
+	ClientProtocol    string
+	UpstreamProtocol  string
+	ClientModel       string
+	UpstreamModel     string
+	Method            string
+	Path              string
+	IsStream          bool
+	UpstreamStatus    *int32
+	LatencyUpstreamMs *int64
+}
+
+// NewRequestID returns a short random request identifier ("req_" + 16 hex
+// chars). It is the observability copy of proxy.newRequestID; non-fatal on
+// rand failure (id remains valid, just less random). Used by the OnLog hook to
+// stamp nyro.log.id on the audit LogRecord.
+func NewRequestID() string {
+	var buf [8]byte
+	_, _ = rand.Read(buf[:])
+	return "req_" + hex.EncodeToString(buf[:])
+}
+
 // LogRecord is one request-audit row. JSON tags are identical to the legacy
 // storage.RequestLog so the WebUI contract is unchanged. parquet tags define
 // the columnar schema; zstd compression is applied per-column via struct tags.
