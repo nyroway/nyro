@@ -83,3 +83,77 @@ func (s *ConfigSnapshot) SettingGet(key string) (string, bool) {
 	v, ok := s.settings[key]
 	return v, ok
 }
+
+// Snapshot is a build helper for constructing a ConfigSnapshot incrementally
+// (used by standalone YAML config). Call Done to freeze it into a ConfigSnapshot.
+// Maps are lazily allocated so callers can set only the sections they have.
+type Snapshot struct {
+	providers map[string]storage.Provider
+	models    map[string]storage.Model
+	apikeys   map[string]storage.ApiKeyAccessRecord
+	bindings  map[string]map[string]bool
+	settings  map[string]string
+}
+
+// SetProvider adds (or replaces) a provider keyed by ID.
+func (b *Snapshot) SetProvider(p storage.Provider) {
+	if b.providers == nil {
+		b.providers = map[string]storage.Provider{}
+	}
+	b.providers[p.ID] = p
+}
+
+// SetModel adds (or replaces) a model keyed by Name.
+func (b *Snapshot) SetModel(m storage.Model) {
+	if b.models == nil {
+		b.models = map[string]storage.Model{}
+	}
+	b.models[m.Name] = m
+}
+
+// SetAPIKey adds (or replaces) an API-key access record keyed by token, and
+// registers its bindings (apiKeyID → set of model IDs).
+func (b *Snapshot) SetAPIKey(token string, rec storage.ApiKeyAccessRecord, boundModelIDs map[string]bool) {
+	if b.apikeys == nil {
+		b.apikeys = map[string]storage.ApiKeyAccessRecord{}
+	}
+	if b.bindings == nil {
+		b.bindings = map[string]map[string]bool{}
+	}
+	b.apikeys[token] = rec
+	b.bindings[rec.ID] = boundModelIDs
+}
+
+// SetSetting adds (or replaces) a setting.
+func (b *Snapshot) SetSetting(key, value string) {
+	if b.settings == nil {
+		b.settings = map[string]string{}
+	}
+	b.settings[key] = value
+}
+
+// Done freezes the builder into an immutable ConfigSnapshot.
+func (b *Snapshot) Done() *ConfigSnapshot {
+	if b.providers == nil {
+		b.providers = map[string]storage.Provider{}
+	}
+	if b.models == nil {
+		b.models = map[string]storage.Model{}
+	}
+	if b.apikeys == nil {
+		b.apikeys = map[string]storage.ApiKeyAccessRecord{}
+	}
+	if b.bindings == nil {
+		b.bindings = map[string]map[string]bool{}
+	}
+	if b.settings == nil {
+		b.settings = map[string]string{}
+	}
+	return &ConfigSnapshot{
+		providers: b.providers,
+		models:    b.models,
+		apikeys:   b.apikeys,
+		bindings:  b.bindings,
+		settings:  b.settings,
+	}
+}

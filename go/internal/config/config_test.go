@@ -74,3 +74,54 @@ func TestApplyToUnknownProvider(t *testing.T) {
 		t.Error("expected error for unknown provider reference")
 	}
 }
+
+func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
+	cfg := &Config{
+		Providers: []ProviderSpec{{
+			Name: "openai", Vendor: "openai", Protocol: "openai",
+			BaseURL: "https://api.openai.com", APIKey: "sk-x",
+		}},
+		Models: []ModelSpec{{
+			Name: "gpt-4o", Targets: []ModelTargetSpec{{Provider: "openai", Model: "gpt-4o"}},
+		}},
+		APIKeys: []APIKeySpec{{Name: "local", Key: "nyro-secret", Models: []string{"gpt-4o"}}},
+	}
+	snap, err := cfg.BuildSnapshot()
+	if err != nil {
+		t.Fatalf("BuildSnapshot: %v", err)
+	}
+	// provider
+	p := snap.ProviderGet("provider:openai")
+	if p == nil || p.BaseURL != "https://api.openai.com" || p.APIKey != "sk-x" {
+		t.Errorf("provider missing/wrong: %+v", p)
+	}
+	// model + target
+	m := snap.ModelByName("gpt-4o")
+	if m == nil || len(m.Targets) != 1 || m.Targets[0].ProviderID != "provider:openai" {
+		t.Errorf("model missing/wrong: %+v", m)
+	}
+	// apikey + binding
+	rec := snap.FindAPIKey("nyro-secret")
+	if rec == nil || rec.Name != "local" {
+		t.Errorf("apikey missing/wrong: %+v", rec)
+	}
+	if !snap.ModelBindingExists("apikey:local", "model:gpt-4o") {
+		t.Error("binding missing")
+	}
+}
+
+func TestBuildSnapshot_UnknownRefs(t *testing.T) {
+	// unknown provider in a model target
+	cfg := &Config{Models: []ModelSpec{{Name: "m", Targets: []ModelTargetSpec{{Provider: "nope", Model: "x"}}}}}
+	if _, err := cfg.BuildSnapshot(); err == nil {
+		t.Error("expected error for unknown provider reference")
+	}
+	// unknown model in an api key
+	cfg2 := &Config{
+		Models:  []ModelSpec{{Name: "m", Targets: []ModelTargetSpec{}}},
+		APIKeys: []APIKeySpec{{Name: "k", Key: "tok", Models: []string{"nope"}}},
+	}
+	if _, err := cfg2.BuildSnapshot(); err == nil {
+		t.Error("expected error for unknown model reference in api key")
+	}
+}

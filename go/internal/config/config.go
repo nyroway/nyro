@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/xds"
 )
 
 type ProviderSpec struct {
@@ -106,3 +107,73 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 	}
 	return nil
 }
+
+// BuildSnapshot constructs an xds.ConfigSnapshot directly from the YAML config
+// (no storage round-trip). This is the standalone-mode path: `nyro gateway
+// --config` swaps this snapshot into the gateway's cache so config reads work
+// without an admin or DB. Providers/models/apikeys are keyed the same way the
+// in-memory storage keys them; settings are empty (the YAML format has no
+// settings section in this phase). Stable synthetic IDs are derived from the
+// YAML names so bindings resolve consistently.
+func (c *Config) BuildSnapshot() (*xds.ConfigSnapshot, error) {
+	b := &xds.Snapshot{}
+
+	providerIDs := map[string]string{} // yaml name → synthetic id
+	for _, p := range c.Providers {
+		id := providerID(p.Name)
+		providerIDs[p.Name] = id
+		b.SetProvider(storage.Provider{
+			ID: id, Name: p.Name, Vendor: p.Vendor, Protocol: p.Protocol,
+			BaseURL: p.BaseURL, APIKey: p.APIKey, AuthMode: "apikey", IsEnabled: true,
+		})
+	}
+
+	modelIDs := map[string]string{} // yaml name → synthetic id
+	for _, m := range c.Models {
+		id := modelID(m.Name)
+		modelIDs[m.Name] = id
+		model := storage.Model{
+			ID: id, Name: m.Name, Balance: storage.BalanceWeighted,
+			EnableAuth: m.EnableAuth, IsEnabled: true,
+		}
+		for _, t := range m.Targets {
+			pid, ok := providerIDs[t.Provider]
+			if !ok {
+				return nil, fmt.Errorf("model %q references unknown provider %q", m.Name, t.Provider)
+			}
+			model.Targets = append(model.Targets, storage.ModelBackend{
+				ProviderID: pid, Model: t.Model, Weight: 1,
+			})
+		}
+		b.SetModel(model)
+	}
+
+	for _, k := range c.APIKeys {
+		if k.Key == "" {
+			continue
+		}
+		id := apiKeyID(k.Name)
+		bound := map[string]bool{}
+		for _, name := range k.Models {
+			mid, ok := modelIDs[name]
+			if !ok {
+				return nil, fmt.Errorf("api key %q references unknown model %q", k.Name, name)
+			}
+			bound[mid] = true
+		}
+		b.SetAPIKey(k.Key, storage.ApiKeyAccessRecord{
+			ID: id, Name: k.Name, IsEnabled: true,
+		}, bound)
+	}
+
+	return b.Done(), nil
+}
+
+// providerID derives a stable synthetic provider id from its YAML name.
+func providerID(name string) string { return "provider:" + name }
+
+// modelID derives a stable synthetic model id from its YAML name.
+func modelID(name string) string { return "model:" + name }
+
+// apiKeyID derives a stable synthetic api-key id from its YAML name.
+func apiKeyID(name string) string { return "apikey:" + name }

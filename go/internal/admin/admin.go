@@ -414,4 +414,25 @@ func bumpEpoch(s storage.Storage) {
 	v, _ := s.Settings().Get("config_epoch")
 	n, _ := strconv.ParseInt(v, 10, 64)
 	_ = s.Settings().Set("config_epoch", strconv.FormatInt(n+1, 10))
+	// Push the new config to every connected gateway over xDS, if a broadcaster
+	// (the admin's gRPC ConfigServer) has been wired in. No-op in tests/standalone.
+	if b := configBroadcaster(); b != nil {
+		b.Notify()
+	}
 }
+
+// Broadcaster pushes a fresh config snapshot to connected gateways. The admin's
+// xDS ConfigServer implements it; it is optional (nil when xDS is disabled).
+type Broadcaster interface {
+	Notify()
+}
+
+var (
+	configBroadcasterVal Broadcaster
+)
+
+// SetBroadcaster wires the xDS push target. Call once at admin startup (after
+// Mount) if the gRPC ConfigServer is enabled. Safe to pass nil to disable.
+func SetBroadcaster(b Broadcaster) { configBroadcasterVal = b }
+
+func configBroadcaster() Broadcaster { return configBroadcasterVal }

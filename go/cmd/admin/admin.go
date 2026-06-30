@@ -1,5 +1,5 @@
 // Package admin implements the `nyro admin` subcommand: the control plane
-// (management API + WebUI + OAuth session lifecycle).
+// (management API + WebUI + OAuth session lifecycle + xDS config push).
 package admin
 
 import (
@@ -13,19 +13,27 @@ import (
 	"github.com/nyroway/nyro/go/internal/auth"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/proxy"
+	"github.com/nyroway/nyro/go/internal/xds"
 )
 
 // NewCmd builds the admin (control-plane) subcommand.
+//
+// In addition to the REST API + WebUI, the admin optionally runs a gRPC
+// ConfigService server (--grpc-addr) that pushes the full config snapshot to
+// every connected gateway. When enabled, every config write (providers, models,
+// api keys, settings) triggers an immediate push to all gateways.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "admin",
 		Short: "Run the control plane (management API + WebUI)",
 	}
 	cmd.Flags().String("addr", "127.0.0.1:19531", "listen address for the control plane")
+	cmd.Flags().String("grpc-addr", "", "listen address for the gRPC xDS server (disabled if empty)")
 	cmd.Flags().String("admin-token", "", "Bearer token protecting /api/v1 admin routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("addr")
+		grpcAddr, _ := cmd.Flags().GetString("grpc-addr")
 		adminToken, _ := cmd.Flags().GetString("admin-token")
 		webuiDir, _ := cmd.Flags().GetString("webui-dir")
 		storageBackend, _ := cmd.Flags().GetString("storage")
@@ -43,6 +51,18 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		bootstrap.StartRetentionLoop(ctx, st)
+
+		// Optionally start the gRPC xDS server and wire it as the config-push
+		// target so every admin config write reaches connected gateways.
+		if grpcAddr != "" {
+			srv := xds.NewConfigServer(st)
+			shutdown, err := xds.ServeGRPC(ctx, grpcAddr, srv)
+			if err != nil {
+				return err
+			}
+			defer shutdown()
+			admin.SetBroadcaster(srv)
+		}
 
 		engine := chi.NewRouter()
 		engine.Use(middleware.Recoverer)

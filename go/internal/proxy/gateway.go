@@ -43,6 +43,19 @@ func NewGateway(s storage.Storage) *Gateway {
 	if snap, err := xds.LoadFromStorage(s); err == nil {
 		cache.Swap(snap)
 	}
+	return newGateway(s, cache)
+}
+
+// NewGatewayWithCache builds a Gateway using a caller-provided, pre-populated
+// ConfigCache. This is the standalone-YAML and xDS path: the caller (cmd/gateway)
+// builds the snapshot from YAML or from the xDS stream and swaps it in, so the
+// gateway never needs to read the DB for config. storage is still retained for
+// OAuth/quota/logs until Phase 3.
+func NewGatewayWithCache(s storage.Storage, cache *xds.ConfigCache) *Gateway {
+	return newGateway(s, cache)
+}
+
+func newGateway(s storage.Storage, cache *xds.ConfigCache) *Gateway {
 	return &Gateway{
 		HTTPClient: &http.Client{Timeout: 5 * time.Minute},
 		Storage:    s,
