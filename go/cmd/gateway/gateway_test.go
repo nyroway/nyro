@@ -35,8 +35,14 @@ func TestBuildGateway_ConfigAndXdsAreMutuallyExclusive(t *testing.T) {
 
 func TestRunE_RejectsBothConfigAndXdsAddr(t *testing.T) {
 	cmd := NewCmd()
-	cmd.SetArgs([]string{"--config", "a.yaml", "--xds-addr", "host:1234"})
-	// RunE returns the XOR error before touching storage/listeners.
+	// ParseFlags binds the args to the flag set first. Calling RunE directly
+	// skips cobra's parse step, so without ParseFlags the flags read as
+	// default-empty, the --config/--xds-addr XOR guard would NOT fire, and RunE
+	// would fall through to the default branch and block on RunServer (test
+	// hang). The XOR check still returns before touching storage/listeners.
+	if err := cmd.ParseFlags([]string{"--config", "a.yaml", "--xds-addr", "host:1234"}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
 	err := cmd.RunE(cmd, nil)
 	if err == nil || err.Error() == "" {
 		t.Fatalf("expected XOR error; got %v", err)
