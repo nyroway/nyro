@@ -15,41 +15,41 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/storage/database"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
-	"github.com/nyroway/nyro/go/internal/storage/sqlite"
 )
 
 // OpenStorage selects and opens the storage backend. "memory" (the default) is
 // ephemeral; "sqlite"/"postgres"/"mysql" open a persistent DB and apply the
-// schema via Migrate.
-func OpenStorage(backend, dsn string) (storage.Storage, error) {
+// config-schema (upstreams/routes/consumers) tables via Migrate.
+func OpenStorage(backend, dsn string) (storage.CoreStorage, error) {
 	switch backend {
 	case "", "memory":
-		return memory.New().Storage(), nil
+		return memory.New().Core(), nil
 	case "sqlite":
-		b, err := sqlite.New(dsn)
+		b, err := database.NewSQLite(dsn)
 		if err != nil {
 			return nil, fmt.Errorf("open sqlite: %w", err)
 		}
-		return bootstrapSQL(b.Storage())
+		return bootstrapSQL(b)
 	case "postgres":
-		b, err := sqlite.NewPostgres(dsn)
+		b, err := database.NewPostgres(dsn)
 		if err != nil {
 			return nil, fmt.Errorf("open postgres: %w", err)
 		}
-		return bootstrapSQL(b.Storage())
+		return bootstrapSQL(b)
 	case "mysql":
-		b, err := sqlite.NewMySQL(dsn)
+		b, err := database.NewMySQL(dsn)
 		if err != nil {
 			return nil, fmt.Errorf("open mysql: %w", err)
 		}
-		return bootstrapSQL(b.Storage())
+		return bootstrapSQL(b)
 	default:
 		return nil, fmt.Errorf("unknown storage backend %q (want memory|sqlite|postgres|mysql)", backend)
 	}
 }
 
-func bootstrapSQL(st storage.Storage) (storage.Storage, error) {
+func bootstrapSQL(st storage.CoreStorage) (storage.CoreStorage, error) {
 	if err := st.Bootstrap().Init(); err != nil {
 		return nil, fmt.Errorf("storage init: %w", err)
 	}

@@ -24,8 +24,8 @@ func TestOpenStorage(t *testing.T) {
 		if h.Backend != "sqlite" {
 			t.Errorf("backend = %q, want sqlite", h.Backend)
 		}
-		if _, err := st.Providers().List(); err != nil {
-			t.Errorf("Providers().List after migrate: %v", err)
+		if _, err := st.Upstreams().List(); err != nil {
+			t.Errorf("Upstreams().List after migrate: %v", err)
 		}
 	})
 	t.Run("unknown backend errors", func(t *testing.T) {
