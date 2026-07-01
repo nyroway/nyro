@@ -97,9 +97,12 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		return
 	}
 
-	// select + failover: try each backend (ordered by the balance strategy)
-	// until one returns a usable response; fail over on network error or 5xx.
+	// select + failover: try each backend (ordered by the balance strategy),
+	// retrying the same backend up to settings.proxy.max_retries times on a
+	// retry_on_status code or network error, then failing over to the next
+	// backend; stop at the first usable response.
 	ordered := g.Router.Select(route.Upstreams, route.Balance)
+	ps := resolveProxySettings(g.snapshot())
 	served := false
 	for _, target := range ordered {
 		p := g.snapshot().UpstreamGet(target.UpstreamID)
@@ -161,21 +164,44 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		client, cErr := g.httpClientFor(p.ProxyURL != "")
 		if cErr != nil {
 			g.Router.Record(router.KeyOf(target), false, 0)
-			continue
+			continue // can't build a client for this backend → next backend
 		}
-		upStart := time.Now()
-		resp, err := g.callUpstream(client, r, outbound)
-		latencyMs := float64(time.Since(upStart).Microseconds()) / 1000
-		if err != nil {
+
+		// Retry this backend up to MaxRetries times (1 = no retry, just the
+		// initial attempt) on a network error or a retry_on_status code.
+		attempts := ps.MaxRetries
+		if attempts < 1 {
+			attempts = 1
+		}
+		var resp *http.Response
+		var latencyMs float64
+		for attempt := 1; attempt <= attempts; attempt++ {
+			upStart := time.Now()
+			resp, err = g.callUpstream(client, r, outbound)
+			latencyMs = float64(time.Since(upStart).Microseconds()) / 1000
+			if err != nil {
+				resp = nil
+				if attempt < attempts {
+					continue
+				}
+				break
+			}
+			if ps.RetryOnStatus[resp.StatusCode] {
+				resp.Body.Close()
+				resp = nil
+				if attempt < attempts {
+					continue
+				}
+				break
+			}
+			break // usable response (not in retry_on_status) → stop retrying
+		}
+		if resp == nil {
 			g.Router.Record(router.KeyOf(target), false, latencyMs)
-			continue // network error → next backend
+			continue // exhausted retries on this backend → next backend
 		}
-		if resp.StatusCode >= 500 {
-			resp.Body.Close()
-			g.Router.Record(router.KeyOf(target), false, latencyMs)
-			continue // server error → retryable
-		}
-		// usable response (2xx or 4xx client error) → serve, no more failover.
+
+		// usable response (2xx, or a non-retried 4xx/5xx) → serve, no more failover.
 		// Populate upstream logCtx fields + bag now that they're known.
 		upstream = *p
 		lc.UpstreamModel = actualModel
