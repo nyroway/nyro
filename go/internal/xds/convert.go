@@ -1,6 +1,7 @@
 package xds
 
 import (
+	"encoding/json"
 	"strconv"
 
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -8,146 +9,147 @@ import (
 )
 
 // SnapshotFromProto converts a wire ConfigSnapshot into the gateway's internal
-// read model. Providers, models (with targets), API keys + bindings, settings,
-// and OAuth credentials are all carried into the cache (P3b).
+// read model. Upstreams, routes (with targets), consumers (keys — prefix+hash
+// only — route grants, and quotas), and settings are all carried into the cache.
 func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
-	snap := &ConfigSnapshot{
-		providers: map[string]storage.Provider{},
-		models:    map[string]storage.Model{},
-		apikeys:   map[string]storage.ApiKeyAccessRecord{},
-		bindings:  map[string]map[string]bool{},
-		settings:  map[string]string{},
-	}
+	b := &Snapshot{}
 	if in == nil {
-		return snap
+		return b.Done()
 	}
 
-	for _, p := range in.GetProviders() {
-		if p == nil {
+	for _, u := range in.GetUpstreams() {
+		if u == nil {
 			continue
 		}
-		snap.providers[p.GetId()] = storage.Provider{
-			ID:           p.GetId(),
-			Name:         p.GetName(),
-			Vendor:       p.GetVendor(),
-			Protocol:     p.GetProtocol(),
-			BaseURL:      p.GetBaseUrl(),
-			PresetKey:    p.GetPresetKey(),
-			Channel:      p.GetChannel(),
-			ModelsSource: p.GetModelsSource(),
-			StaticModels: p.GetStaticModels(),
-			APIKey:       p.GetApiKey(),
-			AuthMode:     p.GetAuthMode(),
-			UseProxy:     p.GetUseProxy(),
-			IsEnabled:    p.GetIsEnabled(),
-		}
+		b.SetUpstream(storage.Upstream{
+			ID:              u.GetId(),
+			Name:            u.GetName(),
+			Provider:        u.GetProvider(),
+			Protocol:        u.GetProtocol(),
+			BaseURL:         u.GetBaseUrl(),
+			CredentialsJSON: rawJSON(u.GetCredentialsJson()),
+			ModelsJSON:      rawJSON(u.GetModelsJson()),
+			ProxyURL:        u.GetProxyUrl(),
+			Enabled:         u.GetEnabled(),
+		})
 	}
 
-	for _, m := range in.GetModels() {
-		if m == nil {
+	for _, r := range in.GetRoutes() {
+		if r == nil {
 			continue
 		}
-		model := storage.Model{
-			ID:         m.GetId(),
-			Name:       m.GetName(),
-			Balance:    storage.ModelBalance(m.GetBalance()),
-			EnableAuth: m.GetEnableAuth(),
-			IsEnabled:  m.GetIsEnabled(),
+		enablePayload := r.GetEnablePayload()
+		route := storage.Route{
+			ID:            r.GetId(),
+			Model:         r.GetModel(),
+			Balance:       storage.ModelBalance(r.GetBalance()),
+			EnableAuth:    r.GetEnableAuth(),
+			EnablePayload: &enablePayload,
+			Enabled:       r.GetEnabled(),
 		}
-		if len(m.GetTargets()) > 0 {
-			model.Targets = make([]storage.ModelBackend, 0, len(m.GetTargets()))
-			for _, t := range m.GetTargets() {
-				if t == nil {
-					continue
-				}
-				model.Targets = append(model.Targets, storage.ModelBackend{
-					ID:         t.GetId(),
-					ModelID:    t.GetModelId(),
-					ProviderID: t.GetProviderId(),
-					Model:      t.GetModel(),
-					Weight:     t.GetWeight(),
-					Priority:   t.GetPriority(),
-				})
+		for _, t := range r.GetTargets() {
+			if t == nil {
+				continue
 			}
+			route.Upstreams = append(route.Upstreams, storage.RouteUpstream{
+				ID: t.GetId(), RouteID: t.GetRouteId(), UpstreamID: t.GetUpstreamId(),
+				Model: t.GetModel(), Weight: t.GetWeight(), Priority: t.GetPriority(),
+				Enabled: t.GetEnabled(),
+			})
 		}
-		snap.models[m.GetName()] = model
+		b.SetRoute(route)
 	}
 
-	for _, k := range in.GetApiKeys() {
-		if k == nil || k.GetToken() == "" {
+	for _, c := range in.GetConsumers() {
+		if c == nil {
 			continue
 		}
-		snap.apikeys[k.GetToken()] = storage.ApiKeyAccessRecord{
-			ID:        k.GetId(),
-			Name:      k.GetName(),
-			IsEnabled: k.GetIsEnabled(),
-			ExpiresAt: k.GetExpiresAt(),
-			RPM:       int32Ptr(k.GetRpm(), k.Rpm),
-			RPD:       int32Ptr(k.GetRpd(), k.Rpd),
-			TPM:       int32Ptr(k.GetTpm(), k.Tpm),
-			TPD:       int32Ptr(k.GetTpd(), k.Tpd),
+		var quotas []storage.ConsumerQuota
+		for _, q := range c.GetQuotas() {
+			if q == nil {
+				continue
+			}
+			quotas = append(quotas, storage.ConsumerQuota{
+				ID: q.GetId(), ConsumerID: q.GetConsumerId(), QuotaType: q.GetQuotaType(),
+				QuotaLimit: q.GetQuotaLimit(), Window: q.GetWindow(),
+			})
 		}
-		set := map[string]bool{}
-		for _, mid := range k.GetBoundModelIds() {
-			set[mid] = true
+		routes := append([]string(nil), c.GetRoutes()...)
+		for _, k := range c.GetKeys() {
+			if k == nil || k.GetKeyPrefix() == "" {
+				continue
+			}
+			b.AddConsumerKey(k.GetId(), k.GetConsumerId(), k.GetKeyPrefix(), k.GetKeyHash(), k.GetEnabled(), k.GetExpiresAt(), routes, quotas)
 		}
-		snap.bindings[k.GetId()] = set
 	}
 
 	for k, v := range in.GetSettings() {
-		snap.settings[k] = v
+		b.SetSetting(k, v)
 	}
 
-	return snap
+	return b.Done()
 }
 
 // SnapshotFromStorage builds a wire ConfigSnapshot by querying storage once.
-// version is the config epoch to stamp on the snapshot. OAuth credentials are
-// included so future phases can apply them on the gateway (P2 ignores them).
-func SnapshotFromStorage(s storage.Storage, version int64) (*pb.ConfigSnapshot, error) {
+// version is the config epoch to stamp on the snapshot.
+func SnapshotFromStorage(s storage.CoreStorage, version int64) (*pb.ConfigSnapshot, error) {
 	out := &pb.ConfigSnapshot{Version: version, Settings: map[string]string{}}
 
-	providers, err := s.Providers().List()
+	upstreams, err := s.Upstreams().List()
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range providers {
-		out.Providers = append(out.Providers, &pb.Provider{
-			Id: p.ID, Name: p.Name, Vendor: p.Vendor, Protocol: p.Protocol,
-			BaseUrl: p.BaseURL, PresetKey: p.PresetKey, Channel: p.Channel,
-			ModelsSource: p.ModelsSource, StaticModels: p.StaticModels,
-			ApiKey: p.APIKey, AuthMode: p.AuthMode, UseProxy: p.UseProxy, IsEnabled: p.IsEnabled,
+	for _, u := range upstreams {
+		out.Upstreams = append(out.Upstreams, &pb.Upstream{
+			Id: u.ID, Name: u.Name, Provider: u.Provider, Protocol: u.Protocol,
+			BaseUrl: u.BaseURL, CredentialsJson: jsonRaw(u.CredentialsJSON),
+			ModelsJson: jsonRaw(u.ModelsJSON), ProxyUrl: u.ProxyURL, Enabled: u.Enabled,
 		})
 	}
 
-	models, err := s.Models().List()
+	routes, err := s.Routes().List()
 	if err != nil {
 		return nil, err
 	}
-	for _, m := range models {
-		pm := &pb.Model{
-			Id: m.ID, Name: m.Name, Balance: string(m.Balance),
-			EnableAuth: m.EnableAuth, IsEnabled: m.IsEnabled,
+	for _, r := range routes {
+		enablePayload := false
+		if r.EnablePayload != nil {
+			enablePayload = *r.EnablePayload
 		}
-		for _, t := range m.Targets {
-			pm.Targets = append(pm.Targets, &pb.ModelBackend{
-				Id: t.ID, ModelId: t.ModelID, ProviderId: t.ProviderID,
-				Model: t.Model, Weight: t.Weight, Priority: t.Priority,
+		pr := &pb.Route{
+			Id: r.ID, Model: r.Model, Balance: string(r.Balance),
+			EnableAuth: r.EnableAuth, EnablePayload: enablePayload, Enabled: r.Enabled,
+		}
+		for _, t := range r.Upstreams {
+			pr.Targets = append(pr.Targets, &pb.RouteUpstream{
+				Id: t.ID, RouteId: t.RouteID, UpstreamId: t.UpstreamID,
+				Model: t.Model, Weight: t.Weight, Priority: t.Priority, Enabled: t.Enabled,
 			})
 		}
-		out.Models = append(out.Models, pm)
+		out.Routes = append(out.Routes, pr)
 	}
 
-	keys, err := s.APIKeys().List()
+	consumers, err := s.Consumers().List()
 	if err != nil {
 		return nil, err
 	}
-	for _, k := range keys {
-		out.ApiKeys = append(out.ApiKeys, &pb.ApiKey{
-			Id: k.ID, Token: k.Token, Name: k.Name, IsEnabled: k.IsEnabled,
-			ExpiresAt: k.ExpiresAt, Rpm: k.RPM, Rpd: k.RPD, Tpm: k.TPM, Tpd: k.TPD,
-			BoundModelIds: append([]string(nil), k.ModelIDs...),
-		})
+	for _, c := range consumers {
+		pc := &pb.Consumer{Id: c.ID, Name: c.Name, Enabled: c.Enabled, Routes: append([]string(nil), c.Routes...)}
+		for _, k := range c.Keys {
+			// A key is only usable when both it and its owning consumer are
+			// enabled — disabling a consumer must revoke every key it owns.
+			pc.Keys = append(pc.Keys, &pb.ConsumerKeyRef{
+				Id: k.ID, ConsumerId: k.ConsumerID, KeyPrefix: k.KeyPrefix, KeyHash: k.KeyHash,
+				Enabled: k.Enabled && c.Enabled, ExpiresAt: k.ExpiresAt,
+			})
+		}
+		for _, q := range c.Quotas {
+			pc.Quotas = append(pc.Quotas, &pb.ConsumerQuota{
+				Id: q.ID, ConsumerId: q.ConsumerID, QuotaType: q.QuotaType,
+				QuotaLimit: q.QuotaLimit, Window: q.Window,
+			})
+		}
+		out.Consumers = append(out.Consumers, pc)
 	}
 
 	settings, err := s.Settings().ListAll()
@@ -162,18 +164,24 @@ func SnapshotFromStorage(s storage.Storage, version int64) (*pb.ConfigSnapshot, 
 }
 
 // EpochFromStorage reads the config_epoch setting (0 if absent/unparseable).
-func EpochFromStorage(s storage.Storage) int64 {
+func EpochFromStorage(s storage.CoreStorage) int64 {
 	v, _ := s.Settings().Get("config_epoch")
 	n, _ := strconv.ParseInt(v, 10, 64)
 	return n
 }
 
-// int32Ptr returns a pointer to v when the source oneof field was set (has).
-// When has is nil (field absent), returns nil so "unset" round-trips.
-func int32Ptr(v int32, has *int32) *int32 {
-	if has == nil {
+// rawJSON converts a wire JSON string to json.RawMessage (empty means "not set").
+func rawJSON(s string) json.RawMessage {
+	if s == "" {
 		return nil
 	}
-	x := v
-	return &x
+	return json.RawMessage(s)
+}
+
+// jsonRaw converts a json.RawMessage DTO field to the wire string.
+func jsonRaw(rm json.RawMessage) string {
+	if len(rm) == 0 {
+		return ""
+	}
+	return string(rm)
 }

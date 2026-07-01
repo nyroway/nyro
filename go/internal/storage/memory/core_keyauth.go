@@ -25,11 +25,19 @@ func (s keyAuthStore) FindKey(rawKey string) (*storage.ConsumerKeyAccessRecord, 
 		return nil, nil
 	}
 
+	// A key is only usable when both it and its owning consumer are enabled —
+	// disabling a consumer must revoke every key it owns, not just the ones
+	// individually toggled off.
+	consumerEnabled := true
+	if c, ok := s.b.consumers[matched.ConsumerID]; ok {
+		consumerEnabled = c.Enabled
+	}
+
 	rec := &storage.ConsumerKeyAccessRecord{
 		KeyID:      matched.ID,
 		ConsumerID: matched.ConsumerID,
 		KeyPrefix:  matched.KeyPrefix,
-		Enabled:    matched.Enabled,
+		Enabled:    matched.Enabled && consumerEnabled,
 		ExpiresAt:  matched.ExpiresAt,
 	}
 	for _, g := range s.b.consumerRoutes {

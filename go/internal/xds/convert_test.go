@@ -3,12 +3,9 @@ package xds
 import (
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 	pb "github.com/nyroway/nyro/go/internal/xds/pb/xds/v1"
 )
-
-func int32P(v int32) *int32 { return &v }
 
 // protoRoundtrip builds a pb snapshot, converts it to the internal model, and
 // returns the internal snapshot for assertions.
@@ -23,83 +20,77 @@ func protoRoundtrip(t *testing.T, in *pb.ConfigSnapshot) *ConfigSnapshot {
 
 func TestSnapshotFromProto_NilSafe(t *testing.T) {
 	snap := SnapshotFromProto(nil)
-	if snap == nil || snap.ModelByName("anything") != nil {
+	if snap == nil || snap.RouteByModel("anything") != nil {
 		t.Error("nil input should yield an empty-but-usable snapshot")
 	}
 }
 
-func TestSnapshotFromProto_Providers(t *testing.T) {
+func TestSnapshotFromProto_Upstreams(t *testing.T) {
 	in := &pb.ConfigSnapshot{
-		Providers: []*pb.Provider{{
-			Id: "prov-1", Name: "openai", Vendor: "openai", Protocol: "openai",
-			BaseUrl: "https://api.openai.com", ApiKey: "sk-x", AuthMode: "apikey",
-			UseProxy: true, IsEnabled: true,
+		Upstreams: []*pb.Upstream{{
+			Id: "up-1", Name: "openai-main", Provider: "openai", Protocol: "openai-compatible",
+			BaseUrl: "https://api.openai.com", CredentialsJson: `{"api_key":"sk-x"}`,
+			ProxyUrl: "http://proxy.local", Enabled: true,
 		}},
 	}
 	snap := protoRoundtrip(t, in)
-	p := snap.ProviderGet("prov-1")
-	if p == nil || p.Name != "openai" || !p.UseProxy || !p.IsEnabled || p.APIKey != "sk-x" {
-		t.Errorf("provider not carried: %+v", p)
+	u := snap.UpstreamGet("up-1")
+	if u == nil || u.Name != "openai-main" || !u.Enabled || string(u.CredentialsJSON) != `{"api_key":"sk-x"}` {
+		t.Errorf("upstream not carried: %+v", u)
 	}
-	if snap.ProviderGet("missing") != nil {
-		t.Error("missing provider should be nil")
+	if snap.UpstreamGet("missing") != nil {
+		t.Error("missing upstream should be nil")
 	}
 }
 
-func TestSnapshotFromProto_ModelsWithTargets(t *testing.T) {
+func TestSnapshotFromProto_RoutesWithTargets(t *testing.T) {
 	in := &pb.ConfigSnapshot{
-		Models: []*pb.Model{{
-			Id: "m-1", Name: "gpt-4", Balance: "weighted", EnableAuth: true, IsEnabled: true,
-			Targets: []*pb.ModelBackend{{
-				Id: "t-1", ModelId: "m-1", ProviderId: "prov-1", Model: "gpt-4o", Weight: 3, Priority: 1,
+		Routes: []*pb.Route{{
+			Id: "r-1", Model: "gpt-4", Balance: "weighted", EnableAuth: true, Enabled: true,
+			Targets: []*pb.RouteUpstream{{
+				Id: "t-1", RouteId: "r-1", UpstreamId: "up-1", Model: "gpt-4o", Weight: 3, Priority: 1, Enabled: true,
 			}},
 		}},
 	}
 	snap := protoRoundtrip(t, in)
-	m := snap.ModelByName("gpt-4")
-	if m == nil || !m.EnableAuth || string(m.Balance) != "weighted" {
-		t.Errorf("model fields not carried: %+v", m)
+	r := snap.RouteByModel("gpt-4")
+	if r == nil || !r.EnableAuth || string(r.Balance) != "weighted" {
+		t.Errorf("route fields not carried: %+v", r)
 	}
-	if len(m.Targets) != 1 || m.Targets[0].ProviderID != "prov-1" || m.Targets[0].Weight != 3 {
-		t.Errorf("targets not carried: %+v", m.Targets)
+	if len(r.Upstreams) != 1 || r.Upstreams[0].UpstreamID != "up-1" || r.Upstreams[0].Weight != 3 {
+		t.Errorf("targets not carried: %+v", r.Upstreams)
 	}
 }
 
-func TestSnapshotFromProto_ApiKeysAndBindings(t *testing.T) {
+func TestSnapshotFromProto_ConsumerKeysAndGrants(t *testing.T) {
 	in := &pb.ConfigSnapshot{
-		ApiKeys: []*pb.ApiKey{{
-			Id: "k-1", Token: "tok-1", Name: "alice", IsEnabled: true,
-			Rpm: int32P(100), BoundModelIds: []string{"m-1", "m-2"},
-		}, {
-			Id: "k-2", Token: "", Name: "ignored", // empty token dropped
+		Consumers: []*pb.Consumer{{
+			Id: "c-1", Name: "alice", Enabled: true,
+			Keys: []*pb.ConsumerKeyRef{{
+				Id: "k-1", ConsumerId: "c-1", KeyPrefix: "nyro_abcd", KeyHash: "deadbeef", Enabled: true,
+			}, {
+				Id: "k-2", ConsumerId: "c-1", KeyPrefix: "", KeyHash: "x", // empty prefix dropped
+			}},
+			Routes: []string{"m-1", "m-2"},
+			Quotas: []*pb.ConsumerQuota{{
+				Id: "q-1", ConsumerId: "c-1", QuotaType: "requests", QuotaLimit: 60, Window: "1m",
+			}},
 		}},
 	}
 	snap := protoRoundtrip(t, in)
-	rec := snap.FindAPIKey("tok-1")
-	if rec == nil || rec.ID != "k-1" || rec.Name != "alice" || rec.RPM == nil || *rec.RPM != 100 {
-		t.Errorf("apikey not carried: %+v", rec)
-	}
-	if !snap.ModelBindingExists("k-1", "m-1") || !snap.ModelBindingExists("k-1", "m-2") {
-		t.Error("bindings not carried")
-	}
-	if snap.ModelBindingExists("k-1", "m-3") {
-		t.Error("non-bound model should be false")
-	}
-}
 
-func TestSnapshotFromProto_UnsetQuotaStaysNil(t *testing.T) {
-	// An ApiKey with no rpm/rpd/tpm/tpd oneof must yield nil pointers, NOT 0,
-	// so "unset" round-trips distinctly from "0".
-	in := &pb.ConfigSnapshot{
-		ApiKeys: []*pb.ApiKey{{Id: "k-1", Token: "tok-1", Name: "n"}},
+	entries := snap.keysByPrefix["nyro_abcd"]
+	if len(entries) != 1 || entries[0].ConsumerID != "c-1" || entries[0].KeyHash != "deadbeef" {
+		t.Errorf("consumer key not carried: %+v", entries)
 	}
-	snap := protoRoundtrip(t, in)
-	rec := snap.FindAPIKey("tok-1")
-	if rec == nil {
-		t.Fatal("apikey missing")
+	if len(entries[0].Routes) != 2 {
+		t.Errorf("route grants not carried: %+v", entries[0].Routes)
 	}
-	if rec.RPM != nil || rec.RPD != nil || rec.TPM != nil || rec.TPD != nil {
-		t.Errorf("unset quotas should be nil; got rpm=%v rpd=%v", rec.RPM, rec.RPD)
+	if len(entries[0].Quotas) != 1 || entries[0].Quotas[0].QuotaLimit != 60 {
+		t.Errorf("quotas not carried: %+v", entries[0].Quotas)
+	}
+	if _, ok := snap.keysByPrefix[""]; ok {
+		t.Error("empty key_prefix should not be stored")
 	}
 }
 
@@ -117,9 +108,9 @@ func TestSnapshotFromProto_Settings(t *testing.T) {
 func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	// Build storage, build pb snapshot, convert to internal, assert equivalence
 	// with the direct LoadFromStorage path.
-	st, p, mOpen, _, k := newPopulatedStorage(t)
+	st, u, rOpen, _, _, rawKey := newPopulatedStorage(t)
 
-	pbSnap, err := SnapshotFromStorage(st.Storage(), 7)
+	pbSnap, err := SnapshotFromStorage(st.Core(), 7)
 	if err != nil {
 		t.Fatalf("SnapshotFromStorage: %v", err)
 	}
@@ -128,26 +119,26 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	}
 
 	// Direct load for comparison.
-	direct, err := LoadFromStorage(st.Storage())
+	direct, err := LoadFromStorage(st.Core())
 	if err != nil {
 		t.Fatalf("LoadFromStorage: %v", err)
 	}
 
 	got := SnapshotFromProto(pbSnap)
 
-	// providers
-	if gp := got.ProviderGet(p.ID); gp == nil || gp.BaseURL != p.BaseURL {
-		t.Errorf("provider via proto path mismatch: %+v", gp)
+	// upstreams
+	if gu := got.UpstreamGet(u.ID); gu == nil || gu.BaseURL != u.BaseURL {
+		t.Errorf("upstream via proto path mismatch: %+v", gu)
 	}
-	// models with targets
-	gm := got.ModelByName(mOpen.Name)
-	dm := direct.ModelByName(mOpen.Name)
-	if gm == nil || len(gm.Targets) != len(dm.Targets) {
-		t.Errorf("model targets mismatch: got %d want %d", len(gm.Targets), len(dm.Targets))
+	// routes with targets
+	gr := got.RouteByModel(rOpen.Model)
+	dr := direct.RouteByModel(rOpen.Model)
+	if gr == nil || len(gr.Upstreams) != len(dr.Upstreams) {
+		t.Errorf("route targets mismatch: got %d want %d", len(gr.Upstreams), len(dr.Upstreams))
 	}
-	// apikeys
-	if gr := got.FindAPIKey(k.Token); gr == nil || gr.ID != k.ID {
-		t.Errorf("apikey via proto path mismatch: %+v", gr)
+	// consumer keys
+	if gk := got.FindKey(rawKey); gk == nil {
+		t.Error("key via proto path mismatch: not found")
 	}
 	// settings
 	if v, ok := got.SettingGet("proxy_url"); !ok || v == "" {
@@ -157,23 +148,20 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 
 func TestEpochFromStorage(t *testing.T) {
 	st := memory.New()
-	if got := EpochFromStorage(st.Storage()); got != 0 {
+	if got := EpochFromStorage(st.Core()); got != 0 {
 		t.Errorf("absent epoch = %d; want 0", got)
 	}
-	if err := st.Settings().Set("config_epoch", "42"); err != nil {
+	if err := st.Core().Settings().Set("config_epoch", "42"); err != nil {
 		t.Fatal(err)
 	}
-	if got := EpochFromStorage(st.Storage()); got != 42 {
+	if got := EpochFromStorage(st.Core()); got != 42 {
 		t.Errorf("epoch = %d; want 42", got)
 	}
 	// garbage value parses to 0.
-	if err := st.Settings().Set("config_epoch", "not-a-number"); err != nil {
+	if err := st.Core().Settings().Set("config_epoch", "not-a-number"); err != nil {
 		t.Fatal(err)
 	}
-	if got := EpochFromStorage(st.Storage()); got != 0 {
+	if got := EpochFromStorage(st.Core()); got != 0 {
 		t.Errorf("garbage epoch = %d; want 0", got)
 	}
 }
-
-// ensure storage import is used in this test file's helpers.
-var _ = storage.Provider{}

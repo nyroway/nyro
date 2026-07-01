@@ -32,11 +32,21 @@ func (s keyAuthStore) FindKey(rawKey string) (*storage.ConsumerKeyAccessRecord, 
 		return nil, nil
 	}
 
+	// A key is only usable when both it and its owning consumer are enabled —
+	// disabling a consumer must revoke every key it owns, not just the ones
+	// individually toggled off.
+	consumerEnabled := true
+	if c, err := s.q.Consumer.WithContext(ctx).Where(s.q.Consumer.ID.Eq(matched.ConsumerID)).First(); err == nil {
+		consumerEnabled = c.Enabled
+	} else if !isNotFound(err) {
+		return nil, err
+	}
+
 	rec := &storage.ConsumerKeyAccessRecord{
 		KeyID:      matched.ID,
 		ConsumerID: matched.ConsumerID,
 		KeyPrefix:  matched.KeyPrefix,
-		Enabled:    matched.Enabled,
+		Enabled:    matched.Enabled && consumerEnabled,
 		ExpiresAt:  matched.ExpiresAt,
 	}
 

@@ -104,8 +104,8 @@ func (c *ConfigClient) runOnce(ctx context.Context) (connected bool, err error) 
 		connected = true
 		internal := SnapshotFromProto(snap)
 		c.cache.Swap(internal)
-		log.Printf("xds client: applied snapshot v%d (providers=%d models=%d apikeys=%d)",
-			snap.GetVersion(), len(snap.GetProviders()), len(snap.GetModels()), len(snap.GetApiKeys()))
+		log.Printf("xds client: applied snapshot v%d (upstreams=%d routes=%d consumers=%d)",
+			snap.GetVersion(), len(snap.GetUpstreams()), len(snap.GetRoutes()), len(snap.GetConsumers()))
 	}
 }
 

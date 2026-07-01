@@ -24,7 +24,7 @@ func newClient(cache *ConfigCache, dialOpt grpc.DialOption) *ConfigClient {
 }
 
 func TestConfigClient_ReceivesAndSwaps(t *testing.T) {
-	st, _, mOpen, _, _ := newPopulatedStorage(t)
+	st, _, rOpen, _, _, _ := newPopulatedStorage(t)
 	srv, dialOpt, stop := bufconnEnv(t, st)
 	defer stop()
 
@@ -37,26 +37,26 @@ func TestConfigClient_ReceivesAndSwaps(t *testing.T) {
 
 	// initial snapshot should land in the cache.
 	waitFor(t, 2*time.Second, func() bool {
-		return cache.Ready() && cache.Load().ModelByName(mOpen.Name) != nil
+		return cache.Ready() && cache.Load().RouteByModel(rOpen.Model) != nil
 	})
 
-	// Bump epoch + add a model, then Notify; cache should reflect the push.
-	if _, err := st.Models().Create(storage.CreateModel{Name: "client-model"}); err != nil {
+	// Bump epoch + add a route, then Notify; cache should reflect the push.
+	if _, err := st.Core().Routes().Create(storage.CreateRoute{Model: "client-model"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Settings().Set("config_epoch", "5"); err != nil {
+	if err := st.Core().Settings().Set("config_epoch", "5"); err != nil {
 		t.Fatal(err)
 	}
 	srv.Notify()
 	waitFor(t, 2*time.Second, func() bool {
-		return cache.Load().ModelByName("client-model") != nil
+		return cache.Load().RouteByModel("client-model") != nil
 	})
 }
 
 // TestConfigClient_StopsOnContextCancel verifies Run returns when the context
 // is cancelled (clean shutdown is the client's other contract besides receive).
 func TestConfigClient_StopsOnContextCancel(t *testing.T) {
-	st, _, _, _, _ := newPopulatedStorage(t)
+	st, _, _, _, _, _ := newPopulatedStorage(t)
 	_, dialOpt, stop := bufconnEnv(t, st)
 	defer stop()
 

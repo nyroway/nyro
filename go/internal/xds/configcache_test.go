@@ -9,115 +9,118 @@ import (
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
-// newPopulatedStorage builds a memory storage with one provider, two models
-// (one open, one auth-gated), and two API keys (one bound to the gated model).
-func newPopulatedStorage(t *testing.T) (*memory.Backend, storage.Provider, storage.Model, storage.Model, storage.ApiKey) {
+// newPopulatedStorage builds a memory backend with one upstream, two routes
+// (one open, one auth-gated), and one consumer with one key bound to the
+// gated route + a requests quota. Returns the raw key token alongside the
+// created entities so tests can exercise FindKey.
+func newPopulatedStorage(t *testing.T) (*memory.Backend, storage.Upstream, storage.Route, storage.Route, storage.Consumer, string) {
 	t.Helper()
 	st := memory.New()
+	core := st.Core()
 
-	p, err := st.Providers().Create(storage.CreateProvider{
-		Name: "openai", Vendor: "openai", Protocol: "openai",
-		BaseURL: "https://api.openai.com", APIKey: "sk-upstream",
+	u, err := core.Upstreams().Create(storage.CreateUpstream{
+		Name: "openai", Provider: "openai", Protocol: "openai",
+		BaseURL: "https://api.openai.com", CredentialsJSON: []byte(`{"api_key":"sk-upstream"}`),
 	})
 	if err != nil {
-		t.Fatalf("create provider: %v", err)
+		t.Fatalf("create upstream: %v", err)
 	}
 
-	mOpen, err := st.Models().Create(storage.CreateModel{
-		Name: "gpt-open", Targets: []storage.CreateModelBackend{
-			{ProviderID: p.ID, Model: "gpt-4o", Weight: 1},
+	rOpen, err := core.Routes().Create(storage.CreateRoute{
+		Model: "gpt-open", Upstreams: []storage.CreateRouteUpstream{
+			{UpstreamID: u.ID, Model: "gpt-4o", Weight: 1},
 		},
 	})
 	if err != nil {
-		t.Fatalf("create open model: %v", err)
+		t.Fatalf("create open route: %v", err)
 	}
 
-	mGated, err := st.Models().Create(storage.CreateModel{
-		Name: "gpt-gated", EnableAuth: true, Targets: []storage.CreateModelBackend{
-			{ProviderID: p.ID, Model: "gpt-4o-gated", Weight: 1},
+	rGated, err := core.Routes().Create(storage.CreateRoute{
+		Model: "gpt-gated", EnableAuth: true, Upstreams: []storage.CreateRouteUpstream{
+			{UpstreamID: u.ID, Model: "gpt-4o-gated", Weight: 1},
 		},
 	})
 	if err != nil {
-		t.Fatalf("create gated model: %v", err)
+		t.Fatalf("create gated route: %v", err)
 	}
 
-	rpm := int32(100)
-	k, err := st.APIKeys().Create(storage.CreateApiKey{
-		Name: "alice", Token: "tok-alice", RPM: &rpm, ModelIDs: []string{mGated.ID},
+	c, err := core.Consumers().Create(storage.CreateConsumer{
+		Name:   "alice",
+		Keys:   []storage.CreateConsumerKey{{Name: "primary", Token: "nyro_tok_alice_0000"}},
+		Routes: []string{rGated.Model},
+		Quotas: []storage.CreateConsumerQuota{{QuotaType: "requests", QuotaLimit: 100, Window: "1m"}},
 	})
 	if err != nil {
-		t.Fatalf("create api key: %v", err)
+		t.Fatalf("create consumer: %v", err)
 	}
 
-	if err := st.Settings().Set("proxy_enabled", "true"); err != nil {
+	if err := core.Settings().Set("proxy_enabled", "true"); err != nil {
 		t.Fatalf("set proxy_enabled: %v", err)
 	}
-	if err := st.Settings().Set("proxy_url", "http://proxy.local:8080"); err != nil {
+	if err := core.Settings().Set("proxy_url", "http://proxy.local:8080"); err != nil {
 		t.Fatalf("set proxy_url: %v", err)
 	}
-	return st, p, mOpen, mGated, k.ApiKey
+	return st, u, rOpen, rGated, c, c.Keys[0].Token
 }
 
 func TestLoadFromStorage_BuildsAllMaps(t *testing.T) {
-	st, p, mOpen, mGated, k := newPopulatedStorage(t)
+	st, u, rOpen, rGated, c, rawKey := newPopulatedStorage(t)
 
-	snap, err := LoadFromStorage(st.Storage())
+	snap, err := LoadFromStorage(st.Core())
 	if err != nil {
 		t.Fatalf("LoadFromStorage: %v", err)
 	}
 
-	// providers
-	got := snap.ProviderGet(p.ID)
-	if got == nil || got.BaseURL != p.BaseURL || !got.IsEnabled {
-		t.Errorf("ProviderGet = %v; want populated provider", got)
+	// upstreams
+	got := snap.UpstreamGet(u.ID)
+	if got == nil || got.BaseURL != u.BaseURL || !got.Enabled {
+		t.Errorf("UpstreamGet = %v; want populated upstream", got)
 	}
-	if snap.ProviderGet("nope") != nil {
-		t.Error("ProviderGet missing key should return nil")
-	}
-
-	// models (with targets)
-	gm := snap.ModelByName(mOpen.Name)
-	if gm == nil || len(gm.Targets) != 1 || gm.Targets[0].ProviderID != p.ID {
-		t.Errorf("ModelByName(open) = %+v; want 1 target on provider", gm)
-	}
-	if snap.ModelByName(mGated.Name).EnableAuth != true {
-		t.Error("gated model EnableAuth not carried")
-	}
-	if snap.ModelByName("missing") != nil {
-		t.Error("ModelByName missing should return nil")
+	if snap.UpstreamGet("nope") != nil {
+		t.Error("UpstreamGet missing key should return nil")
 	}
 
-	// models list
+	// routes (with targets)
+	gr := snap.RouteByModel(rOpen.Model)
+	if gr == nil || len(gr.Upstreams) != 1 || gr.Upstreams[0].UpstreamID != u.ID {
+		t.Errorf("RouteByModel(open) = %+v; want 1 target on upstream", gr)
+	}
+	if !snap.RouteByModel(rGated.Model).EnableAuth {
+		t.Error("gated route EnableAuth not carried")
+	}
+	if snap.RouteByModel("missing") != nil {
+		t.Error("RouteByModel missing should return nil")
+	}
+
+	// routes list
 	names := []string{}
-	for _, m := range snap.ModelsList() {
-		names = append(names, m.Name)
+	for _, r := range snap.RoutesList() {
+		names = append(names, r.Model)
 	}
 	sort.Strings(names)
-	want := []string{mGated.Name, mOpen.Name}
+	want := []string{rGated.Model, rOpen.Model}
 	sort.Strings(want)
 	if len(names) != 2 {
-		t.Errorf("ModelsList len = %d; want 2", len(names))
+		t.Errorf("RoutesList len = %d; want 2", len(names))
 	}
 
-	// apikeys
-	rec := snap.FindAPIKey(k.Token)
-	if rec == nil || rec.ID != k.ID || rec.Name != "alice" || !rec.IsEnabled || rec.RPM == nil || *rec.RPM != 100 {
-		t.Errorf("FindAPIKey = %+v; want alice rpm=100", rec)
+	// consumer key auth
+	rec := snap.FindKey(rawKey)
+	if rec == nil || rec.ConsumerID != c.ID || !rec.Enabled {
+		t.Errorf("FindKey = %+v; want alice's key", rec)
 	}
-	if snap.FindAPIKey("nope") != nil {
-		t.Error("FindAPIKey missing token should return nil")
+	if snap.FindKey("nope") != nil {
+		t.Error("FindKey missing token should return nil")
 	}
 
-	// bindings: alice bound to gated model only
-	if !snap.ModelBindingExists(k.ID, mGated.ID) {
-		t.Error("ModelBindingExists(alice, gated) = false; want true")
+	// route grants: alice bound to gated route only
+	if len(rec.Routes) != 1 || rec.Routes[0] != rGated.Model {
+		t.Errorf("rec.Routes = %v; want [%s]", rec.Routes, rGated.Model)
 	}
-	if snap.ModelBindingExists(k.ID, mOpen.ID) {
-		t.Error("ModelBindingExists(alice, open) = true; want false")
-	}
-	bound := snap.ListBoundModelIDs(k.ID)
-	if len(bound) != 1 || bound[0] != mGated.ID {
-		t.Errorf("ListBoundModelIDs = %v; want [%s]", bound, mGated.ID)
+
+	// quotas
+	if len(rec.Quotas) != 1 || rec.Quotas[0].QuotaLimit != 100 {
+		t.Errorf("rec.Quotas = %+v; want 1 requests quota limit 100", rec.Quotas)
 	}
 
 	// settings
@@ -133,7 +136,7 @@ func TestLoadFromStorage_BuildsAllMaps(t *testing.T) {
 }
 
 func TestConfigCache_LoadSwapReady(t *testing.T) {
-	st, _, _, _, _ := newPopulatedStorage(t)
+	st, _, _, _, _, _ := newPopulatedStorage(t)
 	c := &ConfigCache{}
 	if c.Ready() {
 		t.Fatal("fresh cache should not be Ready")
@@ -141,45 +144,42 @@ func TestConfigCache_LoadSwapReady(t *testing.T) {
 	if c.Load() != nil {
 		t.Fatal("fresh cache Load should be nil")
 	}
-	if err := c.LoadAndSwap(st.Storage()); err != nil {
+	if err := c.LoadAndSwap(st.Core()); err != nil {
 		t.Fatalf("LoadAndSwap: %v", err)
 	}
 	if !c.Ready() {
 		t.Fatal("cache should be Ready after LoadAndSwap")
 	}
 	snap := c.Load()
-	if snap == nil || snap.ModelByName("gpt-open") == nil {
+	if snap == nil || snap.RouteByModel("gpt-open") == nil {
 		t.Error("Load returned nil/empty snapshot after swap")
 	}
 
 	// re-swap with an empty snapshot; readers see it immediately.
-	c.Swap(&ConfigSnapshot{
-		providers: map[string]storage.Provider{},
-		models:    map[string]storage.Model{},
-	})
-	if c.Load().ModelByName("gpt-open") != nil {
+	c.Swap((&Snapshot{}).Done())
+	if c.Load().RouteByModel("gpt-open") != nil {
 		t.Error("swap did not publish new snapshot")
 	}
 }
 
 func TestStartLoaderLoop_Refreshes(t *testing.T) {
-	st, _, mOpen, _, _ := newPopulatedStorage(t)
+	st, _, rOpen, _, _, _ := newPopulatedStorage(t)
 	c := &ConfigCache{}
 	errCh := make(chan error, 4)
 
-	stop := c.StartLoaderLoop(st.Storage(), 20*time.Millisecond, errCh)
+	stop := c.StartLoaderLoop(st.Core(), 20*time.Millisecond, errCh)
 	defer stop()
 
 	// initial snapshot present.
-	waitFor(t, time.Second, func() bool { return c.Ready() && c.Load().ModelByName(mOpen.Name) != nil })
+	waitFor(t, time.Second, func() bool { return c.Ready() && c.Load().RouteByModel(rOpen.Model) != nil })
 
-	// delete the model; next tick should drop it from the snapshot.
-	if err := st.Models().Delete(mOpen.ID); err != nil {
-		t.Fatalf("delete model: %v", err)
+	// delete the route; next tick should drop it from the snapshot.
+	if err := st.Core().Routes().Delete(rOpen.ID); err != nil {
+		t.Fatalf("delete route: %v", err)
 	}
 	waitFor(t, 2*time.Second, func() bool {
 		s := c.Load()
-		return s != nil && s.ModelByName(mOpen.Name) == nil
+		return s != nil && s.RouteByModel(rOpen.Model) == nil
 	})
 }
 

@@ -1,79 +1,98 @@
 // Package xds holds the gateway's in-memory configuration cache (the read side
-// of the xDS control loop). It serves the gateway's config reads: models,
-// providers, API keys, bindings, and proxy settings.
+// of the xDS control loop). It serves the gateway's config reads: upstreams,
+// routes, consumer keys, and proxy settings.
 package xds
 
 import "github.com/nyroway/nyro/go/internal/storage"
+
+// consumerKeyEntry is the gateway-facing view of a consumer key: enough to
+// authenticate a raw token locally (prefix filter + hash compare) plus the
+// grants needed to answer FindKey in one shot. It never carries the plaintext
+// token.
+type consumerKeyEntry struct {
+	KeyID      string
+	ConsumerID string
+	KeyPrefix  string
+	KeyHash    string
+	Enabled    bool
+	ExpiresAt  string
+	Routes     []string
+	Quotas     []storage.ConsumerQuota
+}
 
 // ConfigSnapshot is an immutable view of the gateway's configuration at one
 // point in time. Readers are safe for concurrent use; the maps are never
 // mutated after construction.
 type ConfigSnapshot struct {
-	// providers maps provider ID → Provider.
-	providers map[string]storage.Provider
-	// models maps client-facing model Name → Model (Targets attached).
-	models map[string]storage.Model
-	// apikeys maps raw API-key token → access record (the read model used by
-	// the inbound auth check).
-	apikeys map[string]storage.ApiKeyAccessRecord
-	// bindings maps apiKey ID → set of bound model IDs.
-	bindings map[string]map[string]bool
+	// upstreams maps upstream ID → Upstream.
+	upstreams map[string]storage.Upstream
+	// routes maps client-facing Route.Model → Route (Upstreams targets attached).
+	routes map[string]storage.Route
+	// keysByPrefix indexes consumer keys by KeyPrefix for FindKey's candidate
+	// narrowing (raw tokens are never persisted, so this is the closest to an
+	// O(1) lookup available without a per-request DB round trip).
+	keysByPrefix map[string][]consumerKeyEntry
 	// settings holds the gateway-relevant key/value settings (proxy_*).
 	settings map[string]string
 }
 
-// ModelByName returns the model registered under name (nil if absent).
-func (s *ConfigSnapshot) ModelByName(name string) *storage.Model {
-	m, ok := s.models[name]
+// UpstreamGet returns the upstream with the given ID (nil if absent).
+func (s *ConfigSnapshot) UpstreamGet(id string) *storage.Upstream {
+	u, ok := s.upstreams[id]
 	if !ok {
 		return nil
 	}
-	return &m
+	return &u
 }
 
-// ModelsList returns every model, sorted by name (matching storage's ordering).
-func (s *ConfigSnapshot) ModelsList() []storage.Model {
-	out := make([]storage.Model, 0, len(s.models))
-	for _, m := range s.models {
-		out = append(out, m)
+// UpstreamsList returns every upstream (unordered).
+func (s *ConfigSnapshot) UpstreamsList() []storage.Upstream {
+	out := make([]storage.Upstream, 0, len(s.upstreams))
+	for _, u := range s.upstreams {
+		out = append(out, u)
 	}
 	return out
 }
 
-// ProviderGet returns the provider with the given ID (nil if absent).
-func (s *ConfigSnapshot) ProviderGet(id string) *storage.Provider {
-	p, ok := s.providers[id]
+// RouteByModel returns the route registered under model (nil if absent).
+func (s *ConfigSnapshot) RouteByModel(model string) *storage.Route {
+	r, ok := s.routes[model]
 	if !ok {
 		return nil
 	}
-	return &p
+	return &r
 }
 
-// FindAPIKey returns the access record for a raw token (nil if absent).
-func (s *ConfigSnapshot) FindAPIKey(raw string) *storage.ApiKeyAccessRecord {
-	rec, ok := s.apikeys[raw]
-	if !ok {
-		return nil
-	}
-	return &rec
-}
-
-// ModelBindingExists reports whether apiKeyID is bound to modelID.
-func (s *ConfigSnapshot) ModelBindingExists(apiKeyID, modelID string) bool {
-	if set, ok := s.bindings[apiKeyID]; ok {
-		return set[modelID]
-	}
-	return false
-}
-
-// ListBoundModelIDs returns the model IDs bound to apiKeyID (empty if none).
-func (s *ConfigSnapshot) ListBoundModelIDs(apiKeyID string) []string {
-	set := s.bindings[apiKeyID]
-	out := make([]string, 0, len(set))
-	for id := range set {
-		out = append(out, id)
+// RoutesList returns every route, with targets attached.
+func (s *ConfigSnapshot) RoutesList() []storage.Route {
+	out := make([]storage.Route, 0, len(s.routes))
+	for _, r := range s.routes {
+		out = append(out, r)
 	}
 	return out
+}
+
+// FindKey resolves a raw consumer-key token to its access record: filter
+// candidates by prefix, then compare hashes (raw tokens are never persisted,
+// so an exact-match map lookup like the legacy FindAPIKey isn't possible).
+func (s *ConfigSnapshot) FindKey(rawKey string) *storage.ConsumerKeyAccessRecord {
+	prefix := storage.PrefixOf(rawKey)
+	hash := storage.HashKey(rawKey)
+	for _, entry := range s.keysByPrefix[prefix] {
+		if entry.KeyHash != hash {
+			continue
+		}
+		return &storage.ConsumerKeyAccessRecord{
+			KeyID:      entry.KeyID,
+			ConsumerID: entry.ConsumerID,
+			KeyPrefix:  entry.KeyPrefix,
+			Enabled:    entry.Enabled,
+			ExpiresAt:  entry.ExpiresAt,
+			Routes:     entry.Routes,
+			Quotas:     entry.Quotas,
+		}
+	}
+	return nil
 }
 
 // SettingGet returns the value for key ("", false if absent).
@@ -86,40 +105,35 @@ func (s *ConfigSnapshot) SettingGet(key string) (string, bool) {
 // (used by standalone YAML config). Call Done to freeze it into a ConfigSnapshot.
 // Maps are lazily allocated so callers can set only the sections they have.
 type Snapshot struct {
-	providers map[string]storage.Provider
-	models    map[string]storage.Model
-	apikeys   map[string]storage.ApiKeyAccessRecord
-	bindings  map[string]map[string]bool
+	upstreams map[string]storage.Upstream
+	routes    map[string]storage.Route
+	keys      []consumerKeyEntry
 	settings  map[string]string
 }
 
-// SetProvider adds (or replaces) a provider keyed by ID.
-func (b *Snapshot) SetProvider(p storage.Provider) {
-	if b.providers == nil {
-		b.providers = map[string]storage.Provider{}
+// SetUpstream adds (or replaces) an upstream keyed by ID.
+func (b *Snapshot) SetUpstream(u storage.Upstream) {
+	if b.upstreams == nil {
+		b.upstreams = map[string]storage.Upstream{}
 	}
-	b.providers[p.ID] = p
+	b.upstreams[u.ID] = u
 }
 
-// SetModel adds (or replaces) a model keyed by Name.
-func (b *Snapshot) SetModel(m storage.Model) {
-	if b.models == nil {
-		b.models = map[string]storage.Model{}
+// SetRoute adds (or replaces) a route keyed by Model.
+func (b *Snapshot) SetRoute(r storage.Route) {
+	if b.routes == nil {
+		b.routes = map[string]storage.Route{}
 	}
-	b.models[m.Name] = m
+	b.routes[r.Model] = r
 }
 
-// SetAPIKey adds (or replaces) an API-key access record keyed by token, and
-// registers its bindings (apiKeyID → set of model IDs).
-func (b *Snapshot) SetAPIKey(token string, rec storage.ApiKeyAccessRecord, boundModelIDs map[string]bool) {
-	if b.apikeys == nil {
-		b.apikeys = map[string]storage.ApiKeyAccessRecord{}
-	}
-	if b.bindings == nil {
-		b.bindings = map[string]map[string]bool{}
-	}
-	b.apikeys[token] = rec
-	b.bindings[rec.ID] = boundModelIDs
+// AddConsumerKey registers one consumer key's gateway-facing view (prefix,
+// hash, grants). Called once per key across all consumers.
+func (b *Snapshot) AddConsumerKey(keyID, consumerID, keyPrefix, keyHash string, enabled bool, expiresAt string, routes []string, quotas []storage.ConsumerQuota) {
+	b.keys = append(b.keys, consumerKeyEntry{
+		KeyID: keyID, ConsumerID: consumerID, KeyPrefix: keyPrefix, KeyHash: keyHash,
+		Enabled: enabled, ExpiresAt: expiresAt, Routes: routes, Quotas: quotas,
+	})
 }
 
 // SetSetting adds (or replaces) a setting.
@@ -132,26 +146,23 @@ func (b *Snapshot) SetSetting(key, value string) {
 
 // Done freezes the builder into an immutable ConfigSnapshot.
 func (b *Snapshot) Done() *ConfigSnapshot {
-	if b.providers == nil {
-		b.providers = map[string]storage.Provider{}
+	if b.upstreams == nil {
+		b.upstreams = map[string]storage.Upstream{}
 	}
-	if b.models == nil {
-		b.models = map[string]storage.Model{}
-	}
-	if b.apikeys == nil {
-		b.apikeys = map[string]storage.ApiKeyAccessRecord{}
-	}
-	if b.bindings == nil {
-		b.bindings = map[string]map[string]bool{}
+	if b.routes == nil {
+		b.routes = map[string]storage.Route{}
 	}
 	if b.settings == nil {
 		b.settings = map[string]string{}
 	}
+	byPrefix := make(map[string][]consumerKeyEntry, len(b.keys))
+	for _, k := range b.keys {
+		byPrefix[k.KeyPrefix] = append(byPrefix[k.KeyPrefix], k)
+	}
 	return &ConfigSnapshot{
-		providers: b.providers,
-		models:    b.models,
-		apikeys:   b.apikeys,
-		bindings:  b.bindings,
-		settings:  b.settings,
+		upstreams:    b.upstreams,
+		routes:       b.routes,
+		keysByPrefix: byPrefix,
+		settings:     b.settings,
 	}
 }

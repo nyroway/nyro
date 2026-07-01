@@ -20,7 +20,7 @@ import (
 func bufconnEnv(t *testing.T, store *memory.Backend) (srv *ConfigServer, dialOpt grpc.DialOption, teardown func()) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
-	srv = NewConfigServer(store.Storage())
+	srv = NewConfigServer(store.Core())
 	gs := grpc.NewServer()
 	pb.RegisterConfigServiceServer(gs, srv)
 	go gs.Serve(lis)
@@ -47,7 +47,7 @@ func dialClient(t *testing.T, dialOpt grpc.DialOption) (pb.ConfigService_StreamC
 }
 
 func TestStreamConfig_SendsInitialSnapshot(t *testing.T) {
-	st, p, _, _, _ := newPopulatedStorage(t)
+	st, u, _, _, _, _ := newPopulatedStorage(t)
 	srv, dialOpt, stop := bufconnEnv(t, st)
 	defer stop()
 
@@ -62,13 +62,13 @@ func TestStreamConfig_SendsInitialSnapshot(t *testing.T) {
 		t.Errorf("initial version = %d; want 0", snap.GetVersion())
 	}
 	found := false
-	for _, pr := range snap.GetProviders() {
-		if pr.GetId() == p.ID {
+	for _, up := range snap.GetUpstreams() {
+		if up.GetId() == u.ID {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("initial snapshot missing provider")
+		t.Error("initial snapshot missing upstream")
 	}
 	if srv.ClientCount() != 1 {
 		t.Errorf("ClientCount = %d; want 1", srv.ClientCount())
@@ -76,7 +76,7 @@ func TestStreamConfig_SendsInitialSnapshot(t *testing.T) {
 }
 
 func TestNotify_PushesToConnectedGateway(t *testing.T) {
-	st, p, _, _, _ := newPopulatedStorage(t)
+	st, u, _, _, _, _ := newPopulatedStorage(t)
 	srv, dialOpt, stop := bufconnEnv(t, st)
 	defer stop()
 
@@ -92,13 +92,13 @@ func TestNotify_PushesToConnectedGateway(t *testing.T) {
 		t.Fatalf("initial version = %d; want 0", snap0.GetVersion())
 	}
 
-	// Add a model + bump epoch, then Notify (mirrors admin write path).
-	if _, err := st.Models().Create(storage.CreateModel{Name: "new-model", Targets: []storage.CreateModelBackend{
-		{ProviderID: p.ID, Model: "nm"},
+	// Add a route + bump epoch, then Notify (mirrors admin write path).
+	if _, err := st.Core().Routes().Create(storage.CreateRoute{Model: "new-model", Upstreams: []storage.CreateRouteUpstream{
+		{UpstreamID: u.ID, Model: "nm"},
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Settings().Set("config_epoch", "3"); err != nil {
+	if err := st.Core().Settings().Set("config_epoch", "3"); err != nil {
 		t.Fatal(err)
 	}
 	srv.Notify()
@@ -111,20 +111,20 @@ func TestNotify_PushesToConnectedGateway(t *testing.T) {
 		t.Errorf("pushed version = %d; want 3", snap1.GetVersion())
 	}
 	hasNew := false
-	for _, m := range snap1.GetModels() {
-		if m.GetName() == "new-model" {
+	for _, r := range snap1.GetRoutes() {
+		if r.GetModel() == "new-model" {
 			hasNew = true
 		}
 	}
 	if !hasNew {
-		t.Error("pushed snapshot missing the newly-added model")
+		t.Error("pushed snapshot missing the newly-added route")
 	}
 }
 
 // TestStreamConfig_DisconnectOnClientCancel verifies the server cleans up the
 // client when the gateway cancels (reconnect scenario on the client side).
 func TestStreamConfig_DisconnectOnClientCancel(t *testing.T) {
-	st, _, _, _, _ := newPopulatedStorage(t)
+	st, _, _, _, _, _ := newPopulatedStorage(t)
 	srv, dialOpt, stop := bufconnEnv(t, st)
 	defer stop()
 
