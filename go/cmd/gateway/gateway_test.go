@@ -53,19 +53,23 @@ func TestBuildGateway_StandaloneYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/nyro.yaml"
 	const yaml = `
-providers:
+version: 1
+upstreams:
   - name: openai
+    provider: openai
     protocol: openai-compatible
     base_url: https://api.openai.com
-    api_key: sk-***
-models:
-  - name: gpt-4o
-    targets:
-      - {provider: openai, model: gpt-4o}
-api_keys:
+    credentials:
+      api_key: sk-***
+routes:
+  - model: gpt-4o
+    upstreams:
+      - {name: openai, model: gpt-4o}
+consumers:
   - name: local
-    key: nyro-secret
-    models: [gpt-4o]
+    keys:
+      - {name: primary, api_key: nyro-secret}
+    routes: [gpt-4o]
 `
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
