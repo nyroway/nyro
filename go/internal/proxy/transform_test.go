@@ -29,16 +29,18 @@ func TestCrossProtocolAnthropicToOpenAI(t *testing.T) {
 	}))
 	defer up.Close()
 
-	// Provider speaks openai-compatible; client will POST /v1/messages (Anthropic).
+	// Upstream speaks openai-compatible; client will POST /v1/messages (Anthropic).
 	st := memory.New()
-	prov, _ := st.Providers().Create(storage.CreateProvider{
-		Name: "openai-upstream", Protocol: "openai-compatible", BaseURL: up.URL, APIKey: "sk-test",
+	core := st.Core()
+	upstream, _ := core.Upstreams().Create(storage.CreateUpstream{
+		Name: "openai-upstream", Provider: "openai-upstream", Protocol: "openai-compatible", BaseURL: up.URL,
+		CredentialsJSON: []byte(`{"api_key":"sk-test"}`),
 	})
-	_, _ = st.Models().Create(storage.CreateModel{
-		Name:    "claude-sonnet",
-		Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "gpt-4o"}},
+	_, _ = core.Routes().Create(storage.CreateRoute{
+		Model:     "claude-sonnet",
+		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: upstream.ID, Model: "gpt-4o"}},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, st.Storage()))
+	engine := NewRouter(newTestGatewayFromStorage(t, core))
 
 	// Client sends an Anthropic Messages request.
 	body := `{"model":"claude-sonnet","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`

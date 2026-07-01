@@ -28,11 +28,11 @@ func TestDispatchRecordsUpstreamLatency(t *testing.T) {
 		t.Fatalf("dispatch → %d %s", rec.Code, rec.Body.String())
 	}
 
-	m := gw.snapshot().ModelByName("gpt-4o")
-	if m == nil || len(m.Targets) == 0 {
-		t.Fatalf("model/backends missing: %+v", m)
+	rt := gw.snapshot().RouteByModel("gpt-4o")
+	if rt == nil || len(rt.Upstreams) == 0 {
+		t.Fatalf("route/backends missing: %+v", rt)
 	}
-	if lat := gw.Router.Latency(router.KeyOf(m.Targets[0])); lat <= 0 {
+	if lat := gw.Router.Latency(router.KeyOf(rt.Upstreams[0])); lat <= 0 {
 		t.Errorf("upstream latency not recorded (got %v); Record must receive real latency, not 0", lat)
 	}
 }

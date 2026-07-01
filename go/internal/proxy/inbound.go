@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -10,34 +11,34 @@ import (
 	"github.com/nyroway/nyro/go/internal/xds"
 )
 
-// checkAccess is the inbound access check. For open models (EnableAuth=false)
-// it always allows. Otherwise it validates the API key, expiry, and model
-// binding against the in-memory config snapshot, then checks the rpm/rpd/tpm/
-// tpd quotas against the in-memory sliding-window counter (P3a: no longer reads
-// request_logs). Returns (0, "") to allow, or (statusCode, message) to deny.
-// Ported from proxy/dispatcher/auth.rs.
-func checkAccess(snap *xds.ConfigSnapshot, qc *quota.Counter, model storage.Model, r *http.Request, apiKeyID *string, apiKeyName *string) (int, string) {
-	if !model.EnableAuth {
+// checkAccess is the inbound access check. For open routes (EnableAuth=false)
+// it always allows. Otherwise it resolves the raw token to a consumer key
+// (prefix filter + hash compare against the config snapshot — raw tokens are
+// never persisted), validates expiry and the route grant, then checks the
+// consumer's quotas against the in-memory sliding-window counter. Returns
+// (0, "") to allow, or (statusCode, message) to deny.
+func checkAccess(snap *xds.ConfigSnapshot, qc *quota.Counter, route storage.Route, r *http.Request, consumerID *string, keyName *string) (int, string) {
+	if !route.EnableAuth {
 		return 0, ""
 	}
 	raw := extractKey(r)
 	if raw == "" {
 		return http.StatusUnauthorized, "missing API key"
 	}
-	rec := snap.FindAPIKey(raw)
+	rec := snap.FindKey(raw)
 	if rec == nil {
 		return http.StatusUnauthorized, "invalid API key"
 	}
-	*apiKeyID = rec.ID
-	*apiKeyName = rec.Name
-	if !rec.IsEnabled {
+	*consumerID = rec.ConsumerID
+	*keyName = rec.KeyPrefix
+	if !rec.Enabled {
 		return http.StatusForbidden, "API key is disabled"
 	}
 	if rec.ExpiresAt != "" && expired(rec.ExpiresAt) {
 		return http.StatusForbidden, "API key has expired"
 	}
-	if !snap.ModelBindingExists(rec.ID, model.ID) {
-		return http.StatusForbidden, "API key is not bound to this model"
+	if !slices.Contains(rec.Routes, route.Model) {
+		return http.StatusForbidden, "API key is not granted this route"
 	}
 	if status, msg := quotaExceeded(qc, rec); status != 0 {
 		return status, msg
@@ -68,31 +69,20 @@ func expired(iso string) bool {
 	return time.Now().After(t)
 }
 
-// quotaExceeded checks all four quota windows against the in-memory sliding
-// counter. Limits come from the API-key access record (already in the config
-// snapshot); counts come from the per-process window. Token quotas (tpm/tpd)
-// count accumulated past usage; they begin enforcing once the dispatcher
-// records token usage into the counter (after a successful upstream response).
-// Ported from auth.rs quota block.
-func quotaExceeded(qc *quota.Counter, rec *storage.ApiKeyAccessRecord) (int, string) {
-	if rec.RPM != nil {
-		if qc.Requests(rec.ID, quota.WindowMinute) >= int64(*rec.RPM) {
-			return http.StatusTooManyRequests, "api key rpm quota exceeded"
+// quotaExceeded checks every quota attached to the consumer's key against the
+// in-memory sliding counter. Limits/types/windows come from the config
+// snapshot (ConsumerQuota); counts come from the per-process counter, keyed by
+// (consumerID, quotaType) — token quotas count accumulated past usage and
+// begin enforcing once the dispatcher records usage after a successful
+// upstream response.
+func quotaExceeded(qc *quota.Counter, rec *storage.ConsumerKeyAccessRecord) (int, string) {
+	for _, q := range rec.Quotas {
+		window, err := quota.ParseWindow(q.Window)
+		if err != nil {
+			continue // malformed window: skip rather than block all traffic
 		}
-	}
-	if rec.RPD != nil {
-		if qc.Requests(rec.ID, quota.WindowDay) >= int64(*rec.RPD) {
-			return http.StatusTooManyRequests, "api key rpd quota exceeded"
-		}
-	}
-	if rec.TPM != nil {
-		if qc.Tokens(rec.ID, quota.WindowMinute) >= int64(*rec.TPM) {
-			return http.StatusTooManyRequests, "api key tpm quota exceeded"
-		}
-	}
-	if rec.TPD != nil {
-		if qc.Tokens(rec.ID, quota.WindowDay) >= int64(*rec.TPD) {
-			return http.StatusTooManyRequests, "api key tpd quota exceeded"
+		if qc.Value(rec.ConsumerID, q.QuotaType, window) >= q.QuotaLimit {
+			return http.StatusTooManyRequests, "consumer " + q.QuotaType + " quota exceeded"
 		}
 	}
 	return 0, ""

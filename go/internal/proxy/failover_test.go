@@ -28,16 +28,17 @@ func TestDispatchFailover(t *testing.T) {
 	defer up2.Close()
 
 	st := memory.New()
-	p1, _ := st.Providers().Create(storage.CreateProvider{Name: "p1", Protocol: "openai-compatible", BaseURL: up1.URL, APIKey: "k"})
-	p2, _ := st.Providers().Create(storage.CreateProvider{Name: "p2", Protocol: "openai-compatible", BaseURL: up2.URL, APIKey: "k"})
-	_, _ = st.Models().Create(storage.CreateModel{
-		Name: "gpt-4o", Balance: storage.BalancePriority,
-		Targets: []storage.CreateModelBackend{
-			{ProviderID: p1.ID, Model: "gpt-4o", Priority: 1},
-			{ProviderID: p2.ID, Model: "gpt-4o", Priority: 2},
+	core := st.Core()
+	p1, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p1", Provider: "p1", Protocol: "openai-compatible", BaseURL: up1.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	p2, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p2", Provider: "p2", Protocol: "openai-compatible", BaseURL: up2.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	_, _ = core.Routes().Create(storage.CreateRoute{
+		Model: "gpt-4o", Balance: storage.BalancePriority,
+		Upstreams: []storage.CreateRouteUpstream{
+			{UpstreamID: p1.ID, Model: "gpt-4o", Priority: 1},
+			{UpstreamID: p2.ID, Model: "gpt-4o", Priority: 2},
 		},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, st.Storage()))
+	engine := NewRouter(newTestGatewayFromStorage(t, core))
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))

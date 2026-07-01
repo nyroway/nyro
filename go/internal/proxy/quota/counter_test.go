@@ -21,40 +21,38 @@ func (f *fakeClock) now() time.Time { return f.t }
 
 func TestRecordAndRead(t *testing.T) {
 	c := New()
-	fc, _ := useFakeClock(c, time.Unix(1_000_000, 0))
+	// Minute-aligned so a few-second advance stays in the same 1m bucket
+	// (bucketResolution == time.Minute, so a 1-minute window is exactly one
+	// bucket wide — no partial-overlap credit across a bucket boundary).
+	fc, _ := useFakeClock(c, time.Unix(1_000_000, 0).Truncate(time.Minute))
 
-	c.Record("k1", 1, 100)
-	c.Record("k1", 1, 50)
-	c.Record("k2", 1, 7)
+	c.Record("k1", "requests", 1)
+	c.Record("k1", "requests", 1)
+	c.Record("k1", "tokens", 150)
+	c.Record("k2", "requests", 1)
 
 	// Same instant → both windows accumulate.
-	if got := c.Requests("k1", WindowMinute); got != 2 {
+	if got := c.Value("k1", "requests", time.Minute); got != 2 {
 		t.Errorf("k1 minute requests = %d, want 2", got)
 	}
-	if got := c.Tokens("k1", WindowMinute); got != 150 {
+	if got := c.Value("k1", "tokens", time.Minute); got != 150 {
 		t.Errorf("k1 minute tokens = %d, want 150", got)
 	}
-	if got := c.Requests("k1", WindowDay); got != 2 {
+	if got := c.Value("k1", "requests", 24*time.Hour); got != 2 {
 		t.Errorf("k1 day requests = %d, want 2", got)
 	}
-	if got := c.Requests("k2", WindowMinute); got != 1 {
+	if got := c.Value("k2", "requests", time.Minute); got != 1 {
 		t.Errorf("k2 minute requests = %d, want 1", got)
 	}
 	// Unknown key → 0.
-	if got := c.Requests("nope", WindowMinute); got != 0 {
+	if got := c.Value("nope", "requests", time.Minute); got != 0 {
 		t.Errorf("unknown key requests = %d, want 0", got)
 	}
 
-	// 60-second window: 1s advance keeps second 0 in-window (window = [t-59, t]).
-	fc.t = fc.t.Add(time.Second)
-	if got := c.Requests("k1", WindowMinute); got != 2 {
-		t.Errorf("k1 after 1s advance = %d, want 2 (still in 60s window)", got)
-	}
-
-	// 61 seconds after the write (which was at t0): second 0 rolls off.
-	fc.t = time.Unix(1_000_000, 0).Add(61 * time.Second)
-	if got := c.Requests("k1", WindowMinute); got != 0 {
-		t.Errorf("k1 after 61s advance = %d, want 0", got)
+	// A few seconds later, still inside the same 1-minute bucket.
+	fc.t = fc.t.Add(5 * time.Second)
+	if got := c.Value("k1", "requests", time.Minute); got != 2 {
+		t.Errorf("k1 after 5s advance = %d, want 2 (still in 1m window)", got)
 	}
 }
 
@@ -63,26 +61,20 @@ func TestMinuteWindowExpiry(t *testing.T) {
 	base := time.Unix(2_000_000, 0)
 	fc, _ := useFakeClock(c, base)
 
-	// 60 records, one per second, seconds 0..59. Do NOT advance past the last
-	// record before reading (advancing would roll second 0 off early).
+	// 60 records, one per minute, minutes 0..59 — spans the whole 1h ring
+	// window used to validate rolloff at coarser granularity.
 	for i := 0; i < 60; i++ {
-		fc.t = base.Add(time.Duration(i) * time.Second)
-		c.Record("k", 1, 10)
+		fc.t = base.Add(time.Duration(i) * time.Minute)
+		c.Record("k", "requests", 1)
 	}
-	// Window covers seconds [0, 59] → all 60 buckets present.
-	if got := c.Requests("k", WindowMinute); got != 60 {
+	// Window covers the trailing hour → all 60 one-minute buckets present.
+	if got := c.Value("k", "requests", time.Hour); got != 60 {
 		t.Errorf("full window = %d, want 60", got)
 	}
-	// One more second (now=60): second 0 drops out, but we add nothing, so the
-	// window holds seconds [1, 60] = 59 live buckets (second 60 bucket empty).
-	fc.t = base.Add(60 * time.Second)
-	if got := c.Requests("k", WindowMinute); got != 59 {
-		t.Errorf("after rolling second 0 = %d, want 59", got)
-	}
-	// Wait out the whole 60-second window from the last write (second 59).
-	fc.t = base.Add(120 * time.Second)
-	if got := c.Requests("k", WindowMinute); got != 0 {
-		t.Errorf("after full minute idle = %d, want 0", got)
+	// One more minute: the oldest bucket (minute 0) drops out of the 1h window.
+	fc.t = base.Add(60 * time.Minute)
+	if got := c.Value("k", "requests", time.Hour); got != 59 {
+		t.Errorf("after rolling first minute = %d, want 59", got)
 	}
 }
 
@@ -91,10 +83,10 @@ func TestDayWindowExpiry(t *testing.T) {
 	base := time.Unix(0, 0).UTC() // hour 0 epoch
 	fc, _ := useFakeClock(c, base)
 
-	c.Record("k", 1, 100)
-	// 25 hours later: day window (24 buckets) must have rolled off entirely.
+	c.Record("k", "requests", 1)
+	// 25 hours later: day window (24h) must have rolled off entirely.
 	fc.t = base.Add(25 * time.Hour)
-	if got := c.Requests("k", WindowDay); got != 0 {
+	if got := c.Value("k", "requests", 24*time.Hour); got != 0 {
 		t.Errorf("day window after 25h = %d, want 0", got)
 	}
 }
@@ -104,17 +96,18 @@ func TestMinuteAndDayIndependent(t *testing.T) {
 	base := time.Unix(1_000_000, 0)
 	fc, _ := useFakeClock(c, base)
 
-	// One record at hour 0.
-	c.Record("k", 1, 100)
-	// 90 minutes later: minute window empty, day window still holds it.
+	// One record at t0.
+	c.Record("k", "requests", 1)
+	c.Record("k", "tokens", 100)
+	// 90 minutes later: 1-minute window empty, 24h window still holds it.
 	fc.t = base.Add(90 * time.Minute)
-	if got := c.Requests("k", WindowMinute); got != 0 {
+	if got := c.Value("k", "requests", time.Minute); got != 0 {
 		t.Errorf("minute after 90m = %d, want 0", got)
 	}
-	if got := c.Requests("k", WindowDay); got != 1 {
+	if got := c.Value("k", "requests", 24*time.Hour); got != 1 {
 		t.Errorf("day after 90m = %d, want 1", got)
 	}
-	if got := c.Tokens("k", WindowDay); got != 100 {
+	if got := c.Value("k", "tokens", 24*time.Hour); got != 100 {
 		t.Errorf("day tokens after 90m = %d, want 100", got)
 	}
 }
@@ -130,7 +123,8 @@ func TestConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perG; j++ {
-				c.Record("k", 1, 3)
+				c.Record("k", "requests", 1)
+				c.Record("k", "tokens", 3)
 			}
 		}()
 	}
@@ -140,17 +134,17 @@ func TestConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perG; j++ {
-				_ = c.Requests("k", WindowMinute)
-				_ = c.Tokens("k", WindowDay)
+				_ = c.Value("k", "requests", time.Minute)
+				_ = c.Value("k", "tokens", 24*time.Hour)
 			}
 			atomic.StoreInt64(&readOK, 1)
 		}()
 	}
 	wg.Wait()
-	if got := c.Requests("k", WindowMinute); got != int64(goroutines*perG) {
+	if got := c.Value("k", "requests", time.Minute); got != int64(goroutines*perG) {
 		t.Errorf("concurrent requests = %d, want %d", got, goroutines*perG)
 	}
-	if got := c.Tokens("k", WindowMinute); got != int64(goroutines*perG*3) {
+	if got := c.Value("k", "tokens", time.Minute); got != int64(goroutines*perG*3) {
 		t.Errorf("concurrent tokens = %d, want %d", got, goroutines*perG*3)
 	}
 	if atomic.LoadInt64(&readOK) == 0 {
@@ -163,26 +157,44 @@ func TestGC(t *testing.T) {
 	base := time.Unix(1_000_000, 0)
 	fc, _ := useFakeClock(c, base)
 
-	c.Record("idle", 1, 10)
+	c.Record("idle", "requests", 1)
 
-	// Let the idle key's BOTH windows fully expire (>24h for the day window).
+	// Let the idle key's ring fully expire (>24h, the ring's full span).
 	fc.t = base.Add(25 * time.Hour)
 
 	// Now record an active key at the current time — it must survive GC.
-	c.Record("active", 1, 10)
+	c.Record("active", "requests", 1)
 
 	removed := c.GC()
 	if removed != 1 {
 		t.Fatalf("GC removed %d keys, want 1", removed)
 	}
 	c.mu.Lock()
-	_, idlePresent := c.state["idle"]
-	_, activePresent := c.state["active"]
+	_, idlePresent := c.rings[quotaKey{"idle", "requests"}]
+	_, activePresent := c.rings[quotaKey{"active", "requests"}]
 	c.mu.Unlock()
 	if idlePresent {
 		t.Error("idle key still present after GC")
 	}
 	if !activePresent {
 		t.Error("active key removed by GC (should stay)")
+	}
+}
+
+func TestParseWindow(t *testing.T) {
+	cases := map[string]time.Duration{
+		"1m": time.Minute,
+		"1h": time.Hour,
+		"1d": 24 * time.Hour,
+		"2d": 48 * time.Hour,
+	}
+	for s, want := range cases {
+		got, err := ParseWindow(s)
+		if err != nil {
+			t.Fatalf("ParseWindow(%q): %v", s, err)
+		}
+		if got != want {
+			t.Errorf("ParseWindow(%q) = %v, want %v", s, got, want)
+		}
 	}
 }

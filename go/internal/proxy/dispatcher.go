@@ -34,10 +34,10 @@ import (
 func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiRequest, ingress codec.EndpointHandler) {
 	started := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	var apiKeyID string
+	var consumerID string
 	var usage ir.Usage
-	model := storage.Model{}
-	provider := storage.Provider{}
+	route := storage.Route{}
+	upstream := storage.Upstream{}
 	lc := observability.LogCtx{
 		Method:         r.Method,
 		Path:           r.URL.Path,
@@ -55,52 +55,55 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 	defer func() {
 		bag.Set(string(observability.BagStarted), started)
 		bag.Set(string(observability.BagStatus), rec.status)
-		bag.Set(string(observability.BagModel), model)
-		bag.Set(string(observability.BagProvider), provider)
-		bag.Set(string(observability.BagAPIKeyID), apiKeyID)
+		bag.Set(string(observability.BagModel), route)
+		bag.Set(string(observability.BagProvider), upstream)
+		bag.Set(string(observability.BagAPIKeyID), consumerID)
 		bag.Set(string(observability.BagLogCtx), lc)
 		bag.Set(string(observability.BagUsage), usage)
-		// Record into the in-memory quota sliding window. apiKeyID is empty for
-		// unauthenticated/open requests — skip those. For requests that failed
-		// before usage was captured, usage is zero so only the request counts.
-		if apiKeyID != "" {
-			g.Quota.Record(apiKeyID, 1, int64(usage.PromptTokens+usage.CompletionTokens))
+		// Record into the in-memory quota sliding window. consumerID is empty
+		// for unauthenticated/open requests — skip those. For requests that
+		// failed before usage was captured, usage is zero so only the request
+		// counts.
+		if consumerID != "" {
+			g.Quota.Record(consumerID, "requests", 1)
+			g.Quota.Record(consumerID, "tokens", int64(usage.PromptTokens+usage.CompletionTokens))
 		}
 	}()
 
 	plugin.RunPhaseHooks(plugin.PhaseOnRequest, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
 
-	// route: model name → model (with backends) — read from the in-memory cache.
-	m := g.snapshot().ModelByName(req.Model)
-	if m == nil {
+	// route: model name → route (with upstream targets) — read from the
+	// in-memory cache.
+	rt := g.snapshot().RouteByModel(req.Model)
+	if rt == nil {
 		writeJSONError(rec, http.StatusNotFound, "model not found: "+req.Model)
 		return
 	}
-	model = *m
-	bag.Set(string(observability.BagModel), model)
-	if !model.IsEnabled {
+	route = *rt
+	bag.Set(string(observability.BagModel), route)
+	if !route.Enabled {
 		writeJSONError(rec, http.StatusServiceUnavailable, "model disabled: "+req.Model)
 		return
 	}
-	if len(model.Targets) == 0 {
+	if len(route.Upstreams) == 0 {
 		writeJSONError(rec, http.StatusServiceUnavailable, "no backends for model: "+req.Model)
 		return
 	}
 
 	// inbound auth + OnAccess
 	plugin.RunPhaseHooks(plugin.PhaseOnAccess, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
-	if status, msg := checkAccess(g.snapshot(), g.Quota, model, r, &apiKeyID, &lc.APIKeyName); status != 0 {
+	if status, msg := checkAccess(g.snapshot(), g.Quota, route, r, &consumerID, &lc.APIKeyName); status != 0 {
 		writeJSONError(rec, status, msg)
 		return
 	}
 
 	// select + failover: try each backend (ordered by the balance strategy)
 	// until one returns a usable response; fail over on network error or 5xx.
-	ordered := g.Router.Select(model.Targets, model.Balance)
+	ordered := g.Router.Select(route.Upstreams, route.Balance)
 	served := false
 	for _, target := range ordered {
-		p := g.snapshot().ProviderGet(target.ProviderID)
-		if p == nil || !p.IsEnabled {
+		p := g.snapshot().UpstreamGet(target.UpstreamID)
+		if p == nil || !p.Enabled {
 			continue
 		}
 		actualModel := target.Model
@@ -125,7 +128,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		// Build the outbound request via the Vendor pipeline (7-step:
 		// pre_encode → codec encode → post_encode → auth → build_url) when a
 		// vendor is registered; otherwise fallback to direct codec encode.
-		v := vendor.Global().Resolve(p.Vendor, p.Protocol)
+		v := vendor.Global().Resolve(p.Provider, p.Protocol)
 		var outbound codec.OutboundRequest
 		var err error
 		if v == nil {
@@ -143,7 +146,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 			}
 		} else {
 			pctx := &vendor.ProviderCtx{
-				Provider:    vendor.VendorProvider{ID: p.ID, Vendor: p.Vendor, Protocol: p.Protocol, BaseURL: p.BaseURL, AuthMode: p.AuthMode},
+				Provider:    vendor.VendorProvider{ID: p.ID, Vendor: p.Provider, Protocol: p.Protocol, BaseURL: p.BaseURL},
 				APIKey:      g.resolveCredential(*p),
 				ActualModel: actualModel,
 			}
@@ -155,7 +158,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		}
 		plugin.RunPhaseHooks(plugin.PhaseOnUpstream, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
 
-		client, cErr := g.httpClientFor(p.UseProxy)
+		client, cErr := g.httpClientFor(p.ProxyURL != "")
 		if cErr != nil {
 			g.Router.Record(router.KeyOf(target), false, 0)
 			continue
@@ -173,15 +176,15 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 			continue // server error → retryable
 		}
 		// usable response (2xx or 4xx client error) → serve, no more failover.
-		// Populate provider + upstream logCtx fields + bag now that they're known.
-		provider = *p
+		// Populate upstream logCtx fields + bag now that they're known.
+		upstream = *p
 		lc.UpstreamModel = actualModel
 		lc.UpstreamProtocol = egressHandler.Endpoint().String()
 		us := int32(resp.StatusCode)
 		lc.UpstreamStatus = &us
 		um := int64(latencyMs)
 		lc.LatencyUpstreamMs = &um
-		bag.Set(string(observability.BagProvider), provider)
+		bag.Set(string(observability.BagProvider), upstream)
 		g.Router.Record(router.KeyOf(target), true, latencyMs)
 		switch {
 		case resp.StatusCode >= 400:

@@ -86,13 +86,13 @@ func TestDispatchPopulatesBagBeforeOnLog(t *testing.T) {
 	}
 
 	// Bag fully populated before the OnLog hook read it.
-	model := bagGet[storage.Model](t, string(observability.BagModel))
-	if model.Name != "gpt-4o" {
-		t.Errorf("bag model = %+v; want name gpt-4o", model)
+	route := bagGet[storage.Route](t, string(observability.BagModel))
+	if route.Model != "gpt-4o" {
+		t.Errorf("bag route = %+v; want model gpt-4o", route)
 	}
-	provider := bagGet[storage.Provider](t, string(observability.BagProvider))
-	if provider.Name != "test" {
-		t.Errorf("bag provider = %+v; want name test", provider)
+	up := bagGet[storage.Upstream](t, string(observability.BagProvider))
+	if up.Name != "test" {
+		t.Errorf("bag upstream = %+v; want name test", up)
 	}
 	status := bagGet[int](t, string(observability.BagStatus))
 	if status != http.StatusOK {

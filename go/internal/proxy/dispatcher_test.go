@@ -21,7 +21,7 @@ func newTestGateway(t *testing.T, upstreamURL string) *Gateway {
 // equivalent of the old NewGateway(s) one-shot LoadFromStorage: production no
 // longer reads the DB for config (xDS / YAML), so tests seed the cache via the
 // same LoadAndSwap the xDS loader uses.
-func newTestGatewayFromStorage(t *testing.T, s storage.Storage) *Gateway {
+func newTestGatewayFromStorage(t *testing.T, s storage.CoreStorage) *Gateway {
 	t.Helper()
 	gw := NewGateway()
 	if err := gw.Cache.LoadAndSwap(s); err != nil {
@@ -33,15 +33,17 @@ func newTestGatewayFromStorage(t *testing.T, s storage.Storage) *Gateway {
 func newTestGatewayProto(t *testing.T, upstreamURL, protocol string) *Gateway {
 	t.Helper()
 	st := memory.New()
-	prov, _ := st.Providers().Create(storage.CreateProvider{
-		Name: "test", Protocol: protocol, BaseURL: upstreamURL, APIKey: "test-key",
+	core := st.Core()
+	up, _ := core.Upstreams().Create(storage.CreateUpstream{
+		Name: "test", Provider: "test", Protocol: protocol, BaseURL: upstreamURL,
+		CredentialsJSON: []byte(`{"api_key":"test-key"}`),
 	})
-	_, _ = st.Models().Create(storage.CreateModel{
-		Name:    "gpt-4o",
-		Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "gpt-4o"}},
+	_, _ = core.Routes().Create(storage.CreateRoute{
+		Model:     "gpt-4o",
+		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "gpt-4o"}},
 	})
 	gw := NewGateway()
-	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
+	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	return gw

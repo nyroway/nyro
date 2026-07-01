@@ -27,14 +27,16 @@ func TestReadyz(t *testing.T) {
 
 	// Published snapshot → ready.
 	st := memory.New()
-	prov, _ := st.Providers().Create(storage.CreateProvider{
-		Name: "p", Protocol: "openai-compatible", BaseURL: "http://up", APIKey: "k",
+	core := st.Core()
+	up, _ := core.Upstreams().Create(storage.CreateUpstream{
+		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: "http://up",
+		CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
-	_, _ = st.Models().Create(storage.CreateModel{
-		Name: "m", Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "m"}},
+	_, _ = core.Routes().Create(storage.CreateRoute{
+		Model: "m", Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "m"}},
 	})
 	gw2 := NewGateway()
-	if err := gw2.Cache.LoadAndSwap(st.Storage()); err != nil {
+	if err := gw2.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	r2 := NewRouter(gw2)

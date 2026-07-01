@@ -10,44 +10,47 @@ import (
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
-// TestModelsList verifies GET /v1/models (cutover blocker B2): open models
-// (enable_auth=false) are always listed; auth-gated models appear only when the
-// caller presents a valid API key bound to them. Output is the OpenAI-compatible
-// {object:"list", data:[{id,object:"model",created:0,owned_by:"Nyro"}]}.
+// TestModelsList verifies GET /v1/models (cutover blocker B2): open routes
+// (enable_auth=false) are always listed; auth-gated routes appear only when the
+// caller presents a valid key granted access to them. Output is the
+// OpenAI-compatible {object:"list", data:[{id,object:"model",created:0,owned_by:"Nyro"}]}.
 func TestModelsList(t *testing.T) {
 	st := memory.New()
-	prov, _ := st.Providers().Create(storage.CreateProvider{
-		Name: "p", Protocol: "openai-compatible", BaseURL: "http://up", APIKey: "k",
+	core := st.Core()
+	up, _ := core.Upstreams().Create(storage.CreateUpstream{
+		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: "http://up",
+		CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
-	if _, err := st.Models().Create(storage.CreateModel{
-		Name:    "open-model",
-		Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "open-model"}},
+	if _, err := core.Routes().Create(storage.CreateRoute{
+		Model:     "open-model",
+		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "open-model"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	secret, err := st.Models().Create(storage.CreateModel{
-		Name:       "secret-model",
+	if _, err := core.Routes().Create(storage.CreateRoute{
+		Model:      "secret-model",
 		EnableAuth: true,
-		Targets:    []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "secret-model"}},
+		Upstreams:  []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "secret-model"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := core.Consumers().Create(storage.CreateConsumer{
+		Name:   "k1",
+		Keys:   []storage.CreateConsumerKey{{Name: "primary"}},
+		Routes: []string{"secret-model"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.APIKeys().Create(storage.CreateApiKey{
-		Name:     "k1",
-		ModelIDs: []string{secret.ID},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := consumer.Keys[0].Token
 
 	gw := NewGateway()
-	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
+	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	r := NewRouter(gw)
 
-	// No API key → only open models.
+	// No API key → only open routes.
 	req := httptest.NewRequest("GET", "/v1/models", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -58,12 +61,12 @@ func TestModelsList(t *testing.T) {
 		t.Errorf("no key: open-model missing; body %s", rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "secret-model") {
-		t.Errorf("no key: secret-model leaked without a bound key; body %s", rec.Body.String())
+		t.Errorf("no key: secret-model leaked without a granted key; body %s", rec.Body.String())
 	}
 
-	// Bound API key → open + secret.
+	// Granted API key → open + secret.
 	req = httptest.NewRequest("GET", "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer "+key.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

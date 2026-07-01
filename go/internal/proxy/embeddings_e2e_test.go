@@ -32,14 +32,16 @@ func TestDispatchEmbeddingsEndToEnd(t *testing.T) {
 	defer upstream.Close()
 
 	st := memory.New()
-	prov, _ := st.Providers().Create(storage.CreateProvider{
-		Name: "emb", Protocol: "openai-compatible", BaseURL: upstream.URL, APIKey: "k",
+	core := st.Core()
+	up, _ := core.Upstreams().Create(storage.CreateUpstream{
+		Name: "emb", Provider: "emb", Protocol: "openai-compatible", BaseURL: upstream.URL,
+		CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
-	_, _ = st.Models().Create(storage.CreateModel{
-		Name:    "text-embedding",
-		Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "text-embedding-3-small"}},
+	_, _ = core.Routes().Create(storage.CreateRoute{
+		Model:     "text-embedding",
+		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "text-embedding-3-small"}},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, st.Storage()))
+	engine := NewRouter(newTestGatewayFromStorage(t, core))
 
 	body := `{"model":"text-embedding","input":"hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(body))

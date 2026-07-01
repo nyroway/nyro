@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -10,34 +11,32 @@ import (
 
 // handleModelsList serves GET /v1/models — the OpenAI-compatible client
 // discovery endpoint. It lists the client-facing model names this gateway
-// exposes, filtered by the caller's API key: open models (enable_auth=false)
-// are always listed; auth-gated models appear only when the caller presents a
-// valid, enabled, non-expired key bound to them. Output mirrors the Rust
-// proxy/handler.rs models_list: {object:"list", data:[{id, object:"model",
+// exposes, filtered by the caller's API key: open routes (enable_auth=false)
+// are always listed; auth-gated routes appear only when the caller presents a
+// valid, enabled, non-expired key granted access to them. Output mirrors the
+// Rust proxy/handler.rs models_list: {object:"list", data:[{id, object:"model",
 // created:0, owned_by:"Nyro"}]}, de-duplicated and sorted by name.
 func handleModelsList(w http.ResponseWriter, r *http.Request, gw *Gateway) {
-	accessible := map[string]struct{}{}
+	var grantedRoutes []string
 	snap := gw.snapshot()
 	if raw := extractKey(r); raw != "" {
-		if rec := snap.FindAPIKey(raw); rec != nil && rec.IsEnabled {
+		if rec := snap.FindKey(raw); rec != nil && rec.Enabled {
 			if rec.ExpiresAt == "" || !expired(rec.ExpiresAt) {
-				for _, id := range snap.ListBoundModelIDs(rec.ID) {
-					accessible[id] = struct{}{}
-				}
+				grantedRoutes = rec.Routes
 			}
 		}
 	}
 
-	models := snap.ModelsList()
+	routes := snap.RoutesList()
 	seen := map[string]struct{}{}
 	var names []string
-	for _, m := range models {
-		if m.EnableAuth {
-			if _, ok := accessible[m.ID]; !ok {
+	for _, rt := range routes {
+		if rt.EnableAuth {
+			if !slices.Contains(grantedRoutes, rt.Model) {
 				continue
 			}
 		}
-		name := strings.TrimSpace(m.Name)
+		name := strings.TrimSpace(rt.Model)
 		if name == "" {
 			continue
 		}

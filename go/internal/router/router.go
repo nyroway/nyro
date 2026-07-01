@@ -20,7 +20,7 @@ import (
 type Key string
 
 // KeyOf builds the tracking key for a backend (providerID:model).
-func KeyOf(b storage.ModelBackend) Key { return Key(b.ProviderID + ":" + b.Model) }
+func KeyOf(b storage.RouteUpstream) Key { return Key(b.UpstreamID + ":" + b.Model) }
 
 type healthEntry struct {
 	consecFail    int
@@ -49,7 +49,7 @@ func New() *Router {
 // cooldown. If every backend is in cooldown it falls back to all of them (the
 // gateway never hard-fails solely due to cooldown). Ordering honours the
 // model's balance strategy.
-func (r *Router) Select(targets []storage.ModelBackend, balance storage.ModelBalance) []storage.ModelBackend {
+func (r *Router) Select(targets []storage.RouteUpstream, balance storage.ModelBalance) []storage.RouteUpstream {
 	if len(targets) <= 1 {
 		return targets
 	}
@@ -57,7 +57,7 @@ func (r *Router) Select(targets []storage.ModelBackend, balance storage.ModelBal
 	defer r.mu.RUnlock()
 
 	now := time.Now()
-	healthy := make([]storage.ModelBackend, 0, len(targets))
+	healthy := make([]storage.RouteUpstream, 0, len(targets))
 	for _, b := range targets {
 		if h, ok := r.health[KeyOf(b)]; ok && now.Before(h.cooldownUntil) {
 			continue
@@ -138,10 +138,10 @@ func (r *Router) IsHealthy(k Key) bool {
 
 // weightedOrder returns backends in a weighted-random order (higher weight →
 // more likely first). Backends with weight ≤ 0 are treated as weight 1.
-func weightedOrder(backends []storage.ModelBackend) []storage.ModelBackend {
-	rem := make([]storage.ModelBackend, len(backends))
+func weightedOrder(backends []storage.RouteUpstream) []storage.RouteUpstream {
+	rem := make([]storage.RouteUpstream, len(backends))
 	copy(rem, backends)
-	out := make([]storage.ModelBackend, 0, len(backends))
+	out := make([]storage.RouteUpstream, 0, len(backends))
 	for len(rem) > 0 {
 		total := 0
 		for _, b := range rem {

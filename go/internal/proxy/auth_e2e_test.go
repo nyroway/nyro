@@ -25,24 +25,28 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 	defer up.Close()
 
 	st := memory.New()
-	prov, _ := st.Providers().Create(storage.CreateProvider{Name: "p", Protocol: "openai-compatible", BaseURL: up.URL, APIKey: "k"})
-	m, _ := st.Models().Create(storage.CreateModel{
-		Name: "gpt-4o", EnableAuth: true,
-		Targets: []storage.CreateModelBackend{{ProviderID: prov.ID, Model: "gpt-4o"}},
+	core := st.Core()
+	up2, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: up.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	_, _ = core.Routes().Create(storage.CreateRoute{
+		Model: "gpt-4o", EnableAuth: true,
+		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up2.ID, Model: "gpt-4o"}},
 	})
-	key, _ := st.APIKeys().Create(storage.CreateApiKey{Name: "test", ModelIDs: []string{m.ID}})
+	consumer, _ := core.Consumers().Create(storage.CreateConsumer{
+		Name: "test", Keys: []storage.CreateConsumerKey{{Name: "primary"}}, Routes: []string{"gpt-4o"},
+	})
+	token := consumer.Keys[0].Token
 	gw := NewGateway()
-	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
+	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	engine := NewRouter(gw)
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
-	post := func(token string) int {
+	post := func(tok string) int {
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+		if tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
 		}
 		rec := httptest.NewRecorder()
 		engine.ServeHTTP(rec, req)
@@ -55,17 +59,19 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 	if c := post("bogus"); c != http.StatusUnauthorized {
 		t.Errorf("invalid key → %d, want 401", c)
 	}
-	if c := post(key.Token); c != http.StatusOK {
+	if c := post(token); c != http.StatusOK {
 		t.Errorf("valid key → %d, want 200", c)
 	}
-	// disable the key → 403
-	if _, err := st.APIKeys().Update(key.ID, storage.UpdateApiKey{IsEnabled: boolPtr(false)}); err != nil {
-		t.Fatalf("disable key: %v", err)
+	// disable the consumer → its keys are revoked too (FindKey ANDs the key's
+	// own Enabled with the owning consumer's Enabled), not just individually
+	// disabled keys.
+	if _, err := core.Consumers().Update(consumer.ID, storage.UpdateConsumer{Enabled: boolPtr(false)}); err != nil {
+		t.Fatalf("disable consumer: %v", err)
 	}
-	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil { // reflect the storage change in the in-memory cache
+	if err := gw.Cache.LoadAndSwap(core); err != nil { // reflect the storage change in the in-memory cache
 		t.Fatalf("reload cache: %v", err)
 	}
-	if c := post(key.Token); c != http.StatusForbidden {
-		t.Errorf("disabled key → %d, want 403", c)
+	if c := post(token); c != http.StatusForbidden {
+		t.Errorf("disabled consumer's key → %d, want 403", c)
 	}
 }
