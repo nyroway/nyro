@@ -1,9 +1,10 @@
 // Package admin mounts the management REST API (under /api/v1) consumed by the
-// React WebUI and the CLI. Handlers are thin wrappers over storage.Storage.
-// Ported (scoped) from crates/nyro-core/src/admin/.
+// React WebUI and the CLI. Handlers are thin wrappers over storage.CoreStorage
+// (config-schema: upstreams/routes/consumers).
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,122 +44,128 @@ type StatsSource interface {
 // logs/stats are the parquet-backed read sources (the observability store) —
 // the only request-log/metrics path after the Phase 4 removal of the
 // request_logs table. cmd/admin wires the real parquet-backed sources.
-func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, stats StatsSource) {
+func Mount(r chi.Router, s storage.CoreStorage, adminToken string, logs LogSource, stats StatsSource) {
 	r.Route("/api/v1", func(g chi.Router) {
 		if adminToken != "" {
 			g.Use(bearerAuth(adminToken))
 		}
 
 		g.Get("/status", func(w http.ResponseWriter, r *http.Request) {
-			providers, _ := s.Providers().List()
-			models, _ := s.Models().List()
-			keys, _ := s.APIKeys().List()
+			upstreams, _ := s.Upstreams().List()
+			routes, _ := s.Routes().List()
+			consumers, _ := s.Consumers().List()
 			health, _ := s.Bootstrap().Health()
 			web.JSON(w, http.StatusOK, map[string]any{
 				"status":         "ok",
-				"provider_count": len(providers),
-				"model_count":    len(models),
-				"api_key_count":  len(keys),
+				"upstream_count": len(upstreams),
+				"route_count":    len(routes),
+				"consumer_count": len(consumers),
 				"backend":        health.Backend,
 				"writable":       health.Writable,
 			})
 		})
 
-		// ── providers ──
-		g.Get("/providers", func(w http.ResponseWriter, r *http.Request) { anyList(w, r, s.Providers().List) })
-		g.Post("/providers", func(w http.ResponseWriter, r *http.Request) {
-			var in storage.CreateProvider
+		// ── upstreams ──
+		g.Get("/upstreams", func(w http.ResponseWriter, r *http.Request) { anyList(w, r, s.Upstreams().List) })
+		g.Post("/upstreams", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.CreateUpstream
 			if err := web.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
-			if exists, _ := s.Providers().ExistsByName(in.Name, ""); exists {
-				conflict(w, "provider name already exists")
+			if exists, _ := s.Upstreams().ExistsByName(in.Name, ""); exists {
+				conflict(w, "upstream name already exists")
 				return
 			}
-			p, err := s.Providers().Create(in)
+			u, err := s.Upstreams().Create(in)
 			if err == nil {
 				bumpEpoch(s)
 			}
-			created(w, p, err)
+			created(w, u, err)
 		})
-		g.Put("/providers/{id}", func(w http.ResponseWriter, r *http.Request) {
-			var in storage.UpdateProvider
+		g.Put("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.UpdateUpstream
 			if err := web.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
-			p, err := s.Providers().Update(chi.URLParam(r, "id"), in)
-			ok(w, p, err)
+			u, err := s.Upstreams().Update(chi.URLParam(r, "id"), in)
+			ok(w, u, err)
 		})
-		g.Delete("/providers/{id}", func(w http.ResponseWriter, r *http.Request) {
-			if err := s.Providers().Delete(chi.URLParam(r, "id")); err != nil {
+		g.Delete("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if err := s.Upstreams().Delete(chi.URLParam(r, "id")); err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			bumpEpoch(s)
 			w.WriteHeader(http.StatusNoContent)
 		})
-		g.Post("/providers/{id}/test", func(w http.ResponseWriter, r *http.Request) {
-			p, err := s.Providers().Get(chi.URLParam(r, "id"))
-			if err != nil || p == nil {
-				web.JSON(w, http.StatusNotFound, map[string]any{"error": "provider not found"})
+		g.Post("/upstreams/{id}/test", func(w http.ResponseWriter, r *http.Request) {
+			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
+			if err != nil || u == nil {
+				web.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
-			modelsURL := p.ModelsSource
+			var cred struct {
+				APIKey string `json:"api_key"`
+			}
+			_ = json.Unmarshal(u.CredentialsJSON, &cred)
+
+			modelsURL := ""
+			if def, ok := provider.Lookup(u.Provider); ok && def.Models.Kind == provider.KindDynamic {
+				modelsURL = def.Models.URL
+			}
 			if modelsURL == "" {
-				modelsURL = strings.TrimRight(p.BaseURL, "/") + "/models"
+				modelsURL = strings.TrimRight(u.BaseURL, "/") + "/models"
 			}
 			req, _ := http.NewRequest("GET", modelsURL, nil)
-			if p.Protocol == "google-gemini" {
-				req.Header.Set("x-goog-api-key", p.APIKey)
+			if u.Protocol == provider.ProtocolGoogleGemini {
+				req.Header.Set("x-goog-api-key", cred.APIKey)
 			} else {
-				req.Header.Set("Authorization", "Bearer "+p.APIKey)
+				req.Header.Set("Authorization", "Bearer "+cred.APIKey)
 			}
 			client := &http.Client{Timeout: 10 * time.Second}
 			start := time.Now()
 			resp, err := client.Do(req)
 			latency := time.Since(start).Milliseconds()
 			if err != nil {
-				_ = s.Providers().RecordTestResult(p.ID, storage.ProviderTestResult{Success: false, TestedAt: time.Now().UTC().Format(time.RFC3339)})
 				web.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": latency, "error": err.Error()})
 				return
 			}
 			resp.Body.Close()
 			success := resp.StatusCode < 400
-			_ = s.Providers().RecordTestResult(p.ID, storage.ProviderTestResult{Success: success, TestedAt: time.Now().UTC().Format(time.RFC3339)})
 			web.JSON(w, http.StatusOK, map[string]any{"success": success, "latency_ms": latency, "status_code": resp.StatusCode})
 		})
 
-		// ── models ──
-		g.Get("/models", func(w http.ResponseWriter, r *http.Request) { anyList(w, r, s.Models().List) })
-		g.Post("/models", func(w http.ResponseWriter, r *http.Request) {
-			var in storage.CreateModel
+		// ── routes ──
+		g.Get("/routes", func(w http.ResponseWriter, r *http.Request) { anyList(w, r, s.Routes().List) })
+		g.Post("/routes", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.CreateRoute
 			if err := web.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
-			if exists, _ := s.Models().ExistsByName(in.Name, ""); exists {
-				conflict(w, "model name already exists")
+			if exists, _ := s.Routes().ExistsByName(in.Model, ""); exists {
+				conflict(w, "route model already exists")
 				return
 			}
-			m, err := s.Models().Create(in)
+			rt, err := s.Routes().Create(in)
 			if err == nil {
 				bumpEpoch(s)
 			}
-			created(w, m, err)
+			created(w, rt, err)
 		})
-		g.Put("/models/{id}", func(w http.ResponseWriter, r *http.Request) {
-			var in storage.UpdateModel
+		g.Put("/routes/{id}", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.UpdateRoute
 			if err := web.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
-			m, err := s.Models().Update(chi.URLParam(r, "id"), in)
-			ok(w, m, err)
+			rt, err := s.Routes().Update(chi.URLParam(r, "id"), in)
+			ok(w, rt, err)
 		})
-		g.Delete("/models/{id}", func(w http.ResponseWriter, r *http.Request) {
-			if err := s.Models().Delete(chi.URLParam(r, "id")); err != nil {
+		g.Delete("/routes/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if err := s.Routes().Delete(chi.URLParam(r, "id")); err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
@@ -166,35 +173,36 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			w.WriteHeader(http.StatusNoContent)
 		})
 
-		// ── api-keys ──
-		g.Get("/api-keys", func(w http.ResponseWriter, r *http.Request) { anyList(w, r, s.APIKeys().List) })
-		g.Post("/api-keys", func(w http.ResponseWriter, r *http.Request) {
-			var in storage.CreateApiKey
+		// ── consumers ──
+		g.Get("/consumers", func(w http.ResponseWriter, r *http.Request) { anyList(w, r, s.Consumers().List) })
+		g.Post("/consumers", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.CreateConsumer
 			if err := web.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
-			if exists, _ := s.APIKeys().ExistsByName(in.Name, ""); exists {
-				conflict(w, "API key name already exists")
-				return
-			}
-			k, err := s.APIKeys().Create(in)
+			c, err := s.Consumers().Create(in)
 			if err == nil {
 				bumpEpoch(s)
 			}
-			created(w, k, err)
+			// The response's Keys[].Token carries each new key's raw value —
+			// the one-time plaintext exposure; only prefix+hash are persisted.
+			created(w, c, err)
 		})
-		g.Put("/api-keys/{id}", func(w http.ResponseWriter, r *http.Request) {
-			var in storage.UpdateApiKey
+		g.Put("/consumers/{id}", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.UpdateConsumer
 			if err := web.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
-			k, err := s.APIKeys().Update(chi.URLParam(r, "id"), in)
-			ok(w, k, err)
+			c, err := s.Consumers().Update(chi.URLParam(r, "id"), in)
+			if err == nil {
+				bumpEpoch(s)
+			}
+			ok(w, c, err)
 		})
-		g.Delete("/api-keys/{id}", func(w http.ResponseWriter, r *http.Request) {
-			if err := s.APIKeys().Delete(chi.URLParam(r, "id")); err != nil {
+		g.Delete("/consumers/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if err := s.Consumers().Delete(chi.URLParam(r, "id")); err != nil {
 				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
@@ -339,30 +347,39 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, out)
 		})
 		g.Get("/config/export", func(w http.ResponseWriter, r *http.Request) {
-			providers, _ := s.Providers().List()
-			models, _ := s.Models().List()
+			upstreams, _ := s.Upstreams().List()
+			routes, _ := s.Routes().List()
+			consumers, _ := s.Consumers().List()
 			settings, _ := s.Settings().ListAll()
-			web.JSON(w, http.StatusOK, map[string]any{"version": 1, "providers": providers, "models": models, "settings": settings})
+			web.JSON(w, http.StatusOK, map[string]any{
+				"version": 1, "upstreams": upstreams, "routes": routes, "consumers": consumers, "settings": settings,
+			})
 		})
 		g.Post("/config/import", func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
-				Providers []storage.CreateProvider `json:"providers"`
-				Models    []storage.CreateModel    `json:"models"`
-				Settings  []storage.Setting        `json:"settings"`
+				Upstreams []storage.CreateUpstream `json:"upstreams"`
+				Routes    []storage.CreateRoute    `json:"routes"`
+				Consumers []storage.CreateConsumer `json:"consumers"`
+				Settings  []storage.CoreSetting    `json:"settings"`
 			}
 			if err := web.Decode(r, &body); err != nil {
 				badRequest(w, err)
 				return
 			}
-			var provCount, modelCount, setCount int
-			for _, p := range body.Providers {
-				if _, err := s.Providers().Create(p); err == nil {
-					provCount++
+			var upCount, routeCount, consumerCount, setCount int
+			for _, u := range body.Upstreams {
+				if _, err := s.Upstreams().Create(u); err == nil {
+					upCount++
 				}
 			}
-			for _, m := range body.Models {
-				if _, err := s.Models().Create(m); err == nil {
-					modelCount++
+			for _, rt := range body.Routes {
+				if _, err := s.Routes().Create(rt); err == nil {
+					routeCount++
+				}
+			}
+			for _, c := range body.Consumers {
+				if _, err := s.Consumers().Create(c); err == nil {
+					consumerCount++
 				}
 			}
 			for _, set := range body.Settings {
@@ -370,7 +387,10 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 					setCount++
 				}
 			}
-			web.JSON(w, http.StatusOK, map[string]any{"providers_imported": provCount, "models_imported": modelCount, "settings_imported": setCount})
+			web.JSON(w, http.StatusOK, map[string]any{
+				"upstreams_imported": upCount, "routes_imported": routeCount,
+				"consumers_imported": consumerCount, "settings_imported": setCount,
+			})
 		})
 	})
 }
@@ -424,7 +444,7 @@ func conflict(w http.ResponseWriter, msg string) {
 
 // bumpEpoch increments the config_epoch setting so multi-replica deployments can
 // detect config changes and reload. Ported from admin/settings.rs bump_config_epoch.
-func bumpEpoch(s storage.Storage) {
+func bumpEpoch(s storage.CoreStorage) {
 	v, _ := s.Settings().Get("config_epoch")
 	n, _ := strconv.ParseInt(v, 10, 64)
 	_ = s.Settings().Set("config_epoch", strconv.FormatInt(n+1, 10))

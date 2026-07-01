@@ -16,7 +16,7 @@ func newEngine(t *testing.T, token string) (chi.Router, *memory.Backend) {
 	t.Helper()
 	st := memory.New()
 	r := chi.NewRouter()
-	Mount(r, st.Storage(), token, nil, nil)
+	Mount(r, st.Core(), token, nil, nil)
 	return r, st
 }
 
@@ -42,10 +42,10 @@ func do(r http.Handler, method, path, token string, body []byte) *httptest.Respo
 
 func TestAdminAuth(t *testing.T) {
 	r, _ := newEngine(t, "secret")
-	if rec := do(r, "GET", "/api/v1/providers", "", nil); rec.Code != http.StatusUnauthorized {
+	if rec := do(r, "GET", "/api/v1/upstreams", "", nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("no token → %d, want 401", rec.Code)
 	}
-	if rec := do(r, "GET", "/api/v1/providers", "wrong", nil); rec.Code != http.StatusUnauthorized {
+	if rec := do(r, "GET", "/api/v1/upstreams", "wrong", nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("bad token → %d, want 401", rec.Code)
 	}
 	if rec := do(r, "GET", "/api/v1/status", "secret", nil); rec.Code != http.StatusOK {
@@ -53,38 +53,38 @@ func TestAdminAuth(t *testing.T) {
 	}
 }
 
-func TestAdminProviderCRUD(t *testing.T) {
+func TestAdminUpstreamCRUD(t *testing.T) {
 	r, _ := newEngine(t, "secret")
 
-	rec := do(r, "POST", "/api/v1/providers", "secret",
-		[]byte(`{"name":"OpenAI","protocol":"openai-compatible","base_url":"https://api.openai.com","api_key":"sk-1"}`))
+	rec := do(r, "POST", "/api/v1/upstreams", "secret",
+		[]byte(`{"name":"OpenAI","provider":"openai","protocol":"openai-compatible","base_url":"https://api.openai.com","credentials":{"api_key":"sk-1"}}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
 	}
-	var p storage.Provider
-	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
 		t.Fatal(err)
 	}
-	if p.ID == "" || p.AuthMode != "apikey" || !p.IsEnabled {
-		t.Errorf("provider: %+v", p)
+	if u.ID == "" || !u.Enabled {
+		t.Errorf("upstream: %+v", u)
 	}
 
-	rec = do(r, "GET", "/api/v1/providers", "secret", nil)
+	rec = do(r, "GET", "/api/v1/upstreams", "secret", nil)
 	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"name":"OpenAI"`)) {
 		t.Errorf("list → %d %s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestAdminModelAndSettings(t *testing.T) {
+func TestAdminRouteAndSettings(t *testing.T) {
 	r, st := newEngine(t, "") // empty token disables auth
-	prov, _ := st.Providers().Create(storage.CreateProvider{
-		Name: "P", Protocol: "openai-compatible", BaseURL: "u", APIKey: "k",
+	up, _ := st.Core().Upstreams().Create(storage.CreateUpstream{
+		Name: "P", Provider: "p", Protocol: "openai-compatible", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 
-	rec := do(r, "POST", "/api/v1/models", "",
-		[]byte(`{"name":"gpt-4o","targets":[{"provider_id":"`+prov.ID+`","model":"gpt-4o"}]}`))
+	rec := do(r, "POST", "/api/v1/routes", "",
+		[]byte(`{"model":"gpt-4o","upstreams":[{"upstream_id":"`+up.ID+`","model":"gpt-4o"}]}`))
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("create model → %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("create route → %d %s", rec.Code, rec.Body.String())
 	}
 
 	rec = do(r, "PUT", "/api/v1/settings/log_retention_days", "", []byte(`{"value":"7"}`))
@@ -94,5 +94,35 @@ func TestAdminModelAndSettings(t *testing.T) {
 	rec = do(r, "GET", "/api/v1/settings/log_retention_days", "", nil)
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"value":"7"`)) {
 		t.Errorf("get setting → %s", rec.Body.String())
+	}
+}
+
+// TestAdminConsumerCreateExposesRawToken proves the create response carries the
+// one-time plaintext token for each generated key (never persisted, never
+// returned again on subsequent reads).
+func TestAdminConsumerCreateExposesRawToken(t *testing.T) {
+	r, _ := newEngine(t, "")
+
+	rec := do(r, "POST", "/api/v1/consumers", "",
+		[]byte(`{"name":"acme","keys":[{"name":"primary"}]}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create consumer → %d %s", rec.Code, rec.Body.String())
+	}
+	var c storage.Consumer
+	if err := json.Unmarshal(rec.Body.Bytes(), &c); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Keys) != 1 || c.Keys[0].Token == "" {
+		t.Fatalf("consumer keys missing raw token: %+v", c.Keys)
+	}
+
+	// Re-fetch via list — the raw token must NOT be exposed again.
+	rec = do(r, "GET", "/api/v1/consumers", "", nil)
+	var list []storage.Consumer
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || len(list[0].Keys) != 1 || list[0].Keys[0].Token != "" {
+		t.Errorf("list should not expose raw token: %+v", list)
 	}
 }

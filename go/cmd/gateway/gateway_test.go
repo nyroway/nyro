@@ -87,10 +87,10 @@ api_keys:
 	if !gw.Cache.Ready() {
 		t.Error("cache should be ready after YAML build")
 	}
-	if gw.Cache.Load().ModelByName("gpt-4o") == nil {
+	if gw.Cache.Load().RouteByModel("gpt-4o") == nil {
 		t.Error("model from YAML not in cache")
 	}
-	if gw.Cache.Load().FindAPIKey("nyro-secret") == nil {
+	if gw.Cache.Load().FindKey("nyro-secret") == nil {
 		t.Error("api key from YAML not in cache")
 	}
 }

@@ -1,8 +1,14 @@
 // Package config loads the standalone YAML configuration and seeds it into a
 // storage backend. Used by `nyro gateway --config` to run without an admin/DB.
+//
+// The YAML field names here (providers/models/api_keys) predate the
+// config-schema rollout; ApplyTo/BuildSnapshot map them onto the new
+// storage.CoreStorage / xds.Snapshot types, but renaming the YAML shape itself
+// to upstreams/routes/consumers is a separate, later step.
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -56,53 +62,58 @@ func LoadYAML(path string) (*Config, error) {
 	return &c, nil
 }
 
-// ApplyTo seeds providers, models (with provider binding), and api_keys (with
-// model binding) into storage. References use the YAML name; name→id is mapped
-// internally because Create returns opaque generated IDs.
-func (c *Config) ApplyTo(st storage.Storage) error {
-	providerIDs := map[string]string{}
+// ApplyTo seeds upstreams, routes (with upstream targets), and consumers (one
+// key + route grants each) into storage. References use the YAML name; name→id
+// is mapped internally because Create returns opaque generated IDs.
+func (c *Config) ApplyTo(st storage.CoreStorage) error {
+	upstreamIDs := map[string]string{}
 	for _, p := range c.Providers {
-		created, err := st.Providers().Create(storage.CreateProvider{
-			Name: p.Name, Vendor: p.Vendor, Protocol: p.Protocol, BaseURL: p.BaseURL, APIKey: p.APIKey,
+		credsJSON, err := json.Marshal(map[string]string{"api_key": p.APIKey})
+		if err != nil {
+			return fmt.Errorf("encode credentials for provider %q: %w", p.Name, err)
+		}
+		created, err := st.Upstreams().Create(storage.CreateUpstream{
+			Name: p.Name, Provider: p.Vendor, Protocol: p.Protocol, BaseURL: p.BaseURL,
+			CredentialsJSON: credsJSON,
 		})
 		if err != nil {
-			return fmt.Errorf("create provider %q: %w", p.Name, err)
+			return fmt.Errorf("create upstream %q: %w", p.Name, err)
 		}
-		providerIDs[p.Name] = created.ID
+		upstreamIDs[p.Name] = created.ID
 	}
 
-	modelIDs := map[string]string{}
+	routeModels := map[string]string{} // yaml model name → route model (same value; routes are keyed by Model)
 	for _, m := range c.Models {
-		targets := make([]storage.CreateModelBackend, 0, len(m.Targets))
+		targets := make([]storage.CreateRouteUpstream, 0, len(m.Targets))
 		for _, t := range m.Targets {
-			pid, ok := providerIDs[t.Provider]
+			uid, ok := upstreamIDs[t.Provider]
 			if !ok {
 				return fmt.Errorf("model %q references unknown provider %q", m.Name, t.Provider)
 			}
-			targets = append(targets, storage.CreateModelBackend{ProviderID: pid, Model: t.Model})
+			targets = append(targets, storage.CreateRouteUpstream{UpstreamID: uid, Model: t.Model})
 		}
-		created, err := st.Models().Create(storage.CreateModel{
-			Name: m.Name, EnableAuth: m.EnableAuth, Targets: targets,
-		})
-		if err != nil {
-			return fmt.Errorf("create model %q: %w", m.Name, err)
+		if _, err := st.Routes().Create(storage.CreateRoute{
+			Model: m.Name, EnableAuth: m.EnableAuth, Upstreams: targets,
+		}); err != nil {
+			return fmt.Errorf("create route %q: %w", m.Name, err)
 		}
-		modelIDs[m.Name] = created.ID
+		routeModels[m.Name] = m.Name
 	}
 
 	for _, k := range c.APIKeys {
-		mids := make([]string, 0, len(k.Models))
+		routes := make([]string, 0, len(k.Models))
 		for _, name := range k.Models {
-			mid, ok := modelIDs[name]
-			if !ok {
+			if _, ok := routeModels[name]; !ok {
 				return fmt.Errorf("api key %q references unknown model %q", k.Name, name)
 			}
-			mids = append(mids, mid)
+			routes = append(routes, name)
 		}
-		if _, err := st.APIKeys().Create(storage.CreateApiKey{
-			Name: k.Name, Token: k.Key, ModelIDs: mids,
+		if _, err := st.Consumers().Create(storage.CreateConsumer{
+			Name:   k.Name,
+			Keys:   []storage.CreateConsumerKey{{Name: k.Name, Token: k.Key}},
+			Routes: routes,
 		}); err != nil {
-			return fmt.Errorf("create api key %q: %w", k.Name, err)
+			return fmt.Errorf("create consumer for api key %q: %w", k.Name, err)
 		}
 	}
 	return nil
@@ -111,69 +122,65 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 // BuildSnapshot constructs an xds.ConfigSnapshot directly from the YAML config
 // (no storage round-trip). This is the standalone-mode path: `nyro gateway
 // --config` swaps this snapshot into the gateway's cache so config reads work
-// without an admin or DB. Providers/models/apikeys are keyed the same way the
-// in-memory storage keys them; settings are empty (the YAML format has no
-// settings section in this phase). Stable synthetic IDs are derived from the
-// YAML names so bindings resolve consistently.
+// without an admin or DB. Settings are empty (the YAML format has no settings
+// section in this phase). Stable synthetic IDs are derived from the YAML names
+// so bindings resolve consistently.
 func (c *Config) BuildSnapshot() (*xds.ConfigSnapshot, error) {
 	b := &xds.Snapshot{}
 
-	providerIDs := map[string]string{} // yaml name → synthetic id
+	upstreamIDs := map[string]string{} // yaml name → synthetic id
 	for _, p := range c.Providers {
-		id := providerID(p.Name)
-		providerIDs[p.Name] = id
-		b.SetProvider(storage.Provider{
-			ID: id, Name: p.Name, Vendor: p.Vendor, Protocol: p.Protocol,
-			BaseURL: p.BaseURL, APIKey: p.APIKey, AuthMode: "apikey", IsEnabled: true,
+		id := upstreamID(p.Name)
+		upstreamIDs[p.Name] = id
+		credsJSON, err := json.Marshal(map[string]string{"api_key": p.APIKey})
+		if err != nil {
+			return nil, fmt.Errorf("encode credentials for provider %q: %w", p.Name, err)
+		}
+		b.SetUpstream(storage.Upstream{
+			ID: id, Name: p.Name, Provider: p.Vendor, Protocol: p.Protocol,
+			BaseURL: p.BaseURL, CredentialsJSON: credsJSON, Enabled: true,
 		})
 	}
 
-	modelIDs := map[string]string{} // yaml name → synthetic id
 	for _, m := range c.Models {
-		id := modelID(m.Name)
-		modelIDs[m.Name] = id
-		model := storage.Model{
-			ID: id, Name: m.Name, Balance: storage.BalanceWeighted,
-			EnableAuth: m.EnableAuth, IsEnabled: true,
+		route := storage.Route{
+			ID: routeID(m.Name), Model: m.Name, Balance: storage.BalanceWeighted,
+			EnableAuth: m.EnableAuth, Enabled: true,
 		}
 		for _, t := range m.Targets {
-			pid, ok := providerIDs[t.Provider]
+			uid, ok := upstreamIDs[t.Provider]
 			if !ok {
 				return nil, fmt.Errorf("model %q references unknown provider %q", m.Name, t.Provider)
 			}
-			model.Targets = append(model.Targets, storage.ModelBackend{
-				ProviderID: pid, Model: t.Model, Weight: 1,
+			route.Upstreams = append(route.Upstreams, storage.RouteUpstream{
+				UpstreamID: uid, Model: t.Model, Weight: 1,
 			})
 		}
-		b.SetModel(model)
+		b.SetRoute(route)
 	}
 
 	for _, k := range c.APIKeys {
 		if k.Key == "" {
 			continue
 		}
-		id := apiKeyID(k.Name)
-		bound := map[string]bool{}
-		for _, name := range k.Models {
-			mid, ok := modelIDs[name]
-			if !ok {
-				return nil, fmt.Errorf("api key %q references unknown model %q", k.Name, name)
-			}
-			bound[mid] = true
-		}
-		b.SetAPIKey(k.Key, storage.ApiKeyAccessRecord{
-			ID: id, Name: k.Name, IsEnabled: true,
-		}, bound)
+		b.AddConsumerKey(
+			consumerKeyID(k.Name), consumerID(k.Name),
+			storage.PrefixOf(k.Key), storage.HashKey(k.Key),
+			true, "", append([]string(nil), k.Models...), nil,
+		)
 	}
 
 	return b.Done(), nil
 }
 
-// providerID derives a stable synthetic provider id from its YAML name.
-func providerID(name string) string { return "provider:" + name }
+// upstreamID derives a stable synthetic upstream id from its YAML name.
+func upstreamID(name string) string { return "upstream:" + name }
 
-// modelID derives a stable synthetic model id from its YAML name.
-func modelID(name string) string { return "model:" + name }
+// routeID derives a stable synthetic route id from its YAML name.
+func routeID(name string) string { return "route:" + name }
 
-// apiKeyID derives a stable synthetic api-key id from its YAML name.
-func apiKeyID(name string) string { return "apikey:" + name }
+// consumerID derives a stable synthetic consumer id from its YAML api-key name.
+func consumerID(name string) string { return "consumer:" + name }
+
+// consumerKeyID derives a stable synthetic consumer-key id from its YAML name.
+func consumerKeyID(name string) string { return "consumer-key:" + name }

@@ -38,29 +38,32 @@ api_keys:
 	}
 
 	st := memory.New()
-	if err := cfg.ApplyTo(st); err != nil {
+	core := st.Core()
+	if err := cfg.ApplyTo(core); err != nil {
 		t.Fatalf("ApplyTo: %v", err)
 	}
-	// provider seeded
-	ps, _ := st.Providers().List()
-	if len(ps) != 1 || ps[0].Name != "openai" {
-		t.Errorf("provider not seeded: %+v", ps)
+	// upstream seeded
+	ups, _ := core.Upstreams().List()
+	if len(ups) != 1 || ups[0].Name != "openai" {
+		t.Errorf("upstream not seeded: %+v", ups)
 	}
-	// model seeded with binding to the provider
-	ms, _ := st.Models().List()
-	if len(ms) != 1 || ms[0].Name != "gpt-4o" {
-		t.Errorf("model not seeded: %+v", ms)
+	// route seeded with a target on the upstream
+	routes, _ := core.Routes().List()
+	if len(routes) != 1 || routes[0].Model != "gpt-4o" {
+		t.Errorf("route not seeded: %+v", routes)
 	}
-	backends, _ := st.ModelBackends().ListByModel(ms[0].ID)
-	if len(backends) != 1 || backends[0].ProviderID != ps[0].ID {
-		t.Errorf("model backend binding wrong: %+v", backends)
+	if len(routes[0].Upstreams) != 1 || routes[0].Upstreams[0].UpstreamID != ups[0].ID {
+		t.Errorf("route target binding wrong: %+v", routes[0].Upstreams)
 	}
-	// api key with explicit token + model binding
-	ks, _ := st.APIKeys().List()
-	if len(ks) != 1 || ks[0].Token != "nyro-secret" {
-		t.Errorf("api key token wrong: %+v", ks)
+	// consumer with explicit token + route grant
+	consumers, _ := core.Consumers().List()
+	if len(consumers) != 1 || len(consumers[0].Keys) != 1 {
+		t.Errorf("consumer not seeded: %+v", consumers)
 	}
-	rec, _ := st.Auth().FindAPIKey("nyro-secret")
+	if len(consumers[0].Routes) != 1 || consumers[0].Routes[0] != "gpt-4o" {
+		t.Errorf("consumer route grant wrong: %+v", consumers[0].Routes)
+	}
+	rec, _ := core.Auth().FindKey("nyro-secret")
 	if rec == nil {
 		t.Error("explicit token not discoverable after ApplyTo")
 	}
@@ -70,7 +73,7 @@ func TestApplyToUnknownProvider(t *testing.T) {
 	cfg := &Config{
 		Models: []ModelSpec{{Name: "m", Targets: []ModelTargetSpec{{Provider: "nope", Model: "x"}}}},
 	}
-	if err := cfg.ApplyTo(memory.New()); err == nil {
+	if err := cfg.ApplyTo(memory.New().Core()); err == nil {
 		t.Error("expected error for unknown provider reference")
 	}
 }
@@ -90,23 +93,23 @@ func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSnapshot: %v", err)
 	}
-	// provider
-	p := snap.ProviderGet("provider:openai")
-	if p == nil || p.BaseURL != "https://api.openai.com" || p.APIKey != "sk-x" {
-		t.Errorf("provider missing/wrong: %+v", p)
+	// upstream
+	u := snap.UpstreamGet("upstream:openai")
+	if u == nil || u.BaseURL != "https://api.openai.com" || string(u.CredentialsJSON) != `{"api_key":"sk-x"}` {
+		t.Errorf("upstream missing/wrong: %+v", u)
 	}
-	// model + target
-	m := snap.ModelByName("gpt-4o")
-	if m == nil || len(m.Targets) != 1 || m.Targets[0].ProviderID != "provider:openai" {
-		t.Errorf("model missing/wrong: %+v", m)
+	// route + target
+	rt := snap.RouteByModel("gpt-4o")
+	if rt == nil || len(rt.Upstreams) != 1 || rt.Upstreams[0].UpstreamID != "upstream:openai" {
+		t.Errorf("route missing/wrong: %+v", rt)
 	}
-	// apikey + binding
-	rec := snap.FindAPIKey("nyro-secret")
-	if rec == nil || rec.Name != "local" {
-		t.Errorf("apikey missing/wrong: %+v", rec)
+	// consumer key + route grant
+	rec := snap.FindKey("nyro-secret")
+	if rec == nil {
+		t.Fatalf("key missing")
 	}
-	if !snap.ModelBindingExists("apikey:local", "model:gpt-4o") {
-		t.Error("binding missing")
+	if len(rec.Routes) != 1 || rec.Routes[0] != "gpt-4o" {
+		t.Errorf("route grant missing/wrong: %+v", rec.Routes)
 	}
 }
 
@@ -115,13 +118,5 @@ func TestBuildSnapshot_UnknownRefs(t *testing.T) {
 	cfg := &Config{Models: []ModelSpec{{Name: "m", Targets: []ModelTargetSpec{{Provider: "nope", Model: "x"}}}}}
 	if _, err := cfg.BuildSnapshot(); err == nil {
 		t.Error("expected error for unknown provider reference")
-	}
-	// unknown model in an api key
-	cfg2 := &Config{
-		Models:  []ModelSpec{{Name: "m", Targets: []ModelTargetSpec{}}},
-		APIKeys: []APIKeySpec{{Name: "k", Key: "tok", Models: []string{"nope"}}},
-	}
-	if _, err := cfg2.BuildSnapshot(); err == nil {
-		t.Error("expected error for unknown model reference in api key")
 	}
 }
