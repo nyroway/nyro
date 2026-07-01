@@ -1,4 +1,4 @@
-.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-tidy go-run help
+.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-tidy go-gen-storage go-run help
 
 # Development — start Tauri desktop app with hot reload
 dev: webui-build
@@ -85,6 +85,10 @@ go-fmt:
 go-tidy:
 	cd go && go mod tidy
 
+# Generate typed GORM query code for the Go storage backend
+go-gen-storage:
+	cd go && go run ./internal/storage/gen
+
 # Run the Go gateway (data plane) locally
 go-run:
 	cd go && go run . gateway
@@ -120,5 +124,6 @@ help:
 	@echo "  make go-vet       Vet Go code"
 	@echo "  make go-fmt       Format Go code"
 	@echo "  make go-tidy      Tidy go.mod/go.sum"
+	@echo "  make go-gen-storage Generate Go storage query code"
 	@echo "  make go-run       Run Go gateway (data plane)"
 	@echo "  make clean        Remove build artifacts"
