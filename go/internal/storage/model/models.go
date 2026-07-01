@@ -64,7 +64,7 @@ type ConsumerKey struct {
 	ID         string `gorm:"column:id;primaryKey"`
 	ConsumerID string `gorm:"column:consumer_id;not null;uniqueIndex:idx_consumer_key_name"`
 	Name       string `gorm:"column:name;not null;uniqueIndex:idx_consumer_key_name"`
-	KeyPrefix  string `gorm:"column:key_prefix;not null"`
+	KeyPrefix  string `gorm:"column:key_prefix;not null;index"`
 	KeyHash    string `gorm:"column:key_hash;not null"`
 	Enabled    bool   `gorm:"column:enabled;not null;default:true"`
 	ExpiresAt  string `gorm:"column:expires_at"`

@@ -26,7 +26,25 @@ type Backend struct {
 	backends  map[string]storage.ModelBackend
 	settings  map[string]string
 	apiKeys   map[string]storage.ApiKey
-	bindings map[string][]string // apiKeyID → []modelID
+	bindings  map[string][]string // apiKeyID → []modelID
+
+	// config-schema (CoreStorage) state, kept alongside the legacy maps above.
+	upstreams      map[string]storage.Upstream
+	routes         map[string]storage.Route
+	routeUpstreams map[string]storage.RouteUpstream
+	consumers      map[string]storage.Consumer
+	consumerKeys   map[string]storage.ConsumerKey
+	consumerRoutes map[string]consumerRouteGrant // synthetic id -> grant
+	consumerQuotas map[string]storage.ConsumerQuota
+	coreSettings   map[string]string
+}
+
+// consumerRouteGrant is one consumer_routes row (consumer_id, route_id), kept
+// under a synthetic map key since the pair itself has no natural single key
+// for Go map storage without a composite key type.
+type consumerRouteGrant struct {
+	ConsumerID string
+	RouteID    string
 }
 
 // New creates an empty in-memory backend.
@@ -37,7 +55,16 @@ func New() *Backend {
 		backends:  map[string]storage.ModelBackend{},
 		settings:  map[string]string{},
 		apiKeys:   map[string]storage.ApiKey{},
-		bindings: map[string][]string{},
+		bindings:  map[string][]string{},
+
+		upstreams:      map[string]storage.Upstream{},
+		routes:         map[string]storage.Route{},
+		routeUpstreams: map[string]storage.RouteUpstream{},
+		consumers:      map[string]storage.Consumer{},
+		consumerKeys:   map[string]storage.ConsumerKey{},
+		consumerRoutes: map[string]consumerRouteGrant{},
+		consumerQuotas: map[string]storage.ConsumerQuota{},
+		coreSettings:   map[string]string{},
 	}
 }
 
@@ -45,13 +72,31 @@ func New() *Backend {
 func (b *Backend) Storage() storage.Storage { return b }
 
 // storage.Storage composition — each returns a thin sub-store wrapper.
-func (b *Backend) Providers() storage.ProviderStore               { return providerStore{b} }
-func (b *Backend) Models() storage.ModelStore                     { return modelStore{b} }
-func (b *Backend) ModelBackends() storage.ModelBackendStore       { return backendStore{b} }
-func (b *Backend) Settings() storage.SettingsStore                { return settingsStore{b} }
-func (b *Backend) APIKeys() storage.ApiKeyStore                   { return apiKeyStore{b} }
-func (b *Backend) Auth() storage.AuthAccessStore { return authAccessStore{b} }
-func (b *Backend) Bootstrap() storage.Bootstrap  { return b }
+func (b *Backend) Providers() storage.ProviderStore         { return providerStore{b} }
+func (b *Backend) Models() storage.ModelStore               { return modelStore{b} }
+func (b *Backend) ModelBackends() storage.ModelBackendStore { return backendStore{b} }
+func (b *Backend) Settings() storage.SettingsStore          { return settingsStore{b} }
+func (b *Backend) APIKeys() storage.ApiKeyStore             { return apiKeyStore{b} }
+func (b *Backend) Auth() storage.AuthAccessStore            { return authAccessStore{b} }
+func (b *Backend) Bootstrap() storage.Bootstrap             { return b }
+
+// Core returns the backend as a storage.CoreStorage (config-schema tables).
+// It is exposed as a distinct view — not by implementing CoreStorage directly
+// on Backend — because CoreStorage.Auth() and the legacy Storage.Auth() above
+// have the same name but different return types, which one Go type cannot
+// implement simultaneously.
+func (b *Backend) Core() storage.CoreStorage { return coreView{b} }
+
+type coreView struct{ b *Backend }
+
+func (v coreView) Upstreams() storage.UpstreamStore    { return upstreamStore{v.b} }
+func (v coreView) Routes() storage.RouteStore          { return routeStore{v.b} }
+func (v coreView) Consumers() storage.ConsumerStore    { return consumerStore{v.b} }
+func (v coreView) Auth() storage.KeyAuthStore          { return keyAuthStore{v.b} }
+func (v coreView) Settings() storage.CoreSettingsStore { return coreSettingsStore{v.b} }
+func (v coreView) Bootstrap() storage.Bootstrap        { return v.b }
+
+var _ storage.CoreStorage = coreView{}
 
 // Bootstrap
 func (b *Backend) Init() error    { return nil }

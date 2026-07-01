@@ -24,6 +24,10 @@ type ConsumerKey struct {
 	Name       string `json:"name"`
 	KeyPrefix  string `json:"key_prefix"`
 	KeyHash    string `json:"-"` // never serialized
+	// Token carries the raw key exactly once, in the response to the create
+	// call that generated it. It is never populated on read paths (List/Get)
+	// and never persisted.
+	Token      string `json:"token,omitempty"`
 	Enabled    bool   `json:"enabled"`
 	ExpiresAt  string `json:"expires_at,omitempty"`
 	LastUsedAt string `json:"last_used_at,omitempty"`

@@ -10,12 +10,14 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/model"
+	"github.com/nyroway/nyro/go/internal/storage/query"
 )
 
 // Backend is the shared SQL backend.
 type Backend struct {
 	backend string
 	db      *gorm.DB
+	q       *query.Query
 }
 
 // NewSQLite opens a SQLite database and returns a shared SQL backend.
@@ -31,7 +33,7 @@ func NewSQLite(path string) (*Backend, error) {
 	sqlDB.SetMaxOpenConns(5)
 	db.Exec("PRAGMA journal_mode=WAL")
 	db.Exec("PRAGMA busy_timeout=5000")
-	return &Backend{backend: "sqlite", db: db}, nil
+	return &Backend{backend: "sqlite", db: db, q: query.Use(db)}, nil
 }
 
 // NewMySQL opens a MySQL database and returns a shared SQL backend.
@@ -40,7 +42,7 @@ func NewMySQL(dsn string) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Backend{backend: "mysql", db: db}, nil
+	return &Backend{backend: "mysql", db: db, q: query.Use(db)}, nil
 }
 
 // NewPostgres opens a Postgres database and returns a shared SQL backend.
@@ -49,7 +51,7 @@ func NewPostgres(dsn string) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Backend{backend: "postgres", db: db}, nil
+	return &Backend{backend: "postgres", db: db, q: query.Use(db)}, nil
 }
 
 // DB exposes the underlying GORM database for tests and advanced callers.
@@ -78,3 +80,23 @@ func (b *Backend) Health() (storage.StorageHealth, error) {
 	h.Writable = true
 	return h, nil
 }
+
+// Upstreams returns the config-schema upstream store.
+func (b *Backend) Upstreams() storage.UpstreamStore { return upstreamStore{q: b.q} }
+
+// Routes returns the config-schema route store.
+func (b *Backend) Routes() storage.RouteStore { return routeStore{q: b.q} }
+
+// Consumers returns the config-schema consumer store.
+func (b *Backend) Consumers() storage.ConsumerStore { return consumerStore{q: b.q} }
+
+// Auth returns the config-schema inbound key-auth read path.
+func (b *Backend) Auth() storage.KeyAuthStore { return keyAuthStore{q: b.q} }
+
+// Settings returns the config-schema settings store (key column).
+func (b *Backend) Settings() storage.CoreSettingsStore { return coreSettingsStore{q: b.q} }
+
+// Bootstrap returns the backend itself (it already implements Init/Migrate/Health).
+func (b *Backend) Bootstrap() storage.Bootstrap { return b }
+
+var _ storage.CoreStorage = (*Backend)(nil)
