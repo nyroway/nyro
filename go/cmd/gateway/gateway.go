@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/nyroway/nyro/go/internal/auth"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/config"
 	"github.com/nyroway/nyro/go/internal/observability"
@@ -69,12 +68,6 @@ func NewCmd() *cobra.Command {
 				}
 			}()
 		}
-
-		reg := auth.NewRegistry()
-		bootstrap.RegisterDrivers(reg)
-		gw.SetDriverRegistry(reg)
-
-		gw.StartOAuthRefreshLoop(ctx)
 
 		engine := proxy.NewRouter(gw)
 		return bootstrap.RunServer(engine, addr)

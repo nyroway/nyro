@@ -10,11 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/auth"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/proxy/quota"
 	"github.com/nyroway/nyro/go/internal/router"
-	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/xds"
 )
 
@@ -38,21 +36,9 @@ type Gateway struct {
 	Obs     *observability.ObsProvider
 	Handles *observability.Handles
 
-	driverRegistry *auth.Registry
-
 	proxyMu        sync.Mutex
 	proxyClient    *http.Client
 	proxyClientKey string
-
-	// OAuth refresh overlay (P3b). The cache snapshot is immutable, so a
-	// locally-refreshed token is held in oauthOverlay (providerID → refreshed
-	// cred) and checked before the snapshot. oauthMu serializes refresh per
-	// provider: oauthRefreshInFlight[providerID] is held while one goroutine
-	// refreshes that provider, so concurrent requests reuse the same token
-	// instead of each spawning an upstream refresh.
-	oauthMu              sync.Mutex
-	oauthOverlay         map[string]storage.OAuthCredential
-	oauthRefreshInFlight map[string]chan struct{}
 }
 
 // NewGateway builds a Gateway with a fresh, empty ConfigCache. Tests use this
@@ -69,17 +55,12 @@ func NewGateway() *Gateway {
 // config. Obs/Handles are attached by cmd/gateway after construction.
 func NewGatewayWithCache(cache *xds.ConfigCache) *Gateway {
 	return &Gateway{
-		HTTPClient:           &http.Client{Timeout: 5 * time.Minute},
-		Cache:                cache,
-		Quota:                quota.New(),
-		Router:               router.New(),
-		oauthOverlay:         map[string]storage.OAuthCredential{},
-		oauthRefreshInFlight: map[string]chan struct{}{},
+		HTTPClient: &http.Client{Timeout: 5 * time.Minute},
+		Cache:      cache,
+		Quota:      quota.New(),
+		Router:     router.New(),
 	}
 }
-
-// SetDriverRegistry wires the OAuth driver registry (for token refresh).
-func (g *Gateway) SetDriverRegistry(r *auth.Registry) { g.driverRegistry = r }
 
 // snapshot returns the current config snapshot, falling back to an empty one so
 // callers never see a nil pointer (readers on an empty snapshot simply report

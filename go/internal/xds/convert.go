@@ -17,7 +17,6 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
 		apikeys:   map[string]storage.ApiKeyAccessRecord{},
 		bindings:  map[string]map[string]bool{},
 		settings:  map[string]string{},
-		oauth:     map[string]storage.OAuthCredential{},
 	}
 	if in == nil {
 		return snap
@@ -99,22 +98,6 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
 		snap.settings[k] = v
 	}
 
-	for _, o := range in.GetOauthCredentials() {
-		if o == nil || o.GetProviderId() == "" {
-			continue
-		}
-		snap.oauth[o.GetProviderId()] = storage.OAuthCredential{
-			ProviderID:    o.GetProviderId(),
-			DriverKey:     o.GetDriverKey(),
-			Scheme:        o.GetScheme(),
-			AccessToken:   o.GetAccessToken(),
-			RefreshToken:  o.GetRefreshToken(),
-			ExpiresAt:     o.GetExpiresAt(),
-			Status:        o.GetStatus(),
-			StatusVersion: o.GetStatusVersion(),
-		}
-	}
-
 	return snap
 }
 
@@ -164,20 +147,6 @@ func SnapshotFromStorage(s storage.Storage, version int64) (*pb.ConfigSnapshot, 
 			Id: k.ID, Token: k.Token, Name: k.Name, IsEnabled: k.IsEnabled,
 			ExpiresAt: k.ExpiresAt, Rpm: k.RPM, Rpd: k.RPD, Tpm: k.TPM, Tpd: k.TPD,
 			BoundModelIds: append([]string(nil), k.ModelIDs...),
-		})
-	}
-
-	// OAuth credentials are populated via ListAll so the gateway receives the
-	// full set in one snapshot (P3b) and can refresh locally without DB reads.
-	creds, err := s.OAuthCredentials().ListAll()
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range creds {
-		out.OauthCredentials = append(out.OauthCredentials, &pb.OAuthCredential{
-			ProviderId: c.ProviderID, DriverKey: c.DriverKey, Scheme: c.Scheme,
-			AccessToken: c.AccessToken, RefreshToken: c.RefreshToken, ExpiresAt: c.ExpiresAt,
-			Status: c.Status, StatusVersion: c.StatusVersion,
 		})
 	}
 

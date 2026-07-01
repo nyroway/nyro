@@ -331,25 +331,12 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			web.JSON(w, http.StatusOK, map[string]any{"count": plugin.Kernel().Count()})
 		})
 		g.Get("/provider-presets", func(w http.ResponseWriter, r *http.Request) {
-			web.JSON(w, http.StatusOK, provider.Presets)
-		})
-		// ── OAuth status + disconnect (session init/poll/complete requires driver implementations) ──
-		g.Get("/providers/{id}/oauth", func(w http.ResponseWriter, r *http.Request) {
-			cred, _ := s.OAuthCredentials().Get(chi.URLParam(r, "id"))
-			if cred == nil {
-				web.JSON(w, http.StatusOK, map[string]any{"connected": false})
-				return
+			defs := provider.Definitions()
+			out := make([]presetView, len(defs))
+			for i, d := range defs {
+				out[i] = toPresetView(d)
 			}
-			web.JSON(w, http.StatusOK, map[string]any{
-				"connected": cred.Status == "connected",
-				"status":    cred.Status,
-				"driver":    cred.DriverKey,
-				"expires":   cred.ExpiresAt,
-			})
-		})
-		g.Delete("/providers/{id}/oauth", func(w http.ResponseWriter, r *http.Request) {
-			_ = s.OAuthCredentials().Delete(chi.URLParam(r, "id"))
-			w.WriteHeader(http.StatusNoContent)
+			web.JSON(w, http.StatusOK, out)
 		})
 		g.Get("/config/export", func(w http.ResponseWriter, r *http.Request) {
 			providers, _ := s.Providers().List()

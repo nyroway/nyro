@@ -80,9 +80,8 @@ func (b *Backend) Models() storage.ModelStore                     { return model
 func (b *Backend) ModelBackends() storage.ModelBackendStore       { return backendStore{b} }
 func (b *Backend) Settings() storage.SettingsStore                { return settingsStore{b} }
 func (b *Backend) APIKeys() storage.ApiKeyStore                   { return apiKeyStore{b} }
-func (b *Backend) Auth() storage.AuthAccessStore                  { return authStore{b} }
-func (b *Backend) OAuthCredentials() storage.OAuthCredentialStore { return oauthStore{b} }
-func (b *Backend) Bootstrap() storage.Bootstrap                   { return b }
+func (b *Backend) Auth() storage.AuthAccessStore { return authStore{b} }
+func (b *Backend) Bootstrap() storage.Bootstrap  { return b }
 
 // Bootstrap
 func (b *Backend) Init() error { return nil }
@@ -666,105 +665,3 @@ func (s authStore) ListBoundModelIDs(apiKeyID string) ([]string, error) {
 	return s.b.loadBindings(apiKeyID), nil
 }
 
-// ── oauthStore ──
-
-type oauthStore struct{ b *Backend }
-
-func (s oauthStore) Get(providerID string) (*storage.OAuthCredential, error) {
-	var c storage.OAuthCredential
-	if err := s.b.db.First(&c, "provider_id = ?", providerID).Error; isNotFound(err) {
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-func (s oauthStore) ListAll() ([]storage.OAuthCredential, error) {
-	var out []storage.OAuthCredential
-	if err := s.b.db.Order("provider_id ASC").Find(&out).Error; err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (s oauthStore) Upsert(providerID string, in storage.UpsertOAuthCredential) (storage.OAuthCredential, error) {
-	existing, _ := s.Get(providerID)
-	now := nowISO()
-	c := storage.OAuthCredential{
-		ProviderID: providerID, DriverKey: in.DriverKey, Scheme: in.Scheme,
-		AccessToken: in.AccessToken, RefreshToken: in.RefreshToken, ExpiresAt: in.ExpiresAt,
-		ResourceURL: in.ResourceURL, SubjectID: in.SubjectID, Scopes: in.Scopes, Meta: in.Meta,
-		Status: "connected", LastRefreshAt: now, CreatedAt: now, UpdatedAt: now,
-	}
-	if existing != nil {
-		c.StatusVersion = existing.StatusVersion
-		c.CreatedAt = existing.CreatedAt
-	}
-	if err := s.b.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "provider_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"driver_key", "scheme", "access_token", "refresh_token", "expires_at", "resource_url", "subject_id", "scopes", "meta", "status", "last_refresh_at", "updated_at"}),
-	}).Create(&c).Error; err != nil {
-		return storage.OAuthCredential{}, err
-	}
-	return c, nil
-}
-
-func (s oauthStore) Delete(providerID string) error {
-	return s.b.db.Delete(&storage.OAuthCredential{}, "provider_id = ?", providerID).Error
-}
-
-func (s oauthStore) TryBeginRefresh(providerID string, expectedVersion int32) (*storage.OAuthCredential, error) {
-	var c storage.OAuthCredential
-	if err := s.b.db.First(&c, "provider_id = ?", providerID).Error; isNotFound(err) {
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-	if c.StatusVersion != expectedVersion {
-		return nil, nil
-	}
-	res := s.b.db.Model(&c).Where("status_version = ?", expectedVersion).
-		Updates(map[string]any{"status": "refreshing", "status_version": expectedVersion + 1, "updated_at": nowISO()})
-	if res.Error != nil || res.RowsAffected == 0 {
-		return nil, res.Error
-	}
-	c.Status = "refreshing"
-	c.StatusVersion = expectedVersion + 1
-	return &c, nil
-}
-
-func (s oauthStore) CompleteRefresh(providerID string, in storage.UpsertOAuthCredential) (storage.OAuthCredential, error) {
-	if err := s.b.db.Model(&storage.OAuthCredential{}).Where("provider_id = ?", providerID).
-		Updates(map[string]any{"access_token": in.AccessToken, "refresh_token": in.RefreshToken, "expires_at": in.ExpiresAt, "status": "connected", "last_error": "", "last_refresh_at": nowISO(), "updated_at": nowISO()}).Error; err != nil {
-		return storage.OAuthCredential{}, err
-	}
-	c, err := s.Get(providerID)
-	if err != nil {
-		return storage.OAuthCredential{}, err
-	}
-	if c == nil {
-		return storage.OAuthCredential{}, storage.ErrNotFound
-	}
-	return *c, nil
-}
-
-func (s oauthStore) FailRefresh(providerID, errorMessage string) error {
-	return s.b.db.Model(&storage.OAuthCredential{}).Where("provider_id = ?", providerID).
-		Updates(map[string]any{"status": "error", "last_error": errorMessage, "updated_at": nowISO()}).Error
-}
-
-func (s oauthStore) ListExpiring(before time.Duration) ([]storage.OAuthCredential, error) {
-	var out []storage.OAuthCredential
-	cutoff := time.Now().Add(before).UTC().Format(time.RFC3339)
-	s.b.db.Where("expires_at IS NOT NULL AND expires_at != '' AND expires_at <= ?", cutoff).Find(&out)
-	return out, nil
-}
-
-func (s oauthStore) RecoverStaleRefreshing(timeout time.Duration) (int64, error) {
-	cutoff := time.Now().Add(-timeout).UTC().Format(time.RFC3339)
-	result := s.b.db.Model(&storage.OAuthCredential{}).
-		Where("status = ? AND updated_at < ?", "refreshing", cutoff).
-		Updates(map[string]any{"status": "error", "last_error": "stale refresh recovery", "updated_at": nowISO()})
-	return result.RowsAffected, result.Error
-}

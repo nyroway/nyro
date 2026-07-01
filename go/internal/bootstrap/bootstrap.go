@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/auth"
-	"github.com/nyroway/nyro/go/internal/auth/drivers"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 	"github.com/nyroway/nyro/go/internal/storage/sqlite"
@@ -59,13 +57,6 @@ func bootstrapSQL(st storage.Storage) (storage.Storage, error) {
 		return nil, fmt.Errorf("storage migrate: %w", err)
 	}
 	return st, nil
-}
-
-// RegisterDrivers wires the outbound OAuth drivers: Claude, Codex, Vertex.
-func RegisterDrivers(reg *auth.Registry) {
-	reg.Register("claude-code", drivers.NewClaudeDriver())
-	reg.Register("codex", drivers.NewCodexDriver())
-	reg.Register("vertexai", drivers.NewVertexDriver())
 }
 
 // RunServer serves handler on addr until SIGINT/SIGTERM, then graceful-shutdown.

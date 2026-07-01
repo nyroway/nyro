@@ -60,42 +60,6 @@ type UpdateApiKey struct {
 	ModelIDs  *[]string `json:"model_ids,omitempty"`
 }
 
-// OAuthCredential is a stored upstream OAuth token (CAS-refreshed).
-type OAuthCredential struct {
-	ProviderID    string `json:"provider_id" gorm:"column:provider_id;primaryKey"`
-	DriverKey     string `json:"driver_key" gorm:"column:driver_key"`
-	Scheme        string `json:"scheme" gorm:"column:scheme"`
-	AccessToken   string `json:"access_token" gorm:"column:access_token"`
-	RefreshToken  string `json:"refresh_token,omitempty" gorm:"column:refresh_token"`
-	ExpiresAt     string `json:"expires_at,omitempty" gorm:"column:expires_at"`
-	ResourceURL   string `json:"resource_url,omitempty" gorm:"column:resource_url"`
-	SubjectID     string `json:"subject_id,omitempty" gorm:"column:subject_id"`
-	Scopes        string `json:"scopes,omitempty" gorm:"column:scopes"`
-	Meta          string `json:"meta,omitempty" gorm:"column:meta"`
-	Status        string `json:"status" gorm:"column:status;default:connected"`
-	StatusVersion int32  `json:"status_version" gorm:"column:status_version;default:0"`
-	LastError     string `json:"last_error,omitempty" gorm:"column:last_error"`
-	LastRefreshAt string `json:"last_refresh_at,omitempty" gorm:"column:last_refresh_at"`
-	CreatedAt     string `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt     string `json:"updated_at" gorm:"column:updated_at"`
-}
-
-// TableName fixes the provider_oauth_credentials table name.
-func (OAuthCredential) TableName() string { return "provider_oauth_credentials" }
-
-// UpsertOAuthCredential holds the fields written on token store/refresh.
-type UpsertOAuthCredential struct {
-	DriverKey    string `json:"driver_key"`
-	Scheme       string `json:"scheme"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	ExpiresAt    string `json:"expires_at,omitempty"`
-	ResourceURL  string `json:"resource_url,omitempty"`
-	SubjectID    string `json:"subject_id,omitempty"`
-	Scopes       string `json:"scopes,omitempty"`
-	Meta         string `json:"meta,omitempty"`
-}
-
 // ProviderTestResult records a connectivity test outcome.
 type ProviderTestResult struct {
 	Success  bool   `json:"success"`

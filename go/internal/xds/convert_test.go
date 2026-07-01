@@ -116,17 +116,8 @@ func TestSnapshotFromProto_Settings(t *testing.T) {
 
 func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	// Build storage, build pb snapshot, convert to internal, assert equivalence
-	// with the direct LoadFromStorage path. OAuth now round-trips too (P3b).
+	// with the direct LoadFromStorage path.
 	st, p, mOpen, _, k := newPopulatedStorage(t)
-
-	// Seed an OAuth credential so the OAuth path is exercised end-to-end.
-	_, err := st.OAuthCredentials().Upsert(p.ID, storage.UpsertOAuthCredential{
-		DriverKey: "drv", Scheme: "oauth_auth_code_pkce",
-		AccessToken: "tok-oauth", ExpiresAt: "2030-01-01T00:00:00Z",
-	})
-	if err != nil {
-		t.Fatalf("upsert oauth: %v", err)
-	}
 
 	pbSnap, err := SnapshotFromStorage(st.Storage(), 7)
 	if err != nil {
@@ -134,9 +125,6 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	}
 	if pbSnap.GetVersion() != 7 {
 		t.Errorf("version = %d; want 7", pbSnap.GetVersion())
-	}
-	if len(pbSnap.GetOauthCredentials()) != 1 {
-		t.Errorf("oauth_credentials in pb = %d; want 1", len(pbSnap.GetOauthCredentials()))
 	}
 
 	// Direct load for comparison.
@@ -164,35 +152,6 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	// settings
 	if v, ok := got.SettingGet("proxy_url"); !ok || v == "" {
 		t.Errorf("setting via proto path missing: %q %v", v, ok)
-	}
-	// oauth: cache (direct), pb path, and OAuthGet all agree.
-	if gc := got.OAuthGet(p.ID); gc == nil || gc.AccessToken != "tok-oauth" || gc.DriverKey != "drv" {
-		t.Errorf("oauth via proto path mismatch: %+v", gc)
-	}
-	if dc := direct.OAuthGet(p.ID); dc == nil || dc.AccessToken != "tok-oauth" {
-		t.Errorf("oauth via direct load mismatch: %+v", dc)
-	}
-	if got.OAuthGet("missing") != nil {
-		t.Error("OAuthGet(missing) should be nil")
-	}
-}
-
-func TestSnapshotFromProto_OAuthDroppedOnEmptyProviderID(t *testing.T) {
-	// An OAuth entry with an empty provider_id is dropped (guards against a nil
-	// key poisoning the map).
-	in := &pb.ConfigSnapshot{
-		OauthCredentials: []*pb.OAuthCredential{
-			{ProviderId: "", DriverKey: "drv", AccessToken: "x"},
-			{ProviderId: "p1", DriverKey: "drv", AccessToken: "y"},
-		},
-	}
-	snap := protoRoundtrip(t, in)
-	if snap.OAuthGet("p1") == nil {
-		t.Error("p1 oauth missing")
-	}
-	// No entry was inserted under the empty key (map lookup returns nil).
-	if snap.OAuthGet("") != nil {
-		t.Error("empty provider_id should not be stored")
 	}
 }
 

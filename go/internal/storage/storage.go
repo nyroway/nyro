@@ -2,7 +2,6 @@ package storage
 
 import (
 	"errors"
-	"time"
 )
 
 // ErrNotFound is returned by Update/Delete when no row matches the id.
@@ -79,27 +78,6 @@ type AuthAccessStore interface {
 	ListBoundModelIDs(apiKeyID string) ([]string, error)
 }
 
-// OAuthCredentialStore holds upstream OAuth tokens.
-//
-// The CAS methods (TryBeginRefresh/CompleteRefresh/FailRefresh/ListExpiring/
-// RecoverStaleRefreshing) coordinate cross-replica refresh via the shared DB.
-// The gateway stopped using them in xDS P3b: it now reads OAuth from its
-// ConfigCache snapshot and refreshes locally under a per-process mutex. They
-// remain on the interface because the admin process still drives DB-backed
-// reconnect/refresh flows. ListAll is the full-table snapshot used to populate
-// the xDS ConfigSnapshot (admin → gateway).
-type OAuthCredentialStore interface {
-	Get(providerID string) (*OAuthCredential, error)
-	ListAll() ([]OAuthCredential, error)
-	Upsert(providerID string, in UpsertOAuthCredential) (OAuthCredential, error)
-	Delete(providerID string) error
-	TryBeginRefresh(providerID string, expectedVersion int32) (*OAuthCredential, error)
-	CompleteRefresh(providerID string, in UpsertOAuthCredential) (OAuthCredential, error)
-	FailRefresh(providerID string, errorMessage string) error
-	ListExpiring(before time.Duration) ([]OAuthCredential, error)
-	RecoverStaleRefreshing(timeout time.Duration) (int64, error)
-}
-
 // Storage is the aggregate persistence interface.
 //
 // The request-audit sink (LogStore) lived here through Phase 3 (dual-write);
@@ -113,6 +91,5 @@ type Storage interface {
 	Settings() SettingsStore
 	APIKeys() ApiKeyStore
 	Auth() AuthAccessStore
-	OAuthCredentials() OAuthCredentialStore
 	Bootstrap() Bootstrap
 }

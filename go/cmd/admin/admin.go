@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nyroway/nyro/go/internal/admin"
-	"github.com/nyroway/nyro/go/internal/auth"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
@@ -46,10 +45,6 @@ func NewCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-
-		reg := auth.NewRegistry()
-		bootstrap.RegisterDrivers(reg)
-		sessions := auth.NewSessionStore()
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -108,7 +103,6 @@ func NewCmd() *cobra.Command {
 		// The request_logs table was removed in Phase 4; these are the only
 		// request-log/metrics read paths.
 		admin.Mount(engine, st, adminToken, admin.NewParquetLogSource(obsCfg.DataDir), admin.NewParquetStatsSource(obsCfg.DataDir))
-		admin.MountOAuth(engine, st, reg, sessions)
 		proxy.MountWebui(engine, webuiDir)
 
 		// Best-effort flush of buffered OTLP rows on shutdown; do not block

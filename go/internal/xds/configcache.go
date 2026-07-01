@@ -38,7 +38,6 @@ func LoadFromStorage(s storage.Storage) (*ConfigSnapshot, error) {
 		apikeys:   map[string]storage.ApiKeyAccessRecord{},
 		bindings:  map[string]map[string]bool{},
 		settings:  map[string]string{},
-		oauth:     map[string]storage.OAuthCredential{},
 	}
 
 	providers, err := s.Providers().List()
@@ -88,14 +87,6 @@ func LoadFromStorage(s storage.Storage) (*ConfigSnapshot, error) {
 	}
 	for _, kv := range settings {
 		snap.settings[kv.Key] = kv.Value
-	}
-
-	creds, err := s.OAuthCredentials().ListAll()
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range creds {
-		snap.oauth[c.ProviderID] = c
 	}
 
 	return snap, nil

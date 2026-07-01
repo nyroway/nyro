@@ -76,21 +76,5 @@ CREATE TABLE IF NOT EXISTS api_key_models (
   PRIMARY KEY (api_key_id, model_id)
 );
 
-CREATE TABLE IF NOT EXISTS provider_oauth_credentials (
-  provider_id TEXT PRIMARY KEY,
-  driver_key TEXT,
-  scheme TEXT,
-  access_token TEXT,
-  refresh_token TEXT,
-  expires_at TEXT,
-  resource_url TEXT,
-  subject_id TEXT,
-  scopes TEXT,
-  meta TEXT,
-  status TEXT NOT NULL DEFAULT 'connected',
-  status_version INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT,
-  last_refresh_at TEXT,
-  created_at TEXT,
-  updated_at TEXT
-);
+-- provider_oauth_credentials table removed: OAuth/driver auth infrastructure
+-- deleted; cloud provider auth will be rebuilt in provider.NewAuthenticator.

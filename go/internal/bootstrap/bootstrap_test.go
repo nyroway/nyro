@@ -2,19 +2,7 @@ package bootstrap
 
 import (
 	"testing"
-
-	"github.com/nyroway/nyro/go/internal/auth"
 )
-
-func TestRegisterDrivers(t *testing.T) {
-	reg := auth.NewRegistry()
-	RegisterDrivers(reg)
-	for _, key := range []string{"claude-code", "codex", "vertexai"} {
-		if _, ok := reg.Get(key); !ok {
-			t.Errorf("RegisterDrivers: driver %q not registered", key)
-		}
-	}
-}
 
 func TestOpenStorage(t *testing.T) {
 	t.Run("memory default", func(t *testing.T) {
