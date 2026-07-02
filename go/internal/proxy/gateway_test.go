@@ -121,3 +121,21 @@ func TestResolveProxySettings_Overrides(t *testing.T) {
 		t.Errorf("RetryOnStatus = %v, want exactly {408,429}", ps.RetryOnStatus)
 	}
 }
+
+// TestDirectClientTransportTuning verifies the direct upstream client's
+// transport is tuned for concurrency (Go's http.Transport defaults to
+// MaxIdleConnsPerHost=2, which churns connections under load).
+func TestDirectClientTransportTuning(t *testing.T) {
+	g := NewGateway()
+	client := g.directClient(proxySettings{RequestTimeout: time.Minute, ConnectTimeout: 10 * time.Second})
+	tr, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport is %T, want *http.Transport", client.Transport)
+	}
+	if tr.MaxIdleConnsPerHost < 64 {
+		t.Errorf("MaxIdleConnsPerHost=%d, want >=64 (default 2 churns connections)", tr.MaxIdleConnsPerHost)
+	}
+	if tr.IdleConnTimeout == 0 {
+		t.Error("IdleConnTimeout unset")
+	}
+}

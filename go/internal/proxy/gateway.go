@@ -162,11 +162,16 @@ func (g *Gateway) httpClientFor(useProxy bool) (*http.Client, error) {
 	}
 
 	transport := &http.Transport{
-		Proxy:       http.ProxyURL(parsed),
-		DialContext: (&net.Dialer{Timeout: ps.ConnectTimeout}).DialContext,
+		Proxy:               http.ProxyURL(parsed),
+		DialContext:         (&net.Dialer{Timeout: ps.ConnectTimeout}).DialContext,
+		MaxIdleConns:        256,
+		MaxIdleConnsPerHost: 64,
+		IdleConnTimeout:     90 * time.Second,
 	}
 	if forceHTTP1 {
 		transport.ForceAttemptHTTP2 = false
+	} else {
+		transport.ForceAttemptHTTP2 = true
 	}
 	client := &http.Client{Timeout: ps.RequestTimeout, Transport: transport}
 	g.proxyClient = client
@@ -186,7 +191,11 @@ func (g *Gateway) directClient(ps proxySettings) *http.Client {
 	client := &http.Client{
 		Timeout: ps.RequestTimeout,
 		Transport: &http.Transport{
-			DialContext: (&net.Dialer{Timeout: ps.ConnectTimeout}).DialContext,
+			DialContext:         (&net.Dialer{Timeout: ps.ConnectTimeout}).DialContext,
+			MaxIdleConns:        256,
+			MaxIdleConnsPerHost: 64,
+			IdleConnTimeout:     90 * time.Second,
+			ForceAttemptHTTP2:   true,
 		},
 	}
 	g.client = client
