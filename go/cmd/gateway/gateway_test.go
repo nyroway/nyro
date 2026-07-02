@@ -98,3 +98,57 @@ consumers:
 		t.Error("api key from YAML not in cache")
 	}
 }
+
+// TestBuildGateway_StandaloneReadsObservabilityFromYAML proves settings.observability
+// declared in the YAML file actually reaches the observability provider (it did
+// not before this fix — standalone mode read OTEL_* env vars only and silently
+// ignored the file). traces.exporter: otlp with no endpoint anywhere must trip
+// NewProvider's fail-fast guard — that failure is only possible if the YAML
+// setting was actually read.
+func TestBuildGateway_StandaloneReadsObservabilityFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/nyro.yaml"
+	const yaml = `
+version: 1
+settings:
+  observability:
+    traces:
+      exporter: otlp
+upstreams: []
+routes: []
+consumers: []
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := buildGateway(context.Background(), path, "")
+	if err == nil {
+		t.Fatal("expected an error: traces.exporter=otlp declared in YAML with no endpoint must fail fast, proving the YAML setting was read")
+	}
+}
+
+// TestBuildGateway_StandaloneIgnoresEnvWhenYAMLSilent proves OTEL_* environment
+// variables are never consulted: OTEL_TRACES_EXPORTER=otlp is set (with no
+// OTEL_EXPORTER_OTLP_ENDPOINT), which would trip the same fail-fast guard as the
+// test above if the gateway still read it — but the YAML declares nothing, so
+// the fixed default (traces→none) must apply and buildGateway must succeed.
+func TestBuildGateway_StandaloneIgnoresEnvWhenYAMLSilent(t *testing.T) {
+	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
+
+	dir := t.TempDir()
+	path := dir + "/nyro.yaml"
+	const yaml = `
+version: 1
+upstreams: []
+routes: []
+consumers: []
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, obs, err := buildGateway(context.Background(), path, "")
+	if err != nil {
+		t.Fatalf("buildGateway: %v (OTEL_* env vars must not be consulted when the YAML declares nothing)", err)
+	}
+	_ = obs.Shutdown(context.Background())
+}

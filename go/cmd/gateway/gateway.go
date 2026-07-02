@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -88,8 +87,10 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 	switch {
 	case cfgPath != "":
 		// Standalone YAML: build the config snapshot directly (no DB). The
-		// observability config comes from env (OTEL_EXPORTER_OTLP_ENDPOINT /
-		// OTEL_*_EXPORTER); defaults are logs→stdout, metrics/traces→none.
+		// observability config comes from settings.observability in the YAML
+		// file (flattened into the snapshot by internal/config); if the file
+		// declares nothing, defaults are logs→stdout, metrics/traces→none. See
+		// resolveObsConfig — environment variables are never consulted here.
 		cfg, missing, err := config.LoadYAML(cfgPath)
 		if err != nil {
 			return nil, nil, nil, err
@@ -105,7 +106,7 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 		cache.Swap(snap)
 		gw = proxy.NewGatewayWithCache(cache)
 
-		obsCfg := observability.LoadConfig(standaloneObsGet)
+		obsCfg := resolveObsConfig(cache)
 		prov, perr := observability.NewProvider(ctx, obsCfg)
 		if perr != nil {
 			return nil, nil, nil, fmt.Errorf("observability provider: %w", perr)
@@ -116,22 +117,16 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 	case xdsAddr != "":
 		// xDS hot-reload: empty cache is filled by the stream. Observability
 		// config is read from the cache snapshot (published by the admin) once
-		// it arrives; for the provider we read synchronously at startup and
-		// accept that env overrides apply. The default is all→otlp via
-		// obs_otlp_endpoint from settings; env can override.
+		// it arrives.
 		cache := &xds.ConfigCache{}
 		client := xds.NewConfigClient(xdsAddr, cache)
 		go func() { _ = client.Run(ctx) }()
 		gw = proxy.NewGatewayWithCache(cache)
 
-		// Read obs settings from the cache snapshot when present; fall back to
-		// env so the provider can be built before the first xDS push lands.
-		obsCfg := observability.LoadConfig(cacheObsGet(cache))
-		if obsCfg.Sink == "" && obsCfg.LogsSink == "" && obsCfg.MetricsSink == "" && obsCfg.TracesSink == "" && obsCfg.OTLPEndpoint == "" {
-			// No xDS settings yet → env-based defaults (all→otlp if
-			// OTEL_EXPORTER_OTLP_ENDPOINT is set, else none).
-			obsCfg = observability.LoadConfig(standaloneObsGet)
-		}
+		// Read obs settings from the cache snapshot when present (the control-
+		// plane push); before the first push lands, or when nothing was pushed,
+		// apply the fixed default — never env vars (see resolveObsConfig).
+		obsCfg := resolveObsConfig(cache)
 		prov, perr := observability.NewProvider(ctx, obsCfg)
 		if perr != nil {
 			return nil, nil, nil, fmt.Errorf("observability provider: %w", perr)
@@ -153,30 +148,6 @@ func attachObservability(gw *proxy.Gateway, prov *observability.ObsProvider) {
 	observability.RegisterHooks(prov.Tracer, prov.Logger, gw.Handles)
 }
 
-// standaloneObsGet maps OTel-standard env vars onto the observability settings
-// keys, so the standalone YAML path (which has no settings store) can still
-// configure the sinks via env. Defaults: logs→stdout, metrics/traces→none. If
-// OTEL_EXPORTER_OTLP_ENDPOINT is set, every signal whose exporter resolves to
-// "otlp" routes there; per-signal OTEL_<SIGNAL>_EXPORTER=none|console|otlp wins
-// over the global endpoint default.
-func standaloneObsGet(key string) (string, error) {
-	// Per-key mapping onto the obs_* settings keys that LoadConfig reads.
-	switch key {
-	case "obs_otlp_endpoint":
-		return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), nil
-	case "obs_logs_sink":
-		return resolveSinkEnv("OTEL_LOGS_EXPORTER", "stdout"), nil
-	case "obs_metrics_sink":
-		return resolveSinkEnv("OTEL_METRICS_EXPORTER", "none"), nil
-	case "obs_traces_sink":
-		return resolveSinkEnv("OTEL_TRACES_EXPORTER", "none"), nil
-	case "obs_sink":
-		// No global default in standalone mode (per-signal defaults above win).
-		return "", nil
-	}
-	return "", nil
-}
-
 // cacheObsGet returns a get-func that reads obs_* settings from the xDS-published
 // snapshot, falling back to "" (absent) before the first push lands.
 func cacheObsGet(cache *xds.ConfigCache) func(string) (string, error) {
@@ -190,25 +161,33 @@ func cacheObsGet(cache *xds.ConfigCache) func(string) (string, error) {
 	}
 }
 
-// resolveSinkEnv maps an OTEL_<SIGNAL>_EXPORTER value onto an obs sink name
-// (console≡stdout), applying def when the env var is unset/empty.
-func resolveSinkEnv(envVar, def string) string {
-	v := os.Getenv(envVar)
-	switch v {
-	case "":
-		// If an OTLP endpoint is configured and the signal didn't pin its own
-		// exporter, follow the endpoint (otlp). Otherwise keep the per-signal
-		// default.
-		if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
-			return "otlp"
-		}
-		return def
-	case "otlp":
-		return "otlp"
-	case "console":
-		return "stdout"
-	case "none":
-		return "none"
+// resolveObsConfig reads observability settings from the config snapshot — the
+// gateway's only two data sources are the config file (standalone) and the
+// control-plane push (xDS); both end up in the same ConfigCache/snapshot
+// shape, so both branches of buildGateway call this identically. If the
+// snapshot has no observability settings at all (absent from the config file,
+// or not yet pushed over xDS), the fixed default in defaultObsGet applies.
+// Process environment variables are never consulted here — a deployment that
+// wants an env var to drive a sink must reference it explicitly inside
+// config.yaml (e.g. endpoint: "${OTEL_EXPORTER_OTLP_ENDPOINT}"), which
+// config.LoadYAML's ${VAR} expansion already handles.
+func resolveObsConfig(cache *xds.ConfigCache) observability.ObsConfig {
+	obsCfg := observability.LoadConfig(cacheObsGet(cache))
+	if obsCfg.Sink == "" && obsCfg.LogsSink == "" && obsCfg.MetricsSink == "" && obsCfg.TracesSink == "" && obsCfg.OTLPEndpoint == "" {
+		obsCfg = observability.LoadConfig(defaultObsGet)
 	}
-	return def
+	return obsCfg
+}
+
+// defaultObsGet supplies fixed defaults (logs→stdout, metrics/traces→none)
+// when neither the config file nor a control-plane push declares any
+// observability setting. It never reads the process environment.
+func defaultObsGet(key string) (string, error) {
+	switch key {
+	case "obs_logs_sink":
+		return "stdout", nil
+	case "obs_metrics_sink", "obs_traces_sink":
+		return "none", nil
+	}
+	return "", nil
 }
