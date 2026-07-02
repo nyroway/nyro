@@ -1,5 +1,5 @@
 // Command nyro is the unified gateway CLI: `nyro gateway` (data plane),
-// `nyro admin` (control plane), `nyro tool` (utilities).
+// `nyro admin` (control plane).
 package main
 
 import (
@@ -10,19 +10,26 @@ import (
 
 	"github.com/nyroway/nyro/go/cmd/admin"
 	"github.com/nyroway/nyro/go/cmd/gateway"
-	"github.com/nyroway/nyro/go/cmd/tool"
 )
 
-func main() {
+// newRootCmd builds the root cobra command. Extracted from main so tests can
+// inspect its subcommand/flag shape without calling Execute or os.Exit.
+func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "nyro",
 		Short: "Nyro gateway",
 	}
+	// nyro is not meant to be introspected via shell-completion scripts today;
+	// disable cobra's auto-added `completion` subcommand rather than ship an
+	// unmaintained surface.
+	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(gateway.NewCmd())
 	root.AddCommand(admin.NewCmd())
-	root.AddCommand(tool.NewCmd())
+	return root
+}
 
-	if err := root.Execute(); err != nil {
+func main() {
+	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
