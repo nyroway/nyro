@@ -56,6 +56,50 @@ func TestHealthCheckModelFallsBackToFirstDiscoveredStaticModel(t *testing.T) {
 	}
 }
 
+func TestGetNormalizesAliases(t *testing.T) {
+	cases := map[string]string{
+		"zhipu": "zhipuai", "glm": "zhipuai", "GLM": "zhipuai",
+		"z.ai": "zai", "grok": "xai", " XAI ": "xai",
+	}
+	for alias, want := range cases {
+		p, ok := provider.Get(alias)
+		if !ok {
+			t.Fatalf("Get(%q) not found", alias)
+		}
+		if got := p.Definition().ID; got != want {
+			t.Errorf("Get(%q).Definition().ID = %q, want %q", alias, got, want)
+		}
+	}
+}
+
+func TestLookupNormalizesAliases(t *testing.T) {
+	def, ok := provider.Lookup("zhipu")
+	if !ok || def.ID != "zhipuai" {
+		t.Fatalf("Lookup(zhipu) = %+v, %v; want zhipuai", def, ok)
+	}
+}
+
+func TestResolveFallsBackToCustom(t *testing.T) {
+	p := provider.Resolve("this-id-does-not-exist")
+	if got := p.Definition().ID; got != "custom" {
+		t.Errorf("Resolve(unknown) = %q, want custom", got)
+	}
+	if p := provider.Resolve(""); p.Definition().ID != "custom" {
+		t.Errorf("Resolve(\"\") = %q, want custom", p.Definition().ID)
+	}
+}
+
+func TestResolveHitsRealProviderBeforeFallback(t *testing.T) {
+	p := provider.Resolve("anthropic")
+	if got := p.Definition().ID; got != "anthropic" {
+		t.Errorf("Resolve(anthropic) = %q, want anthropic (not custom fallback)", got)
+	}
+	// Alias normalization applies inside Resolve too (via Get).
+	if got := provider.Resolve("zhipu").Definition().ID; got != "zhipuai" {
+		t.Errorf("Resolve(zhipu) = %q, want zhipuai", got)
+	}
+}
+
 func TestDuplicateRegistrationPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {

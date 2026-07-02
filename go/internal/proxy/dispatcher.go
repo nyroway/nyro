@@ -15,9 +15,9 @@ import (
 	"github.com/nyroway/nyro/go/internal/protocol/codec"
 	"github.com/nyroway/nyro/go/internal/protocol/ids"
 	"github.com/nyroway/nyro/go/internal/protocol/ir"
+	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/router"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/internal/vendor"
 )
 
 // Dispatch is the single orchestration entry point. The ingress shell
@@ -128,38 +128,24 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 			}
 		}
 
-		// Build the outbound request via the Vendor pipeline (7-step:
-		// pre_encode → codec encode → post_encode → auth → build_url) when a
-		// vendor is registered; otherwise fallback to direct codec encode.
-		v := vendor.Global().Resolve(p.Provider, p.Protocol)
-		var outbound codec.OutboundRequest
-		var err error
-		if v == nil {
-			// Fallback: direct codec encode + protocol-based auth + URL.
-			outbound, err = egressHandler.MakeRequestEncoder().Encode(req)
-			if err == nil {
-				cred := g.resolveCredential(*p)
-				if outbound.Headers == nil {
-					outbound.Headers = map[string]string{}
-				}
-				for k, val := range authHeadersFor(p.Protocol, cred) {
-					outbound.Headers[k] = val
-				}
-				outbound.Path = buildUpstreamURL(p.BaseURL, outbound.Path)
-			}
-		} else {
-			pctx := &vendor.ProviderCtx{
-				Provider:    vendor.VendorProvider{ID: p.ID, Vendor: p.Provider, Protocol: p.Protocol, BaseURL: p.BaseURL},
-				APIKey:      g.resolveCredential(*p),
-				ActualModel: actualModel,
-			}
-			outbound, err = vendor.BuildRequest(v, req, pctx, egressHandler)
+		// Build the outbound request: codec-encode the IR, then build the
+		// upstream URL and resolve the provider's outbound authenticator.
+		outbound, err := egressHandler.MakeRequestEncoder().Encode(req)
+		if err == nil {
+			outbound.Path = provider.BuildURL(p.BaseURL, outbound.Path)
 		}
 		if err != nil {
 			writeJSONError(rec, http.StatusInternalServerError, "encode request: "+err.Error())
 			return
 		}
 		plugin.RunPhaseHooks(plugin.PhaseOnUpstream, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
+
+		pr := provider.Resolve(p.Provider)
+		auth, authErr := pr.NewAuthenticator(r.Context(), runtimeFromUpstream(*p))
+		if authErr != nil {
+			g.Router.Record(router.KeyOf(target), false, 0)
+			continue // can't authenticate for this backend → next backend
+		}
 
 		client, cErr := g.httpClientFor(p.ProxyURL != "")
 		if cErr != nil {
@@ -177,7 +163,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		var latencyMs float64
 		for attempt := 1; attempt <= attempts; attempt++ {
 			upStart := time.Now()
-			resp, err = g.callUpstream(client, r, outbound)
+			resp, err = g.callUpstream(client, r, outbound, auth)
 			latencyMs = float64(time.Since(upStart).Microseconds()) / 1000
 			if err != nil {
 				resp = nil
@@ -232,10 +218,10 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 }
 
 // callUpstream sends the outbound HTTP request (without writing to the
-// client), so the dispatcher can fail over before committing a response.
-// The outbound already has the full URL + auth headers set by the vendor
-// pipeline or the fallback path.
-func (g *Gateway) callUpstream(client *http.Client, r *http.Request, outbound codec.OutboundRequest) (*http.Response, error) {
+// client), so the dispatcher can fail over before committing a response. The
+// outbound already has the full URL set; auth applies the provider's outbound
+// authentication headers last, after the codec-set headers.
+func (g *Gateway) callUpstream(client *http.Client, r *http.Request, outbound codec.OutboundRequest, auth provider.Authenticator) (*http.Response, error) {
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), outbound.Method, outbound.Path, bytes.NewReader(outbound.Body))
 	if err != nil {
 		return nil, err
@@ -246,7 +232,24 @@ func (g *Gateway) callUpstream(client *http.Client, r *http.Request, outbound co
 	if upstreamReq.Header.Get("Content-Type") == "" {
 		upstreamReq.Header.Set("Content-Type", "application/json")
 	}
+	if err := auth.Apply(r.Context(), upstreamReq); err != nil {
+		return nil, err
+	}
 	return client.Do(upstreamReq)
+}
+
+// runtimeFromUpstream projects the storage row's outbound-relevant fields
+// into the provider package's runtime view.
+func runtimeFromUpstream(u storage.Upstream) provider.UpstreamRuntime {
+	return provider.UpstreamRuntime{
+		Name:            u.Name,
+		Provider:        u.Provider,
+		Protocol:        u.Protocol,
+		BaseURL:         u.BaseURL,
+		CredentialsJSON: u.CredentialsJSON,
+		ModelsJSON:      u.ModelsJSON,
+		ProxyURL:        u.ProxyURL,
+	}
 }
 
 // serveStream decodes upstream SSE → IR deltas → re-encodes to client SSE in

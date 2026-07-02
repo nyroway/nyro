@@ -42,7 +42,7 @@ func TestDispatchAnthropicStreamEndToEnd(t *testing.T) {
 	upstream := anthropicStreamUpstream(t)
 	defer upstream.Close()
 
-	engine := NewRouter(newTestGatewayProto(t, upstream.URL, "anthropic-messages"))
+	engine := NewRouter(newTestGatewayProviderProto(t, upstream.URL, "anthropic", "anthropic-messages"))
 	body := `{"model":"gpt-4o","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"stream":true}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

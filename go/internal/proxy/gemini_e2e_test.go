@@ -9,11 +9,13 @@ import (
 )
 
 // geminiStreamUpstream simulates a Gemini streamGenerateContent SSE stream.
-// (Auth is not checked — real Gemini uses x-goog-api-key, handled by the
-// Vendor layer in a later phase.)
 func geminiStreamUpstream(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-goog-api-key"); got == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		f := w.(http.Flusher)
@@ -32,7 +34,7 @@ func TestDispatchGeminiStreamEndToEnd(t *testing.T) {
 	upstream := geminiStreamUpstream(t)
 	defer upstream.Close()
 
-	engine := NewRouter(newTestGatewayProto(t, upstream.URL, "google-gemini"))
+	engine := NewRouter(newTestGatewayProviderProto(t, upstream.URL, "gemini", "google-gemini"))
 	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gpt-4o:streamGenerateContent", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -58,7 +60,7 @@ func TestDispatchGeminiModelNotFound(t *testing.T) {
 	upstream := geminiStreamUpstream(t)
 	defer upstream.Close()
 
-	engine := NewRouter(newTestGatewayProto(t, upstream.URL, "google-gemini"))
+	engine := NewRouter(newTestGatewayProviderProto(t, upstream.URL, "gemini", "google-gemini"))
 	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
 	// Model alias "unknown-model" has no route → 404.
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/unknown-model:generateContent", strings.NewReader(body))

@@ -31,11 +31,18 @@ func newTestGatewayFromStorage(t *testing.T, s storage.CoreStorage) *Gateway {
 }
 
 func newTestGatewayProto(t *testing.T, upstreamURL, protocol string) *Gateway {
+	return newTestGatewayProviderProto(t, upstreamURL, "test", protocol)
+}
+
+// newTestGatewayProviderProto is like newTestGatewayProto but lets the caller
+// pin a real provider id (e.g. "anthropic", "gemini") so provider.Resolve
+// picks the vendor-specific Authenticator instead of falling back to custom.
+func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol string) *Gateway {
 	t.Helper()
 	st := memory.New()
 	core := st.Core()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "test", Provider: "test", Protocol: protocol, BaseURL: upstreamURL,
+		Name: "test", Provider: providerID, Protocol: protocol, BaseURL: upstreamURL,
 		CredentialsJSON: []byte(`{"api_key":"test-key"}`),
 	})
 	_, _ = core.Routes().Create(storage.CreateRoute{

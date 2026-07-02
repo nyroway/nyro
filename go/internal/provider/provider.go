@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -117,10 +118,12 @@ func Register(p Provider) {
 }
 
 // Get returns a registered provider by id (data-plane entry: holds behavior).
+// id is normalized first so common aliases (zhipu, z.ai, grok, ...) resolve
+// to their canonical registration.
 func Get(id string) (Provider, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	p, ok := registry[id]
+	p, ok := registry[normalizeID(id)]
 	return p, ok
 }
 
@@ -131,11 +134,38 @@ func Get(id string) (Provider, bool) {
 func Lookup(id string) (Definition, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	p, ok := registry[id]
+	p, ok := registry[normalizeID(id)]
 	if !ok {
 		return Definition{}, false
 	}
 	return p.Definition(), true
+}
+
+// Resolve returns a registered provider by id, falling back to the "custom"
+// provider (always registered) when id is empty or unmatched. Unlike Get, it
+// never fails — this is the data plane's single resolution entry point: every
+// upstream must be dispatchable, even one whose provider id is a typo or a
+// self-hosted deployment with no named vendor.
+func Resolve(id string) Provider {
+	if p, ok := Get(id); ok {
+		return p
+	}
+	p, _ := Get("custom")
+	return p
+}
+
+// normalizeID maps common vendor id aliases to their canonical registration.
+func normalizeID(id string) string {
+	id = strings.TrimSpace(strings.ToLower(id))
+	switch id {
+	case "zhipu", "glm":
+		return "zhipuai"
+	case "z.ai":
+		return "zai"
+	case "grok":
+		return "xai"
+	}
+	return id
 }
 
 // List returns all providers in stable ID order (data-plane).
