@@ -12,6 +12,25 @@ import (
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
+// TestRejectsOversizedBody verifies handleProxy rejects request bodies larger
+// than settings.proxy.max_body_bytes (default 32MiB) with 413, instead of
+// buffering the whole thing via io.ReadAll.
+func TestRejectsOversizedBody(t *testing.T) {
+	st := memory.New().Storage()
+	engine := NewRouter(newTestGatewayFromStorage(t, st))
+
+	huge := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
+		strings.Repeat("x", 33<<20) + `"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(huge))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status=%d, want 413 for a >32MiB body", rec.Code)
+	}
+}
+
 func newTestGateway(t *testing.T, upstreamURL string) *Gateway {
 	return newTestGatewayProto(t, upstreamURL, "openai-compatible")
 }

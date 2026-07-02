@@ -82,6 +82,7 @@ type proxySettings struct {
 	ConnectTimeout time.Duration
 	MaxRetries     int
 	RetryOnStatus  map[int]bool
+	MaxBodyBytes   int64
 }
 
 var defaultRetryOnStatus = map[int]bool{429: true, 500: true, 502: true, 503: true, 504: true}
@@ -96,6 +97,7 @@ func resolveProxySettings(snap *xds.ConfigSnapshot) proxySettings {
 		ConnectTimeout: 30 * time.Second,
 		MaxRetries:     2,
 		RetryOnStatus:  defaultRetryOnStatus,
+		MaxBodyBytes:   32 << 20,
 	}
 	if v, ok := snap.SettingGet("proxy.request_timeout"); ok {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -120,6 +122,11 @@ func resolveProxySettings(snap *xds.ConfigSnapshot) proxySettings {
 				set[c] = true
 			}
 			ps.RetryOnStatus = set
+		}
+	}
+	if v, ok := snap.SettingGet("proxy.max_body_bytes"); ok {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			ps.MaxBodyBytes = n
 		}
 	}
 	return ps

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -79,8 +80,15 @@ func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep ids.Pro
 		webutil.Error(w, http.StatusNotImplemented, "no codec registered for endpoint", "gateway_error")
 		return
 	}
+	limit := resolveProxySettings(gw.snapshot()).MaxBodyBytes
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			webutil.Error(w, http.StatusRequestEntityTooLarge, "request body too large", "gateway_error")
+			return
+		}
 		webutil.Error(w, http.StatusBadRequest, "read body: "+err.Error(), "gateway_error")
 		return
 	}
