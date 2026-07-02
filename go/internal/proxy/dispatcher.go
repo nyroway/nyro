@@ -103,6 +103,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 	// backend; stop at the first usable response.
 	ordered := g.Router.Select(route.Upstreams, route.Balance)
 	ps := resolveProxySettings(g.snapshot())
+	clientModel := req.Model
 	served := false
 	for _, target := range ordered {
 		p := g.snapshot().UpstreamGet(target.UpstreamID)
@@ -111,7 +112,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		}
 		actualModel := target.Model
 		if actualModel == "" || actualModel == "*" {
-			actualModel = req.Model
+			actualModel = clientModel
 		}
 		req.Model = actualModel
 
