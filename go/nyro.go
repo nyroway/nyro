@@ -18,8 +18,6 @@ func main() {
 		Use:   "nyro",
 		Short: "Nyro gateway",
 	}
-	root.PersistentFlags().String("storage", "memory", "storage backend: memory|sqlite|postgres|mysql")
-	root.PersistentFlags().String("db-dsn", "", "database path/DSN for persistent backends")
 	root.AddCommand(gateway.NewCmd())
 	root.AddCommand(admin.NewCmd())
 	root.AddCommand(tool.NewCmd())

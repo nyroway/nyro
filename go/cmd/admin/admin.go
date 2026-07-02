@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -33,6 +34,8 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("grpc-addr", "", "listen address for the gRPC xDS server (disabled if empty)")
 	cmd.Flags().String("admin-token", "", "Bearer token protecting /api/v1 admin routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
+	cmd.Flags().String("storage", "sqlite", "storage backend: sqlite|postgres|mysql")
+	cmd.Flags().String("db-dsn", "", "database path/DSN (sqlite: file path, default ./data/nyro.db; postgres/mysql: full DSN, required)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("addr")
 		grpcAddr, _ := cmd.Flags().GetString("grpc-addr")
@@ -40,6 +43,19 @@ func NewCmd() *cobra.Command {
 		webuiDir, _ := cmd.Flags().GetString("webui-dir")
 		storageBackend, _ := cmd.Flags().GetString("storage")
 		dbDSN, _ := cmd.Flags().GetString("db-dsn")
+
+		switch storageBackend {
+		case "sqlite":
+			if dbDSN == "" {
+				dbDSN = "./data/nyro.db"
+			}
+		case "postgres", "mysql":
+			if dbDSN == "" {
+				return fmt.Errorf("--db-dsn is required for --storage %s", storageBackend)
+			}
+		default:
+			return fmt.Errorf("unknown --storage %q (want sqlite|postgres|mysql)", storageBackend)
+		}
 
 		st, err := bootstrap.OpenStorage(storageBackend, dbDSN)
 		if err != nil {
