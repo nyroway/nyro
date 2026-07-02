@@ -153,7 +153,6 @@ func TestMutationsBumpEpoch(t *testing.T) {
 		{"create upstream", "POST", "/api/v1/upstreams", `{"name":"u2","provider":"openai","credentials":{"api_key":"k"}}`},
 		{"update upstream", "PUT", "/api/v1/upstreams/" + up.ID, `{"enabled":false}`},
 		{"update route", "PUT", "/api/v1/routes/" + rt.ID, `{"enabled":false}`},
-		{"import config", "POST", "/api/v1/config/import", `{"settings":[{"key":"k1","value":"v1"}]}`},
 		{"delete route", "DELETE", "/api/v1/routes/" + rt.ID, ""},
 		{"delete upstream", "DELETE", "/api/v1/upstreams/" + up.ID, ""},
 	}

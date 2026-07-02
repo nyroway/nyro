@@ -349,55 +349,6 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			}
 			webutil.JSON(w, http.StatusOK, out)
 		})
-		g.Get("/config/export", func(w http.ResponseWriter, r *http.Request) {
-			upstreams, _ := s.Upstreams().List()
-			routes, _ := s.Routes().List()
-			consumers, _ := s.Consumers().List()
-			settings, _ := s.Settings().ListAll()
-			webutil.JSON(w, http.StatusOK, map[string]any{
-				"version": 1, "upstreams": upstreams, "routes": routes, "consumers": consumers, "settings": settings,
-			})
-		})
-		g.Post("/config/import", func(w http.ResponseWriter, r *http.Request) {
-			var body struct {
-				Upstreams []storage.CreateUpstream `json:"upstreams"`
-				Routes    []storage.CreateRoute    `json:"routes"`
-				Consumers []storage.CreateConsumer `json:"consumers"`
-				Settings  []storage.Setting        `json:"settings"`
-			}
-			if err := webutil.Decode(r, &body); err != nil {
-				badRequest(w, err)
-				return
-			}
-			var upCount, routeCount, consumerCount, setCount int
-			for _, u := range body.Upstreams {
-				if _, err := s.Upstreams().Create(u); err == nil {
-					upCount++
-				}
-			}
-			for _, rt := range body.Routes {
-				if _, err := s.Routes().Create(rt); err == nil {
-					routeCount++
-				}
-			}
-			for _, c := range body.Consumers {
-				if _, err := s.Consumers().Create(c); err == nil {
-					consumerCount++
-				}
-			}
-			for _, set := range body.Settings {
-				if err := s.Settings().Set(set.Key, set.Value); err == nil {
-					setCount++
-				}
-			}
-			if upCount+routeCount+consumerCount+setCount > 0 {
-				bumpEpoch(s)
-			}
-			webutil.JSON(w, http.StatusOK, map[string]any{
-				"upstreams_imported": upCount, "routes_imported": routeCount,
-				"consumers_imported": consumerCount, "settings_imported": setCount,
-			})
-		})
 	})
 }
 
