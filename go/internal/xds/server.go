@@ -1,14 +1,3 @@
-// Package xds is nyro's config-distribution plane: a custom gRPC
-// ConfigService that pushes full config snapshots from the admin (control
-// plane) to gateways (data plane). The name borrows Envoy's push model as a
-// concept only — this is NOT the Envoy xDS protocol (no ADS, no
-// delta/SotW variants, no ACK/NACK).
-//
-// This file also holds the gRPC control-plane server (ConfigService) that
-// pushes configuration snapshots to connected gateways. The admin process runs
-// one of these alongside its REST API; each gateway opens a long-lived
-// StreamConfig stream and receives a full snapshot on connect and on every
-// config change.
 package xds
 
 import (

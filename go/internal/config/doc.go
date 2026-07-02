@@ -1,7 +1,8 @@
-// Package config holds bootstrap configuration for the Nyro gateway.
+// Package config loads the standalone YAML configuration and seeds it into a
+// storage backend. Used by `nyro gateway --config` to run without an
+// admin/DB.
 //
-// Ported from crates/nyro-core/src/config.rs. Only process-bootstrap values
-// live here (listen address, data dir, storage backend selection); the live
-// provider/model/key configuration is persisted in storage and surfaced
-// through the admin service at runtime.
+// The YAML shape mirrors the config-schema plan's final config.yaml: version +
+// settings (server/proxy/observability) + upstreams + routes + consumers
+// (nested keys/routes/quotas).
 package config

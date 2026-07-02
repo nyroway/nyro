@@ -1,12 +1,3 @@
-// Package plugin implements the request-lifecycle extension framework.
-//
-// This is the P1 seam: the five phases and the PhaseHook interface are defined
-// here, and the dispatcher invokes RunPhaseHooks at each phase boundary. No
-// hooks are registered yet, so every call is a no-op that returns Continue.
-// P4 fills in real hooks (and the PluginKernel capability registry).
-//
-// Ported from plugin/phase.rs. Go has no link-time registration like Rust's
-// inventory crate, so hooks register via init() into the package-level slice.
 package plugin
 
 import (

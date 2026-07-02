@@ -1,6 +1,3 @@
-// Package xds holds the gateway's in-memory configuration cache (the read side
-// of the xDS control loop). It serves the gateway's config reads: upstreams,
-// routes, consumer keys, and proxy settings.
 package xds
 
 import "github.com/nyroway/nyro/go/internal/storage"
