@@ -1,4 +1,4 @@
-package web
+package webutil
 
 import (
 	"encoding/json"

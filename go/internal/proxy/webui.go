@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/nyroway/nyro/go/internal/web"
+	"github.com/nyroway/nyro/go/internal/webutil"
 )
 
 // MountWebui serves a built WebUI directory from the chi router. Static files
@@ -22,7 +22,7 @@ func MountWebui(r chi.Router, dir string) {
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/v1") || p == "/healthz" {
-			web.Error(w, http.StatusNotFound, "not found", "gateway_error")
+			webutil.Error(w, http.StatusNotFound, "not found", "gateway_error")
 			return
 		}
 		if r.Method == http.MethodGet {

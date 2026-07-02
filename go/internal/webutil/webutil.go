@@ -1,6 +1,6 @@
 // Package web provides the small set of net/http JSON helpers used across the
 // nyro HTTP layer (admin API + proxy), replacing gin's c.JSON / c.ShouldBind.
-package web
+package webutil
 
 import (
 	"encoding/json"

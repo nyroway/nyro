@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nyroway/nyro/go/internal/web"
+	"github.com/nyroway/nyro/go/internal/webutil"
 )
 
 // handleModelsList serves GET /v1/models — the OpenAI-compatible client
@@ -52,5 +52,5 @@ func handleModelsList(w http.ResponseWriter, r *http.Request, gw *Gateway) {
 	for _, n := range names {
 		data = append(data, map[string]any{"id": n, "object": "model", "created": 0, "owned_by": "Nyro"})
 	}
-	web.JSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+	webutil.JSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }

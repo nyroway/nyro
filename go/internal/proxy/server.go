@@ -15,7 +15,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/protocol/codec/responses" // register Responses codec
 	"github.com/nyroway/nyro/go/internal/protocol/ids"
 	"github.com/nyroway/nyro/go/internal/protocol/ir"
-	"github.com/nyroway/nyro/go/internal/web"
+	"github.com/nyroway/nyro/go/internal/webutil"
 )
 
 // NewRouter builds the chi router with the proxy routes wired. Referencing the
@@ -31,17 +31,17 @@ func NewRouter(gw *Gateway) chi.Router {
 	r.Use(middleware.Recoverer)
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		web.JSON(w, http.StatusOK, map[string]any{"status": "ok"})
+		webutil.JSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 	// GET /readyz — readiness probe gated on config-cache fill. The gateway no
 	// longer holds a storage handle (P3c), so readiness is "has a config
 	// snapshot been published (xDS push / YAML build)?" — nil means not ready.
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if gw.Cache.Load() == nil {
-			web.JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "unready"})
+			webutil.JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "unready"})
 			return
 		}
-		web.JSON(w, http.StatusOK, map[string]any{"status": "ready"})
+		webutil.JSON(w, http.StatusOK, map[string]any{"status": "ready"})
 	})
 
 	// GET /v1/models — OpenAI-compatible client discovery (API-key-aware).
@@ -63,7 +63,7 @@ func NewRouter(gw *Gateway) chi.Router {
 	r.Post("/v1beta/models/{resource}", func(w http.ResponseWriter, r *http.Request) {
 		model, action, ok := strings.Cut(chi.URLParam(r, "resource"), ":")
 		if !ok {
-			web.Error(w, http.StatusNotFound, "malformed Gemini path, expected models/{model}:{action}", "gateway_error")
+			webutil.Error(w, http.StatusNotFound, "malformed Gemini path, expected models/{model}:{action}", "gateway_error")
 			return
 		}
 		handleProxy(w, r, gw, ids.GoogleGeminiGenerateContentV1Beta, model, action == "streamGenerateContent")
@@ -76,12 +76,12 @@ func NewRouter(gw *Gateway) chi.Router {
 func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep ids.ProtocolEndpoint, pathModel string, pathStream bool) {
 	h, ok := codec.Get(ep)
 	if !ok {
-		web.Error(w, http.StatusNotImplemented, "no codec registered for endpoint", "gateway_error")
+		webutil.Error(w, http.StatusNotImplemented, "no codec registered for endpoint", "gateway_error")
 		return
 	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		web.Error(w, http.StatusBadRequest, "read body: "+err.Error(), "gateway_error")
+		webutil.Error(w, http.StatusBadRequest, "read body: "+err.Error(), "gateway_error")
 		return
 	}
 
@@ -89,7 +89,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep ids.Pro
 	if pathModel != "" {
 		md, ok := h.MakeRequestDecoder().(codec.PathModelDecoder)
 		if !ok {
-			web.Error(w, http.StatusInternalServerError, "codec does not support path-model decode", "gateway_error")
+			webutil.Error(w, http.StatusInternalServerError, "codec does not support path-model decode", "gateway_error")
 			return
 		}
 		req, err = md.DecodeWithModel(body, pathModel, pathStream)
@@ -97,7 +97,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep ids.Pro
 		req, err = h.MakeRequestDecoder().Decode(body)
 	}
 	if err != nil {
-		web.Error(w, http.StatusBadRequest, "decode request: "+err.Error(), "gateway_error")
+		webutil.Error(w, http.StatusBadRequest, "decode request: "+err.Error(), "gateway_error")
 		return
 	}
 

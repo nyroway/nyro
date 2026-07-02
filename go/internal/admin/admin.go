@@ -15,7 +15,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/plugin"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/internal/web"
+	"github.com/nyroway/nyro/go/internal/webutil"
 )
 
 // LogSource is the read side for /logs. Backed by parquet
@@ -55,7 +55,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			routes, _ := s.Routes().List()
 			consumers, _ := s.Consumers().List()
 			health, _ := s.Migrator().Health()
-			web.JSON(w, http.StatusOK, map[string]any{
+			webutil.JSON(w, http.StatusOK, map[string]any{
 				"status":         "ok",
 				"upstream_count": len(upstreams),
 				"route_count":    len(routes),
@@ -69,7 +69,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		g.Get("/upstreams", func(w http.ResponseWriter, r *http.Request) { anyList(w, r, s.Upstreams().List) })
 		g.Post("/upstreams", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.CreateUpstream
-			if err := web.Decode(r, &in); err != nil {
+			if err := webutil.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
@@ -85,7 +85,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 		g.Put("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.UpdateUpstream
-			if err := web.Decode(r, &in); err != nil {
+			if err := webutil.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
@@ -94,7 +94,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 		g.Delete("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
 			if err := s.Upstreams().Delete(chi.URLParam(r, "id")); err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			bumpEpoch(s)
@@ -103,7 +103,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		g.Post("/upstreams/{id}/test", func(w http.ResponseWriter, r *http.Request) {
 			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
 			if err != nil || u == nil {
-				web.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
+				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
 			var cred struct {
@@ -129,19 +129,19 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			resp, err := client.Do(req)
 			latency := time.Since(start).Milliseconds()
 			if err != nil {
-				web.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": latency, "error": err.Error()})
+				webutil.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": latency, "error": err.Error()})
 				return
 			}
 			resp.Body.Close()
 			success := resp.StatusCode < 400
-			web.JSON(w, http.StatusOK, map[string]any{"success": success, "latency_ms": latency, "status_code": resp.StatusCode})
+			webutil.JSON(w, http.StatusOK, map[string]any{"success": success, "latency_ms": latency, "status_code": resp.StatusCode})
 		})
 
 		// ── routes ──
 		g.Get("/routes", func(w http.ResponseWriter, r *http.Request) { anyList(w, r, s.Routes().List) })
 		g.Post("/routes", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.CreateRoute
-			if err := web.Decode(r, &in); err != nil {
+			if err := webutil.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
@@ -157,7 +157,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 		g.Put("/routes/{id}", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.UpdateRoute
-			if err := web.Decode(r, &in); err != nil {
+			if err := webutil.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
@@ -166,7 +166,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 		g.Delete("/routes/{id}", func(w http.ResponseWriter, r *http.Request) {
 			if err := s.Routes().Delete(chi.URLParam(r, "id")); err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			bumpEpoch(s)
@@ -177,7 +177,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		g.Get("/consumers", func(w http.ResponseWriter, r *http.Request) { anyList(w, r, s.Consumers().List) })
 		g.Post("/consumers", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.CreateConsumer
-			if err := web.Decode(r, &in); err != nil {
+			if err := webutil.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
@@ -191,7 +191,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 		g.Put("/consumers/{id}", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.UpdateConsumer
-			if err := web.Decode(r, &in); err != nil {
+			if err := webutil.Decode(r, &in); err != nil {
 				badRequest(w, err)
 				return
 			}
@@ -203,7 +203,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 		g.Delete("/consumers/{id}", func(w http.ResponseWriter, r *http.Request) {
 			if err := s.Consumers().Delete(chi.URLParam(r, "id")); err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			bumpEpoch(s)
@@ -214,32 +214,32 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		g.Get("/settings", func(w http.ResponseWriter, r *http.Request) {
 			all, err := s.Settings().ListAll()
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			web.JSON(w, http.StatusOK, all)
+			webutil.JSON(w, http.StatusOK, all)
 		})
 		g.Get("/settings/{key}", func(w http.ResponseWriter, r *http.Request) {
 			key := chi.URLParam(r, "key")
 			v, err := s.Settings().Get(key)
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			web.JSON(w, http.StatusOK, map[string]any{"key": key, "value": v})
+			webutil.JSON(w, http.StatusOK, map[string]any{"key": key, "value": v})
 		})
 		g.Put("/settings/{key}", func(w http.ResponseWriter, r *http.Request) {
 			key := chi.URLParam(r, "key")
 			var body struct {
 				Value string `json:"value"`
 			}
-			_ = web.Decode(r, &body)
+			_ = webutil.Decode(r, &body)
 			if err := s.Settings().Set(key, body.Value); err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			bumpEpoch(s)
-			web.JSON(w, http.StatusOK, map[string]any{"key": key, "value": body.Value})
+			webutil.JSON(w, http.StatusOK, map[string]any{"key": key, "value": body.Value})
 		})
 
 		// ── logs ──
@@ -251,30 +251,30 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			q.Offset, _ = strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
 			page, err := logs.Query(q)
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			web.JSON(w, http.StatusOK, page)
+			webutil.JSON(w, http.StatusOK, page)
 		})
 		g.Get("/logs/{id}", func(w http.ResponseWriter, r *http.Request) {
 			l, err := logs.FindByID(chi.URLParam(r, "id"))
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			if l == nil {
-				web.JSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
+				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "not found"})
 				return
 			}
-			web.JSON(w, http.StatusOK, l)
+			webutil.JSON(w, http.StatusOK, l)
 		})
 		g.Delete("/logs", func(w http.ResponseWriter, r *http.Request) {
 			n, err := logs.ClearAll()
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			web.JSON(w, http.StatusOK, map[string]any{"cleared": n})
+			webutil.JSON(w, http.StatusOK, map[string]any{"cleared": n})
 		})
 
 		// ── stats ──
@@ -290,34 +290,34 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		g.Get("/stats/overview", func(w http.ResponseWriter, r *http.Request) {
 			st, err := stats.StatsOverview(parseHours(r))
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			web.JSON(w, http.StatusOK, st)
+			webutil.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/models", func(w http.ResponseWriter, r *http.Request) {
 			st, err := stats.StatsByModel(parseHours(r))
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			web.JSON(w, http.StatusOK, st)
+			webutil.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/providers", func(w http.ResponseWriter, r *http.Request) {
 			st, err := stats.StatsByProvider(parseHours(r))
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			web.JSON(w, http.StatusOK, st)
+			webutil.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/api-keys", func(w http.ResponseWriter, r *http.Request) {
 			st, err := stats.StatsByApiKey(parseHours(r))
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			web.JSON(w, http.StatusOK, st)
+			webutil.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/stats/hourly", func(w http.ResponseWriter, r *http.Request) {
 			hoursStr := r.URL.Query().Get("hours")
@@ -330,13 +330,13 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			}
 			st, err := stats.StatsHourly(hours)
 			if err != nil {
-				web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			web.JSON(w, http.StatusOK, st)
+			webutil.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/extensions", func(w http.ResponseWriter, r *http.Request) {
-			web.JSON(w, http.StatusOK, map[string]any{"count": plugin.Kernel().Count()})
+			webutil.JSON(w, http.StatusOK, map[string]any{"count": plugin.Kernel().Count()})
 		})
 		g.Get("/provider-presets", func(w http.ResponseWriter, r *http.Request) {
 			defs := provider.Definitions()
@@ -344,14 +344,14 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			for i, d := range defs {
 				out[i] = toPresetView(d)
 			}
-			web.JSON(w, http.StatusOK, out)
+			webutil.JSON(w, http.StatusOK, out)
 		})
 		g.Get("/config/export", func(w http.ResponseWriter, r *http.Request) {
 			upstreams, _ := s.Upstreams().List()
 			routes, _ := s.Routes().List()
 			consumers, _ := s.Consumers().List()
 			settings, _ := s.Settings().ListAll()
-			web.JSON(w, http.StatusOK, map[string]any{
+			webutil.JSON(w, http.StatusOK, map[string]any{
 				"version": 1, "upstreams": upstreams, "routes": routes, "consumers": consumers, "settings": settings,
 			})
 		})
@@ -362,7 +362,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				Consumers []storage.CreateConsumer `json:"consumers"`
 				Settings  []storage.Setting        `json:"settings"`
 			}
-			if err := web.Decode(r, &body); err != nil {
+			if err := webutil.Decode(r, &body); err != nil {
 				badRequest(w, err)
 				return
 			}
@@ -387,7 +387,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 					setCount++
 				}
 			}
-			web.JSON(w, http.StatusOK, map[string]any{
+			webutil.JSON(w, http.StatusOK, map[string]any{
 				"upstreams_imported": upCount, "routes_imported": routeCount,
 				"consumers_imported": consumerCount, "settings_imported": setCount,
 			})
@@ -400,7 +400,7 @@ func bearerAuth(token string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
 			if !strings.HasPrefix(h, "Bearer ") || strings.TrimPrefix(h, "Bearer ") != token {
-				web.Error(w, http.StatusUnauthorized, "unauthorized", "auth_error")
+				webutil.Error(w, http.StatusUnauthorized, "unauthorized", "auth_error")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -412,34 +412,34 @@ func bearerAuth(token string) func(http.Handler) http.Handler {
 func anyList[T any](w http.ResponseWriter, _ *http.Request, f func() ([]T, error)) {
 	items, err := f()
 	if err != nil {
-		web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	web.JSON(w, http.StatusOK, items)
+	webutil.JSON(w, http.StatusOK, items)
 }
 
 func ok(w http.ResponseWriter, v any, err error) {
 	if err != nil {
-		web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	web.JSON(w, http.StatusOK, v)
+	webutil.JSON(w, http.StatusOK, v)
 }
 
 func created(w http.ResponseWriter, v any, err error) {
 	if err != nil {
-		web.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	web.JSON(w, http.StatusCreated, v)
+	webutil.JSON(w, http.StatusCreated, v)
 }
 
 func badRequest(w http.ResponseWriter, err error) {
-	web.Error(w, http.StatusBadRequest, err.Error(), "invalid_request")
+	webutil.Error(w, http.StatusBadRequest, err.Error(), "invalid_request")
 }
 
 func conflict(w http.ResponseWriter, msg string) {
-	web.Error(w, http.StatusConflict, msg, "NAME_CONFLICT")
+	webutil.Error(w, http.StatusConflict, msg, "NAME_CONFLICT")
 }
 
 // bumpEpoch increments the config_epoch setting so multi-replica deployments can
