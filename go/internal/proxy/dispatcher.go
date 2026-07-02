@@ -272,22 +272,31 @@ func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, upstre
 	dec := decHandler.MakeStreamResponseDecoder()
 	enc := encHandler.MakeStreamResponseEncoder()
 
-	scanner := bufio.NewScanner(upstream)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	reader := bufio.NewReaderSize(upstream, 64*1024)
 
 	var usage ir.Usage
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		line, readErr := reader.ReadString('\n')
+		line = strings.TrimRight(line, "\r\n")
 		// Only process "data:" lines (Anthropic pairs event:/data:; data carries the type).
 		if !strings.HasPrefix(line, "data:") {
+			if readErr != nil {
+				break // io.EOF or upstream error: flush what we have and finish
+			}
 			continue
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if payload == "" {
+			if readErr != nil {
+				break
+			}
 			continue
 		}
 		deltas, err := dec.ParseChunk(payload)
 		if err != nil {
+			if readErr != nil {
+				break
+			}
 			continue
 		}
 		for _, d := range deltas {
@@ -299,6 +308,9 @@ func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, upstre
 		}
 		frames, _ := enc.FormatDeltas(deltas)
 		writeSSE(w, frames, flusher)
+		if readErr != nil {
+			break // io.EOF or upstream error: flush what we have and finish
+		}
 	}
 	for _, d := range dec.Finish() {
 		frames, _ := enc.FormatDeltas([]ir.StreamDelta{d})
