@@ -92,9 +92,13 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 
 	// inbound auth + OnAccess
 	plugin.RunPhaseHooks(plugin.PhaseOnAccess, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
-	if status, msg := checkAccess(g.snapshot(), g.Quota, route, r, &consumerID, &lc.APIKeyName); status != 0 {
+	status, msg, release := checkAccess(g.snapshot(), g.Quota, route, r, &consumerID, &lc.APIKeyName)
+	if status != 0 {
 		writeJSONError(rec, status, msg)
 		return
+	}
+	if release != nil {
+		defer release()
 	}
 
 	// select + failover: try each backend (ordered by the balance strategy),

@@ -99,14 +99,40 @@ type quotaKey struct {
 // Counter is the in-memory quota sliding-window counter. The zero value is not
 // ready to use; call New.
 type Counter struct {
-	mu    sync.Mutex
-	rings map[quotaKey]*ring
-	now   func() time.Time // injectable clock for tests
+	mu       sync.Mutex
+	rings    map[quotaKey]*ring
+	inflight map[string]int64 // consumerID → current in-flight requests
+	now      func() time.Time // injectable clock for tests
 }
 
 // New returns a ready Counter.
 func New() *Counter {
-	return &Counter{rings: make(map[quotaKey]*ring), now: time.Now}
+	return &Counter{rings: make(map[quotaKey]*ring), inflight: make(map[string]int64), now: time.Now}
+}
+
+// TryAcquire atomically increments consumerID's in-flight count if it is
+// below limit, returning whether the slot was granted. Pair every true
+// return with exactly one Release.
+func (c *Counter) TryAcquire(consumerID string, limit int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inflight[consumerID] >= limit {
+		return false
+	}
+	c.inflight[consumerID]++
+	return true
+}
+
+// Release decrements consumerID's in-flight count (never below zero, and the
+// entry is dropped at zero so idle consumers don't accumulate map entries).
+func (c *Counter) Release(consumerID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n := c.inflight[consumerID]; n > 1 {
+		c.inflight[consumerID] = n - 1
+	} else {
+		delete(c.inflight, consumerID)
+	}
 }
 
 // Record adds amount to consumerID's running total for quotaType (e.g.

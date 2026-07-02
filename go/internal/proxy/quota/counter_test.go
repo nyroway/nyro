@@ -181,6 +181,34 @@ func TestGC(t *testing.T) {
 	}
 }
 
+func TestConcurrencyAcquireRelease(t *testing.T) {
+	c := New()
+	if !c.TryAcquire("k1", 2) {
+		t.Fatal("first acquire should succeed")
+	}
+	if !c.TryAcquire("k1", 2) {
+		t.Fatal("second acquire should succeed")
+	}
+	if c.TryAcquire("k1", 2) {
+		t.Fatal("third acquire should fail at limit 2")
+	}
+	c.Release("k1")
+	if !c.TryAcquire("k1", 2) {
+		t.Fatal("acquire after release should succeed")
+	}
+	// Independent consumers don't share slots.
+	if !c.TryAcquire("k2", 1) {
+		t.Fatal("k2 first acquire should succeed")
+	}
+	// Release never underflows.
+	c.Release("k1")
+	c.Release("k1")
+	c.Release("k1")
+	if !c.TryAcquire("k1", 1) {
+		t.Fatal("acquire after over-release should still succeed")
+	}
+}
+
 func TestParseWindow(t *testing.T) {
 	cases := map[string]time.Duration{
 		"1m": time.Minute,
