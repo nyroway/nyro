@@ -27,7 +27,7 @@ type ProviderCtx struct {
 	ActualModel string
 }
 
-// VendorProvider is the subset of storage.Provider the pipeline needs.
+// VendorProvider is the subset of storage.Upstream the pipeline needs.
 type VendorProvider struct {
 	ID       string
 	Vendor   string

@@ -100,8 +100,8 @@ func TestHooksOnLogRecordsMetricsTokensAndSpan(t *testing.T) {
 
 	// Seed the bag with the request state the dispatcher (T3.3) will set.
 	bag := plugin.NewContextBag()
-	model := storage.Model{ID: "m1", Name: "gpt-test"}
-	provider := storage.Provider{ID: "p1", Name: "openai"}
+	model := storage.Route{ID: "m1", Model: "gpt-test"}
+	provider := storage.Upstream{ID: "p1", Name: "openai"}
 	cacheRead := uint32(7)
 	usage := ir.Usage{PromptTokens: 100, CompletionTokens: 50, CacheReadTokens: &cacheRead}
 	started := time.Now().Add(-25 * time.Millisecond) // pretend 25ms elapsed upstream
@@ -223,8 +223,8 @@ func TestHooksOnLogEmitsUpstreamAuditAttrs(t *testing.T) {
 		LatencyUpstreamMs: &upstreamLatency,
 	}
 	bag := plugin.NewContextBag()
-	bag.Set(BagModel, storage.Model{ID: "m", Name: "gpt-test"})
-	bag.Set(BagProvider, storage.Provider{ID: "p", Name: "openai"})
+	bag.Set(BagModel, storage.Route{ID: "m", Model: "gpt-test"})
+	bag.Set(BagProvider, storage.Upstream{ID: "p", Name: "openai"})
 	bag.Set(BagAPIKeyID, "ak")
 	bag.Set(BagUsage, ir.Usage{})
 	bag.Set(BagStarted, time.Now().Add(-5*time.Millisecond))
@@ -244,8 +244,8 @@ func TestHooksOnLogEmitsUpstreamAuditAttrs(t *testing.T) {
 	// --- case 2: nil pointers → attributes must be absent. ---
 	cl.records = nil
 	bag2 := plugin.NewContextBag()
-	bag2.Set(BagModel, storage.Model{ID: "m", Name: "gpt-test"})
-	bag2.Set(BagProvider, storage.Provider{ID: "p", Name: "openai"})
+	bag2.Set(BagModel, storage.Route{ID: "m", Model: "gpt-test"})
+	bag2.Set(BagProvider, storage.Upstream{ID: "p", Name: "openai"})
 	bag2.Set(BagAPIKeyID, "ak")
 	bag2.Set(BagUsage, ir.Usage{})
 	bag2.Set(BagStarted, time.Now().Add(-5*time.Millisecond))
@@ -283,8 +283,8 @@ func TestHooksOnLog5xxMarksSpanError(t *testing.T) {
 	})
 
 	bag := plugin.NewContextBag()
-	bag.Set(BagModel, storage.Model{ID: "m", Name: "gpt-test"})
-	bag.Set(BagProvider, storage.Provider{ID: "p", Name: "openai"})
+	bag.Set(BagModel, storage.Route{ID: "m", Model: "gpt-test"})
+	bag.Set(BagProvider, storage.Upstream{ID: "p", Name: "openai"})
 	bag.Set(BagAPIKeyID, "ak")
 	bag.Set(BagUsage, ir.Usage{})
 	bag.Set(BagStarted, time.Now().Add(-10*time.Millisecond))

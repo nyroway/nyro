@@ -55,8 +55,8 @@ func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 	bag := pctx.Bag
 	span, _ := pluginGet(bag, BagSpan).(trace.Span)
 	spanCtx, _ := pluginGet(bag, BagSpanCtx).(context.Context)
-	model, _ := pluginGet(bag, BagModel).(storage.Model)
-	provider, _ := pluginGet(bag, BagProvider).(storage.Provider)
+	route, _ := pluginGet(bag, BagModel).(storage.Route)
+	upstream, _ := pluginGet(bag, BagProvider).(storage.Upstream)
 	lc, _ := pluginGet(bag, BagLogCtx).(LogCtx) // LogCtx moved into observability (Step 1)
 	usage, _ := pluginGet(bag, BagUsage).(ir.Usage)
 	started, _ := pluginGet(bag, BagStarted).(time.Time)
@@ -80,20 +80,20 @@ func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 	// types via the shared attrOpt).
 	if h.handles != nil {
 		reqAttrs := metric.WithAttributes(
-			attribute.String("model", model.Name),
-			attribute.String("provider", provider.Name),
+			attribute.String("model", route.Model),
+			attribute.String("provider", upstream.Name),
 			attribute.String("apikey", apiKeyID),
 			attribute.String("status_class", statusClass),
 		)
 		h.handles.requests.Add(emitCtx, 1, reqAttrs)
 
 		tokenIn := metric.WithAttributes(
-			attribute.String("model", model.Name),
+			attribute.String("model", route.Model),
 			attribute.String("apikey", apiKeyID),
 			attribute.String("direction", "in"),
 		)
 		tokenOut := metric.WithAttributes(
-			attribute.String("model", model.Name),
+			attribute.String("model", route.Model),
 			attribute.String("apikey", apiKeyID),
 			attribute.String("direction", "out"),
 		)
@@ -101,8 +101,8 @@ func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 		h.handles.tokens.Add(emitCtx, int64(usage.CompletionTokens), tokenOut)
 
 		h.handles.latency.Record(emitCtx, float64(latencyMs), metric.WithAttributes(
-			attribute.String("model", model.Name),
-			attribute.String("provider", provider.Name),
+			attribute.String("model", route.Model),
+			attribute.String("provider", upstream.Name),
 		))
 	}
 
@@ -118,10 +118,10 @@ func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 		log.Int64("nyro.log.created_ms", started.UnixMilli()),
 		log.String("nyro.client_protocol", lc.ClientProtocol),
 		log.String("nyro.upstream_protocol", lc.UpstreamProtocol),
-		log.String("nyro.provider_id", provider.ID),
-		log.String("nyro.provider_name", provider.Name),
-		log.String("nyro.model_id", model.ID),
-		log.String("nyro.model_name", model.Name),
+		log.String("nyro.provider_id", upstream.ID),
+		log.String("nyro.provider_name", upstream.Name),
+		log.String("nyro.model_id", route.ID),
+		log.String("nyro.model_name", route.Model),
 		log.String("nyro.client_model", lc.ClientModel),
 		log.String("nyro.upstream_model", lc.UpstreamModel),
 		log.String("nyro.method", lc.Method),
