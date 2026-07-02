@@ -15,8 +15,8 @@ type StorageHealth struct {
 	Writable         bool
 }
 
-// Bootstrap handles schema initialization, migration, and health.
-type Bootstrap interface {
+// Migrator handles schema initialization, migration, and health.
+type Migrator interface {
 	Init() error
 	Migrate() error
 	Health() (StorageHealth, error)
@@ -30,5 +30,5 @@ type Storage interface {
 	Consumers() ConsumerStore
 	Auth() KeyAuthStore
 	Settings() SettingsStore
-	Bootstrap() Bootstrap
+	Migrator() Migrator
 }

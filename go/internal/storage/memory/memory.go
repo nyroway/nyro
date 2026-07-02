@@ -54,11 +54,11 @@ func New() *Backend {
 	}
 }
 
-func (b *Backend) Bootstrap() storage.Bootstrap { return b }
+func (b *Backend) Migrator() storage.Migrator { return b }
 
 // Storage returns the backend as a storage.Storage. It is exposed as a
 // distinct view type — not by implementing storage.Storage directly on
-// Backend — because Backend already exposes Bootstrap() storage.Bootstrap
+// Backend — because Backend already exposes Migrator() storage.Migrator
 // directly and Go cannot layer a second same-named-but-differently-typed
 // method set onto one struct.
 func (b *Backend) Storage() storage.Storage { return storageView{b} }
@@ -70,11 +70,11 @@ func (v storageView) Routes() storage.RouteStore       { return routeStore{v.b} 
 func (v storageView) Consumers() storage.ConsumerStore { return consumerStore{v.b} }
 func (v storageView) Auth() storage.KeyAuthStore       { return keyAuthStore{v.b} }
 func (v storageView) Settings() storage.SettingsStore  { return coreSettingsStore{v.b} }
-func (v storageView) Bootstrap() storage.Bootstrap     { return v.b }
+func (v storageView) Migrator() storage.Migrator       { return v.b }
 
 var _ storage.Storage = storageView{}
 
-// Bootstrap
+// Migrator
 func (b *Backend) Init() error    { return nil }
 func (b *Backend) Migrate() error { return nil }
 func (b *Backend) Health() (storage.StorageHealth, error) {

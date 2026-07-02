@@ -54,7 +54,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			upstreams, _ := s.Upstreams().List()
 			routes, _ := s.Routes().List()
 			consumers, _ := s.Consumers().List()
-			health, _ := s.Bootstrap().Health()
+			health, _ := s.Migrator().Health()
 			web.JSON(w, http.StatusOK, map[string]any{
 				"status":         "ok",
 				"upstream_count": len(upstreams),

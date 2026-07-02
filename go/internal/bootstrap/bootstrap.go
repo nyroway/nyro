@@ -50,10 +50,10 @@ func OpenStorage(backend, dsn string) (storage.Storage, error) {
 }
 
 func bootstrapSQL(st storage.Storage) (storage.Storage, error) {
-	if err := st.Bootstrap().Init(); err != nil {
+	if err := st.Migrator().Init(); err != nil {
 		return nil, fmt.Errorf("storage init: %w", err)
 	}
-	if err := st.Bootstrap().Migrate(); err != nil {
+	if err := st.Migrator().Migrate(); err != nil {
 		return nil, fmt.Errorf("storage migrate: %w", err)
 	}
 	return st, nil

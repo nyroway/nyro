@@ -10,7 +10,7 @@ func TestOpenStorage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("memory: %v", err)
 		}
-		h, _ := st.Bootstrap().Health()
+		h, _ := st.Migrator().Health()
 		if h.Backend != "memory" {
 			t.Errorf("backend = %q, want memory", h.Backend)
 		}
@@ -20,7 +20,7 @@ func TestOpenStorage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sqlite: %v", err)
 		}
-		h, _ := st.Bootstrap().Health()
+		h, _ := st.Migrator().Health()
 		if h.Backend != "sqlite" {
 			t.Errorf("backend = %q, want sqlite", h.Backend)
 		}
