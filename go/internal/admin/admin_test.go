@@ -126,3 +126,49 @@ func TestAdminConsumerCreateExposesRawToken(t *testing.T) {
 		t.Errorf("list should not expose raw token: %+v", list)
 	}
 }
+
+// TestMutationsBumpEpoch verifies every config-mutating endpoint bumps
+// config_epoch so the xDS broadcaster pushes a fresh snapshot.
+func TestMutationsBumpEpoch(t *testing.T) {
+	r, st := newEngine(t, "")
+	core := st.Storage()
+
+	epoch := func() string {
+		v, _ := core.Settings().Get("config_epoch")
+		return v
+	}
+
+	up, err := core.Upstreams().Create(storage.CreateUpstream{Name: "u1", Provider: "openai", CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	if err != nil {
+		t.Fatalf("seed upstream: %v", err)
+	}
+	rt, err := core.Routes().Create(storage.CreateRoute{Model: "m1"})
+	if err != nil {
+		t.Fatalf("seed route: %v", err)
+	}
+
+	steps := []struct {
+		name, method, path, body string
+	}{
+		{"create upstream", "POST", "/api/v1/upstreams", `{"name":"u2","provider":"openai","credentials":{"api_key":"k"}}`},
+		{"update upstream", "PUT", "/api/v1/upstreams/" + up.ID, `{"enabled":false}`},
+		{"update route", "PUT", "/api/v1/routes/" + rt.ID, `{"enabled":false}`},
+		{"import config", "POST", "/api/v1/config/import", `{"settings":[{"key":"k1","value":"v1"}]}`},
+		{"delete route", "DELETE", "/api/v1/routes/" + rt.ID, ""},
+		{"delete upstream", "DELETE", "/api/v1/upstreams/" + up.ID, ""},
+	}
+	for _, s := range steps {
+		before := epoch()
+		var body []byte
+		if s.body != "" {
+			body = []byte(s.body)
+		}
+		rec := do(r, s.method, s.path, "", body)
+		if rec.Code >= 400 {
+			t.Fatalf("%s: status %d %s", s.name, rec.Code, rec.Body.String())
+		}
+		if after := epoch(); after == before {
+			t.Errorf("%s: config_epoch unchanged (%q) — gateways will not be notified", s.name, after)
+		}
+	}
+}

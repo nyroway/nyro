@@ -90,6 +90,9 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				return
 			}
 			u, err := s.Upstreams().Update(chi.URLParam(r, "id"), in)
+			if err == nil {
+				bumpEpoch(s)
+			}
 			ok(w, u, err)
 		})
 		g.Delete("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +165,9 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				return
 			}
 			rt, err := s.Routes().Update(chi.URLParam(r, "id"), in)
+			if err == nil {
+				bumpEpoch(s)
+			}
 			ok(w, rt, err)
 		})
 		g.Delete("/routes/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +392,9 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				if err := s.Settings().Set(set.Key, set.Value); err == nil {
 					setCount++
 				}
+			}
+			if upCount+routeCount+consumerCount+setCount > 0 {
+				bumpEpoch(s)
 			}
 			webutil.JSON(w, http.StatusOK, map[string]any{
 				"upstreams_imported": upCount, "routes_imported": routeCount,
