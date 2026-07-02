@@ -30,25 +30,25 @@ func TestBumpEpochNotifiesBroadcaster(t *testing.T) {
 	SetBroadcaster(fb)
 	defer SetBroadcaster(orig)
 
-	bumpEpoch(st.Core())
+	bumpEpoch(st.Storage())
 
 	if got := fb.callsCount(); got != 1 {
 		t.Errorf("broadcaster Notify calls = %d; want 1", got)
 	}
 	// epoch was also bumped.
-	if got := epochSetting(t, st.Core()); got != "1" {
+	if got := epochSetting(t, st.Storage()); got != "1" {
 		t.Errorf("config_epoch = %q; want 1", got)
 	}
 
 	// Without a broadcaster, bumpEpoch still bumps the epoch and is a no-op for push.
 	SetBroadcaster(nil)
-	bumpEpoch(st.Core())
-	if got := epochSetting(t, st.Core()); got != "2" {
+	bumpEpoch(st.Storage())
+	if got := epochSetting(t, st.Storage()); got != "2" {
 		t.Errorf("config_epoch after nil broadcaster = %q; want 2", got)
 	}
 }
 
-func epochSetting(t *testing.T, s storage.CoreStorage) string {
+func epochSetting(t *testing.T, s storage.Storage) string {
 	t.Helper()
 	v, err := s.Settings().Get("config_epoch")
 	if err != nil {

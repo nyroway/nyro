@@ -33,15 +33,15 @@ func (s coreSettingsStore) Set(key, value string) error {
 	}).Create(row)
 }
 
-func (s coreSettingsStore) ListAll() ([]storage.CoreSetting, error) {
+func (s coreSettingsStore) ListAll() ([]storage.Setting, error) {
 	ctx := context.Background()
 	rows, err := s.q.Setting.WithContext(ctx).Order(s.q.Setting.Key).Find()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]storage.CoreSetting, 0, len(rows))
+	out := make([]storage.Setting, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, storage.CoreSetting{Key: r.Key, Value: r.Value, UpdatedAt: r.UpdatedAt})
+		out = append(out, storage.Setting{Key: r.Key, Value: r.Value, UpdatedAt: r.UpdatedAt})
 	}
 	return out, nil
 }

@@ -110,7 +110,7 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	// with the direct LoadFromStorage path.
 	st, u, rOpen, _, _, rawKey := newPopulatedStorage(t)
 
-	pbSnap, err := SnapshotFromStorage(st.Core(), 7)
+	pbSnap, err := SnapshotFromStorage(st.Storage(), 7)
 	if err != nil {
 		t.Fatalf("SnapshotFromStorage: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	}
 
 	// Direct load for comparison.
-	direct, err := LoadFromStorage(st.Core())
+	direct, err := LoadFromStorage(st.Storage())
 	if err != nil {
 		t.Fatalf("LoadFromStorage: %v", err)
 	}
@@ -148,20 +148,20 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 
 func TestEpochFromStorage(t *testing.T) {
 	st := memory.New()
-	if got := EpochFromStorage(st.Core()); got != 0 {
+	if got := EpochFromStorage(st.Storage()); got != 0 {
 		t.Errorf("absent epoch = %d; want 0", got)
 	}
-	if err := st.Core().Settings().Set("config_epoch", "42"); err != nil {
+	if err := st.Storage().Settings().Set("config_epoch", "42"); err != nil {
 		t.Fatal(err)
 	}
-	if got := EpochFromStorage(st.Core()); got != 42 {
+	if got := EpochFromStorage(st.Storage()); got != 42 {
 		t.Errorf("epoch = %d; want 42", got)
 	}
 	// garbage value parses to 0.
-	if err := st.Core().Settings().Set("config_epoch", "not-a-number"); err != nil {
+	if err := st.Storage().Settings().Set("config_epoch", "not-a-number"); err != nil {
 		t.Fatal(err)
 	}
-	if got := EpochFromStorage(st.Core()); got != 0 {
+	if got := EpochFromStorage(st.Storage()); got != 0 {
 		t.Errorf("garbage epoch = %d; want 0", got)
 	}
 }

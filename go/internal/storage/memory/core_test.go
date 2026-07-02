@@ -7,7 +7,7 @@ import (
 )
 
 func TestCoreUpstreamCRUD(t *testing.T) {
-	s := New().Core()
+	s := New().Storage()
 
 	created, err := s.Upstreams().Create(storage.CreateUpstream{
 		Name: "openai-main", Provider: "openai", Protocol: "openai-compatible",
@@ -42,7 +42,7 @@ func TestCoreUpstreamCRUD(t *testing.T) {
 }
 
 func TestCoreRouteCreateWithNestedUpstreams(t *testing.T) {
-	s := New().Core()
+	s := New().Storage()
 
 	up, err := s.Upstreams().Create(storage.CreateUpstream{Name: "u1", Provider: "openai"})
 	if err != nil {
@@ -85,7 +85,7 @@ func TestCoreRouteCreateWithNestedUpstreams(t *testing.T) {
 }
 
 func TestCoreConsumerCreateWithKeysRoutesQuotas(t *testing.T) {
-	s := New().Core()
+	s := New().Storage()
 
 	if _, err := s.Routes().Create(storage.CreateRoute{Model: "gpt-4o"}); err != nil {
 		t.Fatalf("create route: %v", err)
@@ -139,7 +139,7 @@ func TestCoreConsumerCreateWithKeysRoutesQuotas(t *testing.T) {
 }
 
 func TestCoreSettingsUpsert(t *testing.T) {
-	s := New().Core()
+	s := New().Storage()
 
 	if err := s.Settings().Set("config_epoch", "1"); err != nil {
 		t.Fatalf("Set: %v", err)

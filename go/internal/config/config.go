@@ -153,7 +153,7 @@ func LoadYAML(path string) (*Config, error) {
 // routes (with upstream targets resolved by name), and consumers (keys, route
 // grants, quotas) into st. BuildSnapshot reuses this against a throwaway
 // in-memory store rather than maintaining a parallel construction path.
-func (c *Config) ApplyTo(st storage.CoreStorage) error {
+func (c *Config) ApplyTo(st storage.Storage) error {
 	upstreamIDs := map[string]string{}
 	for _, u := range c.Upstreams {
 		credsJSON, err := json.Marshal(u.Credentials)
@@ -246,7 +246,7 @@ func consumerQuotas(q ConsumerQuotasSpec) []storage.CreateConsumerQuota {
 }
 
 // flattenSettings expands the nested settings.server/proxy/observability YAML
-// shape into the dot-key rows CoreSettingsStore persists. observability.* maps
+// shape into the dot-key rows SettingsStore persists. observability.* maps
 // onto the existing obs_* keys observability/config.go already consumes;
 // server.*/proxy.* use their own dot-key namespace.
 func flattenSettings(s SettingsSpec) map[string]string {
@@ -289,8 +289,8 @@ func flattenSettings(s SettingsSpec) map[string]string {
 // keep in sync.
 func (c *Config) BuildSnapshot() (*xds.ConfigSnapshot, error) {
 	tmp := memory.New()
-	if err := c.ApplyTo(tmp.Core()); err != nil {
+	if err := c.ApplyTo(tmp.Storage()); err != nil {
 		return nil, err
 	}
-	return xds.LoadFromStorage(tmp.Core())
+	return xds.LoadFromStorage(tmp.Storage())
 }

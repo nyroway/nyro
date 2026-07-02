@@ -92,7 +92,7 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
 
 // SnapshotFromStorage builds a wire ConfigSnapshot by querying storage once.
 // version is the config epoch to stamp on the snapshot.
-func SnapshotFromStorage(s storage.CoreStorage, version int64) (*pb.ConfigSnapshot, error) {
+func SnapshotFromStorage(s storage.Storage, version int64) (*pb.ConfigSnapshot, error) {
 	out := &pb.ConfigSnapshot{Version: version, Settings: map[string]string{}}
 
 	upstreams, err := s.Upstreams().List()
@@ -164,7 +164,7 @@ func SnapshotFromStorage(s storage.CoreStorage, version int64) (*pb.ConfigSnapsh
 }
 
 // EpochFromStorage reads the config_epoch setting (0 if absent/unparseable).
-func EpochFromStorage(s storage.CoreStorage) int64 {
+func EpochFromStorage(s storage.Storage) int64 {
 	v, _ := s.Settings().Get("config_epoch")
 	n, _ := strconv.ParseInt(v, 10, 64)
 	return n

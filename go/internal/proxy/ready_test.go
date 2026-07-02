@@ -27,7 +27,7 @@ func TestReadyz(t *testing.T) {
 
 	// Published snapshot → ready.
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: "http://up",
 		CredentialsJSON: []byte(`{"api_key":"k"}`),

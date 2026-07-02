@@ -16,7 +16,7 @@ import (
 func newPopulatedStorage(t *testing.T) (*memory.Backend, storage.Upstream, storage.Route, storage.Route, storage.Consumer, string) {
 	t.Helper()
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 
 	u, err := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "openai", Provider: "openai", Protocol: "openai",
@@ -66,7 +66,7 @@ func newPopulatedStorage(t *testing.T) (*memory.Backend, storage.Upstream, stora
 func TestLoadFromStorage_BuildsAllMaps(t *testing.T) {
 	st, u, rOpen, rGated, c, rawKey := newPopulatedStorage(t)
 
-	snap, err := LoadFromStorage(st.Core())
+	snap, err := LoadFromStorage(st.Storage())
 	if err != nil {
 		t.Fatalf("LoadFromStorage: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestConfigCache_LoadSwapReady(t *testing.T) {
 	if c.Load() != nil {
 		t.Fatal("fresh cache Load should be nil")
 	}
-	if err := c.LoadAndSwap(st.Core()); err != nil {
+	if err := c.LoadAndSwap(st.Storage()); err != nil {
 		t.Fatalf("LoadAndSwap: %v", err)
 	}
 	if !c.Ready() {
@@ -167,14 +167,14 @@ func TestStartLoaderLoop_Refreshes(t *testing.T) {
 	c := &ConfigCache{}
 	errCh := make(chan error, 4)
 
-	stop := c.StartLoaderLoop(st.Core(), 20*time.Millisecond, errCh)
+	stop := c.StartLoaderLoop(st.Storage(), 20*time.Millisecond, errCh)
 	defer stop()
 
 	// initial snapshot present.
 	waitFor(t, time.Second, func() bool { return c.Ready() && c.Load().RouteByModel(rOpen.Model) != nil })
 
 	// delete the route; next tick should drop it from the snapshot.
-	if err := st.Core().Routes().Delete(rOpen.ID); err != nil {
+	if err := st.Storage().Routes().Delete(rOpen.ID); err != nil {
 		t.Fatalf("delete route: %v", err)
 	}
 	waitFor(t, 2*time.Second, func() bool {

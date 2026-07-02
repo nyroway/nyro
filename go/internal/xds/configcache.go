@@ -27,7 +27,7 @@ func (c *ConfigCache) Ready() bool { return c.snap.Load() != nil }
 // transitional DB-backed populator: upstreams, routes (with targets), consumers
 // (with keys — prefix+hash only, never plaintext — route grants, and quotas),
 // and all settings.
-func LoadFromStorage(s storage.CoreStorage) (*ConfigSnapshot, error) {
+func LoadFromStorage(s storage.Storage) (*ConfigSnapshot, error) {
 	b := &Snapshot{}
 
 	upstreams, err := s.Upstreams().List()
@@ -71,7 +71,7 @@ func LoadFromStorage(s storage.CoreStorage) (*ConfigSnapshot, error) {
 
 // LoadAndSwap loads a snapshot from storage and publishes it to the cache.
 // Returns the load error without swapping on failure.
-func (c *ConfigCache) LoadAndSwap(s storage.CoreStorage) error {
+func (c *ConfigCache) LoadAndSwap(s storage.Storage) error {
 	snap, err := LoadFromStorage(s)
 	if err != nil {
 		return err
@@ -85,7 +85,7 @@ func (c *ConfigCache) LoadAndSwap(s storage.CoreStorage) error {
 // are non-fatal (the previous snapshot keeps serving); each error is sent to
 // errCh non-blockingly when non-nil. stop halts the ticker and waits for the
 // loop goroutine to exit (safe to call multiple times).
-func (c *ConfigCache) StartLoaderLoop(s storage.CoreStorage, interval time.Duration, errCh chan<- error) (stop func()) {
+func (c *ConfigCache) StartLoaderLoop(s storage.Storage, interval time.Duration, errCh chan<- error) (stop func()) {
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}

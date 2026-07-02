@@ -17,7 +17,7 @@ import (
 func TestGatewayHTTPClientForProxy(t *testing.T) {
 	st := memory.New()
 	gw := NewGateway()
-	if err := gw.Cache.LoadAndSwap(st.Core()); err != nil {
+	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	direct, err := gw.httpClientFor(false)
@@ -31,16 +31,16 @@ func TestGatewayHTTPClientForProxy(t *testing.T) {
 	}
 
 	// use_proxy=true but proxy disabled → direct client.
-	st.Core().Settings().Set("proxy_enabled", "false")
-	_ = gw.Cache.LoadAndSwap(st.Core()) // reflect the settings change in the in-memory cache
+	st.Storage().Settings().Set("proxy_enabled", "false")
+	_ = gw.Cache.LoadAndSwap(st.Storage()) // reflect the settings change in the in-memory cache
 	if c, err := gw.httpClientFor(true); err != nil || c != direct {
 		t.Errorf("proxy disabled: want direct client, got %v err=%v", c, err)
 	}
 
 	// use_proxy=true + enabled + proxy_url → distinct proxied client.
-	st.Core().Settings().Set("proxy_enabled", "true")
-	st.Core().Settings().Set("proxy_url", "http://proxy.example:8080")
-	_ = gw.Cache.LoadAndSwap(st.Core())
+	st.Storage().Settings().Set("proxy_enabled", "true")
+	st.Storage().Settings().Set("proxy_url", "http://proxy.example:8080")
+	_ = gw.Cache.LoadAndSwap(st.Storage())
 	c, err := gw.httpClientFor(true)
 	if err != nil {
 		t.Fatalf("proxied client: %v", err)
@@ -63,8 +63,8 @@ func TestGatewayHTTPClientForProxy(t *testing.T) {
 	}
 
 	// empty proxy_url → error.
-	st.Core().Settings().Set("proxy_url", "")
-	_ = gw.Cache.LoadAndSwap(st.Core())
+	st.Storage().Settings().Set("proxy_url", "")
+	_ = gw.Cache.LoadAndSwap(st.Storage())
 	if _, err := gw.httpClientFor(true); err == nil {
 		t.Error("empty proxy_url: want error, got nil")
 	}
@@ -96,7 +96,7 @@ func TestResolveProxySettings_Defaults(t *testing.T) {
 // defaults.
 func TestResolveProxySettings_Overrides(t *testing.T) {
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	core.Settings().Set("proxy.request_timeout", "45s")
 	core.Settings().Set("proxy.connect_timeout", "5s")
 	core.Settings().Set("proxy.max_retries", "4")

@@ -1,5 +1,5 @@
 // Package admin mounts the management REST API (under /api/v1) consumed by the
-// React WebUI and the CLI. Handlers are thin wrappers over storage.CoreStorage
+// React WebUI and the CLI. Handlers are thin wrappers over storage.Storage
 // (config-schema: upstreams/routes/consumers).
 package admin
 
@@ -44,7 +44,7 @@ type StatsSource interface {
 // logs/stats are the parquet-backed read sources (the observability store) —
 // the only request-log/metrics path after the Phase 4 removal of the
 // request_logs table. cmd/admin wires the real parquet-backed sources.
-func Mount(r chi.Router, s storage.CoreStorage, adminToken string, logs LogSource, stats StatsSource) {
+func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, stats StatsSource) {
 	r.Route("/api/v1", func(g chi.Router) {
 		if adminToken != "" {
 			g.Use(bearerAuth(adminToken))
@@ -360,7 +360,7 @@ func Mount(r chi.Router, s storage.CoreStorage, adminToken string, logs LogSourc
 				Upstreams []storage.CreateUpstream `json:"upstreams"`
 				Routes    []storage.CreateRoute    `json:"routes"`
 				Consumers []storage.CreateConsumer `json:"consumers"`
-				Settings  []storage.CoreSetting    `json:"settings"`
+				Settings  []storage.Setting        `json:"settings"`
 			}
 			if err := web.Decode(r, &body); err != nil {
 				badRequest(w, err)
@@ -444,7 +444,7 @@ func conflict(w http.ResponseWriter, msg string) {
 
 // bumpEpoch increments the config_epoch setting so multi-replica deployments can
 // detect config changes and reload. Ported from admin/settings.rs bump_config_epoch.
-func bumpEpoch(s storage.CoreStorage) {
+func bumpEpoch(s storage.Storage) {
 	v, _ := s.Settings().Get("config_epoch")
 	n, _ := strconv.ParseInt(v, 10, 64)
 	_ = s.Settings().Set("config_epoch", strconv.FormatInt(n+1, 10))

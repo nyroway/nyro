@@ -28,7 +28,7 @@ func TestDispatchFailover(t *testing.T) {
 	defer up2.Close()
 
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	p1, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p1", Provider: "p1", Protocol: "openai-compatible", BaseURL: up1.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
 	p2, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p2", Provider: "p2", Protocol: "openai-compatible", BaseURL: up2.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
 	_, _ = core.Routes().Create(storage.CreateRoute{

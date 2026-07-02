@@ -20,7 +20,7 @@ import (
 func bufconnEnv(t *testing.T, store *memory.Backend) (srv *ConfigServer, dialOpt grpc.DialOption, teardown func()) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
-	srv = NewConfigServer(store.Core())
+	srv = NewConfigServer(store.Storage())
 	gs := grpc.NewServer()
 	pb.RegisterConfigServiceServer(gs, srv)
 	go gs.Serve(lis)
@@ -93,12 +93,12 @@ func TestNotify_PushesToConnectedGateway(t *testing.T) {
 	}
 
 	// Add a route + bump epoch, then Notify (mirrors admin write path).
-	if _, err := st.Core().Routes().Create(storage.CreateRoute{Model: "new-model", Upstreams: []storage.CreateRouteUpstream{
+	if _, err := st.Storage().Routes().Create(storage.CreateRoute{Model: "new-model", Upstreams: []storage.CreateRouteUpstream{
 		{UpstreamID: u.ID, Model: "nm"},
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Core().Settings().Set("config_epoch", "3"); err != nil {
+	if err := st.Storage().Settings().Set("config_epoch", "3"); err != nil {
 		t.Fatal(err)
 	}
 	srv.Notify()

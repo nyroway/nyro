@@ -20,7 +20,7 @@ func newTestBackend(t *testing.T) *Backend {
 
 func TestUpstreamCRUD(t *testing.T) {
 	b := newTestBackend(t)
-	var s storage.CoreStorage = b
+	var s storage.Storage = b
 
 	created, err := s.Upstreams().Create(storage.CreateUpstream{
 		Name: "openai-main", Provider: "openai", Protocol: "openai-compatible",
@@ -69,7 +69,7 @@ func TestUpstreamCRUD(t *testing.T) {
 
 func TestRouteCreateWithNestedUpstreams(t *testing.T) {
 	b := newTestBackend(t)
-	var s storage.CoreStorage = b
+	var s storage.Storage = b
 
 	up, err := s.Upstreams().Create(storage.CreateUpstream{Name: "u1", Provider: "openai"})
 	if err != nil {
@@ -117,7 +117,7 @@ func TestRouteCreateWithNestedUpstreams(t *testing.T) {
 
 func TestConsumerCreateWithKeysRoutesQuotas(t *testing.T) {
 	b := newTestBackend(t)
-	var s storage.CoreStorage = b
+	var s storage.Storage = b
 
 	if _, err := s.Routes().Create(storage.CreateRoute{Model: "gpt-4o"}); err != nil {
 		t.Fatalf("create route: %v", err)
@@ -178,7 +178,7 @@ func TestConsumerCreateWithKeysRoutesQuotas(t *testing.T) {
 
 func TestCoreSettingsUpsert(t *testing.T) {
 	b := newTestBackend(t)
-	var s storage.CoreStorage = b
+	var s storage.Storage = b
 
 	if err := s.Settings().Set("config_epoch", "1"); err != nil {
 		t.Fatalf("Set: %v", err)

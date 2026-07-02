@@ -1,7 +1,7 @@
-// Package memory is an in-memory storage backend, used for tests and the
-// no-DB desktop default. It implements storage.CoreStorage via Core(),
-// delegating to per-sub-store wrapper types (Go cannot have two List methods
-// with different return types on one struct).
+// Package memory is an in-memory storage backend, used for tests and
+// standalone mode. It implements storage.Storage via Storage(), delegating to
+// per-sub-store wrapper types (Go cannot have two List methods with different
+// return types on one struct).
 package memory
 
 import (
@@ -21,7 +21,7 @@ var ErrNotFound = errors.New("memory: not found")
 type Backend struct {
 	mu sync.RWMutex
 
-	// config-schema (CoreStorage) state.
+	// config-schema (Storage) state.
 	upstreams      map[string]storage.Upstream
 	routes         map[string]storage.Route
 	routeUpstreams map[string]storage.RouteUpstream
@@ -29,7 +29,7 @@ type Backend struct {
 	consumerKeys   map[string]storage.ConsumerKey
 	consumerRoutes map[string]consumerRouteGrant // synthetic id -> grant
 	consumerQuotas map[string]storage.ConsumerQuota
-	coreSettings   map[string]string
+	settings       map[string]string
 }
 
 // consumerRouteGrant is one consumer_routes row (consumer_id, route_id), kept
@@ -50,29 +50,29 @@ func New() *Backend {
 		consumerKeys:   map[string]storage.ConsumerKey{},
 		consumerRoutes: map[string]consumerRouteGrant{},
 		consumerQuotas: map[string]storage.ConsumerQuota{},
-		coreSettings:   map[string]string{},
+		settings:       map[string]string{},
 	}
 }
 
 func (b *Backend) Bootstrap() storage.Bootstrap { return b }
 
-// Core returns the backend as a storage.CoreStorage (config-schema tables).
-// It is exposed as a distinct view — not by implementing CoreStorage directly
-// on Backend — because CoreStorage.Auth() and the legacy Storage.Auth() above
-// have the same name but different return types, which one Go type cannot
-// implement simultaneously.
-func (b *Backend) Core() storage.CoreStorage { return coreView{b} }
+// Storage returns the backend as a storage.Storage. It is exposed as a
+// distinct view type — not by implementing storage.Storage directly on
+// Backend — because Backend already exposes Bootstrap() storage.Bootstrap
+// directly and Go cannot layer a second same-named-but-differently-typed
+// method set onto one struct.
+func (b *Backend) Storage() storage.Storage { return storageView{b} }
 
-type coreView struct{ b *Backend }
+type storageView struct{ b *Backend }
 
-func (v coreView) Upstreams() storage.UpstreamStore    { return upstreamStore{v.b} }
-func (v coreView) Routes() storage.RouteStore          { return routeStore{v.b} }
-func (v coreView) Consumers() storage.ConsumerStore    { return consumerStore{v.b} }
-func (v coreView) Auth() storage.KeyAuthStore          { return keyAuthStore{v.b} }
-func (v coreView) Settings() storage.CoreSettingsStore { return coreSettingsStore{v.b} }
-func (v coreView) Bootstrap() storage.Bootstrap        { return v.b }
+func (v storageView) Upstreams() storage.UpstreamStore { return upstreamStore{v.b} }
+func (v storageView) Routes() storage.RouteStore       { return routeStore{v.b} }
+func (v storageView) Consumers() storage.ConsumerStore { return consumerStore{v.b} }
+func (v storageView) Auth() storage.KeyAuthStore       { return keyAuthStore{v.b} }
+func (v storageView) Settings() storage.SettingsStore  { return coreSettingsStore{v.b} }
+func (v storageView) Bootstrap() storage.Bootstrap     { return v.b }
 
-var _ storage.CoreStorage = coreView{}
+var _ storage.Storage = storageView{}
 
 // Bootstrap
 func (b *Backend) Init() error    { return nil }

@@ -21,3 +21,14 @@ type Bootstrap interface {
 	Migrate() error
 	Health() (StorageHealth, error)
 }
+
+// Storage is the storage aggregate: typed sub-stores over the config-schema
+// tables (upstreams/routes/consumers/keys/settings) plus schema bootstrap.
+type Storage interface {
+	Upstreams() UpstreamStore
+	Routes() RouteStore
+	Consumers() ConsumerStore
+	Auth() KeyAuthStore
+	Settings() SettingsStore
+	Bootstrap() Bootstrap
+}

@@ -25,7 +25,7 @@ func TestDispatchMaxRetries(t *testing.T) {
 	defer up.Close()
 
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	core.Settings().Set("proxy.max_retries", "3")
 	p, _ := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: up.URL,
@@ -63,7 +63,7 @@ func TestDispatchRetryOnStatusCustom(t *testing.T) {
 	defer up.Close()
 
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	codes, _ := json.Marshal([]int{429})
 	core.Settings().Set("proxy.retry_on_status", string(codes))
 	p, _ := core.Upstreams().Create(storage.CreateUpstream{
@@ -97,7 +97,7 @@ func TestDispatchRetryOnStatusCustom(t *testing.T) {
 // (RFC 5737 TEST-NET-1) must fail well before the default 120s request timeout.
 func TestDispatchConnectTimeout(t *testing.T) {
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	core.Settings().Set("proxy.connect_timeout", "200ms")
 	core.Settings().Set("proxy.max_retries", "1")
 	p, _ := core.Upstreams().Create(storage.CreateUpstream{

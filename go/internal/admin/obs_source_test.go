@@ -19,7 +19,7 @@ func newParquetEngine(t *testing.T, obsDir string) chi.Router {
 	r := chi.NewRouter()
 	// The storage backend is unused by /logs (parquet-only) but required by
 	// Mount's signature.
-	Mount(r, memory.New().Core(), "", NewParquetLogSource(obsDir), nil)
+	Mount(r, memory.New().Storage(), "", NewParquetLogSource(obsDir), nil)
 	return r
 }
 

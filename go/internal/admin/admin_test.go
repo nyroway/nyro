@@ -16,7 +16,7 @@ func newEngine(t *testing.T, token string) (chi.Router, *memory.Backend) {
 	t.Helper()
 	st := memory.New()
 	r := chi.NewRouter()
-	Mount(r, st.Core(), token, nil, nil)
+	Mount(r, st.Storage(), token, nil, nil)
 	return r, st
 }
 
@@ -77,7 +77,7 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 
 func TestAdminRouteAndSettings(t *testing.T) {
 	r, st := newEngine(t, "") // empty token disables auth
-	up, _ := st.Core().Upstreams().Create(storage.CreateUpstream{
+	up, _ := st.Storage().Upstreams().Create(storage.CreateUpstream{
 		Name: "P", Provider: "p", Protocol: "openai-compatible", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 

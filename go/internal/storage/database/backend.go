@@ -94,9 +94,9 @@ func (b *Backend) Consumers() storage.ConsumerStore { return consumerStore{q: b.
 func (b *Backend) Auth() storage.KeyAuthStore { return keyAuthStore{q: b.q} }
 
 // Settings returns the config-schema settings store (key column).
-func (b *Backend) Settings() storage.CoreSettingsStore { return coreSettingsStore{q: b.q} }
+func (b *Backend) Settings() storage.SettingsStore { return coreSettingsStore{q: b.q} }
 
 // Bootstrap returns the backend itself (it already implements Init/Migrate/Health).
 func (b *Backend) Bootstrap() storage.Bootstrap { return b }
 
-var _ storage.CoreStorage = (*Backend)(nil)
+var _ storage.Storage = (*Backend)(nil)

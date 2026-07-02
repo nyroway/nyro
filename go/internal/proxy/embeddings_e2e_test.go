@@ -32,7 +32,7 @@ func TestDispatchEmbeddingsEndToEnd(t *testing.T) {
 	defer upstream.Close()
 
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "emb", Provider: "emb", Protocol: "openai-compatible", BaseURL: upstream.URL,
 		CredentialsJSON: []byte(`{"api_key":"k"}`),

@@ -18,7 +18,7 @@ import (
 func newStatsEngine(t *testing.T, obsDir string) chi.Router {
 	t.Helper()
 	r := chi.NewRouter()
-	Mount(r, memory.New().Core(), "", nil, NewParquetStatsSource(obsDir))
+	Mount(r, memory.New().Storage(), "", nil, NewParquetStatsSource(obsDir))
 	return r
 }
 

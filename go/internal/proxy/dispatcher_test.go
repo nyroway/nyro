@@ -21,7 +21,7 @@ func newTestGateway(t *testing.T, upstreamURL string) *Gateway {
 // equivalent of the old NewGateway(s) one-shot LoadFromStorage: production no
 // longer reads the DB for config (xDS / YAML), so tests seed the cache via the
 // same LoadAndSwap the xDS loader uses.
-func newTestGatewayFromStorage(t *testing.T, s storage.CoreStorage) *Gateway {
+func newTestGatewayFromStorage(t *testing.T, s storage.Storage) *Gateway {
 	t.Helper()
 	gw := NewGateway()
 	if err := gw.Cache.LoadAndSwap(s); err != nil {
@@ -40,7 +40,7 @@ func newTestGatewayProto(t *testing.T, upstreamURL, protocol string) *Gateway {
 func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol string) *Gateway {
 	t.Helper()
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "test", Provider: providerID, Protocol: protocol, BaseURL: upstreamURL,
 		CredentialsJSON: []byte(`{"api_key":"test-key"}`),

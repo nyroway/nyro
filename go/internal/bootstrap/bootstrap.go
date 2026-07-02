@@ -22,10 +22,10 @@ import (
 // OpenStorage selects and opens the storage backend. "memory" (the default) is
 // ephemeral; "sqlite"/"postgres"/"mysql" open a persistent DB and apply the
 // config-schema (upstreams/routes/consumers) tables via Migrate.
-func OpenStorage(backend, dsn string) (storage.CoreStorage, error) {
+func OpenStorage(backend, dsn string) (storage.Storage, error) {
 	switch backend {
 	case "", "memory":
-		return memory.New().Core(), nil
+		return memory.New().Storage(), nil
 	case "sqlite":
 		b, err := database.NewSQLite(dsn)
 		if err != nil {
@@ -49,7 +49,7 @@ func OpenStorage(backend, dsn string) (storage.CoreStorage, error) {
 	}
 }
 
-func bootstrapSQL(st storage.CoreStorage) (storage.CoreStorage, error) {
+func bootstrapSQL(st storage.Storage) (storage.Storage, error) {
 	if err := st.Bootstrap().Init(); err != nil {
 		return nil, fmt.Errorf("storage init: %w", err)
 	}

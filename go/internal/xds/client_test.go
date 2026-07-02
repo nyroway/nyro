@@ -41,10 +41,10 @@ func TestConfigClient_ReceivesAndSwaps(t *testing.T) {
 	})
 
 	// Bump epoch + add a route, then Notify; cache should reflect the push.
-	if _, err := st.Core().Routes().Create(storage.CreateRoute{Model: "client-model"}); err != nil {
+	if _, err := st.Storage().Routes().Create(storage.CreateRoute{Model: "client-model"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Core().Settings().Set("config_epoch", "5"); err != nil {
+	if err := st.Storage().Settings().Set("config_epoch", "5"); err != nil {
 		t.Fatal(err)
 	}
 	srv.Notify()

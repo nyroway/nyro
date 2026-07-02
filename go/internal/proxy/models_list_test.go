@@ -16,7 +16,7 @@ import (
 // OpenAI-compatible {object:"list", data:[{id,object:"model",created:0,owned_by:"Nyro"}]}.
 func TestModelsList(t *testing.T) {
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: "http://up",
 		CredentialsJSON: []byte(`{"api_key":"k"}`),

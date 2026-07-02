@@ -31,7 +31,7 @@ func TestCrossProtocolAnthropicToOpenAI(t *testing.T) {
 
 	// Upstream speaks openai-compatible; client will POST /v1/messages (Anthropic).
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	upstream, _ := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "openai-upstream", Provider: "openai-upstream", Protocol: "openai-compatible", BaseURL: up.URL,
 		CredentialsJSON: []byte(`{"api_key":"sk-test"}`),

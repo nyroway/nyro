@@ -28,7 +28,7 @@ import (
 type ConfigServer struct {
 	pb.UnimplementedConfigServiceServer
 
-	store storage.CoreStorage
+	store storage.Storage
 
 	mu       sync.Mutex
 	current  *pb.ConfigSnapshot // last snapshot handed to Notify (nil until first push)
@@ -44,7 +44,7 @@ type streamClient struct {
 }
 
 // NewConfigServer creates a ConfigServiceServer backed by store.
-func NewConfigServer(store storage.CoreStorage) *ConfigServer {
+func NewConfigServer(store storage.Storage) *ConfigServer {
 	return &ConfigServer{
 		store:   store,
 		clients: map[*streamClient]struct{}{},

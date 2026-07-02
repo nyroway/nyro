@@ -54,7 +54,7 @@ consumers:
 	}
 
 	st := memory.New()
-	core := st.Core()
+	core := st.Storage()
 	if err := cfg.ApplyTo(core); err != nil {
 		t.Fatalf("ApplyTo: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestApplyToUnknownUpstream(t *testing.T) {
 	cfg := &Config{
 		Routes: []RouteSpec{{Model: "m", Upstreams: []RouteUpstreamSpec{{Name: "nope", Model: "x"}}}},
 	}
-	if err := cfg.ApplyTo(memory.New().Core()); err == nil {
+	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
 		t.Error("expected error for unknown upstream reference")
 	}
 }
@@ -130,7 +130,7 @@ func TestApplyToUnknownRoute(t *testing.T) {
 	cfg := &Config{
 		Consumers: []ConsumerSpec{{Name: "c", Routes: []string{"nope"}}},
 	}
-	if err := cfg.ApplyTo(memory.New().Core()); err == nil {
+	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
 		t.Error("expected error for unknown route reference")
 	}
 }
