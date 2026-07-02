@@ -53,7 +53,9 @@ func TestCleanSignalSkipsZeroDays(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := time.Now().UTC().AddDate(0, 0, -365)
-	os.Chtimes(p, old, old)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
 
 	cleanSignal(dir, "logs", 0, time.Now().UTC())
 

@@ -22,23 +22,23 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 		return []ir.StreamDelta{&ir.UnknownDelta{Raw: payload}}, nil
 	}
 	var out []ir.StreamDelta
-	switch {
-	case ev.Type == "response.created" || ev.Type == "response.in_progress":
+	switch ev.Type {
+	case "response.created", "response.in_progress":
 		if ev.Response != nil {
 			d.id, d.model = ev.Response.ID, ev.Response.Model
 			out = append(out, &ir.MessageStartDelta{ID: ev.Response.ID, Model: ev.Response.Model})
 		}
-	case ev.Type == "response.output_text.delta":
+	case "response.output_text.delta":
 		if ev.Delta != "" {
 			out = append(out, &ir.TextDelta{Text: ev.Delta})
 		}
-	case ev.Type == "response.function_call_arguments.delta":
+	case "response.function_call_arguments.delta":
 		out = append(out, &ir.ToolCallDeltaDelta{Index: 0, Arguments: ev.Delta})
-	case ev.Type == "response.output_item.added":
+	case "response.output_item.added":
 		if ev.Item != nil && ev.Item.Type == "function_call" {
 			out = append(out, &ir.ToolCallStartDelta{Index: 0, ID: ev.Item.CallID, Name: ev.Item.Name})
 		}
-	case ev.Type == "response.completed":
+	case "response.completed":
 		if ev.Response != nil {
 			if ev.Response.Usage != nil {
 				out = append(out, &ir.UsageDelta{Usage: ir.Usage{
@@ -53,7 +53,7 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 			d.done = true
 			out = append(out, &ir.DoneDelta{StopReason: nvl(d.stop, "completed")})
 		}
-	case ev.Type == "response.failed" || ev.Type == "response.incomplete":
+	case "response.failed", "response.incomplete":
 		if !d.done {
 			d.done = true
 			out = append(out, &ir.DoneDelta{StopReason: ev.Type})

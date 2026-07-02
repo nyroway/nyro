@@ -23,7 +23,7 @@ func bufconnEnv(t *testing.T, store *memory.Backend) (srv *ConfigServer, dialOpt
 	srv = NewConfigServer(store.Storage())
 	gs := grpc.NewServer()
 	pb.RegisterConfigServiceServer(gs, srv)
-	go gs.Serve(lis)
+	go func() { _ = gs.Serve(lis) }()
 	dialOpt = grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 		return lis.DialContext(ctx)
 	})
@@ -40,10 +40,10 @@ func dialClient(t *testing.T, dialOpt grpc.DialOption) (pb.ConfigService_StreamC
 	}
 	stream, err := pb.NewConfigServiceClient(conn).StreamConfig(context.Background(), &pb.Subscribe{Version: 0})
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		t.Fatalf("StreamConfig: %v", err)
 	}
-	return stream, func() { conn.Close() }
+	return stream, func() { _ = conn.Close() }
 }
 
 func TestStreamConfig_SendsInitialSnapshot(t *testing.T) {
@@ -133,7 +133,7 @@ func TestStreamConfig_DisconnectOnClientCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	stream, err := pb.NewConfigServiceClient(conn).StreamConfig(ctx, &pb.Subscribe{Version: 0})
 	if err != nil {
 		t.Fatalf("StreamConfig: %v", err)

@@ -65,11 +65,11 @@ func (b *Backend) Storage() storage.Storage { return storageView{b} }
 
 type storageView struct{ b *Backend }
 
-func (v storageView) Upstreams() storage.UpstreamStore { return upstreamStore{v.b} }
-func (v storageView) Routes() storage.RouteStore       { return routeStore{v.b} }
-func (v storageView) Consumers() storage.ConsumerStore { return consumerStore{v.b} }
-func (v storageView) Auth() storage.KeyAuthStore       { return keyAuthStore{v.b} }
-func (v storageView) Settings() storage.SettingsStore  { return coreSettingsStore{v.b} }
+func (v storageView) Upstreams() storage.UpstreamStore { return upstreamStore(v) }
+func (v storageView) Routes() storage.RouteStore       { return routeStore(v) }
+func (v storageView) Consumers() storage.ConsumerStore { return consumerStore(v) }
+func (v storageView) Auth() storage.KeyAuthStore       { return keyAuthStore(v) }
+func (v storageView) Settings() storage.SettingsStore  { return coreSettingsStore(v) }
 func (v storageView) Migrator() storage.Migrator       { return v.b }
 
 var _ storage.Storage = storageView{}

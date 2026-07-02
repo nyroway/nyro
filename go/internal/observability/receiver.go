@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/nyroway/nyro/go/internal/observability/parquet"
 	collectlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collecttrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -16,6 +15,8 @@ import (
 	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
 	metricsv1 "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/nyroway/nyro/go/internal/observability/parquet"
 )
 
 // Receiver is the admin-side OTLP/HTTP receiver. It decodes the official OTLP
@@ -140,18 +141,24 @@ func (rcv *Receiver) handleMetrics(w http.ResponseWriter, r *http.Request) {
 				switch d := m.Data.(type) {
 				case *metricsv1.Metric_Gauge:
 					for _, p := range d.Gauge.GetDataPoints() {
-						rows = append(rows, MetricSample{Ts: int64(p.GetTimeUnixNano()), Name: name, Kind: "gauge",
-							Value: dataPointValue(p), LabelsJSON: attrsToJSON(p.GetAttributes())})
+						rows = append(rows, MetricSample{
+							Ts: int64(p.GetTimeUnixNano()), Name: name, Kind: "gauge",
+							Value: dataPointValue(p), LabelsJSON: attrsToJSON(p.GetAttributes()),
+						})
 					}
 				case *metricsv1.Metric_Sum:
 					for _, p := range d.Sum.GetDataPoints() {
-						rows = append(rows, MetricSample{Ts: int64(p.GetTimeUnixNano()), Name: name, Kind: "counter",
-							Value: dataPointValue(p), LabelsJSON: attrsToJSON(p.GetAttributes())})
+						rows = append(rows, MetricSample{
+							Ts: int64(p.GetTimeUnixNano()), Name: name, Kind: "counter",
+							Value: dataPointValue(p), LabelsJSON: attrsToJSON(p.GetAttributes()),
+						})
 					}
 				case *metricsv1.Metric_Histogram:
 					for _, p := range d.Histogram.GetDataPoints() {
-						rows = append(rows, MetricSample{Ts: int64(p.GetTimeUnixNano()), Name: name, Kind: "histogram",
-							HistSum: p.GetSum(), HistCount: int64(p.GetCount()), LabelsJSON: attrsToJSON(p.GetAttributes())})
+						rows = append(rows, MetricSample{
+							Ts: int64(p.GetTimeUnixNano()), Name: name, Kind: "histogram",
+							HistSum: p.GetSum(), HistCount: int64(p.GetCount()), LabelsJSON: attrsToJSON(p.GetAttributes()),
+						})
 					}
 				}
 			}

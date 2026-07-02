@@ -83,17 +83,17 @@ func (s *Sink[Row]) flushLocked(now time.Time) error {
 	}
 	pw := parquet.NewGenericWriter[Row](f)
 	if _, err := pw.Write(s.buf); err != nil {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := pw.Close(); err != nil {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, name); err != nil {

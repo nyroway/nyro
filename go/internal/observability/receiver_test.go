@@ -11,8 +11,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/nyroway/nyro/go/internal/observability"
-	"github.com/nyroway/nyro/go/internal/observability/parquet"
 	collectlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collecttrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -21,6 +19,9 @@ import (
 	metricsv1 "go.opentelemetry.io/proto/otlp/metrics/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/nyroway/nyro/go/internal/observability"
+	"github.com/nyroway/nyro/go/internal/observability/parquet"
 )
 
 func TestReceiverLogs(t *testing.T) {
@@ -49,7 +50,7 @@ func TestReceiverLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -121,7 +122,7 @@ func TestReceiverMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -202,7 +203,7 @@ func TestReceiverTraces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
@@ -289,7 +290,7 @@ func TestReceiverBadBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d want 400", resp.StatusCode)
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/plugin"
 	"github.com/nyroway/nyro/go/internal/provider"
@@ -132,7 +133,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				webutil.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": latency, "error": err.Error()})
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			success := resp.StatusCode < 400
 			webutil.JSON(w, http.StatusOK, map[string]any{"success": success, "latency_ms": latency, "status_code": resp.StatusCode})
 		})
@@ -418,9 +419,7 @@ type Broadcaster interface {
 	Notify()
 }
 
-var (
-	configBroadcasterVal Broadcaster
-)
+var configBroadcasterVal Broadcaster
 
 // SetBroadcaster wires the xDS push target. Call once at admin startup (after
 // Mount) if the gRPC ConfigServer is enabled. Safe to pass nil to disable.

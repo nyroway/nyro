@@ -32,7 +32,7 @@ func anthropicStreamUpstream(t *testing.T) *httptest.Server {
 			{"message_stop", `{"type":"message_stop"}`},
 		}
 		for _, e := range events {
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.event, e.data)
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.event, e.data)
 			f.Flush()
 		}
 	}))

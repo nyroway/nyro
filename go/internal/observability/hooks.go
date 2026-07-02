@@ -4,14 +4,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/plugin"
-	"github.com/nyroway/nyro/go/internal/protocol/ir"
-	"github.com/nyroway/nyro/go/internal/storage"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/nyroway/nyro/go/internal/plugin"
+	"github.com/nyroway/nyro/go/internal/protocol/ir"
+	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 // Bag key contract. Exported (plain strings) so the proxy dispatcher can set

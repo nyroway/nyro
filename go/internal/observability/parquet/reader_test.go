@@ -11,9 +11,15 @@ func TestReadSinceRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := parquet.NewSink[observability.LogRecord](dir, "logs", 100)
 	rows := []observability.LogRecord{{ID: "a"}, {ID: "b"}, {ID: "c"}}
-	s.Write(rows)
-	s.Flush()
-	s.Close()
+	if err := s.Write(rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := parquet.ReadSince[observability.LogRecord](dir, "logs", 0)
 	if err != nil {

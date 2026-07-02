@@ -165,8 +165,10 @@ func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []ModelStat
 		if a.name != "" {
 			name = a.name
 		}
-		keys = append(keys, ApiKeyStats{APIKeyID: id, APIKeyName: name, RequestCount: a.req,
-			TotalInputTokens: a.in, TotalOutputTokens: a.out, CacheReadTokens: a.cache, LastUsedAt: a.lastTs})
+		keys = append(keys, ApiKeyStats{
+			APIKeyID: id, APIKeyName: name, RequestCount: a.req,
+			TotalInputTokens: a.in, TotalOutputTokens: a.out, CacheReadTokens: a.cache, LastUsedAt: a.lastTs,
+		})
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].RequestCount > keys[j].RequestCount })
 
@@ -196,9 +198,10 @@ func AggregateHourly(samples []MetricSample, _ int64) ([]StatsHourly, error) {
 				bb.err += int64(s.Value)
 			}
 		case "nyro_tokens_total":
-			if l.Direction == "in" {
+			switch l.Direction {
+			case "in":
 				bb.in += int64(s.Value)
-			} else if l.Direction == "out" {
+			case "out":
 				bb.out += int64(s.Value)
 			}
 		case "nyro_request_latency_ms":
@@ -212,8 +215,10 @@ func AggregateHourly(samples []MetricSample, _ int64) ([]StatsHourly, error) {
 		if bb.latCnt > 0 {
 			avg = bb.latSum / float64(bb.latCnt)
 		}
-		out = append(out, StatsHourly{Hour: hour, RequestCount: bb.req, ErrorCount: bb.err,
-			TotalInputTokens: bb.in, TotalOutputTokens: bb.out, AvgDurationMs: avg})
+		out = append(out, StatsHourly{
+			Hour: hour, RequestCount: bb.req, ErrorCount: bb.err,
+			TotalInputTokens: bb.in, TotalOutputTokens: bb.out, AvgDurationMs: avg,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Hour < out[j].Hour })
 	return out, nil

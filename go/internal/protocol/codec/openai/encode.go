@@ -274,7 +274,7 @@ func encodeResponseFormat(rf ir.ResponseFormat) json.RawMessage {
 	case *ir.JsonSchemaResponse:
 		js := map[string]any{"name": v.Name}
 		if len(v.Schema) > 0 {
-			js["schema"] = json.RawMessage(v.Schema)
+			js["schema"] = v.Schema
 		}
 		if v.Strict != nil {
 			js["strict"] = *v.Strict

@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/nyroway/nyro/go/internal/protocol/codec"
 	"github.com/nyroway/nyro/go/internal/protocol/codec/anthropic"  // register Anthropic codec
 	"github.com/nyroway/nyro/go/internal/protocol/codec/embeddings" // register Embeddings codec

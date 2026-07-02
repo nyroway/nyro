@@ -1,4 +1,8 @@
-.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-tidy go-gen-storage go-run help
+.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-fmt-check go-lint go-lint-install go-check go-tidy go-gen-storage go-run help
+
+# golangci-lint version pinned for reproducible fmt/lint (installed to go/bin, never touches go.mod)
+GOLANGCI_LINT_VERSION := v2.6.0
+GOLANGCI_LINT := $(CURDIR)/go/bin/golangci-lint
 
 # Development — start Tauri desktop app with hot reload
 dev: webui-build
@@ -77,9 +81,25 @@ go-test:
 go-vet:
 	cd go && go vet ./...
 
-# Format Go code
-go-fmt:
-	cd go && go fmt ./...
+# Install golangci-lint into go/bin at the pinned version (idempotent, no go.mod/go.sum impact)
+go-lint-install:
+	@$(GOLANGCI_LINT) --version 2>/dev/null | grep -q $(GOLANGCI_LINT_VERSION:v%=%) || \
+		GOBIN=$(CURDIR)/go/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+
+# Format Go code (gofumpt + goimports, in place)
+go-fmt: go-lint-install
+	cd go && $(GOLANGCI_LINT) fmt
+
+# Check Go formatting without modifying files (used in CI)
+go-fmt-check: go-lint-install
+	cd go && $(GOLANGCI_LINT) fmt --diff
+
+# Lint Go code (errcheck, staticcheck, unused, bodyclose, unconvert, ...)
+go-lint: go-lint-install
+	cd go && $(GOLANGCI_LINT) run
+
+# Format, vet, lint, and test the Go module
+go-check: go-fmt-check go-vet go-lint go-test
 
 # Tidy go.mod / go.sum
 go-tidy:
@@ -122,7 +142,10 @@ help:
 	@echo "  make go-build     Build Go nyro CLI → go/bin/nyro"
 	@echo "  make go-test      Run Go tests"
 	@echo "  make go-vet       Vet Go code"
-	@echo "  make go-fmt       Format Go code"
+	@echo "  make go-fmt       Format Go code (gofumpt + goimports)"
+	@echo "  make go-fmt-check Check Go formatting (CI)"
+	@echo "  make go-lint      Lint Go code (golangci-lint)"
+	@echo "  make go-check     go-fmt-check + go-vet + go-lint + go-test"
 	@echo "  make go-tidy      Tidy go.mod/go.sum"
 	@echo "  make go-gen-storage Generate Go storage query code"
 	@echo "  make go-run       Run Go gateway (data plane)"

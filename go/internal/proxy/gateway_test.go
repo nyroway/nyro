@@ -31,15 +31,21 @@ func TestGatewayHTTPClientForProxy(t *testing.T) {
 	}
 
 	// use_proxy=true but proxy disabled → direct client.
-	st.Storage().Settings().Set("proxy_enabled", "false")
+	if err := st.Storage().Settings().Set("proxy_enabled", "false"); err != nil {
+		t.Fatal(err)
+	}
 	_ = gw.Cache.LoadAndSwap(st.Storage()) // reflect the settings change in the in-memory cache
 	if c, err := gw.httpClientFor(true); err != nil || c != direct {
 		t.Errorf("proxy disabled: want direct client, got %v err=%v", c, err)
 	}
 
 	// use_proxy=true + enabled + proxy_url → distinct proxied client.
-	st.Storage().Settings().Set("proxy_enabled", "true")
-	st.Storage().Settings().Set("proxy_url", "http://proxy.example:8080")
+	if err := st.Storage().Settings().Set("proxy_enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Storage().Settings().Set("proxy_url", "http://proxy.example:8080"); err != nil {
+		t.Fatal(err)
+	}
 	_ = gw.Cache.LoadAndSwap(st.Storage())
 	c, err := gw.httpClientFor(true)
 	if err != nil {
@@ -63,7 +69,9 @@ func TestGatewayHTTPClientForProxy(t *testing.T) {
 	}
 
 	// empty proxy_url → error.
-	st.Storage().Settings().Set("proxy_url", "")
+	if err := st.Storage().Settings().Set("proxy_url", ""); err != nil {
+		t.Fatal(err)
+	}
 	_ = gw.Cache.LoadAndSwap(st.Storage())
 	if _, err := gw.httpClientFor(true); err == nil {
 		t.Error("empty proxy_url: want error, got nil")
@@ -97,11 +105,17 @@ func TestResolveProxySettings_Defaults(t *testing.T) {
 func TestResolveProxySettings_Overrides(t *testing.T) {
 	st := memory.New()
 	core := st.Storage()
-	core.Settings().Set("proxy.request_timeout", "45s")
-	core.Settings().Set("proxy.connect_timeout", "5s")
-	core.Settings().Set("proxy.max_retries", "4")
+	mustSet := func(key, value string) {
+		t.Helper()
+		if err := core.Settings().Set(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustSet("proxy.request_timeout", "45s")
+	mustSet("proxy.connect_timeout", "5s")
+	mustSet("proxy.max_retries", "4")
 	codes, _ := json.Marshal([]int{408, 429})
-	core.Settings().Set("proxy.retry_on_status", string(codes))
+	mustSet("proxy.retry_on_status", string(codes))
 
 	c := &xds.ConfigCache{}
 	if err := c.LoadAndSwap(core); err != nil {

@@ -92,10 +92,10 @@ func streamUpstream(t *testing.T) *httptest.Server {
 			`{"id":"c1","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
 		}
 		for _, c := range chunks {
-			fmt.Fprintf(w, "data: %s\n\n", c)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", c)
 			f.Flush()
 		}
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		f.Flush()
 	}))
 }

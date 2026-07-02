@@ -178,7 +178,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 				break
 			}
 			if ps.RetryOnStatus[resp.StatusCode] {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				resp = nil
 				if attempt < attempts {
 					continue
@@ -213,7 +213,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		default:
 			g.serveNonStream(r.Context(), rec, resp.Body, egressHandler, ingress, req, &usage, bag)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		served = true
 		break
 	}

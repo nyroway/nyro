@@ -84,11 +84,11 @@ func (c *ConfigClient) runOnce(ctx context.Context) (connected bool, err error) 
 	dialCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	conn, err := grpc.DialContext(dialCtx, c.target, c.dialOpts...)
+	conn, err := grpc.NewClient(c.target, c.dialOpts...)
 	if err != nil {
 		return false, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := pb.NewConfigServiceClient(conn)
 	stream, err := client.StreamConfig(dialCtx, &pb.Subscribe{Version: 0})

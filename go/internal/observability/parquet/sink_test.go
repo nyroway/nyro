@@ -14,7 +14,7 @@ func TestSinkWriteRotateReadBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	// maxRows=2 → writing 3 rows forces a rotation (2 files).
 	if err := s.Write([]observability.LogRecord{

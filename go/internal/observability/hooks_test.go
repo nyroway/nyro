@@ -5,9 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/plugin"
-	"github.com/nyroway/nyro/go/internal/protocol/ir"
-	"github.com/nyroway/nyro/go/internal/storage"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
@@ -17,6 +14,10 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/nyroway/nyro/go/internal/plugin"
+	"github.com/nyroway/nyro/go/internal/protocol/ir"
+	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 // captureLogger is a minimal log.Logger wrapper that records every emitted

@@ -26,7 +26,9 @@ func TestDispatchMaxRetries(t *testing.T) {
 
 	st := memory.New()
 	core := st.Storage()
-	core.Settings().Set("proxy.max_retries", "3")
+	if err := core.Settings().Set("proxy.max_retries", "3"); err != nil {
+		t.Fatal(err)
+	}
 	p, _ := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: up.URL,
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
@@ -65,7 +67,9 @@ func TestDispatchRetryOnStatusCustom(t *testing.T) {
 	st := memory.New()
 	core := st.Storage()
 	codes, _ := json.Marshal([]int{429})
-	core.Settings().Set("proxy.retry_on_status", string(codes))
+	if err := core.Settings().Set("proxy.retry_on_status", string(codes)); err != nil {
+		t.Fatal(err)
+	}
 	p, _ := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: up.URL,
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
@@ -98,8 +102,12 @@ func TestDispatchRetryOnStatusCustom(t *testing.T) {
 func TestDispatchConnectTimeout(t *testing.T) {
 	st := memory.New()
 	core := st.Storage()
-	core.Settings().Set("proxy.connect_timeout", "200ms")
-	core.Settings().Set("proxy.max_retries", "1")
+	if err := core.Settings().Set("proxy.connect_timeout", "200ms"); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Settings().Set("proxy.max_retries", "1"); err != nil {
+		t.Fatal(err)
+	}
 	p, _ := core.Upstreams().Create(storage.CreateUpstream{
 		Name: "p", Provider: "p", Protocol: "openai-compatible",
 		BaseURL:         "http://192.0.2.1:81", // TEST-NET-1: reserved, non-routable

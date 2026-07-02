@@ -77,7 +77,7 @@ func readParquetFile[Row any](name string) ([]Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	pr := parquet.NewGenericReader[Row](f)
 	rows := make([]Row, pr.NumRows())
 	// parquet-go's Read returns io.EOF when it has drained the file, even on a

@@ -78,6 +78,33 @@ jobs:
           path: target/debug/nyro-tools
           retention-days: 1
 
+  go-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Go format check (gofumpt + goimports)
+        run: make go-fmt-check
+
+      - name: Go vet
+        run: make go-vet
+
+      - name: Go lint (golangci-lint)
+        run: make go-lint
+
+      - name: Go test
+        run: make go-test
+
   unit-tests:
     needs: build
     runs-on: ubuntu-latest

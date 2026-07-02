@@ -24,7 +24,7 @@ func geminiStreamUpstream(t *testing.T) *httptest.Server {
 			`{"candidates":[{"content":{"parts":[{"text":"there"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}`,
 		}
 		for _, c := range chunks {
-			fmt.Fprintf(w, "data: %s\n\n", c)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", c)
 			f.Flush()
 		}
 	}))

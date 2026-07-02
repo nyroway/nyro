@@ -25,7 +25,7 @@ func responsesStreamUpstream(t *testing.T) *httptest.Server {
 			`{"type":"response.completed","response":{"id":"r1","status":"completed","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}`,
 		}
 		for _, e := range events {
-			fmt.Fprintf(w, "data: %s\n\n", e)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", e)
 			f.Flush()
 		}
 	}))
