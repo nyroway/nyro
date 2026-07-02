@@ -136,17 +136,34 @@ type Config struct {
 	Consumers []ConsumerSpec `yaml:"consumers"`
 }
 
-// LoadYAML reads and parses a standalone config file.
-func LoadYAML(path string) (*Config, error) {
+// LoadYAML reads and parses a standalone config file. "${VAR_NAME}" references
+// anywhere in the raw YAML text are expanded from the process environment
+// before parsing (the convention documented in the config schema, e.g.
+// credentials.api_key: "${OPENAI_API_KEY}"). A reference to an unset
+// environment variable expands to an empty string and its name is returned in
+// the second result — this deliberately does not fail the load, since not
+// every deployment sets every optional variable; callers should log it as a
+// warning.
+func LoadYAML(path string) (*Config, []string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+		return nil, nil, fmt.Errorf("read config: %w", err)
 	}
+	var missing []string
+	seen := map[string]bool{}
+	expanded := os.Expand(string(data), func(key string) string {
+		v, ok := os.LookupEnv(key)
+		if !ok && !seen[key] {
+			seen[key] = true
+			missing = append(missing, key)
+		}
+		return v
+	})
 	var c Config
-	if err := yaml.Unmarshal(data, &c); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
+	if err := yaml.Unmarshal([]byte(expanded), &c); err != nil {
+		return nil, missing, fmt.Errorf("parse config: %w", err)
 	}
-	return &c, nil
+	return &c, missing, nil
 }
 
 // ApplyTo is the single YAML→storage conversion path: it seeds upstreams,

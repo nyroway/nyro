@@ -90,9 +90,12 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 		// Standalone YAML: build the config snapshot directly (no DB). The
 		// observability config comes from env (OTEL_EXPORTER_OTLP_ENDPOINT /
 		// OTEL_*_EXPORTER); defaults are logs→stdout, metrics/traces→none.
-		cfg, err := config.LoadYAML(cfgPath)
+		cfg, missing, err := config.LoadYAML(cfgPath)
 		if err != nil {
 			return nil, nil, nil, err
+		}
+		for _, name := range missing {
+			slog.Warn("config references an unset environment variable", "var", name)
 		}
 		snap, err := cfg.BuildSnapshot()
 		if err != nil {

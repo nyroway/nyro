@@ -45,7 +45,7 @@ consumers:
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadYAML(path)
+	cfg, _, err := LoadYAML(path)
 	if err != nil {
 		t.Fatalf("LoadYAML: %v", err)
 	}
@@ -249,5 +249,69 @@ func TestFlattenSettings(t *testing.T) {
 	// Absent values must not produce empty-string rows.
 	if _, ok := got["obs_metrics_sink"]; ok {
 		t.Error("unset observability.metrics.exporter should not appear in flattened settings")
+	}
+}
+
+func TestLoadYAMLExpandsEnvVars(t *testing.T) {
+	t.Setenv("NYRO_TEST_API_KEY", "sk-from-env")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nyro.yaml")
+	const yamlTmpl = `
+version: 1
+upstreams:
+  - name: openai
+    provider: openai
+    protocol: openai-compatible
+    base_url: https://api.openai.com
+    credentials:
+      api_key: "${NYRO_TEST_API_KEY}"
+routes: []
+consumers: []
+`
+	if err := os.WriteFile(path, []byte(yamlTmpl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, missing, err := LoadYAML(path)
+	if err != nil {
+		t.Fatalf("LoadYAML: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Errorf("missing = %v, want none (NYRO_TEST_API_KEY is set)", missing)
+	}
+	if got := cfg.Upstreams[0].Credentials["api_key"]; got != "sk-from-env" {
+		t.Errorf("api_key = %q, want expanded env value %q", got, "sk-from-env")
+	}
+}
+
+func TestLoadYAMLReportsUnsetEnvVars(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nyro.yaml")
+	const yamlTmpl = `
+version: 1
+upstreams:
+  - name: openai
+    provider: openai
+    protocol: openai-compatible
+    base_url: https://api.openai.com
+    credentials:
+      api_key: "${NYRO_TEST_DEFINITELY_UNSET_VAR}"
+routes: []
+consumers: []
+`
+	if err := os.WriteFile(path, []byte(yamlTmpl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, missing, err := LoadYAML(path)
+	if err != nil {
+		t.Fatalf("LoadYAML: %v (unset vars must warn, not fail)", err)
+	}
+	if len(missing) != 1 || missing[0] != "NYRO_TEST_DEFINITELY_UNSET_VAR" {
+		t.Errorf("missing = %v, want [NYRO_TEST_DEFINITELY_UNSET_VAR]", missing)
+	}
+	if got := cfg.Upstreams[0].Credentials["api_key"]; got != "" {
+		t.Errorf("api_key = %q, want empty string for an unset var", got)
 	}
 }
