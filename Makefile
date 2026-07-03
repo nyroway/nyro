@@ -1,4 +1,4 @@
-.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-fmt-check go-lint go-lint-install go-check go-tidy go-gen-storage go-run help
+.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-fmt-check go-lint go-lint-install go-check go-tidy go-gen-storage go-webui-build go-webui-embed-assets go-webui-embed-build go-webui-embed-run go-run help
 
 # golangci-lint version pinned for reproducible fmt/lint (installed to go/bin, never touches go.mod)
 GOLANGCI_LINT_VERSION := v2.6.0
@@ -109,6 +109,24 @@ go-tidy:
 go-gen-storage:
 	cd go && go run ./internal/storage/gen
 
+# Build the Go WebUI bundle only
+go-webui-build:
+	cd go/webui && pnpm install && pnpm build
+
+# Copy the built Go WebUI into the Go package-local embed directory
+go-webui-embed-assets: go-webui-build
+	rm -rf go/internal/webui/dist
+	mkdir -p go/internal/webui/dist
+	cp -R go/webui/dist/. go/internal/webui/dist/
+
+# Build the Go nyro CLI with the Go WebUI embedded
+go-webui-embed-build: go-webui-embed-assets
+	cd go && mkdir -p bin && go build -tags webui_embed -o bin/nyro .
+
+# Build and run the Go admin with embedded WebUI for local preview
+go-webui-embed-run: go-webui-embed-build
+	cd go && ./bin/nyro admin
+
 # Run the Go gateway (data plane) locally
 go-run:
 	cd go && go run . gateway
@@ -116,7 +134,7 @@ go-run:
 # Clean all build artifacts
 clean:
 	cargo clean
-	rm -rf webui/dist webui/node_modules/.vite
+	rm -rf webui/dist webui/node_modules/.vite go/webui/dist go/webui/node_modules/.vite go/internal/webui/dist
 
 help:
 	@echo "Nyro AI Gateway"
@@ -148,5 +166,8 @@ help:
 	@echo "  make go-check     go-fmt-check + go-vet + go-lint + go-test"
 	@echo "  make go-tidy      Tidy go.mod/go.sum"
 	@echo "  make go-gen-storage Generate Go storage query code"
+	@echo "  make go-webui-build Build Go WebUI frontend only"
+	@echo "  make go-webui-embed-build Build Go nyro CLI with embedded Go WebUI"
+	@echo "  make go-webui-embed-run Build and run Go admin with embedded Go WebUI"
 	@echo "  make go-run       Run Go gateway (data plane)"
 	@echo "  make clean        Remove build artifacts"

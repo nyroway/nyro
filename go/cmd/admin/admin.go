@@ -15,7 +15,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
-	"github.com/nyroway/nyro/go/internal/proxy"
+	"github.com/nyroway/nyro/go/internal/webui"
 	"github.com/nyroway/nyro/go/internal/xds"
 )
 
@@ -119,7 +119,7 @@ func NewCmd() *cobra.Command {
 		// The request_logs table was removed in Phase 4; these are the only
 		// request-log/metrics read paths.
 		admin.Mount(engine, st, adminToken, admin.NewParquetLogSource(obsCfg.DataDir), admin.NewParquetStatsSource(obsCfg.DataDir))
-		proxy.MountWebui(engine, webuiDir)
+		webui.Mount(engine, webuiDir)
 
 		// Best-effort flush of buffered OTLP rows on shutdown; do not block
 		// shutdown — the sinks' own rotation already bounds data loss.

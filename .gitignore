@@ -23,6 +23,10 @@ src-tauri/icons/ios/
 # Go (nyro/go) — runtime data, build output, local working docs
 go/data/
 go/bin/
+go/webui/node_modules/
+go/webui/dist/
+go/webui/.vite/
+go/internal/webui/dist/
 go/docs/superpowers/
 # Go build/test artifacts (consolidated from go/.gitignore)
 *.exe
