@@ -5,6 +5,8 @@ export interface Provider {
   protocol: string;
   base_url: string;
   api_key?: string;
+  /** Full multi-field credential object (e.g. AWS/Azure/GCP fields), keyed by field name. */
+  credentials?: Record<string, string>;
   use_proxy: boolean;
   auth_mode?: "apikey" | "oauth";
   oauth_status?: ProviderOAuthStatus;
@@ -53,6 +55,8 @@ export interface ApiKey {
   rpd?: number | null;
   tpm?: number | null;
   tpd?: number | null;
+  /** `quotas.concurrency.max_requests` — the max number of in-flight requests. */
+  max_requests?: number | null;
   is_enabled: boolean;
   expires_at?: string | null;
   created_at: string;
@@ -202,6 +206,24 @@ export interface ProviderChannelPreset {
   staticModels?: string[];
 }
 
+/**
+ * One field in a provider's credential schema, mirrored from the Go backend's
+ * `provider.CredentialField` (see `GET /api/v1/provider-presets`). `type` is
+ * one of "string" | "secret" | "enum". `required_when` gates conditional
+ * requiredness on the value of another field in the same credentials object
+ * (the referenced value may be a single string or a list of acceptable
+ * strings).
+ */
+export interface ProviderCredentialField {
+  name: string;
+  type: string;
+  required: boolean;
+  default?: string;
+  values?: string[];
+  env?: string;
+  required_when?: Record<string, unknown>;
+}
+
 export interface ProviderPreset {
   id: string;
   label: {
@@ -211,6 +233,8 @@ export interface ProviderPreset {
   icon?: string;
   defaultProtocol: string;
   channels?: ProviderChannelPreset[];
+  /** The preset's full credential schema (`credentials.fields[]` from the Go backend). */
+  credentialFields?: ProviderCredentialField[];
 }
 
 export interface CreateProvider {
@@ -225,6 +249,8 @@ export interface CreateProvider {
   models_source?: string;
   static_models?: string;
   api_key: string;
+  /** Full credential field values keyed by field name; takes priority over `api_key` when non-empty. */
+  credentials?: Record<string, string>;
 }
 
 export interface UpdateProvider {
@@ -239,6 +265,8 @@ export interface UpdateProvider {
   models_source?: string;
   static_models?: string;
   api_key?: string;
+  /** Full credential field values keyed by field name; takes priority over `api_key` when set. */
+  credentials?: Record<string, string>;
   is_enabled?: boolean;
 }
 
@@ -284,6 +312,7 @@ export interface CreateApiKey {
   rpd?: number;
   tpm?: number;
   tpd?: number;
+  max_requests?: number;
   expires_at?: string;
   model_ids: string[];
 }
@@ -294,6 +323,7 @@ export interface UpdateApiKey {
   rpd?: number;
   tpm?: number;
   tpd?: number;
+  max_requests?: number;
   is_enabled?: boolean;
   expires_at?: string;
   model_ids?: string[];

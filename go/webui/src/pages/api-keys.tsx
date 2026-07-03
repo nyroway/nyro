@@ -103,6 +103,7 @@ type CreateForm = {
   rpd: string;
   tpm: string;
   tpd: string;
+  max_requests: string;
   expiresPreset: ExpirePreset;
   model_ids: string[];
 };
@@ -116,6 +117,7 @@ type EditForm = {
   rpd: string;
   tpm: string;
   tpd: string;
+  max_requests: string;
   model_ids: string[];
 };
 
@@ -125,6 +127,7 @@ const emptyCreate: CreateForm = {
   rpd: "",
   tpm: "",
   tpd: "",
+  max_requests: "",
   expiresPreset: "30d",
   model_ids: [],
 };
@@ -236,6 +239,7 @@ export default function ApiKeysPage() {
       rpd: item.rpd ? String(item.rpd) : "",
       tpm: item.tpm ? String(item.tpm) : "",
       tpd: item.tpd ? String(item.tpd) : "",
+      max_requests: item.max_requests ? String(item.max_requests) : "",
       model_ids: item.model_ids ?? [],
     });
   }
@@ -382,6 +386,17 @@ export default function ApiKeysPage() {
                     placeholder={isZh ? "留空=不限" : "Empty = unlimited"}
                   />
                 </div>
+                <div className="col-span-2 space-y-2">
+                  <FieldLabel>{isZh ? "并发上限" : "Max Concurrency"}</FieldLabel>
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={createForm.max_requests}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, max_requests: digitsOnly(e.target.value) }))}
+                    placeholder={isZh ? "留空=不限，同时处理的最大请求数" : "Empty = unlimited, max in-flight requests"}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -394,6 +409,7 @@ export default function ApiKeysPage() {
                   rpd: createForm.rpd ? Number.parseInt(createForm.rpd, 10) : undefined,
                   tpm: createForm.tpm ? Number.parseInt(createForm.tpm, 10) : undefined,
                   tpd: createForm.tpd ? Number.parseInt(createForm.tpd, 10) : undefined,
+                  max_requests: createForm.max_requests ? Number.parseInt(createForm.max_requests, 10) : undefined,
                   expires_at: resolveExpiresAt(createForm.expiresPreset),
                   model_ids: createForm.model_ids,
                 })
@@ -560,6 +576,19 @@ export default function ApiKeysPage() {
                             }
                           />
                         </div>
+                        <div className="col-span-2 space-y-2">
+                          <FieldLabel>{isZh ? "并发上限" : "Max Concurrency"}</FieldLabel>
+                          <Input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={editForm.max_requests}
+                            onChange={(e) =>
+                              setEditForm((prev) => (prev ? { ...prev, max_requests: digitsOnly(e.target.value) } : prev))
+                            }
+                            placeholder={isZh ? "留空=不限" : "Empty = unlimited"}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -574,6 +603,7 @@ export default function ApiKeysPage() {
                             rpd: editForm.rpd ? Number.parseInt(editForm.rpd, 10) : 0,
                             tpm: editForm.tpm ? Number.parseInt(editForm.tpm, 10) : 0,
                             tpd: editForm.tpd ? Number.parseInt(editForm.tpd, 10) : 0,
+                            max_requests: editForm.max_requests ? Number.parseInt(editForm.max_requests, 10) : 0,
                             model_ids: editForm.model_ids,
                           },
                         })
@@ -635,6 +665,9 @@ export default function ApiKeysPage() {
                       </Badge>
                       <Badge variant="warning" className="connect-label-badge bg-amber-50 text-amber-700">
                         TPD {quotaText(item.tpd)}
+                      </Badge>
+                      <Badge variant="warning" className="connect-label-badge bg-fuchsia-50 text-fuchsia-700">
+                        {isZh ? "并发" : "Concurrency"} {quotaText(item.max_requests)}
                       </Badge>
                     </div>
                   </div>

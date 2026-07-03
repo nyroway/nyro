@@ -11,6 +11,7 @@ import type {
   OAuthSessionStatusData,
   ProviderPreset,
   ProviderChannelPreset,
+  ProviderCredentialField,
   ProviderProtocol,
   ProviderOAuthStatusData,
 } from "@/lib/types";
@@ -78,6 +79,7 @@ const emptyCreate: CreateProvider = {
   models_source: "",
   static_models: "",
   api_key: "",
+  credentials: {},
 };
 const PAGE_SIZE = 7;
 const DEFAULT_PRESET_ID = "nyro";
@@ -299,6 +301,140 @@ function resolvePresetConfig(
   };
 }
 
+// The single-field fallback used for presets whose `credentials.fields[]` is
+// empty or absent (should not normally happen for real backend presets, but
+// covers the offline fallbackProviderPreset() and any future preset with no
+// declared credential schema).
+const DEFAULT_CREDENTIAL_FIELDS: ProviderCredentialField[] = [
+  { name: "api_key", type: "secret", required: true },
+];
+
+function credentialFieldsForPreset(preset?: ProviderPreset | null): ProviderCredentialField[] {
+  return preset?.credentialFields?.length ? preset.credentialFields : DEFAULT_CREDENTIAL_FIELDS;
+}
+
+// isCredentialFieldRequired resolves a field's `required`/`required_when`
+// gate against the currently entered credential values. `required_when`
+// values may be a single string or a list of acceptable strings (see e.g.
+// azurefoundry.go's client_id field, required when credential_source is
+// either "client_secret" or "managed_identity").
+function isCredentialFieldRequired(field: ProviderCredentialField, values: Record<string, string>): boolean {
+  if (field.required) return true;
+  if (!field.required_when) return false;
+  return Object.entries(field.required_when).every(([key, expected]) => {
+    const actual = values[key] ?? "";
+    return Array.isArray(expected) ? expected.includes(actual) : actual === expected;
+  });
+}
+
+function missingRequiredCredentials(fields: ProviderCredentialField[], values: Record<string, string>): boolean {
+  return fields.some((field) => isCredentialFieldRequired(field, values) && !(values[field.name] ?? "").trim());
+}
+
+function defaultCredentialValues(fields: ProviderCredentialField[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const field of fields) {
+    if (field.default) out[field.name] = field.default;
+  }
+  return out;
+}
+
+function credentialFieldLabel(field: ProviderCredentialField): string {
+  return field.name
+    .split("_")
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .join(" ");
+}
+
+// CredentialFieldInput renders one input for a provider credential field,
+// keyed by the Go backend's field `type` ("string" | "secret" | "enum").
+// Secret fields whose name looks like a JSON blob (e.g. gcp-vertex's
+// `service_account_json`) get a multi-line textarea instead of a single-line
+// password input, since pasting a service-account JSON document into a
+// one-line field is unusable. Each instance owns its own show/hide toggle so
+// the parent form doesn't need one boolean per field.
+function CredentialFieldInput({
+  field,
+  value,
+  onChange,
+  isZh,
+}: {
+  field: ProviderCredentialField;
+  value: string;
+  onChange: (value: string) => void;
+  isZh: boolean;
+}) {
+  const [reveal, setReveal] = useState(false);
+  const label = credentialFieldLabel(field);
+  const isSecret = field.type === "secret";
+  const isJsonBlob = isSecret && /json/i.test(field.name);
+
+  if (field.type === "enum" && field.values?.length) {
+    return (
+      <div className="space-y-2">
+        <FieldLabel>{label}</FieldLabel>
+        <Select value={value || field.default || field.values[0]} onValueChange={onChange}>
+          <SelectTrigger>
+            <SelectValue placeholder={label} />
+          </SelectTrigger>
+          <SelectContent>
+            {field.values.map((option) => (
+              <SelectItem key={option} value={option}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
+
+  if (isJsonBlob) {
+    return (
+      <div className="col-span-2 space-y-2">
+        <FieldLabel>{label}</FieldLabel>
+        <textarea
+          placeholder={isZh ? "粘贴 JSON 内容" : "Paste JSON content"}
+          value={value}
+          rows={8}
+          className="min-h-32 w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <FieldLabel>{label}</FieldLabel>
+      {isSecret ? (
+        <div className="relative">
+          <Input
+            placeholder={field.name === "api_key" ? "sk-..." : label}
+            type={reveal ? "text" : "password"}
+            value={value}
+            className="pr-10"
+            onChange={(e) => onChange(e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={() => setReveal((prev) => !prev)}
+            className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+            aria-label={reveal ? (isZh ? "隐藏" : "Hide") : (isZh ? "显示" : "Show")}
+          >
+            {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
+      ) : (
+        <Input value={value} placeholder={label} onChange={(e) => onChange(e.target.value)} />
+      )}
+    </div>
+  );
+}
+
 function FieldLabel({ children, info }: { children: string; info?: string }) {
   return (
     <label className="ml-1 inline-flex items-center gap-1 text-xs leading-none font-normal text-slate-900">
@@ -391,8 +527,6 @@ export default function ProvidersPage() {
   const [providerToCopy, setProviderToCopy] = useState<Provider | null>(null);
   const [appendTargets, setAppendTargets] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState(DEFAULT_PRESET_ID);
-  const [showCreateApiKey, setShowCreateApiKey] = useState(true);
-  const [showEditApiKey, setShowEditApiKey] = useState(false);
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
   const [createOAuthSession, setCreateOAuthSession] = useState<OAuthSessionInitData | null>(null);
   const [createOAuthStatus, setCreateOAuthStatus] = useState<OAuthSessionStatusData | null>(null);
@@ -460,6 +594,7 @@ export default function ProvidersPage() {
     models_source: "",
     static_models: "",
     api_key: "",
+    credentials: {},
     auth_mode: "apikey",
   });
   const isEditingOAuthProvider = Boolean(
@@ -1049,7 +1184,6 @@ export default function ProvidersPage() {
   function startEdit(p: Provider) {
     setEditingId(p.id);
     setEditError(null);
-    setShowEditApiKey(false);
     const presetForEdit = providerPresets.find(
       (item) => item.id === (p.preset_key || DEFAULT_PRESET_ID),
     );
@@ -1070,6 +1204,7 @@ export default function ProvidersPage() {
       models_source: p.models_source ?? "",
       static_models: p.static_models ?? "",
       api_key: p.api_key ?? "",
+      credentials: p.credentials ?? {},
       auth_mode: normalizeAuthMode(p.auth_mode),
     });
   }
@@ -1098,6 +1233,7 @@ export default function ProvidersPage() {
       models_source: config.modelsSource,
       static_models: config.staticModels,
       api_key: config.apiKey || "",
+      credentials: defaultCredentialValues(credentialFieldsForPreset(preset)),
       name: "",
     });
   }
@@ -1168,6 +1304,7 @@ export default function ProvidersPage() {
               models_source: config.modelsSource,
               static_models: config.staticModels,
               api_key: config.apiKey || prev.api_key,
+              credentials: defaultCredentialValues(credentialFieldsForPreset(preset)),
             };
           })()
         : prev,
@@ -1177,7 +1314,6 @@ export default function ProvidersPage() {
   function closeCreateForm() {
     resetCreateOAuthState(true);
     setShowForm(false);
-    setShowCreateApiKey(true);
     setSelectedPresetId(DEFAULT_PRESET_ID);
     setForm(emptyCreate);
   }
@@ -1195,6 +1331,11 @@ export default function ProvidersPage() {
   const hasCreatePresets = providerPresets.length > 0;
   const createResolvedAuthMode = presetChannelAuthMode(selectedPreset, createChannelValue);
   const createUsesVertexServiceAccount = isVertexProviderSelection(form);
+  const createCredentialFields = credentialFieldsForPreset(selectedPreset);
+  const createPresetBaseUrl = selectedPreset
+    ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-compatible", createChannelValue).baseUrl
+    : "";
+  const createBaseUrlMissing = !createPresetBaseUrl && !form.base_url?.trim();
   const createOAuthReady = createOAuthStatus?.status === "ready";
   const createOAuthRequiresManualCode =
     createOAuthStatus?.status === "pending"
@@ -1257,7 +1398,6 @@ export default function ProvidersPage() {
               return;
             }
             setShowForm(true);
-            setShowCreateApiKey(true);
             resetCreateOAuthState(true);
             const initialPresetId = providerPresets[0]?.id;
             if (initialPresetId) {
@@ -1561,49 +1701,21 @@ export default function ProvidersPage() {
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
               </div>
-              {createResolvedAuthMode !== "oauth" && (
-                <div className={createUsesVertexServiceAccount ? "col-span-2 space-y-2" : "space-y-2"}>
-                  <FieldLabel
-                    info={
-                      createUsesVertexServiceAccount
-                        ? (isZh ? "粘贴 Google Cloud 服务账号 JSON，需包含 project_id、client_email、private_key。" : "Paste the Google Cloud service account JSON with project_id, client_email, and private_key.")
-                        : undefined
+              {createResolvedAuthMode !== "oauth" &&
+                createCredentialFields.map((field) => (
+                  <CredentialFieldInput
+                    key={field.name}
+                    field={field}
+                    value={form.credentials?.[field.name] ?? ""}
+                    onChange={(value) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        credentials: { ...(prev.credentials ?? {}), [field.name]: value },
+                      }))
                     }
-                  >
-                    {createUsesVertexServiceAccount ? (isZh ? "服务账号 JSON" : "Service Account JSON") : "API Key"}
-                  </FieldLabel>
-                  {createUsesVertexServiceAccount ? (
-                    <textarea
-                      placeholder={isZh ? "{\n  \"project_id\": \"...\",\n  \"client_email\": \"...\",\n  \"private_key\": \"-----BEGIN PRIVATE KEY-----\\n...\"\n}" : "{\n  \"project_id\": \"...\",\n  \"client_email\": \"...\",\n  \"private_key\": \"-----BEGIN PRIVATE KEY-----\\n...\"\n}"}
-                      value={form.api_key}
-                      rows={8}
-                      className="min-h-32 w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300"
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-                    />
-                  ) : (
-                    <div className="relative">
-                      <Input
-                        placeholder="sk-..."
-                        type={showCreateApiKey ? "text" : "password"}
-                        value={form.api_key}
-                        className="pr-10"
-                        onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowCreateApiKey((prev) => !prev)}
-                        className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                        aria-label={showCreateApiKey ? (isZh ? "隐藏 API Key" : "Hide API key") : (isZh ? "显示 API Key" : "Show API key")}
-                      >
-                        {showCreateApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
+                    isZh={isZh}
+                  />
+                ))}
               {createResolvedAuthMode !== "oauth" && (
               <div className="space-y-2">
                 <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
@@ -1720,7 +1832,8 @@ export default function ProvidersPage() {
                     createMut.isPending
                     || createOAuthMut.isPending
                     || !form.name.trim()
-                    || (createResolvedAuthMode === "apikey" && !form.api_key)
+                    || (createResolvedAuthMode === "apikey" && missingRequiredCredentials(createCredentialFields, form.credentials ?? {}))
+                    || (createResolvedAuthMode === "apikey" && createBaseUrlMissing)
                     || (createResolvedAuthMode === "oauth" && !createOAuthReady)
                   }
                 >
@@ -1774,6 +1887,11 @@ export default function ProvidersPage() {
               );
               const editingResolvedAuthMode = presetChannelAuthMode(editingPreset, editingChannelValue);
               const editUsesVertexServiceAccount = isVertexProviderSelection(editForm);
+              const editCredentialFields = credentialFieldsForPreset(editingPreset);
+              const editPresetBaseUrl = editingPreset
+                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-compatible", editingChannelValue).baseUrl
+                : "";
+              const editBaseUrlMissing = !editPresetBaseUrl && !editForm.base_url?.trim();
               const currentProviderIsOAuth =
                 normalizeAuthMode(p.auth_mode) === "oauth"
                 || normalizeAuthMode(editForm.auth_mode) === "oauth";
@@ -2087,49 +2205,22 @@ export default function ProvidersPage() {
                         onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                       />
                     </div>
-                    {editingResolvedAuthMode !== "oauth" ? (
-                      <div className={editUsesVertexServiceAccount ? "col-span-2 space-y-2" : "space-y-2"}>
-                        <FieldLabel
-                          info={
-                            editUsesVertexServiceAccount
-                              ? (isZh ? "粘贴 Google Cloud 服务账号 JSON，需包含 project_id、client_email、private_key。" : "Paste the Google Cloud service account JSON with project_id, client_email, and private_key.")
-                              : undefined
-                          }
-                        >
-                          {editUsesVertexServiceAccount ? (isZh ? "服务账号 JSON" : "Service Account JSON") : (isZh ? "API Key" : "API Key")}
-                        </FieldLabel>
-                        {editUsesVertexServiceAccount ? (
-                          <textarea
-                            placeholder={isZh ? "{\n  \"project_id\": \"...\",\n  \"client_email\": \"...\",\n  \"private_key\": \"-----BEGIN PRIVATE KEY-----\\n...\"\n}" : "{\n  \"project_id\": \"...\",\n  \"client_email\": \"...\",\n  \"private_key\": \"-----BEGIN PRIVATE KEY-----\\n...\"\n}"}
-                            value={editForm.api_key ?? ""}
-                            rows={8}
-                            className="min-h-32 w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300"
-                            autoCapitalize="none"
-                            autoCorrect="off"
-                            spellCheck={false}
-                            onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })}
+                    {editingResolvedAuthMode !== "oauth"
+                      ? editCredentialFields.map((field) => (
+                          <CredentialFieldInput
+                            key={field.name}
+                            field={field}
+                            value={editForm.credentials?.[field.name] ?? ""}
+                            onChange={(value) =>
+                              setEditForm((prev) => ({
+                                ...prev,
+                                credentials: { ...(prev.credentials ?? {}), [field.name]: value },
+                              }))
+                            }
+                            isZh={isZh}
                           />
-                        ) : (
-                          <div className="relative">
-                            <Input
-                              placeholder="sk-..."
-                              type={showEditApiKey ? "text" : "password"}
-                              value={editForm.api_key ?? ""}
-                              className="pr-10"
-                              onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowEditApiKey((prev) => !prev)}
-                              className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                              aria-label={showEditApiKey ? (isZh ? "隐藏 API Key" : "Hide API key") : (isZh ? "显示 API Key" : "Show API key")}
-                            >
-                              {showEditApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ) : null}
+                        ))
+                      : null}
                     {editingResolvedAuthMode !== "oauth" ? (
                     <div className="space-y-2">
                       <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
@@ -2237,11 +2328,20 @@ export default function ProvidersPage() {
                           channel: editForm.channel || undefined,
                           models_source: editForm.models_source ?? "",
                           static_models: editForm.static_models || undefined,
-                          api_key: editForm.api_key || undefined,
+                          credentials: editForm.credentials && Object.keys(editForm.credentials).length
+                            ? editForm.credentials
+                            : undefined,
                         };
                         updateMut.mutate({ id: editForm.id, ...input });
                       }}
-                      disabled={updateMut.isPending || editRequiresNewOAuthProvider || reconnectOAuthMut.isPending || logoutOAuthMut.isPending}
+                      disabled={
+                        updateMut.isPending
+                        || editRequiresNewOAuthProvider
+                        || reconnectOAuthMut.isPending
+                        || logoutOAuthMut.isPending
+                        || (editingResolvedAuthMode === "apikey" && missingRequiredCredentials(editCredentialFields, editForm.credentials ?? {}))
+                        || (editingResolvedAuthMode === "apikey" && editBaseUrlMissing)
+                      }
                     >
                       {updateMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
                     </Button>

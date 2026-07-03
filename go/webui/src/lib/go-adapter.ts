@@ -51,6 +51,20 @@ function apiKeyFromCredentials(value: unknown): string {
   return stringValue(parseJSONRecord(value).api_key) ?? "";
 }
 
+// credentialsRecord flattens an upstream's opaque credentials JSON blob into a
+// string-keyed record for editing in the WebUI's dynamic credential-field
+// form. Non-string values (should not normally occur) are stringified rather
+// than dropped, so round-tripping through the form never silently loses data.
+function credentialsRecord(value: unknown): Record<string, string> {
+  const parsed = parseJSONRecord(value);
+  const out: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(parsed)) {
+    if (typeof raw === "string") out[key] = raw;
+    else if (raw != null) out[key] = String(raw);
+  }
+  return out;
+}
+
 function routeTargetFromModelBackend(target: CreateModelBackend | UpsertModelBackend): GoCreateRouteUpstream {
   return {
     upstream_id: target.provider_id,
@@ -61,22 +75,33 @@ function routeTargetFromModelBackend(target: CreateModelBackend | UpsertModelBac
   };
 }
 
-function quota(type: "requests" | "tokens", limit: number | undefined, window: string): GoCreateConsumerQuota | undefined {
+function quota(
+  type: "requests" | "tokens" | "concurrency",
+  limit: number | undefined,
+  window?: string,
+): GoCreateConsumerQuota | undefined {
   if (limit == null || Number.isNaN(limit)) return undefined;
   return { quota_type: type, quota_limit: limit, window };
 }
 
-function quotasFromApiKey(input: Pick<CreateApiKey | UpdateApiKey, "rpm" | "rpd" | "tpm" | "tpd">): GoCreateConsumerQuota[] {
+function quotasFromApiKey(
+  input: Pick<CreateApiKey | UpdateApiKey, "rpm" | "rpd" | "tpm" | "tpd" | "max_requests">,
+): GoCreateConsumerQuota[] {
   return [
     quota("requests", input.rpm, "1m"),
     quota("requests", input.rpd, "24h"),
     quota("tokens", input.tpm, "1m"),
     quota("tokens", input.tpd, "24h"),
+    quota("concurrency", input.max_requests, undefined),
   ].filter((item): item is GoCreateConsumerQuota => Boolean(item));
 }
 
-function quotaValue(quotas: GoConsumerQuota[], type: string, window: string): number | null {
-  return quotas.find((item) => item.quota_type === type && item.window === window)?.quota_limit ?? null;
+// quotaValue looks up a quota's limit by (type, window). `window` is
+// normalized through `?? undefined` on both sides so that a concurrency
+// quota's NULL/absent window (serialized as either `undefined` or JSON
+// `null`) matches the lookup key `undefined` consistently.
+function quotaValue(quotas: GoConsumerQuota[], type: string, window: string | undefined): number | null {
+  return quotas.find((item) => item.quota_type === type && (item.window ?? undefined) === window)?.quota_limit ?? null;
 }
 
 export function providerFromUpstream(upstream: GoUpstream): Provider {
@@ -88,6 +113,7 @@ export function providerFromUpstream(upstream: GoUpstream): Provider {
     protocol: upstream.protocol ?? "",
     base_url: upstream.base_url ?? "",
     api_key: apiKeyFromCredentials(upstream.credentials),
+    credentials: credentialsRecord(upstream.credentials),
     use_proxy: Boolean(upstream.proxy_url),
     auth_mode: "apikey",
     preset_key: stringValue(models.preset_key) ?? upstream.provider,
@@ -102,12 +128,16 @@ export function providerFromUpstream(upstream: GoUpstream): Provider {
 
 export function createUpstreamFromProvider(input: CreateProvider): GoCreateUpstream {
   const provider = input.vendor || input.preset_key || input.name;
+  const credentials =
+    input.credentials && Object.keys(input.credentials).length > 0
+      ? input.credentials
+      : { api_key: input.api_key };
   return {
     name: input.name,
     provider,
     protocol: input.protocol,
     base_url: input.base_url,
-    credentials: { api_key: input.api_key },
+    credentials,
     models: {
       preset_key: input.preset_key ?? provider,
       channel: input.channel,
@@ -127,7 +157,11 @@ export function updateUpstreamFromProvider(input: UpdateProvider): GoUpdateUpstr
   }
   if (input.protocol !== undefined) out.protocol = input.protocol;
   if (input.base_url !== undefined) out.base_url = input.base_url;
-  if (input.api_key !== undefined) out.credentials = { api_key: input.api_key };
+  if (input.credentials !== undefined) {
+    out.credentials = input.credentials;
+  } else if (input.api_key !== undefined) {
+    out.credentials = { api_key: input.api_key };
+  }
   if (input.use_proxy !== undefined) out.proxy_url = input.use_proxy ? "enabled" : "";
   if (input.is_enabled !== undefined) out.enabled = input.is_enabled;
   if (
@@ -220,6 +254,7 @@ export function apiKeyFromConsumer(consumer: GoConsumer): ApiKey {
     rpd: quotaValue(quotas, "requests", "24h"),
     tpm: quotaValue(quotas, "tokens", "1m"),
     tpd: quotaValue(quotas, "tokens", "24h"),
+    max_requests: quotaValue(quotas, "concurrency", undefined),
     is_enabled: consumer.enabled,
     expires_at: firstKey?.expires_at ?? null,
     created_at: consumer.created_at ?? firstKey?.created_at ?? "",
@@ -261,5 +296,6 @@ export function providerPresetFromGoPreset(preset: GoProviderPreset): ProviderPr
     icon: preset.id,
     defaultProtocol: preset.default_protocol,
     channels,
+    credentialFields: preset.credentials?.fields ?? [],
   };
 }
