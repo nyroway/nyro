@@ -502,6 +502,11 @@ export default function ApiKeysPage() {
 
                     <div className="space-y-3">
                       <p className="text-sm font-semibold text-slate-700">{isZh ? "2. 访问权限" : "2. Access Permission"}</p>
+                      <p className="text-xs text-slate-500">
+                        {isZh
+                          ? "模型访问权限编辑暂不支持，以下仅展示当前值(只读)。"
+                          : "Model access editing is not supported yet; values below are read-only."}
+                      </p>
                       <div className="space-y-2">
                         <FieldLabel>
                           {isZh
@@ -516,6 +521,7 @@ export default function ApiKeysPage() {
                           }
                           searchPlaceholder={isZh ? "搜索路由..." : "Search routes..."}
                           emptyText={isZh ? "无匹配路由" : "No matching routes"}
+                          disabled
                           onChange={(next) =>
                             setEditForm((prev) => (prev ? { ...prev, model_ids: next } : prev))
                           }

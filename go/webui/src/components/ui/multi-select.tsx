@@ -24,6 +24,7 @@ interface MultiSelectProps {
   emptyText?: string;
   onChange?: (values: string[]) => void;
   className?: string;
+  disabled?: boolean;
 }
 
 export function MultiSelect({
@@ -34,12 +35,14 @@ export function MultiSelect({
   emptyText = "无匹配结果",
   onChange,
   className,
+  disabled = false,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false);
   const [internalSelected, setInternalSelected] = React.useState<string[]>(values ?? []);
   const selected = values ?? internalSelected;
 
   const toggle = (value: string) => {
+    if (disabled) return;
     const next = selected.includes(value)
       ? selected.filter(v => v !== value)
       : [...selected, value];
@@ -48,6 +51,7 @@ export function MultiSelect({
   };
 
   const remove = (value: string) => {
+    if (disabled) return;
     const next = selected.filter(v => v !== value);
     if (values === undefined) setInternalSelected(next);
     onChange?.(next);
@@ -60,11 +64,14 @@ export function MultiSelect({
   }, [values]);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={disabled ? false : open} onOpenChange={disabled ? undefined : setOpen}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
           role="combobox"
+          type="button"
+          disabled={disabled}
+          aria-disabled={disabled}
           className={cn("w-full justify-start h-auto min-h-10 flex-wrap gap-1", className)}
         >
           {selected.length === 0 ? (
@@ -75,10 +82,12 @@ export function MultiSelect({
               return (
                 <Badge key={val} variant="secondary" className="gap-1">
                   {label}
-                  <X
-                    className="h-3 w-3 cursor-pointer"
-                    onClick={e => { e.stopPropagation(); remove(val) }}
-                  />
+                  {!disabled && (
+                    <X
+                      className="h-3 w-3 cursor-pointer"
+                      onClick={e => { e.stopPropagation(); remove(val) }}
+                    />
+                  )}
                 </Badge>
               )
             })
