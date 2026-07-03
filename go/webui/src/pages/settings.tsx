@@ -85,6 +85,20 @@ function parseRetryOnStatus(raw: string | null | undefined): string {
   return raw;
 }
 
+// GO_DURATION_RE approximates Go's time.ParseDuration syntax closely enough
+// to catch the common mistake of typing a bare number (e.g. "120") with no
+// unit suffix, which parses fine client-side but is rejected server-side
+// (go/internal/proxy/gateway.go), silently leaving the old value in effect.
+// This is intentionally not a full Go duration parser — it accepts one or
+// more concatenated (number, unit) pairs such as "120s", "2m", or "1h30m".
+const GO_DURATION_RE = /^(\d+(\.\d+)?(ns|µs|us|ms|s|m|h))+$/;
+
+function isValidGoDuration(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return true; // empty falls back to the default on save
+  return GO_DURATION_RE.test(trimmed);
+}
+
 function encodeRetryOnStatus(text: string): string | null {
   const codes = text
     .split(",")
@@ -221,6 +235,9 @@ export default function SettingsPage() {
     retryOnStatus: parseRetryOnStatus(proxyRetryOnStatusSetting),
     maxBodyBytes: (proxyMaxBodyBytesSetting ?? PROXY_MAX_BODY_BYTES_DEFAULT).trim(),
   };
+  const requestTimeoutInvalid = !isValidGoDuration(proxyRequestTimeout);
+  const connectTimeoutInvalid = !isValidGoDuration(proxyConnectTimeout);
+
   const proxyDirty =
     proxyEnabled !== proxyBaseline.enabled
     || proxyUrl.trim() !== proxyBaseline.url
@@ -437,6 +454,15 @@ export default function SettingsPage() {
       });
       return;
     }
+    if (requestTimeoutInvalid || connectTimeoutInvalid) {
+      setErrorDialog({
+        title: isZh ? "无法保存代理配置" : "Cannot Save Proxy Settings",
+        description: isZh
+          ? "请求超时/连接超时必须是 Go duration 格式，如 120s、2m、1h30m。"
+          : "Request Timeout / Connect Timeout must be a Go duration, e.g. 120s, 2m, 1h30m.",
+      });
+      return;
+    }
     saveProxyMut.mutate({
       enabled: proxyEnabled,
       url,
@@ -534,7 +560,13 @@ export default function SettingsPage() {
                   placeholder={PROXY_REQUEST_TIMEOUT_DEFAULT}
                   value={proxyRequestTimeout}
                   onChange={(e) => setProxyRequestTimeout(e.target.value)}
+                  className={requestTimeoutInvalid ? "border-red-400 focus-visible:ring-red-400" : undefined}
                 />
+                {requestTimeoutInvalid && (
+                  <p className="text-xs text-red-600">
+                    {isZh ? "需要带单位，如 120s、2m" : "Needs a unit, e.g. 120s, 2m"}
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
@@ -551,7 +583,13 @@ export default function SettingsPage() {
                   placeholder={PROXY_CONNECT_TIMEOUT_DEFAULT}
                   value={proxyConnectTimeout}
                   onChange={(e) => setProxyConnectTimeout(e.target.value)}
+                  className={connectTimeoutInvalid ? "border-red-400 focus-visible:ring-red-400" : undefined}
                 />
+                {connectTimeoutInvalid && (
+                  <p className="text-xs text-red-600">
+                    {isZh ? "需要带单位，如 30s、1m" : "Needs a unit, e.g. 30s, 1m"}
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <label className="ml-1 text-xs text-slate-700">{isZh ? "最大重试次数" : "Max Retries"}</label>
@@ -594,7 +632,7 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2">
               <Button
                 onClick={handleSaveProxy}
-                disabled={saveProxyMut.isPending || !proxyDirty}
+                disabled={saveProxyMut.isPending || !proxyDirty || requestTimeoutInvalid || connectTimeoutInvalid}
                 size="sm"
                 className="flex items-center gap-1.5"
               >

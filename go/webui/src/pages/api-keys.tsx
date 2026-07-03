@@ -596,7 +596,7 @@ export default function ApiKeysPage() {
                             onChange={(e) =>
                               setEditForm((prev) => (prev ? { ...prev, max_requests: digitsOnly(e.target.value) } : prev))
                             }
-                            placeholder={isZh ? "留空=不限" : "Empty = unlimited"}
+                            placeholder={isZh ? "留空=不限，同时处理的最大请求数" : "Empty = unlimited, max in-flight requests"}
                           />
                         </div>
                       </div>

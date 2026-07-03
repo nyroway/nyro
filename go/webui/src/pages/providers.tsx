@@ -331,10 +331,22 @@ function missingRequiredCredentials(fields: ProviderCredentialField[], values: R
   return fields.some((field) => isCredentialFieldRequired(field, values) && !(values[field.name] ?? "").trim());
 }
 
-function defaultCredentialValues(fields: ProviderCredentialField[]): Record<string, string> {
+// mergeCredentialValues carries over already-typed credential values when the
+// user switches presets mid-edit/mid-create: a field name that exists in both
+// the old and new preset keeps its typed value, while a field new to this
+// preset falls back to its declared default.
+function mergeCredentialValues(
+  fields: ProviderCredentialField[],
+  prevValues: Record<string, string>,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const field of fields) {
-    if (field.default) out[field.name] = field.default;
+    const prevValue = prevValues[field.name];
+    if (prevValue) {
+      out[field.name] = prevValue;
+    } else if (field.default) {
+      out[field.name] = field.default;
+    }
   }
   return out;
 }
@@ -1233,7 +1245,7 @@ export default function ProvidersPage() {
       models_source: config.modelsSource,
       static_models: config.staticModels,
       api_key: config.apiKey || "",
-      credentials: defaultCredentialValues(credentialFieldsForPreset(preset)),
+      credentials: mergeCredentialValues(credentialFieldsForPreset(preset), form.credentials ?? {}),
       name: "",
     });
   }
@@ -1304,7 +1316,7 @@ export default function ProvidersPage() {
               models_source: config.modelsSource,
               static_models: config.staticModels,
               api_key: config.apiKey || prev.api_key,
-              credentials: defaultCredentialValues(credentialFieldsForPreset(preset)),
+              credentials: mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {}),
             };
           })()
         : prev,
