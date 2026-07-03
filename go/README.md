@@ -56,3 +56,39 @@ go run . gateway                    # data plane, listens on 127.0.0.1:19530
 go test ./...
 go vet ./...
 ```
+
+## Go WebUI
+
+The Go admin control plane has its own management console at `go/webui/`,
+targeting the Go admin API schema directly (upstreams, routes, consumers,
+settings, logs, stats). It is a separate app from the root `webui/` (Rust
+implementation, kept running in parallel until cutover — see
+`go/docs/cutover.md`).
+
+**Dev workflow** — run the frontend against a live admin API with hot reload:
+
+```bash
+cd go/webui
+npm install
+npm run lint
+npm run build
+cd ..
+go run . admin --webui-dir ./webui/dist
+```
+
+**Release-embedding workflow** — bake the built assets into the `nyro`
+binary so no external `--webui-dir` is needed at deploy time:
+
+```bash
+cd go/webui && npm install && npm run build   # produces go/webui/dist
+cd ..
+rm -rf internal/webui/dist
+mkdir -p internal/webui/dist
+cp -R webui/dist/. internal/webui/dist/
+go build -tags webui_embed -o bin/nyro .
+```
+
+The embed build tag is `webui_embed` (see `internal/webui/embed_enabled.go`
+and `internal/webui/embed_disabled.go`). The equivalent `make` targets are
+`go-webui-build`, `go-webui-embed-assets`, `go-webui-embed-build`, and
+`go-webui-embed-run` (see the repo-root `Makefile`).

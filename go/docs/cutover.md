@@ -4,6 +4,12 @@ The Go gateway (`go/`) is feature-complete and tested. This runbook covers the
 dual-run shadow phase and the cutover from the Rust gateway. It is an
 **operational** checklist — the code is done; this is deployment.
 
+> **WebUI note:** the root `webui/` directory is Rust-only for the duration
+> of the parallel period — it targets the Rust admin API and is not being
+> ported. Go WebUI work lives entirely in `go/webui/`, targets the Go admin
+> API schema directly, and is documented in `go/README.md` (## Go WebUI) and
+> `go/webui/README.md`.
+
 ## 0. Build the Go gateway
 
 ```bash
