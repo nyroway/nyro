@@ -527,6 +527,11 @@ export default function ApiKeysPage() {
 
                     <div className="space-y-3">
                       <p className="text-sm font-semibold text-slate-700">{isZh ? "3. 访问限额" : "3. Access Quota"}</p>
+                      <p className="text-xs text-slate-500">
+                        {isZh
+                          ? "配额编辑暂不支持，以下仅展示当前值(只读)。"
+                          : "Quota editing is not supported yet; values below are read-only."}
+                      </p>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <FieldLabel>TPM</FieldLabel>
@@ -535,6 +540,7 @@ export default function ApiKeysPage() {
                             inputMode="numeric"
                             pattern="[0-9]*"
                             value={editForm.tpm}
+                            disabled
                             onChange={(e) =>
                               setEditForm((prev) => (prev ? { ...prev, tpm: digitsOnly(e.target.value) } : prev))
                             }
@@ -547,6 +553,7 @@ export default function ApiKeysPage() {
                             inputMode="numeric"
                             pattern="[0-9]*"
                             value={editForm.tpd}
+                            disabled
                             onChange={(e) =>
                               setEditForm((prev) => (prev ? { ...prev, tpd: digitsOnly(e.target.value) } : prev))
                             }
@@ -559,6 +566,7 @@ export default function ApiKeysPage() {
                             inputMode="numeric"
                             pattern="[0-9]*"
                             value={editForm.rpm}
+                            disabled
                             onChange={(e) =>
                               setEditForm((prev) => (prev ? { ...prev, rpm: digitsOnly(e.target.value) } : prev))
                             }
@@ -571,6 +579,7 @@ export default function ApiKeysPage() {
                             inputMode="numeric"
                             pattern="[0-9]*"
                             value={editForm.rpd}
+                            disabled
                             onChange={(e) =>
                               setEditForm((prev) => (prev ? { ...prev, rpd: digitsOnly(e.target.value) } : prev))
                             }
@@ -583,6 +592,7 @@ export default function ApiKeysPage() {
                             inputMode="numeric"
                             pattern="[0-9]*"
                             value={editForm.max_requests}
+                            disabled
                             onChange={(e) =>
                               setEditForm((prev) => (prev ? { ...prev, max_requests: digitsOnly(e.target.value) } : prev))
                             }
