@@ -67,6 +67,21 @@ const OBS_TRACES_RETENTION_DEFAULT = "3";
 
 const SINK_OPTIONS = ["", "none", "stdout", "otlp"] as const;
 
+// Radix's <Select.Item> forbids value="" (it reserves the empty string to mean
+// "clear selection / show placeholder"), but "" is this page's real inherit-default
+// state everywhere else (settings payload, baseline diffing). Only the rendered
+// <SelectItem> uses this sentinel; translate at the Select boundary via
+// sinkSelectValue/sinkStateValue so "" keeps flowing through the rest of the page.
+const SINK_INHERIT_SENTINEL = "__inherit__";
+
+function sinkSelectValue(value: string): string {
+  return value === "" ? SINK_INHERIT_SENTINEL : value;
+}
+
+function sinkStateValue(value: string): string {
+  return value === SINK_INHERIT_SENTINEL ? "" : value;
+}
+
 function sinkOptionLabel(value: string, isZh: boolean) {
   if (value === "") return isZh ? "（默认继承）" : "(inherit default)";
   if (value === "none") return isZh ? "关闭" : "None";
@@ -659,13 +674,13 @@ export default function SettingsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="ml-1 text-xs text-slate-700">{isZh ? "日志导出" : "Logs Sink"}</label>
-                <Select value={obsLogsSink} onValueChange={setObsLogsSink}>
+                <Select value={sinkSelectValue(obsLogsSink)} onValueChange={(v) => setObsLogsSink(sinkStateValue(v))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {SINK_OPTIONS.map((option) => (
-                      <SelectItem key={option || "inherit"} value={option}>
+                      <SelectItem key={option || "inherit"} value={sinkSelectValue(option)}>
                         {sinkOptionLabel(option, isZh)}
                       </SelectItem>
                     ))}
@@ -674,13 +689,13 @@ export default function SettingsPage() {
               </div>
               <div className="space-y-1.5">
                 <label className="ml-1 text-xs text-slate-700">{isZh ? "指标导出" : "Metrics Sink"}</label>
-                <Select value={obsMetricsSink} onValueChange={setObsMetricsSink}>
+                <Select value={sinkSelectValue(obsMetricsSink)} onValueChange={(v) => setObsMetricsSink(sinkStateValue(v))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {SINK_OPTIONS.map((option) => (
-                      <SelectItem key={option || "inherit"} value={option}>
+                      <SelectItem key={option || "inherit"} value={sinkSelectValue(option)}>
                         {sinkOptionLabel(option, isZh)}
                       </SelectItem>
                     ))}
@@ -689,13 +704,13 @@ export default function SettingsPage() {
               </div>
               <div className="space-y-1.5">
                 <label className="ml-1 text-xs text-slate-700">{isZh ? "链路追踪导出" : "Traces Sink"}</label>
-                <Select value={obsTracesSink} onValueChange={setObsTracesSink}>
+                <Select value={sinkSelectValue(obsTracesSink)} onValueChange={(v) => setObsTracesSink(sinkStateValue(v))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {SINK_OPTIONS.map((option) => (
-                      <SelectItem key={option || "inherit"} value={option}>
+                      <SelectItem key={option || "inherit"} value={sinkSelectValue(option)}>
                         {sinkOptionLabel(option, isZh)}
                       </SelectItem>
                     ))}
