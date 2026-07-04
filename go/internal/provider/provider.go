@@ -118,8 +118,7 @@ func Register(p Provider) {
 }
 
 // Get returns a registered provider by id (data-plane entry: holds behavior).
-// id is normalized first so common aliases (zhipu, z.ai, grok, ...) resolve
-// to their canonical registration.
+// id is normalized first (trimmed, lowercased) before registry lookup.
 func Get(id string) (Provider, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
@@ -154,18 +153,11 @@ func Resolve(id string) Provider {
 	return p
 }
 
-// normalizeID maps common vendor id aliases to their canonical registration.
+// normalizeID trims and lowercases id before registry lookup. Vendor id
+// aliases (zhipu, z.ai, grok, ...) are reintroduced here if/when those
+// providers are re-added.
 func normalizeID(id string) string {
-	id = strings.TrimSpace(strings.ToLower(id))
-	switch id {
-	case "zhipu", "glm":
-		return "zhipuai"
-	case "z.ai":
-		return "zai"
-	case "grok":
-		return "xai"
-	}
-	return id
+	return strings.TrimSpace(strings.ToLower(id))
 }
 
 // List returns all providers in stable ID order (data-plane).

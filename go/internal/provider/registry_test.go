@@ -10,11 +10,12 @@ import (
 
 // allBuiltinIDs is the full set of built-in provider IDs; tests iterate it to
 // guarantee every vendor is registered with a provider-specific concrete type.
+//
+// Temporarily reduced to anthropic/openai/gemini/deepseek/openrouter plus the
+// custom fallback; other vendor providers were removed and can be reinstated
+// (with their own files) later.
 var allBuiltinIDs = []string{
-	"openai", "anthropic", "gemini", "deepseek",
-	"moonshotai", "zhipuai", "xai", "openrouter",
-	"nvidia", "minimax", "zai", "ollama",
-	"aws-bedrock", "gcp-vertex", "azure-foundry", "custom",
+	"openai", "anthropic", "gemini", "deepseek", "openrouter", "custom",
 }
 
 func TestProvidersAreConcreteImplementations(t *testing.T) {
@@ -56,10 +57,9 @@ func TestHealthCheckModelFallsBackToFirstDiscoveredStaticModel(t *testing.T) {
 	}
 }
 
-func TestGetNormalizesAliases(t *testing.T) {
+func TestGetNormalizesID(t *testing.T) {
 	cases := map[string]string{
-		"zhipu": "zhipuai", "glm": "zhipuai", "GLM": "zhipuai",
-		"z.ai": "zai", "grok": "xai", " XAI ": "xai",
+		"OpenAI": "openai", " anthropic ": "anthropic",
 	}
 	for alias, want := range cases {
 		p, ok := provider.Get(alias)
@@ -72,10 +72,10 @@ func TestGetNormalizesAliases(t *testing.T) {
 	}
 }
 
-func TestLookupNormalizesAliases(t *testing.T) {
-	def, ok := provider.Lookup("zhipu")
-	if !ok || def.ID != "zhipuai" {
-		t.Fatalf("Lookup(zhipu) = %+v, %v; want zhipuai", def, ok)
+func TestLookupNormalizesID(t *testing.T) {
+	def, ok := provider.Lookup(" OpenAI ")
+	if !ok || def.ID != "openai" {
+		t.Fatalf("Lookup(\" OpenAI \") = %+v, %v; want openai", def, ok)
 	}
 }
 
@@ -94,9 +94,9 @@ func TestResolveHitsRealProviderBeforeFallback(t *testing.T) {
 	if got := p.Definition().ID; got != "anthropic" {
 		t.Errorf("Resolve(anthropic) = %q, want anthropic (not custom fallback)", got)
 	}
-	// Alias normalization applies inside Resolve too (via Get).
-	if got := provider.Resolve("zhipu").Definition().ID; got != "zhipuai" {
-		t.Errorf("Resolve(zhipu) = %q, want zhipuai", got)
+	// ID normalization (trim/lowercase) applies inside Resolve too (via Get).
+	if got := provider.Resolve(" OpenAI ").Definition().ID; got != "openai" {
+		t.Errorf("Resolve(\" OpenAI \") = %q, want openai", got)
 	}
 }
 
