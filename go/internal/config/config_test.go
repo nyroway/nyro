@@ -23,7 +23,7 @@ settings:
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chatcompletions
+    protocol: openai-compatible
     base_url: https://api.openai.com
     credentials:
       api_key: sk-***
@@ -138,7 +138,7 @@ func TestApplyToUnknownRoute(t *testing.T) {
 func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
 	cfg := &Config{
 		Upstreams: []UpstreamSpec{{
-			Name: "openai", Provider: "openai", Protocol: "openai-chatcompletions",
+			Name: "openai", Provider: "openai", Protocol: "openai-compatible",
 			BaseURL: "https://api.openai.com", Credentials: map[string]string{"api_key": "sk-x"},
 		}},
 		Routes: []RouteSpec{{
@@ -262,7 +262,7 @@ version: 1
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chatcompletions
+    protocol: openai-compatible
     base_url: https://api.openai.com
     credentials:
       api_key: "${NYRO_TEST_API_KEY}"
@@ -293,7 +293,7 @@ version: 1
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chatcompletions
+    protocol: openai-compatible
     base_url: https://api.openai.com
     credentials:
       api_key: "${NYRO_TEST_DEFINITELY_UNSET_VAR}"

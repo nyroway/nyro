@@ -10,7 +10,7 @@ import (
 type GenerateContentHandler struct{}
 
 func (GenerateContentHandler) Endpoint() ids.ProtocolEndpoint {
-	return ids.GeminiGenerateContentV1Beta
+	return ids.GeminiContentV1Beta
 }
 
 func (GenerateContentHandler) MakeRequestDecoder() codec.RequestDecoder { return requestDecoder{} }

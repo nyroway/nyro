@@ -12,10 +12,10 @@ func init() {
 		Def: Definition{
 			ID:              "openrouter",
 			Name:            "OpenRouter",
-			DefaultProtocol: ProtocolOpenAIChatCompletions,
+			DefaultProtocol: ProtocolOpenAICompatible,
 			Protocols: []Protocol{
 				// All three live under /api/v1: chat/completions, responses, messages.
-				{ID: ProtocolOpenAIChatCompletions, BaseURL: "https://openrouter.ai/api/v1"},
+				{ID: ProtocolOpenAICompatible, BaseURL: "https://openrouter.ai/api/v1"},
 				{ID: ProtocolOpenAIResponses, BaseURL: "https://openrouter.ai/api/v1"},
 				{ID: ProtocolAnthropicMessages, BaseURL: "https://openrouter.ai/api/v1"},
 			},

@@ -7,11 +7,11 @@ import (
 
 // ChatCompletionsHandler is the OpenAI-compatible /v1/chat/completions
 // codec.EndpointHandler. Registering it in init() makes it discoverable via
-// codec.Get(ids.OpenAIChatCompletionsV1).
+// codec.Get(ids.OpenAICompatibleChatCompletionsV1).
 type ChatCompletionsHandler struct{}
 
 func (ChatCompletionsHandler) Endpoint() ids.ProtocolEndpoint {
-	return ids.OpenAIChatCompletionsV1
+	return ids.OpenAICompatibleChatCompletionsV1
 }
 
 func (ChatCompletionsHandler) MakeRequestDecoder() codec.RequestDecoder   { return requestDecoder{} }

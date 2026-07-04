@@ -6,11 +6,11 @@ import "github.com/nyroway/nyro/go/internal/protocol/ids"
 // These untyped aliases exist so provider code and storage rows, which carry
 // protocols as plain strings, can compare without conversions.
 const (
-	ProtocolOpenAIChatCompletions = string(ids.ProtocolOpenAIChatCompletions)
-	ProtocolOpenAIResponses       = string(ids.ProtocolOpenAIResponses)
-	ProtocolAnthropicMessages     = string(ids.ProtocolAnthropicMessages)
-	ProtocolGeminiGenerateContent = string(ids.ProtocolGeminiGenerateContent)
-	ProtocolGeminiInteractions    = string(ids.ProtocolGeminiInteractions)
-	ProtocolBedrockConverse       = string(ids.ProtocolBedrockConverse)
-	ProtocolAzureModelInference   = string(ids.ProtocolAzureModelInference)
+	ProtocolOpenAICompatible   = string(ids.ProtocolOpenAICompatible)
+	ProtocolOpenAIResponses    = string(ids.ProtocolOpenAIResponses)
+	ProtocolAnthropicMessages  = string(ids.ProtocolAnthropicMessages)
+	ProtocolGeminiContent      = string(ids.ProtocolGeminiContent)
+	ProtocolGeminiInteractions = string(ids.ProtocolGeminiInteractions)
+	ProtocolBedrockConverse    = string(ids.ProtocolBedrockConverse)
+	ProtocolAzureInference     = string(ids.ProtocolAzureInference)
 )

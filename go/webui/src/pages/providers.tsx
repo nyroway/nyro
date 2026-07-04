@@ -70,7 +70,7 @@ function protocolUrl(protocol: string) {
 const emptyCreate: CreateProvider = {
   name: "",
   vendor: undefined,
-  protocol: "openai-chatcompletions",
+  protocol: "openai-compatible",
   base_url: "https://api.openai.com/v1",
   use_proxy: false,
   auth_mode: "apikey",
@@ -84,15 +84,15 @@ const emptyCreate: CreateProvider = {
 const PAGE_SIZE = 7;
 const DEFAULT_PRESET_ID = "nyro";
 // Only protocols with a registered codec are user-selectable here.
-// gemini-interactions/bedrock-converse/azure-modelinference are declared in
+// gemini-interactions/bedrock-converse/azure-inference are declared in
 // ProviderProtocol (and on the backend, go/internal/protocol/ids) but have
 // no codec yet — offering them would let a user pick a protocol that fails
 // at request time.
 const protocolOptions = [
   { label: "Anthropic Messages API", value: "anthropic-messages" },
-  { label: "OpenAI Chat Completions API", value: "openai-chatcompletions" },
+  { label: "OpenAI Compatible API", value: "openai-compatible" },
   { label: "OpenAI Responses API", value: "openai-responses" },
-  { label: "Gemini generateContent API", value: "gemini-generatecontent" },
+  { label: "Gemini Content API", value: "gemini-content" },
 ] as const satisfies ReadonlyArray<{ label: string; value: ProviderProtocol }>;
 
 function validateProviderEndpoint(
@@ -148,7 +148,7 @@ function resolvePresetProtocol(
   preferred?: ProviderProtocol,
 ): ProviderProtocol {
   const available = availableProtocolsForPreset(preset, channelId);
-  const canonicalDefault = (resolveProtocol(preset.defaultProtocol) ?? "openai-chatcompletions") as ProviderProtocol;
+  const canonicalDefault = (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol;
   if (preferred && available.includes(preferred)) return preferred;
   if (available.includes(canonicalDefault)) return canonicalDefault;
   return available[0] ?? canonicalDefault;
@@ -183,7 +183,7 @@ function defaultModelsEndpoint(baseUrl: string, protocol: ProviderProtocol) {
     parsed = null;
   }
 
-  if (protocol === "openai-chatcompletions" || protocol === "openai-responses" || protocol === "anthropic-messages") {
+  if (protocol === "openai-compatible" || protocol === "openai-responses" || protocol === "anthropic-messages") {
     // OpenRouter model discovery endpoint should be /api/v1/models.
     if (parsed?.host === "openrouter.ai") {
       const pathname = parsed.pathname.replace(/\/+$/, "");
@@ -200,7 +200,7 @@ function defaultModelsEndpoint(baseUrl: string, protocol: ProviderProtocol) {
     }
   }
 
-  if (protocol === "gemini-generatecontent") {
+  if (protocol === "gemini-content") {
     return `${normalized}/v1beta/models`;
   }
 
@@ -215,7 +215,7 @@ function isVertexProviderSelection(value?: Pick<CreateProvider, "vendor" | "pres
 
 function defaultVertexBaseUrl(protocol: ProviderProtocol | string) {
   const base = "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global";
-  return protocol === "openai-chatcompletions" ? `${base}/endpoints/openapi` : base;
+  return protocol === "openai-compatible" ? `${base}/endpoints/openapi` : base;
 }
 
 function joinStaticModels(models?: string[]) {
@@ -234,7 +234,7 @@ function fallbackProviderPreset(): ProviderPreset {
   return {
     id: DEFAULT_PRESET_ID,
     label: { zh: "自定义", en: "Custom" },
-    defaultProtocol: "openai-chatcompletions",
+    defaultProtocol: "openai-compatible",
     channels: [],
   };
 }
@@ -1147,7 +1147,7 @@ export default function ProvidersPage() {
     };
 
     try {
-      const protocol = (resolveProtocol(provider.protocol || "openai") ?? "openai-chatcompletions") as ProviderProtocol;
+      const protocol = (resolveProtocol(provider.protocol || "openai") ?? "openai-compatible") as ProviderProtocol;
       const baseUrl = provider.base_url?.trim() ?? "";
 
       appendTestLog("info", isZh ? `开始测试 ${provider.name}...` : `Start testing ${provider.name}...`);
@@ -1205,7 +1205,7 @@ export default function ProvidersPage() {
       (item) => item.id === (p.preset_key || DEFAULT_PRESET_ID),
     );
     const channel = p.channel || "default";
-    const savedProtocol = (resolveProtocol(p.protocol) ?? "openai-chatcompletions") as ProviderProtocol;
+    const savedProtocol = (resolveProtocol(p.protocol) ?? "openai-compatible") as ProviderProtocol;
     const safeProtocol = presetForEdit
       ? resolvePresetProtocol(presetForEdit, channel, savedProtocol)
       : savedProtocol;
@@ -1234,7 +1234,7 @@ export default function ProvidersPage() {
     if (!preset) return;
 
     const nextChannelId = preset.channels?.[0]?.id ?? "";
-    const nextProtocol = resolvePresetProtocol(preset, nextChannelId, (resolveProtocol(preset.defaultProtocol) ?? "openai-chatcompletions") as ProviderProtocol);
+    const nextProtocol = resolvePresetProtocol(preset, nextChannelId, (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol);
     const config = resolvePresetConfig(preset, nextProtocol, nextChannelId);
     const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
 
@@ -1304,7 +1304,7 @@ export default function ProvidersPage() {
             const nextProtocol = resolvePresetProtocol(
               preset,
               nextChannelId,
-              (prev.protocol as ProviderProtocol) || (resolveProtocol(preset.defaultProtocol) ?? "openai-chatcompletions") as ProviderProtocol,
+              (prev.protocol as ProviderProtocol) || (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol,
             );
             const config = resolvePresetConfig(preset, nextProtocol, nextChannelId);
             const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
@@ -1350,7 +1350,7 @@ export default function ProvidersPage() {
   const createUsesVertexServiceAccount = isVertexProviderSelection(form);
   const createCredentialFields = credentialFieldsForPreset(selectedPreset);
   const createPresetBaseUrl = selectedPreset
-    ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-chatcompletions", createChannelValue).baseUrl
+    ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-compatible", createChannelValue).baseUrl
     : "";
   const createBaseUrlMissing = !createPresetBaseUrl && !form.base_url?.trim();
   const createOAuthReady = createOAuthStatus?.status === "ready";
@@ -1822,7 +1822,7 @@ export default function ProvidersPage() {
               <div className="flex gap-3">
                 <Button
                   onClick={() => {
-                    const protocol = form.protocol || "openai-chatcompletions";
+                    const protocol = form.protocol || "openai-compatible";
                     const baseUrl = toGatewayBaseUrl(form.base_url ?? "");
                     const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                     if (validation) {
@@ -1887,7 +1887,7 @@ export default function ProvidersPage() {
             const editingPresetId = editForm.preset_key || DEFAULT_PRESET_ID;
             const editingPreset =
               providerPresets.find((preset) => preset.id === editingPresetId) ?? providerPresets[0] ?? null;
-            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-chatcompletions") as ProviderProtocol];
+            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-compatible") as ProviderProtocol];
             const selectedPreset = providerPresets.find((preset) => preset.id === (p.preset_key || p.vendor || ""));
             const selectedProviderName = selectedPreset
               ? presetLabel(selectedPreset, isZh)
@@ -1906,7 +1906,7 @@ export default function ProvidersPage() {
               const editUsesVertexServiceAccount = isVertexProviderSelection(editForm);
               const editCredentialFields = credentialFieldsForPreset(editingPreset);
               const editPresetBaseUrl = editingPreset
-                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-chatcompletions", editingChannelValue).baseUrl
+                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-compatible", editingChannelValue).baseUrl
                 : "";
               const editBaseUrlMissing = !editPresetBaseUrl && !editForm.base_url?.trim();
               const currentProviderIsOAuth =
@@ -1996,7 +1996,7 @@ export default function ProvidersPage() {
                           const resolvedProtocol = resolvePresetProtocol(
                             editingPreset,
                             value,
-                            (editForm.protocol as ProviderProtocol) || (resolveProtocol(editingPreset.defaultProtocol) ?? "openai-chatcompletions") as ProviderProtocol,
+                            (editForm.protocol as ProviderProtocol) || (resolveProtocol(editingPreset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol,
                           );
                           const config = resolvePresetConfig(
                             editingPreset,
@@ -2328,7 +2328,7 @@ export default function ProvidersPage() {
                     <Button
                       onClick={() => {
                         setEditError(null);
-                        const protocol = editForm.protocol || "openai-chatcompletions";
+                        const protocol = editForm.protocol || "openai-compatible";
                         const baseUrl = toGatewayBaseUrl(editForm.base_url ?? "");
                         const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                         if (validation) {
@@ -2409,13 +2409,13 @@ export default function ProvidersPage() {
                             variant={
                               protocol === "anthropic-messages"
                                 ? "warning"
-                                : protocol === "gemini-generatecontent"
+                                : protocol === "gemini-content"
                                   ? "secondary"
                                   : "success"
                             }
-                            className={`connect-label-badge ${protocol === "gemini-generatecontent" ? "bg-violet-50 text-violet-700" : ""}`}
+                            className={`connect-label-badge ${protocol === "gemini-content" ? "bg-violet-50 text-violet-700" : ""}`}
                           >
-                            {PROTOCOL_TABLE.find((pt) => pt.id === protocol)?.displayName ?? protocol}
+                            {PROTOCOL_TABLE.find((pt) => pt.id === protocol)?.fullName ?? protocol}
                           </Badge>
                         ))}
                         {isGlobalProxyEnabled && p.use_proxy && (

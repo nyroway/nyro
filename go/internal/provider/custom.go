@@ -14,8 +14,8 @@ func init() {
 		Def: Definition{
 			ID:              "custom",
 			Name:            "Custom",
-			DefaultProtocol: ProtocolOpenAIChatCompletions,
-			Protocols:       []Protocol{{ID: ProtocolOpenAIChatCompletions}},
+			DefaultProtocol: ProtocolOpenAICompatible,
+			Protocols:       []Protocol{{ID: ProtocolOpenAICompatible}},
 			Models:          ModelDiscovery{Kind: KindStatic},
 			Credentials:     CredentialSchema{Fields: []CredentialField{{Name: "api_key", Type: "secret"}}},
 		},

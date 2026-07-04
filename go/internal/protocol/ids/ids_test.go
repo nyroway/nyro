@@ -8,11 +8,11 @@ func TestProtocolEndpointString(t *testing.T) {
 		ep   ProtocolEndpoint
 		want string
 	}{
-		{OpenAIChatCompletionsV1, "openai-chatcompletions/chat-completions/v1"},
+		{OpenAICompatibleChatCompletionsV1, "openai-compatible/chat-completions/v1"},
 		{OpenAIResponsesV1, "openai-responses/responses/v1"},
 		{AnthropicMessages20230601, "anthropic-messages/messages/2023-06-01"},
-		{GeminiGenerateContentV1Beta, "gemini-generatecontent/generate-content/v1beta"},
-		{OpenAIEmbeddingsV1, "openai-chatcompletions/embeddings/v1"},
+		{GeminiContentV1Beta, "gemini-content/generate-content/v1beta"},
+		{OpenAICompatibleEmbeddingsV1, "openai-compatible/embeddings/v1"},
 	}
 	for _, c := range cases {
 		if got := c.ep.String(); got != c.want {
@@ -24,20 +24,20 @@ func TestProtocolEndpointString(t *testing.T) {
 func TestParseProtocolAliases(t *testing.T) {
 	t.Parallel()
 	cases := map[string]Protocol{
-		"anthropic-messages":     ProtocolAnthropicMessages,
-		"claude":                 ProtocolAnthropicMessages,
-		"openai-chatcompletions": ProtocolOpenAIChatCompletions,
-		"openai":                 ProtocolOpenAIChatCompletions,
-		"openai-responses":       ProtocolOpenAIResponses,
-		"openaix":                ProtocolOpenAIResponses,
-		"gemini-generatecontent": ProtocolGeminiGenerateContent,
-		"gemini":                 ProtocolGeminiGenerateContent,
-		"gemini-interactions":    ProtocolGeminiInteractions,
-		"geminix":                ProtocolGeminiInteractions,
-		"bedrock-converse":       ProtocolBedrockConverse,
-		"bedrock":                ProtocolBedrockConverse,
-		"azure-modelinference":   ProtocolAzureModelInference,
-		"azure":                  ProtocolAzureModelInference,
+		"anthropic-messages":  ProtocolAnthropicMessages,
+		"claude":              ProtocolAnthropicMessages,
+		"openai-compatible":   ProtocolOpenAICompatible,
+		"openai":              ProtocolOpenAICompatible,
+		"openai-responses":    ProtocolOpenAIResponses,
+		"openaix":             ProtocolOpenAIResponses,
+		"gemini-content":      ProtocolGeminiContent,
+		"gemini":              ProtocolGeminiContent,
+		"gemini-interactions": ProtocolGeminiInteractions,
+		"geminix":             ProtocolGeminiInteractions,
+		"bedrock-converse":    ProtocolBedrockConverse,
+		"bedrock":             ProtocolBedrockConverse,
+		"azure-inference":     ProtocolAzureInference,
+		"azure":               ProtocolAzureInference,
 	}
 	for in, want := range cases {
 		got, err := ParseProtocol(in)
@@ -57,14 +57,17 @@ func TestParseProtocolAliases(t *testing.T) {
 	}
 }
 
-func TestDisplayNameCoversAllProtocols(t *testing.T) {
+func TestNameAndFullNameCoverAllProtocols(t *testing.T) {
 	t.Parallel()
 	for _, p := range []Protocol{
-		ProtocolAnthropicMessages, ProtocolOpenAIChatCompletions, ProtocolOpenAIResponses,
-		ProtocolGeminiGenerateContent, ProtocolGeminiInteractions, ProtocolBedrockConverse, ProtocolAzureModelInference,
+		ProtocolAnthropicMessages, ProtocolOpenAICompatible, ProtocolOpenAIResponses,
+		ProtocolGeminiContent, ProtocolGeminiInteractions, ProtocolBedrockConverse, ProtocolAzureInference,
 	} {
-		if got := p.DisplayName(); got == "Unknown" || got == "" {
-			t.Errorf("%q.DisplayName() = %q, want a real display name", p, got)
+		if got := p.Name(); got == "Unknown" || got == "" {
+			t.Errorf("%q.Name() = %q, want a real short name", p, got)
+		}
+		if got := p.FullName(); got == "Unknown" || got == "" {
+			t.Errorf("%q.FullName() = %q, want a real full name", p, got)
 		}
 	}
 }
