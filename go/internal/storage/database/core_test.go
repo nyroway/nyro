@@ -23,7 +23,7 @@ func TestUpstreamCRUD(t *testing.T) {
 	var s storage.Storage = b
 
 	created, err := s.Upstreams().Create(storage.CreateUpstream{
-		Name: "openai-main", Provider: "openai", Protocol: "openai-compatible",
+		Name: "openai-main", Provider: "openai", Protocol: "openai-chatcompletions",
 		BaseURL: "https://api.openai.com/v1",
 	})
 	if err != nil {

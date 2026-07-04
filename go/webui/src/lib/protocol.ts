@@ -1,25 +1,30 @@
 /**
- * Protocol utilities — mirrors the backend three-layer identity model.
+ * Protocol utilities — mirrors the backend three-layer identity model
+ * (go/internal/protocol/ids).
  *
  * Three orthogonal concepts:
- *   Protocol  — suite / wire-format family  (e.g. "openai-compatible")
+ *   Protocol  — suite / wire-format family  (e.g. "openai-chatcompletions")
  *   Endpoint  — specific API path           (e.g. "chat-completions")
  *   Vendor    — provider organisation       (e.g. "openai")
  *
  * UI only surfaces the Protocol display name; endpoints and versions are
  * internal implementation details not shown to users.
  *
- * Keep the alias table in sync with the Rust side:
- *   crates/nyro-core/src/protocol/registry.rs::default_protocol_aliases
+ * Each protocol has exactly one short alias — keep this table in sync with
+ * go/internal/protocol/ids/ids.go's ParseProtocol. There is no legacy/
+ * back-compat alias set: this schema has no released consumers yet.
  */
 
 // ── Protocol enum (canonical identifiers) ──────────────────────────────────
 
 export type Protocol =
-  | "openai-compatible"
-  | "openai-responses"
   | "anthropic-messages"
-  | "google-gemini";
+  | "openai-chatcompletions"
+  | "openai-responses"
+  | "gemini-generatecontent"
+  | "gemini-interactions"
+  | "bedrock-converse"
+  | "azure-modelinference";
 
 export interface ProtocolMeta {
   id: Protocol;
@@ -29,83 +34,78 @@ export interface ProtocolMeta {
   defaultBaseUrl: string;
 }
 
+// gemini-interactions, bedrock-converse, and azure-modelinference are
+// declared only — no codec is registered for them on the backend yet
+// (go/internal/protocol/ids/ids.go), so defaultBaseUrl is left empty.
 export const PROTOCOL_TABLE: ProtocolMeta[] = [
   {
-    id: "openai-compatible",
-    displayName: "OpenAI Compatible",
+    id: "anthropic-messages",
+    displayName: "Anthropic Messages API",
+    defaultBaseUrl: "https://api.anthropic.com",
+  },
+  {
+    id: "openai-chatcompletions",
+    displayName: "OpenAI Chat Completions API",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
     id: "openai-responses",
-    displayName: "OpenAI Responses",
+    displayName: "OpenAI Responses API",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
-    id: "anthropic-messages",
-    displayName: "Anthropic Messages",
-    defaultBaseUrl: "https://api.anthropic.com",
+    id: "gemini-generatecontent",
+    displayName: "Gemini generateContent API",
+    defaultBaseUrl: "https://generativelanguage.googleapis.com",
   },
   {
-    id: "google-gemini",
-    displayName: "Google Gemini",
-    defaultBaseUrl: "https://generativelanguage.googleapis.com",
+    id: "gemini-interactions",
+    displayName: "Gemini Interactions API",
+    defaultBaseUrl: "",
+  },
+  {
+    id: "bedrock-converse",
+    displayName: "AWS Bedrock Converse API",
+    defaultBaseUrl: "",
+  },
+  {
+    id: "azure-modelinference",
+    displayName: "Azure AI Model Inference API",
+    defaultBaseUrl: "",
   },
 ];
 
 // ── Alias resolution ───────────────────────────────────────────────────────
 
-/** Maps any known string (old canonical, short alias, legacy brand) → Protocol. */
+/** Maps a canonical identifier or its single alias → Protocol. */
 const PROTOCOL_ALIASES: Record<string, Protocol> = {
-  // Canonical (new)
-  "openai-compatible": "openai-compatible",
-  "openai-responses": "openai-responses",
   "anthropic-messages": "anthropic-messages",
-  "google-gemini": "google-gemini",
-
-  // Short names
-  openai: "openai-compatible",
-  openai_responses: "openai-responses",
-  responses: "openai-responses",
-  anthropic: "anthropic-messages",
   claude: "anthropic-messages",
-  gemini: "google-gemini",
-  google: "google-gemini",
 
-  // Deprecated aliases (old canonical slugs)
-  "openai-compat": "openai-compatible",
-  "openai-resps": "openai-responses",
-  "anthropic-msgs": "anthropic-messages",
-  "google-genai": "google-gemini",
-  "google-generative-ai": "google-gemini",
+  "openai-chatcompletions": "openai-chatcompletions",
+  openai: "openai-chatcompletions",
 
-  // Old canonical endpoint strings (Tier-1 backward compat)
-  "openai/chat/v1": "openai-compatible",
-  "openai/embeddings/v1": "openai-compatible",
-  "openai/responses/v1": "openai-responses",
-  "anthropic/messages/2023-06-01": "anthropic-messages",
-  "google/generate/v1beta": "google-gemini",
+  "openai-responses": "openai-responses",
+  openaix: "openai-responses",
 
-  // Deprecated canonical endpoint strings
-  "openai-compat/chat-completions/v1": "openai-compatible",
-  "openai-compat/embeddings/v1": "openai-compatible",
-  "openai-resps/responses/v1": "openai-responses",
-  "anthropic-msgs/messages/2023-06-01": "anthropic-messages",
-  "google-genai/generate-content/v1beta": "google-gemini",
+  "gemini-generatecontent": "gemini-generatecontent",
+  gemini: "gemini-generatecontent",
 
-  // New canonical endpoint strings
-  "openai-compatible/chat-completions/v1": "openai-compatible",
-  "openai-compatible/embeddings/v1": "openai-compatible",
-  "openai-responses/responses/v1": "openai-responses",
-  "anthropic-messages/messages/2023-06-01": "anthropic-messages",
-  "google-gemini/generate-content/v1beta": "google-gemini",
+  "gemini-interactions": "gemini-interactions",
+  geminix: "gemini-interactions",
+
+  "bedrock-converse": "bedrock-converse",
+  bedrock: "bedrock-converse",
+
+  "azure-modelinference": "azure-modelinference",
+  azure: "azure-modelinference",
 };
 
 /**
  * Resolve any raw protocol string to a canonical `Protocol`, or `null` if unknown.
  *
- * Accepts: new canonical keys (`"openai-compatible"`), legacy aliases (`"openai"`),
- * old endpoint canonical strings (`"openai/chat/v1"`), and new endpoint
- * canonical strings (`"openai-compatible/chat-completions/v1"`).
+ * Accepts the canonical identifier (`"openai-chatcompletions"`) or its single
+ * short alias (`"openai"`).
  */
 export function resolveProtocol(raw: string | null | undefined): Protocol | null {
   if (!raw) return null;
@@ -155,7 +155,7 @@ export function parseProtocolEndpoint(raw: string | null | undefined): ProtocolE
 /** Returns true when the raw string resolves to an OpenAI-family protocol. */
 export function isOpenAiProtocol(raw: string | null | undefined): boolean {
   const p = resolveProtocol(raw);
-  return p === "openai-compatible" || p === "openai-responses";
+  return p === "openai-chatcompletions" || p === "openai-responses";
 }
 
 /**

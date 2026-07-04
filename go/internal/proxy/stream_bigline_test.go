@@ -16,7 +16,7 @@ import (
 // TestServeStreamHugeSSELine verifies SSE lines larger than bufio.Scanner's
 // 1MiB default cap still stream through (truncation regression).
 func TestServeStreamHugeSSELine(t *testing.T) {
-	h, ok := codec.Get(ids.OpenAICompatibleChatCompletionsV1)
+	h, ok := codec.Get(ids.OpenAIChatCompletionsV1)
 	if !ok {
 		t.Fatal("openai codec not registered")
 	}

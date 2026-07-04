@@ -103,7 +103,7 @@ describe("provider <-> upstream credentials/models JSON blob round-trip", () => 
       id: "up_1",
       name: "OpenAI",
       provider: "openai",
-      protocol: "openai-compatible",
+      protocol: "openai-chatcompletions",
       base_url: "https://api.openai.com/v1",
       credentials: JSON.stringify({ api_key: "sk-test" }),
       models: JSON.stringify({ preset_key: "openai", channel: "default", static_models: "gpt-4o" }),
@@ -148,7 +148,7 @@ describe("provider <-> upstream credentials/models JSON blob round-trip", () => 
   it("builds a GoCreateUpstream credentials blob from CreateProvider, preferring the structured credentials map over the single api_key field", () => {
     const input: CreateProvider = {
       name: "OpenAI",
-      protocol: "openai-compatible",
+      protocol: "openai-chatcompletions",
       base_url: "https://api.openai.com/v1",
       api_key: "sk-should-be-ignored",
       credentials: { api_key: "sk-real", org_id: "org-1" },
@@ -167,7 +167,7 @@ describe("provider <-> upstream credentials/models JSON blob round-trip", () => 
   it("falls back to { api_key } when CreateProvider has no structured credentials map", () => {
     const input: CreateProvider = {
       name: "OpenAI",
-      protocol: "openai-compatible",
+      protocol: "openai-chatcompletions",
       base_url: "https://api.openai.com/v1",
       api_key: "sk-plain",
     };

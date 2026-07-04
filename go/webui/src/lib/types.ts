@@ -187,10 +187,13 @@ export interface ModelCapabilities {
 }
 
 export type ProviderProtocol =
-  | "openai-compatible"
-  | "openai-responses"
   | "anthropic-messages"
-  | "google-gemini";
+  | "openai-chatcompletions"
+  | "openai-responses"
+  | "gemini-generatecontent"
+  | "gemini-interactions"
+  | "bedrock-converse"
+  | "azure-modelinference";
 
 export interface ProviderChannelPreset {
   id: string;

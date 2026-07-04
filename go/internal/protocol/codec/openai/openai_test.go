@@ -12,11 +12,11 @@ import (
 
 func TestRegistryHasChatCompletions(t *testing.T) {
 	t.Parallel()
-	h, ok := codec.Get(ids.OpenAICompatibleChatCompletionsV1)
+	h, ok := codec.Get(ids.OpenAIChatCompletionsV1)
 	if !ok {
 		t.Fatal("OpenAI chat-completions handler not registered")
 	}
-	if h.Endpoint() != ids.OpenAICompatibleChatCompletionsV1 {
+	if h.Endpoint() != ids.OpenAIChatCompletionsV1 {
 		t.Errorf("endpoint mismatch: %v", h.Endpoint())
 	}
 }

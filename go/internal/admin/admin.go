@@ -120,7 +120,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				modelsURL = strings.TrimRight(u.BaseURL, "/") + "/models"
 			}
 			req, _ := http.NewRequest("GET", modelsURL, nil)
-			if u.Protocol == provider.ProtocolGoogleGemini {
+			if u.Protocol == provider.ProtocolGeminiGenerateContent {
 				req.Header.Set("x-goog-api-key", cred.APIKey)
 			} else {
 				req.Header.Set("Authorization", "Bearer "+cred.APIKey)

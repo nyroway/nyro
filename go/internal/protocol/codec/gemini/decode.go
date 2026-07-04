@@ -22,7 +22,7 @@ func (requestDecoder) DecodeWithModel(body []byte, model string, stream bool) (*
 	}
 
 	req := ir.NewAiRequest(model, nil)
-	req.Meta.SourceProtocol = &ids.GoogleGeminiGenerateContentV1Beta
+	req.Meta.SourceProtocol = &ids.GeminiGenerateContentV1Beta
 	req.Stream.Enabled = stream
 
 	if w.SystemInstruction != nil {

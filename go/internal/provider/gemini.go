@@ -8,8 +8,8 @@ import (
 )
 
 // GeminiProvider implements Google AI Studio (generativelanguage.googleapis.com)
-// behavior. Auth differs by protocol: google-gemini uses x-goog-api-key; the
-// openai-compatible endpoint uses a Bearer token.
+// behavior. Auth differs by protocol: gemini-generatecontent uses x-goog-api-key; the
+// openai-chatcompletions endpoint uses a Bearer token.
 type GeminiProvider struct {
 	DefaultProvider
 }
@@ -19,11 +19,11 @@ func init() {
 		Def: Definition{
 			ID:              "gemini",
 			Name:            "Gemini",
-			DefaultProtocol: ProtocolGoogleGemini,
+			DefaultProtocol: ProtocolGeminiGenerateContent,
 			DefaultModel:    "gemini-2.0-flash",
 			Protocols: []Protocol{
-				{ID: ProtocolGoogleGemini, BaseURL: "https://generativelanguage.googleapis.com"},
-				{ID: ProtocolOpenAICompatible, BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"},
+				{ID: ProtocolGeminiGenerateContent, BaseURL: "https://generativelanguage.googleapis.com"},
+				{ID: ProtocolOpenAIChatCompletions, BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"},
 			},
 			Models:      ModelDiscovery{Kind: KindDynamic, URL: "https://generativelanguage.googleapis.com/v1beta/openai/models"},
 			Credentials: CredentialSchema{Fields: []CredentialField{{Name: "api_key", Type: "secret", Required: true, Env: "GEMINI_API_KEY"}}},
@@ -44,7 +44,7 @@ func (p GeminiProvider) NewAuthenticator(_ context.Context, upstream UpstreamRun
 	if c.APIKey == "" {
 		return nil, errors.New("provider: api_key is required")
 	}
-	return geminiAuthenticator{apiKey: c.APIKey, openaiCompatible: upstream.Protocol == ProtocolOpenAICompatible}, nil
+	return geminiAuthenticator{apiKey: c.APIKey, openaiCompatible: upstream.Protocol == ProtocolOpenAIChatCompletions}, nil
 }
 
 func (a geminiAuthenticator) Apply(_ context.Context, req *http.Request) error {

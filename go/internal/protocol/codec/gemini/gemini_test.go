@@ -12,11 +12,11 @@ import (
 
 func TestRegistryHasGemini(t *testing.T) {
 	t.Parallel()
-	h, ok := codec.Get(ids.GoogleGeminiGenerateContentV1Beta)
+	h, ok := codec.Get(ids.GeminiGenerateContentV1Beta)
 	if !ok {
 		t.Fatal("Gemini handler not registered")
 	}
-	if h.Endpoint() != ids.GoogleGeminiGenerateContentV1Beta {
+	if h.Endpoint() != ids.GeminiGenerateContentV1Beta {
 		t.Errorf("endpoint mismatch: %v", h.Endpoint())
 	}
 }

@@ -18,7 +18,7 @@ func TestModelsList(t *testing.T) {
 	st := memory.New()
 	core := st.Storage()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: "http://up",
+		Name: "p", Provider: "p", Protocol: "openai-chatcompletions", BaseURL: "http://up",
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 	if _, err := core.Routes().Create(storage.CreateRoute{

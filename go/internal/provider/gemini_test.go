@@ -17,11 +17,11 @@ func TestGeminiDefinition(t *testing.T) {
 	if d.DefaultModel != "gemini-2.0-flash" {
 		t.Errorf("DefaultModel = %q, want gemini-2.0-flash", d.DefaultModel)
 	}
-	if d.DefaultProtocol != "google-gemini" {
-		t.Errorf("DefaultProtocol = %q, want google-gemini", d.DefaultProtocol)
+	if d.DefaultProtocol != "gemini-generatecontent" {
+		t.Errorf("DefaultProtocol = %q, want gemini-generatecontent", d.DefaultProtocol)
 	}
-	if !provider.SupportsProtocol(d, "google-gemini") || !provider.SupportsProtocol(d, "openai-compatible") {
-		t.Error("should support google-gemini and openai-compatible")
+	if !provider.SupportsProtocol(d, "gemini-generatecontent") || !provider.SupportsProtocol(d, "openai-chatcompletions") {
+		t.Error("should support gemini-generatecontent and openai-chatcompletions")
 	}
 	if !hasCredentialField(d, "api_key") {
 		t.Error("should expose api_key credential")
@@ -35,9 +35,9 @@ func TestGeminiAuthenticatorSwitchesByProtocol(t *testing.T) {
 	}
 	creds := json.RawMessage(`{"api_key":"AIza-test"}`)
 
-	// google-gemini → x-goog-api-key
+	// gemini-generatecontent → x-goog-api-key
 	auth, err := p.NewAuthenticator(context.Background(), provider.UpstreamRuntime{
-		Protocol:        "google-gemini",
+		Protocol:        "gemini-generatecontent",
 		CredentialsJSON: creds,
 	})
 	if err != nil {
@@ -48,12 +48,12 @@ func TestGeminiAuthenticatorSwitchesByProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := req.Header.Get("x-goog-api-key"); got != "AIza-test" {
-		t.Fatalf("google-gemini: x-goog-api-key = %q, want AIza-test", got)
+		t.Fatalf("gemini-generatecontent: x-goog-api-key = %q, want AIza-test", got)
 	}
 
-	// openai-compatible → Bearer
+	// openai-chatcompletions → Bearer
 	auth2, err := p.NewAuthenticator(context.Background(), provider.UpstreamRuntime{
-		Protocol:        "openai-compatible",
+		Protocol:        "openai-chatcompletions",
 		CredentialsJSON: creds,
 	})
 	if err != nil {
@@ -64,6 +64,6 @@ func TestGeminiAuthenticatorSwitchesByProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := req2.Header.Get("Authorization"); got != "Bearer AIza-test" {
-		t.Fatalf("openai-compatible: Authorization = %q, want Bearer AIza-test", got)
+		t.Fatalf("openai-chatcompletions: Authorization = %q, want Bearer AIza-test", got)
 	}
 }

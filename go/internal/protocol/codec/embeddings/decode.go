@@ -26,7 +26,7 @@ func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
 		return nil, errors.New("model is required for embeddings")
 	}
 	req := ir.NewAiRequest(model, nil)
-	req.Meta.SourceProtocol = &ids.OpenAICompatibleEmbeddingsV1
+	req.Meta.SourceProtocol = &ids.OpenAIEmbeddingsV1
 	req.Meta.Vendor.Ingress = map[string]json.RawMessage{BodyKey: body}
 	return req, nil
 }

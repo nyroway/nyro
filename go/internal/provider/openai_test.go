@@ -17,11 +17,11 @@ func TestOpenAIDefinition(t *testing.T) {
 	if d.DefaultModel != "gpt-4o-mini" {
 		t.Errorf("DefaultModel = %q, want gpt-4o-mini", d.DefaultModel)
 	}
-	if d.DefaultProtocol != "openai-compatible" {
-		t.Errorf("DefaultProtocol = %q, want openai-compatible", d.DefaultProtocol)
+	if d.DefaultProtocol != "openai-chatcompletions" {
+		t.Errorf("DefaultProtocol = %q, want openai-chatcompletions", d.DefaultProtocol)
 	}
-	if !provider.SupportsProtocol(d, "openai-compatible") {
-		t.Error("should support openai-compatible")
+	if !provider.SupportsProtocol(d, "openai-chatcompletions") {
+		t.Error("should support openai-chatcompletions")
 	}
 	if !provider.SupportsProtocol(d, "openai-responses") {
 		t.Error("should support openai-responses")

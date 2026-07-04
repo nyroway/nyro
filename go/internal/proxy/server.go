@@ -50,7 +50,7 @@ func NewRouter(gw *Gateway) chi.Router {
 	r.Get("/v1/models", func(w http.ResponseWriter, r *http.Request) { handleModelsList(w, r, gw) })
 
 	r.Post("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, ids.OpenAICompatibleChatCompletionsV1, "", false)
+		handleProxy(w, r, gw, ids.OpenAIChatCompletionsV1, "", false)
 	})
 	r.Post("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
 		handleProxy(w, r, gw, ids.AnthropicMessages20230601, "", false)
@@ -59,7 +59,7 @@ func NewRouter(gw *Gateway) chi.Router {
 		handleProxy(w, r, gw, ids.OpenAIResponsesV1, "", false)
 	})
 	r.Post("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, ids.OpenAICompatibleEmbeddingsV1, "", false)
+		handleProxy(w, r, gw, ids.OpenAIEmbeddingsV1, "", false)
 	})
 	// Gemini embeds the model + action in the path: /v1beta/models/{model}:{action}
 	r.Post("/v1beta/models/{resource}", func(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +68,7 @@ func NewRouter(gw *Gateway) chi.Router {
 			webutil.Error(w, http.StatusNotFound, "malformed Gemini path, expected models/{model}:{action}", "gateway_error")
 			return
 		}
-		handleProxy(w, r, gw, ids.GoogleGeminiGenerateContentV1Beta, model, action == "streamGenerateContent")
+		handleProxy(w, r, gw, ids.GeminiGenerateContentV1Beta, model, action == "streamGenerateContent")
 	})
 	return r
 }

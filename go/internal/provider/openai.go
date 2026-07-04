@@ -12,11 +12,11 @@ func init() {
 		Def: Definition{
 			ID:              "openai",
 			Name:            "OpenAI",
-			DefaultProtocol: ProtocolOpenAICompatible,
+			DefaultProtocol: ProtocolOpenAIChatCompletions,
 			DefaultModel:    "gpt-4o-mini",
 			Protocols: []Protocol{
 				// Both chat/completions and responses live under /v1.
-				{ID: ProtocolOpenAICompatible, BaseURL: "https://api.openai.com/v1"},
+				{ID: ProtocolOpenAIChatCompletions, BaseURL: "https://api.openai.com/v1"},
 				{ID: ProtocolOpenAIResponses, BaseURL: "https://api.openai.com/v1"},
 			},
 			Models:      ModelDiscovery{Kind: KindDynamic, URL: "https://api.openai.com/v1/models"},

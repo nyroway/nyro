@@ -30,8 +30,8 @@ func TestDispatchFailover(t *testing.T) {
 
 	st := memory.New()
 	core := st.Storage()
-	p1, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p1", Provider: "p1", Protocol: "openai-compatible", BaseURL: up1.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
-	p2, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p2", Provider: "p2", Protocol: "openai-compatible", BaseURL: up2.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	p1, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p1", Provider: "p1", Protocol: "openai-chatcompletions", BaseURL: up1.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	p2, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p2", Provider: "p2", Protocol: "openai-chatcompletions", BaseURL: up2.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
 	_, _ = core.Routes().Create(storage.CreateRoute{
 		Model: "gpt-4o", Balance: storage.BalancePriority,
 		Upstreams: []storage.CreateRouteUpstream{
@@ -80,8 +80,8 @@ func TestFailoverPreservesClientModel(t *testing.T) {
 	defer up2.Close()
 
 	st := memory.New().Storage()
-	p1, _ := st.Upstreams().Create(storage.CreateUpstream{Name: "p1", Provider: "p1", Protocol: "openai-compatible", BaseURL: up1.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
-	p2, _ := st.Upstreams().Create(storage.CreateUpstream{Name: "p2", Provider: "p2", Protocol: "openai-compatible", BaseURL: up2.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	p1, _ := st.Upstreams().Create(storage.CreateUpstream{Name: "p1", Provider: "p1", Protocol: "openai-chatcompletions", BaseURL: up1.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	p2, _ := st.Upstreams().Create(storage.CreateUpstream{Name: "p2", Provider: "p2", Protocol: "openai-chatcompletions", BaseURL: up2.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
 	_, _ = st.Routes().Create(storage.CreateRoute{
 		Model: "gpt-4o", Balance: storage.BalancePriority,
 		Upstreams: []storage.CreateRouteUpstream{

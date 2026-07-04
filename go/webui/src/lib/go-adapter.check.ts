@@ -16,7 +16,7 @@ const upstream: GoUpstream = {
   id: "up_1",
   name: "OpenAI",
   provider: "openai",
-  protocol: "openai-compatible",
+  protocol: "openai-chatcompletions",
   base_url: "https://api.openai.com/v1",
   credentials: { api_key: "sk-test" },
   models: { values: ["gpt-4o"] },
@@ -44,7 +44,7 @@ const consumer: GoConsumer = {
 
 export const __goAdapterCheck = {
   provider: providerFromUpstream(upstream),
-  createUpstream: createUpstreamFromProvider({ name: "OpenAI", protocol: "openai-compatible", base_url: "https://api.openai.com/v1", api_key: "sk" } satisfies CreateProvider),
+  createUpstream: createUpstreamFromProvider({ name: "OpenAI", protocol: "openai-chatcompletions", base_url: "https://api.openai.com/v1", api_key: "sk" } satisfies CreateProvider),
   updateUpstream: updateUpstreamFromProvider({ is_enabled: false } satisfies UpdateProvider),
   model: modelFromRoute(route),
   createRoute: createRouteFromModel({ name: "gpt-4o", target_provider: "up_1", target_model: "gpt-4o" } satisfies CreateModel),

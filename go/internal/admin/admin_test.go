@@ -58,7 +58,7 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 	r, _ := newEngine(t, "secret")
 
 	rec := do(r, "POST", "/api/v1/upstreams", "secret",
-		[]byte(`{"name":"OpenAI","provider":"openai","protocol":"openai-compatible","base_url":"https://api.openai.com","credentials":{"api_key":"sk-1"}}`))
+		[]byte(`{"name":"OpenAI","provider":"openai","protocol":"openai-chatcompletions","base_url":"https://api.openai.com","credentials":{"api_key":"sk-1"}}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
 	}
@@ -79,7 +79,7 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 func TestAdminRouteAndSettings(t *testing.T) {
 	r, st := newEngine(t, "") // empty token disables auth
 	up, _ := st.Storage().Upstreams().Create(storage.CreateUpstream{
-		Name: "P", Provider: "p", Protocol: "openai-compatible", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
+		Name: "P", Provider: "p", Protocol: "openai-chatcompletions", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 
 	rec := do(r, "POST", "/api/v1/routes", "",

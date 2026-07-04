@@ -10,11 +10,11 @@ import (
 
 func TestRegistryHasEmbeddings(t *testing.T) {
 	t.Parallel()
-	h, ok := codec.Get(ids.OpenAICompatibleEmbeddingsV1)
+	h, ok := codec.Get(ids.OpenAIEmbeddingsV1)
 	if !ok {
 		t.Fatal("Embeddings handler not registered")
 	}
-	if h.Endpoint() != ids.OpenAICompatibleEmbeddingsV1 {
+	if h.Endpoint() != ids.OpenAIEmbeddingsV1 {
 		t.Errorf("endpoint mismatch: %v", h.Endpoint())
 	}
 }

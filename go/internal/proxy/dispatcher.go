@@ -206,7 +206,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		switch {
 		case resp.StatusCode >= 400:
 			forwardError(rec, resp)
-		case ingress.Endpoint() == ids.OpenAICompatibleEmbeddingsV1:
+		case ingress.Endpoint() == ids.OpenAIEmbeddingsV1:
 			copyResponse(rec, resp)
 		case req.Stream.Enabled:
 			g.serveStream(r.Context(), rec, resp.Body, egressHandler, ingress, &usage, bag)

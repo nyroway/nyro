@@ -12,10 +12,10 @@ func init() {
 		Def: Definition{
 			ID:              "deepseek",
 			Name:            "DeepSeek",
-			DefaultProtocol: ProtocolOpenAICompatible,
+			DefaultProtocol: ProtocolOpenAIChatCompletions,
 			DefaultModel:    "deepseek-chat",
 			Protocols: []Protocol{
-				{ID: ProtocolOpenAICompatible, BaseURL: "https://api.deepseek.com/v1"},
+				{ID: ProtocolOpenAIChatCompletions, BaseURL: "https://api.deepseek.com/v1"},
 				{ID: ProtocolAnthropicMessages, BaseURL: "https://api.deepseek.com/anthropic"},
 			},
 			Models:      ModelDiscovery{Kind: KindDynamic, URL: "https://api.deepseek.com/v1/models"},

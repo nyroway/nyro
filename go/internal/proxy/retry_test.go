@@ -30,7 +30,7 @@ func TestDispatchMaxRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: up.URL,
+		Name: "p", Provider: "p", Protocol: "openai-chatcompletions", BaseURL: up.URL,
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 	_, _ = core.Routes().Create(storage.CreateRoute{
@@ -71,7 +71,7 @@ func TestDispatchRetryOnStatusCustom(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: up.URL,
+		Name: "p", Provider: "p", Protocol: "openai-chatcompletions", BaseURL: up.URL,
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 	_, _ = core.Routes().Create(storage.CreateRoute{
@@ -109,7 +109,7 @@ func TestDispatchConnectTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "p", Provider: "p", Protocol: "openai-compatible",
+		Name: "p", Provider: "p", Protocol: "openai-chatcompletions",
 		BaseURL:         "http://192.0.2.1:81", // TEST-NET-1: reserved, non-routable
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})

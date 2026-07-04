@@ -26,7 +26,7 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 
 	st := memory.New()
 	core := st.Storage()
-	up2, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p", Provider: "p", Protocol: "openai-compatible", BaseURL: up.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	up2, _ := core.Upstreams().Create(storage.CreateUpstream{Name: "p", Provider: "p", Protocol: "openai-chatcompletions", BaseURL: up.URL, CredentialsJSON: []byte(`{"api_key":"k"}`)})
 	_, _ = core.Routes().Create(storage.CreateRoute{
 		Model: "gpt-4o", EnableAuth: true,
 		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up2.ID, Model: "gpt-4o"}},
