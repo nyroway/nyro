@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -107,23 +106,23 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
-			var cred struct {
-				APIKey string `json:"api_key"`
-			}
-			_ = json.Unmarshal(u.CredentialsJSON, &cred)
-
-			modelsURL := ""
-			if def, ok := provider.Lookup(u.Provider); ok && def.Models.Kind == provider.KindDynamic {
-				modelsURL = def.Models.URL
-			}
-			if modelsURL == "" {
-				modelsURL = strings.TrimRight(u.BaseURL, "/") + "/models"
-			}
+			modelsURL := modelsDiscoveryURL(u.Protocol, u.BaseURL)
 			req, _ := http.NewRequest("GET", modelsURL, nil)
-			if u.Protocol == provider.ProtocolGeminiContent {
-				req.Header.Set("x-goog-api-key", cred.APIKey)
-			} else {
-				req.Header.Set("Authorization", "Bearer "+cred.APIKey)
+			auth, authErr := provider.AuthenticatorFor(u.Protocol, provider.UpstreamRuntime{
+				Name:            u.Name,
+				Protocol:        u.Protocol,
+				BaseURL:         u.BaseURL,
+				CredentialsJSON: u.CredentialsJSON,
+				ModelsJSON:      u.ModelsJSON,
+				ProxyURL:        u.ProxyURL,
+			})
+			if authErr != nil {
+				webutil.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": int64(0), "error": authErr.Error()})
+				return
+			}
+			if err := auth.Apply(r.Context(), req); err != nil {
+				webutil.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": int64(0), "error": err.Error()})
+				return
 			}
 			client := &http.Client{Timeout: 10 * time.Second}
 			start := time.Now()
@@ -351,6 +350,20 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			webutil.JSON(w, http.StatusOK, out)
 		})
 	})
+}
+
+// modelsDiscoveryURL returns the models-list discovery URL for an upstream
+// purely from its protocol + base_url (protocol-first upstreams have no
+// vendor id to key a provider lookup on).
+func modelsDiscoveryURL(protocol, baseURL string) string {
+	path := "/models"
+	switch protocol {
+	case provider.ProtocolAnthropicMessages:
+		path = "/v1/models"
+	case provider.ProtocolGeminiContent:
+		path = "/v1beta/models"
+	}
+	return strings.TrimRight(baseURL, "/") + path
 }
 
 func bearerAuth(token string) func(http.Handler) http.Handler {

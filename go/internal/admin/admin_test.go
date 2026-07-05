@@ -79,7 +79,7 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 func TestAdminRouteAndSettings(t *testing.T) {
 	r, st := newEngine(t, "") // empty token disables auth
 	up, _ := st.Storage().Upstreams().Create(storage.CreateUpstream{
-		Name: "P", Provider: "p", Protocol: "openai-compatible", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
+		Name: "P", Protocol: "openai-compatible", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 
 	rec := do(r, "POST", "/api/v1/routes", "",
@@ -139,7 +139,7 @@ func TestMutationsBumpEpoch(t *testing.T) {
 		return v
 	}
 
-	up, err := core.Upstreams().Create(storage.CreateUpstream{Name: "u1", Provider: "openai", CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	up, err := core.Upstreams().Create(storage.CreateUpstream{Name: "u1", Protocol: "openai-compatible", BaseURL: "https://api.openai.com/v1", CredentialsJSON: []byte(`{"api_key":"k"}`)})
 	if err != nil {
 		t.Fatalf("seed upstream: %v", err)
 	}

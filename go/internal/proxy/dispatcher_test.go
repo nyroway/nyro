@@ -53,18 +53,18 @@ func newTestGatewayProto(t *testing.T, upstreamURL, protocol string) *Gateway {
 	return newTestGatewayProviderProto(t, upstreamURL, "test", protocol)
 }
 
-// newTestGatewayProviderProto is like newTestGatewayProto but also lets the
-// caller set a provider id (e.g. "anthropic", "gemini") on the stored upstream.
+// newTestGatewayProviderProto is like newTestGatewayProto but also takes a
+// providerID label for call-site readability (e.g. "anthropic", "gemini").
 // Auth resolution is purely protocol-driven (provider.AuthenticatorFor keys
-// off protocol, not provider id), so providerID no longer affects which
-// Authenticator is selected; it's retained here only because
-// storage.CreateUpstream.Provider is still a field on the row.
-func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol string) *Gateway {
+// off protocol, not provider id) and storage.CreateUpstream no longer has a
+// Provider field at all, so providerID is not stored anywhere — it exists
+// only to make call sites self-documenting.
+func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol string) *Gateway { //nolint:unparam
 	t.Helper()
 	st := memory.New()
 	core := st.Storage()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "test", Provider: providerID, Protocol: protocol, BaseURL: upstreamURL,
+		Name: "test", Protocol: protocol, BaseURL: upstreamURL,
 		CredentialsJSON: []byte(`{"api_key":"test-key"}`),
 	})
 	_, _ = core.Routes().Create(storage.CreateRoute{

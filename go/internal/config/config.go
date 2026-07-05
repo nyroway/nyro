@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 	"github.com/nyroway/nyro/go/internal/xds"
@@ -171,15 +172,35 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 		if err != nil {
 			return fmt.Errorf("encode credentials for upstream %q: %w", u.Name, err)
 		}
+		protocolVal, baseURL, models := u.Protocol, u.BaseURL, u.Models
+		if u.Provider != "" {
+			if def, ok := provider.Lookup(u.Provider); ok {
+				if protocolVal == "" {
+					protocolVal = def.DefaultProtocol
+				}
+				if baseURL == "" {
+					for _, p := range def.Protocols {
+						if p.ID == protocolVal {
+							baseURL = p.BaseURL
+							break
+						}
+					}
+				}
+				if len(models) == 0 && def.Models.Kind == provider.KindStatic {
+					models = def.Models.Values
+				}
+			}
+		}
+
 		var modelsJSON []byte
-		if len(u.Models) > 0 {
-			modelsJSON, err = json.Marshal(u.Models)
+		if len(models) > 0 {
+			modelsJSON, err = json.Marshal(models)
 			if err != nil {
 				return fmt.Errorf("encode models for upstream %q: %w", u.Name, err)
 			}
 		}
 		created, err := st.Upstreams().Create(storage.CreateUpstream{
-			Name: u.Name, Provider: u.Provider, Protocol: u.Protocol, BaseURL: u.BaseURL,
+			Name: u.Name, Protocol: protocolVal, BaseURL: baseURL,
 			CredentialsJSON: credsJSON, ModelsJSON: modelsJSON, ProxyURL: u.Proxy.URL,
 			Enabled: u.Enabled,
 		})
