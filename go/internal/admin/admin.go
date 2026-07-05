@@ -349,6 +349,22 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			}
 			webutil.JSON(w, http.StatusOK, out)
 		})
+		g.Get("/protocol-credentials", func(w http.ResponseWriter, r *http.Request) {
+			protocols := []string{
+				provider.ProtocolOpenAICompatible,
+				provider.ProtocolOpenAIResponses,
+				provider.ProtocolAnthropicMessages,
+				provider.ProtocolGeminiContent,
+			}
+			out := make([]protocolCredentialsView, len(protocols))
+			for i, p := range protocols {
+				out[i] = protocolCredentialsView{
+					Protocol: p,
+					Fields:   toCredentialFieldViews(provider.CredentialSchemaFor(p).Fields),
+				}
+			}
+			webutil.JSON(w, http.StatusOK, out)
+		})
 	})
 }
 
