@@ -53,9 +53,12 @@ func newTestGatewayProto(t *testing.T, upstreamURL, protocol string) *Gateway {
 	return newTestGatewayProviderProto(t, upstreamURL, "test", protocol)
 }
 
-// newTestGatewayProviderProto is like newTestGatewayProto but lets the caller
-// pin a real provider id (e.g. "anthropic", "gemini") so provider.Resolve
-// picks the vendor-specific Authenticator instead of falling back to custom.
+// newTestGatewayProviderProto is like newTestGatewayProto but also lets the
+// caller set a provider id (e.g. "anthropic", "gemini") on the stored upstream.
+// Auth resolution is purely protocol-driven (provider.AuthenticatorFor keys
+// off protocol, not provider id), so providerID no longer affects which
+// Authenticator is selected; it's retained here only because
+// storage.CreateUpstream.Provider is still a field on the row.
 func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol string) *Gateway {
 	t.Helper()
 	st := memory.New()

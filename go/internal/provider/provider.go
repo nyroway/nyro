@@ -51,7 +51,6 @@ type Protocol struct {
 // UpstreamRuntime is the provider-facing runtime view of an upstream.
 type UpstreamRuntime struct {
 	Name            string
-	Provider        string
 	Protocol        string
 	BaseURL         string
 	CredentialsJSON json.RawMessage
