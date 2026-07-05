@@ -102,7 +102,6 @@ describe("provider <-> upstream credentials/models JSON blob round-trip", () => 
     const upstream: GoUpstream = {
       id: "up_1",
       name: "OpenAI",
-      provider: "openai",
       protocol: "openai-compatible",
       base_url: "https://api.openai.com/v1",
       credentials: JSON.stringify({ api_key: "sk-test" }),
@@ -122,7 +121,6 @@ describe("provider <-> upstream credentials/models JSON blob round-trip", () => 
     const upstream: GoUpstream = {
       id: "up_2",
       name: "Anthropic",
-      provider: "anthropic",
       credentials: { api_key: "sk-ant" },
       models: { preset_key: "anthropic" },
       enabled: true,
@@ -136,7 +134,6 @@ describe("provider <-> upstream credentials/models JSON blob round-trip", () => 
     const upstream: GoUpstream = {
       id: "up_3",
       name: "Broken",
-      provider: "openai",
       credentials: "{not json",
       enabled: true,
     };

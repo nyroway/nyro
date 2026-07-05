@@ -117,6 +117,63 @@ consumers:
 	}
 }
 
+// TestApplyTo_ProviderTemplateExpansion verifies that an UpstreamSpec setting
+// only `provider` (plus credentials) expands to the vendor's default
+// protocol/base_url at ApplyTo time — provider is an input-only template key
+// and is never itself persisted to storage.
+func TestApplyTo_ProviderTemplateExpansion(t *testing.T) {
+	cfg := &Config{
+		Upstreams: []UpstreamSpec{{
+			Name: "openai", Provider: "openai", Credentials: map[string]string{"api_key": "sk-x"},
+		}},
+	}
+	st := memory.New()
+	core := st.Storage()
+	if err := cfg.ApplyTo(core); err != nil {
+		t.Fatalf("ApplyTo: %v", err)
+	}
+	ups, _ := core.Upstreams().List()
+	if len(ups) != 1 {
+		t.Fatalf("upstream not seeded: %+v", ups)
+	}
+	u := ups[0]
+	if u.Protocol != "openai-compatible" {
+		t.Errorf("Protocol = %q, want openai-compatible (from provider default)", u.Protocol)
+	}
+	if u.BaseURL != "https://api.openai.com/v1" {
+		t.Errorf("BaseURL = %q, want https://api.openai.com/v1 (from provider default)", u.BaseURL)
+	}
+}
+
+// TestApplyTo_ProviderTemplateExplicitProtocolWins verifies that an explicit
+// `protocol` in yaml always wins over the provider template's default — the
+// template only fills in what's left empty.
+func TestApplyTo_ProviderTemplateExplicitProtocolWins(t *testing.T) {
+	cfg := &Config{
+		Upstreams: []UpstreamSpec{{
+			Name: "openai", Provider: "openai", Protocol: "openai-responses",
+			Credentials: map[string]string{"api_key": "sk-x"},
+		}},
+	}
+	st := memory.New()
+	core := st.Storage()
+	if err := cfg.ApplyTo(core); err != nil {
+		t.Fatalf("ApplyTo: %v", err)
+	}
+	ups, _ := core.Upstreams().List()
+	if len(ups) != 1 {
+		t.Fatalf("upstream not seeded: %+v", ups)
+	}
+	u := ups[0]
+	if u.Protocol != "openai-responses" {
+		t.Errorf("Protocol = %q, want explicit openai-responses to win over provider default", u.Protocol)
+	}
+	// base_url still filled in from the provider def for the explicit protocol.
+	if u.BaseURL != "https://api.openai.com/v1" {
+		t.Errorf("BaseURL = %q, want https://api.openai.com/v1 (from provider default for openai-responses)", u.BaseURL)
+	}
+}
+
 func TestApplyToUnknownUpstream(t *testing.T) {
 	cfg := &Config{
 		Routes: []RouteSpec{{Model: "m", Upstreams: []RouteUpstreamSpec{{Name: "nope", Model: "x"}}}},

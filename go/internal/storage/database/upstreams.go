@@ -46,7 +46,6 @@ func (s upstreamStore) Create(in storage.CreateUpstream) (storage.Upstream, erro
 	m := &model.Upstream{
 		ID:              newID(),
 		Name:            in.Name,
-		Provider:        in.Provider,
 		Protocol:        in.Protocol,
 		BaseURL:         in.BaseURL,
 		CredentialsJSON: jsonRaw(in.CredentialsJSON),
@@ -70,9 +69,6 @@ func (s upstreamStore) Update(id string, in storage.UpdateUpstream) (storage.Ups
 	}
 	if in.Name != nil {
 		m.Name = *in.Name
-	}
-	if in.Provider != nil {
-		m.Provider = *in.Provider
 	}
 	if in.Protocol != nil {
 		m.Protocol = *in.Protocol

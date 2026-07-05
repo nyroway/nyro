@@ -23,7 +23,7 @@ func TestUpstreamCRUD(t *testing.T) {
 	var s storage.Storage = b
 
 	created, err := s.Upstreams().Create(storage.CreateUpstream{
-		Name: "openai-main", Provider: "openai", Protocol: "openai-compatible",
+		Name: "openai-main", Protocol: "openai-compatible",
 		BaseURL: "https://api.openai.com/v1",
 	})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestRouteCreateWithNestedUpstreams(t *testing.T) {
 	b := newTestBackend(t)
 	var s storage.Storage = b
 
-	up, err := s.Upstreams().Create(storage.CreateUpstream{Name: "u1", Provider: "openai"})
+	up, err := s.Upstreams().Create(storage.CreateUpstream{Name: "u1"})
 	if err != nil {
 		t.Fatalf("create upstream: %v", err)
 	}

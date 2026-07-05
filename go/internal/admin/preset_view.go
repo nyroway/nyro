@@ -35,10 +35,36 @@ type credentialFieldView struct {
 	RequiredWhen map[string]any `json:"required_when,omitempty"`
 }
 
+// protocolCredentialsView is the control-plane projection of
+// provider.CredentialSchemaFor for the /protocol-credentials endpoint: the
+// credential fields a protocol needs, independent of any vendor preset.
+type protocolCredentialsView struct {
+	Protocol string                `json:"protocol"`
+	Fields   []credentialFieldView `json:"fields"`
+}
+
 type modelDiscoveryView struct {
 	Kind   string   `json:"kind"`
 	URL    string   `json:"url,omitempty"`
 	Values []string `json:"values,omitempty"`
+}
+
+// toCredentialFieldViews projects provider.CredentialField values into their
+// serializable view, shared by presetView and the protocol-credentials endpoint.
+func toCredentialFieldViews(fields []provider.CredentialField) []credentialFieldView {
+	out := make([]credentialFieldView, 0, len(fields))
+	for _, f := range fields {
+		out = append(out, credentialFieldView{
+			Name:         f.Name,
+			Type:         f.Type,
+			Required:     f.Required,
+			Default:      f.Default,
+			Values:       f.Values,
+			Env:          f.Env,
+			RequiredWhen: f.RequiredWhen,
+		})
+	}
+	return out
 }
 
 // toPresetView projects a provider.Definition into the serializable preset view.
@@ -49,7 +75,7 @@ func toPresetView(d provider.Definition) presetView {
 		DefaultProtocol: d.DefaultProtocol,
 		DefaultModel:    d.DefaultModel,
 		Protocols:       make([]presetProtocol, 0, len(d.Protocols)),
-		Credentials:     credentialView{Fields: make([]credentialFieldView, 0, len(d.Credentials.Fields))},
+		Credentials:     credentialView{Fields: toCredentialFieldViews(d.Credentials.Fields)},
 		Models: modelDiscoveryView{
 			Kind:   d.Models.Kind,
 			URL:    d.Models.URL,
@@ -58,17 +84,6 @@ func toPresetView(d provider.Definition) presetView {
 	}
 	for _, p := range d.Protocols {
 		pv.Protocols = append(pv.Protocols, presetProtocol{ID: p.ID, BaseURL: p.BaseURL})
-	}
-	for _, f := range d.Credentials.Fields {
-		pv.Credentials.Fields = append(pv.Credentials.Fields, credentialFieldView{
-			Name:         f.Name,
-			Type:         f.Type,
-			Required:     f.Required,
-			Default:      f.Default,
-			Values:       f.Values,
-			Env:          f.Env,
-			RequiredWhen: f.RequiredWhen,
-		})
 	}
 	return pv
 }

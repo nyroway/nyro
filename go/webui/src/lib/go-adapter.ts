@@ -109,14 +109,14 @@ export function providerFromUpstream(upstream: GoUpstream): Provider {
   return {
     id: upstream.id,
     name: upstream.name,
-    vendor: upstream.provider,
+    vendor: null,
     protocol: upstream.protocol ?? "",
     base_url: upstream.base_url ?? "",
     api_key: apiKeyFromCredentials(upstream.credentials),
     credentials: credentialsRecord(upstream.credentials),
     use_proxy: Boolean(upstream.proxy_url),
     auth_mode: "apikey",
-    preset_key: stringValue(models.preset_key) ?? upstream.provider,
+    preset_key: stringValue(models.preset_key) ?? null,
     channel: stringValue(models.channel) ?? null,
     models_source: stringValue(models.models_source) ?? null,
     static_models: stringValue(models.static_models) ?? null,
@@ -127,19 +127,18 @@ export function providerFromUpstream(upstream: GoUpstream): Provider {
 }
 
 export function createUpstreamFromProvider(input: CreateProvider): GoCreateUpstream {
-  const provider = input.vendor || input.preset_key || input.name;
+  const presetKey = input.vendor || input.preset_key || input.name;
   const credentials =
     input.credentials && Object.keys(input.credentials).length > 0
       ? input.credentials
       : { api_key: input.api_key };
   return {
     name: input.name,
-    provider,
     protocol: input.protocol,
     base_url: input.base_url,
     credentials,
     models: {
-      preset_key: input.preset_key ?? provider,
+      preset_key: input.preset_key ?? presetKey,
       channel: input.channel,
       models_source: input.models_source,
       static_models: input.static_models,
@@ -152,9 +151,6 @@ export function createUpstreamFromProvider(input: CreateProvider): GoCreateUpstr
 export function updateUpstreamFromProvider(input: UpdateProvider): GoUpdateUpstream {
   const out: GoUpdateUpstream = {};
   if (input.name !== undefined) out.name = input.name;
-  if (input.vendor !== undefined || input.preset_key !== undefined) {
-    out.provider = input.vendor || input.preset_key || "";
-  }
   if (input.protocol !== undefined) out.protocol = input.protocol;
   if (input.base_url !== undefined) out.base_url = input.base_url;
   if (input.credentials !== undefined) {

@@ -33,7 +33,7 @@ func TestCrossProtocolAnthropicToOpenAI(t *testing.T) {
 	st := memory.New()
 	core := st.Storage()
 	upstream, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "openai-upstream", Provider: "openai-upstream", Protocol: "openai-compatible", BaseURL: up.URL,
+		Name: "openai-upstream", Protocol: "openai-compatible", BaseURL: up.URL,
 		CredentialsJSON: []byte(`{"api_key":"sk-test"}`),
 	})
 	_, _ = core.Routes().Create(storage.CreateRoute{

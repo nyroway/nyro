@@ -79,7 +79,7 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 func TestAdminRouteAndSettings(t *testing.T) {
 	r, st := newEngine(t, "") // empty token disables auth
 	up, _ := st.Storage().Upstreams().Create(storage.CreateUpstream{
-		Name: "P", Provider: "p", Protocol: "openai-compatible", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
+		Name: "P", Protocol: "openai-compatible", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 
 	rec := do(r, "POST", "/api/v1/routes", "",
@@ -128,6 +128,37 @@ func TestAdminConsumerCreateExposesRawToken(t *testing.T) {
 	}
 }
 
+// TestProtocolCredentials verifies the /protocol-credentials endpoint exposes
+// exactly the four codec-backed protocols, each with the api_key field
+// AuthenticatorFor requires.
+func TestProtocolCredentials(t *testing.T) {
+	r, _ := newEngine(t, "")
+
+	rec := do(r, "GET", "/api/v1/protocol-credentials", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get protocol-credentials → %d %s", rec.Code, rec.Body.String())
+	}
+	var out []protocolCredentialsView
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 4 {
+		t.Fatalf("got %d entries, want 4: %+v", len(out), out)
+	}
+	var anthropic *protocolCredentialsView
+	for i := range out {
+		if out[i].Protocol == "anthropic-messages" {
+			anthropic = &out[i]
+		}
+	}
+	if anthropic == nil {
+		t.Fatalf("no anthropic-messages entry: %+v", out)
+	}
+	if len(anthropic.Fields) != 1 || anthropic.Fields[0].Name != "api_key" || !anthropic.Fields[0].Required {
+		t.Errorf("anthropic-messages fields = %+v, want one required api_key field", anthropic.Fields)
+	}
+}
+
 // TestMutationsBumpEpoch verifies every config-mutating endpoint bumps
 // config_epoch so the xDS broadcaster pushes a fresh snapshot.
 func TestMutationsBumpEpoch(t *testing.T) {
@@ -139,7 +170,7 @@ func TestMutationsBumpEpoch(t *testing.T) {
 		return v
 	}
 
-	up, err := core.Upstreams().Create(storage.CreateUpstream{Name: "u1", Provider: "openai", CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	up, err := core.Upstreams().Create(storage.CreateUpstream{Name: "u1", Protocol: "openai-compatible", BaseURL: "https://api.openai.com/v1", CredentialsJSON: []byte(`{"api_key":"k"}`)})
 	if err != nil {
 		t.Fatalf("seed upstream: %v", err)
 	}

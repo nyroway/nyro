@@ -51,7 +51,6 @@ type Protocol struct {
 // UpstreamRuntime is the provider-facing runtime view of an upstream.
 type UpstreamRuntime struct {
 	Name            string
-	Provider        string
 	Protocol        string
 	BaseURL         string
 	CredentialsJSON json.RawMessage
@@ -138,19 +137,6 @@ func Lookup(id string) (Definition, bool) {
 		return Definition{}, false
 	}
 	return p.Definition(), true
-}
-
-// Resolve returns a registered provider by id, falling back to the "custom"
-// provider (always registered) when id is empty or unmatched. Unlike Get, it
-// never fails — this is the data plane's single resolution entry point: every
-// upstream must be dispatchable, even one whose provider id is a typo or a
-// self-hosted deployment with no named vendor.
-func Resolve(id string) Provider {
-	if p, ok := Get(id); ok {
-		return p
-	}
-	p, _ := Get("custom")
-	return p
 }
 
 // normalizeID trims and lowercases id before registry lookup. Vendor id
