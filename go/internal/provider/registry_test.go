@@ -11,11 +11,12 @@ import (
 // allBuiltinIDs is the full set of built-in provider IDs; tests iterate it to
 // guarantee every vendor is registered with a provider-specific concrete type.
 //
-// Temporarily reduced to anthropic/openai/gemini/deepseek/openrouter plus the
-// custom fallback; other vendor providers were removed and can be reinstated
-// (with their own files) later.
+// Temporarily reduced to anthropic/openai/gemini/deepseek/openrouter; other
+// vendor providers were removed and can be reinstated (with their own files)
+// later. The "custom" fallback provider was removed in favor of protocol-based
+// AuthenticatorFor (see authenticator.go).
 var allBuiltinIDs = []string{
-	"openai", "anthropic", "gemini", "deepseek", "openrouter", "custom",
+	"openai", "anthropic", "gemini", "deepseek", "openrouter",
 }
 
 func TestProvidersAreConcreteImplementations(t *testing.T) {
@@ -76,27 +77,6 @@ func TestLookupNormalizesID(t *testing.T) {
 	def, ok := provider.Lookup(" OpenAI ")
 	if !ok || def.ID != "openai" {
 		t.Fatalf("Lookup(\" OpenAI \") = %+v, %v; want openai", def, ok)
-	}
-}
-
-func TestResolveFallsBackToCustom(t *testing.T) {
-	p := provider.Resolve("this-id-does-not-exist")
-	if got := p.Definition().ID; got != "custom" {
-		t.Errorf("Resolve(unknown) = %q, want custom", got)
-	}
-	if p := provider.Resolve(""); p.Definition().ID != "custom" {
-		t.Errorf("Resolve(\"\") = %q, want custom", p.Definition().ID)
-	}
-}
-
-func TestResolveHitsRealProviderBeforeFallback(t *testing.T) {
-	p := provider.Resolve("anthropic")
-	if got := p.Definition().ID; got != "anthropic" {
-		t.Errorf("Resolve(anthropic) = %q, want anthropic (not custom fallback)", got)
-	}
-	// ID normalization (trim/lowercase) applies inside Resolve too (via Get).
-	if got := provider.Resolve(" OpenAI ").Definition().ID; got != "openai" {
-		t.Errorf("Resolve(\" OpenAI \") = %q, want openai", got)
 	}
 }
 
