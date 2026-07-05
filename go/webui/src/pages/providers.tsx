@@ -32,7 +32,6 @@ import {
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
-import { NyroIcon } from "@/components/ui/nyro-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -79,6 +78,21 @@ const emptyCreate: CreateProvider = {
 };
 const PAGE_SIZE = 7;
 const DEFAULT_PRESET_ID = "nyro";
+// Radix's <Select.Item> forbids value="" (it reserves the empty string to mean
+// "clear selection / show placeholder"), but "" is this page's real
+// no-template-selected state everywhere else (selectedPresetId, editForm.preset_key).
+// Only the rendered <SelectItem> uses this sentinel; translate at the Select
+// boundary via templateSelectValue/templateStateValue so "" keeps flowing
+// through the rest of the page.
+const TEMPLATE_NONE_SENTINEL = "__none__";
+
+function templateSelectValue(value: string): string {
+  return value === "" ? TEMPLATE_NONE_SENTINEL : value;
+}
+
+function templateStateValue(value: string): string {
+  return value === TEMPLATE_NONE_SENTINEL ? "" : value;
+}
 // Only protocols with a registered codec are user-selectable here.
 // gemini-interactions/bedrock-converse/azure-inference are declared in
 // ProviderProtocol (and on the backend, go/internal/protocol/ids) but have
@@ -111,21 +125,14 @@ function validateProviderEndpoint(
   return null;
 }
 
-function availableProtocolsForPreset(
-  preset?: ProviderPreset | null,
-  channelId?: string,
-): ProviderProtocol[] {
+function availableProtocolsForPreset(preset?: ProviderPreset | null): ProviderProtocol[] {
   if (!preset || preset.id === DEFAULT_PRESET_ID) {
     return protocolOptions.map((item) => item.value);
   }
 
-  const byChannel = preset.channels?.find((channel) => channel.id === channelId);
   const collectKeys = (channels: ProviderChannelPreset[]) =>
     channels.flatMap((channel) => Object.keys(channel.baseUrls ?? {}));
-
-  const rawKeys = byChannel
-    ? Object.keys(byChannel.baseUrls ?? {})
-    : collectKeys(preset.channels ?? []);
+  const rawKeys = collectKeys(preset.channels ?? []);
 
   // Resolve old/legacy keys to canonical Protocol IDs.
   const known = new Set<ProviderProtocol>(protocolOptions.map((item) => item.value));
@@ -140,10 +147,9 @@ function availableProtocolsForPreset(
 
 function resolvePresetProtocol(
   preset: ProviderPreset,
-  channelId?: string,
   preferred?: ProviderProtocol,
 ): ProviderProtocol {
-  const available = availableProtocolsForPreset(preset, channelId);
+  const available = availableProtocolsForPreset(preset);
   const canonicalDefault = (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol;
   if (preferred && available.includes(preferred)) return preferred;
   if (available.includes(canonicalDefault)) return canonicalDefault;
@@ -154,64 +160,9 @@ function presetLabel(preset: ProviderPreset, isZh: boolean) {
   return isZh ? preset.label.zh : preset.label.en;
 }
 
-function presetLabelClass(preset: ProviderPreset, isZh: boolean) {
-  const len = presetLabel(preset, isZh).trim().length;
-  if (len >= 16) return "provider-preset-label provider-preset-label-micro";
-  if (len >= 12) return "provider-preset-label provider-preset-label-compact";
-  return "provider-preset-label";
-}
-
-function channelLabel(channel: ProviderChannelPreset, isZh: boolean) {
-  return isZh ? channel.label.zh : channel.label.en;
-}
-
 function toGatewayBaseUrl(url: string) {
   const normalized = url.trim().replace(/\/+$/, "");
   return normalized;
-}
-
-function defaultModelsEndpoint(baseUrl: string, protocol: ProviderProtocol) {
-  const normalized = baseUrl.trim().replace(/\/+$/, "");
-  let parsed: URL | null = null;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    parsed = null;
-  }
-
-  if (protocol === "openai-compatible" || protocol === "openai-responses" || protocol === "anthropic-messages") {
-    // OpenRouter model discovery endpoint should be /api/v1/models.
-    if (parsed?.host === "openrouter.ai") {
-      const pathname = parsed.pathname.replace(/\/+$/, "");
-      if (pathname === "/api" || pathname === "/api/v1") {
-        return `${parsed.origin}/api/v1/models`;
-      }
-    }
-
-    try {
-      const pathname = new URL(normalized).pathname.replace(/\/+$/, "");
-      return pathname && pathname !== "/" ? `${normalized}/models` : `${normalized}/v1/models`;
-    } catch {
-      return normalized.endsWith("/v1") ? `${normalized}/models` : `${normalized}/v1/models`;
-    }
-  }
-
-  if (protocol === "gemini-content") {
-    return `${normalized}/v1beta/models`;
-  }
-
-  return "";
-}
-
-function isVertexProviderSelection(value?: Pick<CreateProvider, "vendor" | "preset_key"> | Pick<UpdateProvider, "vendor" | "preset_key"> | null) {
-  const vendor = value?.vendor?.trim().toLowerCase();
-  const preset = value?.preset_key?.trim().toLowerCase();
-  return vendor === "vertexai" || preset === "vertexai";
-}
-
-function defaultVertexBaseUrl(protocol: ProviderProtocol | string) {
-  const base = "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global";
-  return protocol === "openai-compatible" ? `${base}/endpoints/openapi` : base;
 }
 
 function joinStaticModels(models?: string[]) {
@@ -241,9 +192,15 @@ function presetChannels(preset?: ProviderPreset | null) {
 
 function presetChannelAuthMode(
   preset?: ProviderPreset | null,
-  channelId?: string | null,
+  protocol?: ProviderProtocol | null,
 ): "apikey" | "oauth" {
-  const channel = presetChannels(preset).find((item) => item.id === channelId) ?? presetChannels(preset)[0];
+  const channels = presetChannels(preset);
+  const channel =
+    (protocol
+      ? channels.find((item) =>
+          Object.keys(item.baseUrls ?? {}).some((key) => resolveProtocol(key) === protocol),
+        )
+      : undefined) ?? channels[0];
   return channel?.authMode === "oauth" ? "oauth" : "apikey";
 }
 
@@ -266,9 +223,11 @@ function nextProviderCopyName(providers: Provider[], originalName: string) {
 function resolvePresetConfig(
   preset: ProviderPreset,
   protocol: ProviderProtocol,
-  channelId?: string,
 ) {
-  const channel = presetChannels(preset).find((item) => item.id === channelId) ?? presetChannels(preset)[0];
+  const channel =
+    presetChannels(preset).find((item) =>
+      Object.keys(item.baseUrls ?? {}).some((key) => resolveProtocol(key) === protocol),
+    ) ?? presetChannels(preset)[0];
   const sourceBaseUrls = channel?.baseUrls ?? {};
   const rawBaseUrl = Object.entries(sourceBaseUrls).find(
     ([key]) => resolveProtocol(key) === protocol,
@@ -524,7 +483,7 @@ export default function ProvidersPage() {
   const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
   const [providerToCopy, setProviderToCopy] = useState<Provider | null>(null);
   const [appendTargets, setAppendTargets] = useState(false);
-  const [selectedPresetId, setSelectedPresetId] = useState(DEFAULT_PRESET_ID);
+  const [selectedPresetId, setSelectedPresetId] = useState("");
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
   const activeTestRunRef = useRef(0);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -559,8 +518,9 @@ export default function ProvidersPage() {
     [providerPresets, selectedPresetId],
   );
   useEffect(() => {
+    if (!selectedPresetId) return; // "" (no template) is always valid.
     if (providerPresets.some((preset) => preset.id === selectedPresetId)) return;
-    setSelectedPresetId(providerPresets[0]?.id ?? DEFAULT_PRESET_ID);
+    setSelectedPresetId("");
   }, [providerPresets, selectedPresetId]);
 
   const [editForm, setEditForm] = useState<UpdateProvider & { id: string }>({
@@ -738,23 +698,19 @@ export default function ProvidersPage() {
   function startEdit(p: Provider) {
     setEditingId(p.id);
     setEditError(null);
-    const presetForEdit = providerPresets.find(
-      (item) => item.id === (p.preset_key || DEFAULT_PRESET_ID),
-    );
-    const channel = p.channel || "default";
-    const savedProtocol = (resolveProtocol(p.protocol) ?? "openai-compatible") as ProviderProtocol;
-    const safeProtocol = presetForEdit
-      ? resolvePresetProtocol(presetForEdit, channel, savedProtocol)
-      : savedProtocol;
+    const protocol = (resolveProtocol(p.protocol) ?? "openai-compatible") as ProviderProtocol;
+    const presetForEdit = p.preset_key
+      ? providerPresets.find((item) => item.id === p.preset_key) ?? null
+      : null;
     setEditForm({
       id: p.id,
       name: p.name,
       vendor: p.vendor ?? (p.preset_key || undefined),
-      protocol: safeProtocol,
+      protocol,
       base_url: p.base_url,
       use_proxy: p.use_proxy,
-      preset_key: p.preset_key || DEFAULT_PRESET_ID,
-      channel,
+      preset_key: presetForEdit ? presetForEdit.id : "",
+      channel: p.channel || "",
       models_source: p.models_source ?? "",
       static_models: p.static_models ?? "",
       api_key: p.api_key ?? "",
@@ -763,67 +719,83 @@ export default function ProvidersPage() {
     });
   }
 
-  function handlePresetChange(nextPresetId: string) {
-    if (!nextPresetId) return;
-    setSelectedPresetId(nextPresetId);
-    const preset = providerPresets.find((item) => item.id === nextPresetId);
-    if (!preset) return;
-
-    const nextChannelId = preset.channels?.[0]?.id ?? "";
-    const nextProtocol = resolvePresetProtocol(preset, nextChannelId, (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol);
-    const config = resolvePresetConfig(preset, nextProtocol, nextChannelId);
-    const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
-
-    setForm({
-      ...emptyCreate,
-      vendor: preset.id === DEFAULT_PRESET_ID ? undefined : preset.id,
-      protocol: nextProtocol,
-      base_url: nextBaseUrl,
-      use_proxy: false,
-      auth_mode: presetChannelAuthMode(preset, nextChannelId),
-      preset_key: preset.id,
-      channel: nextChannelId,
-      models_source: config.modelsSource,
-      static_models: config.staticModels,
-      api_key: config.apiKey || "",
-      credentials: mergeCredentialValues(credentialFieldsForPreset(preset), form.credentials ?? {}),
-      name: "",
-    });
+  function handleProtocolChange(nextProtocol: string) {
+    const protocol = resolveProtocol(nextProtocol) as ProviderProtocol | null;
+    if (!protocol) return;
+    const preset = selectedPreset && availableProtocolsForPreset(selectedPreset).includes(protocol)
+      ? selectedPreset
+      : null;
+    if (!preset && selectedPresetId) setSelectedPresetId("");
+    const config = preset ? resolvePresetConfig(preset, protocol) : null;
+    setForm((prev) => ({
+      ...prev,
+      protocol,
+      base_url: config?.baseUrl || (preset ? "" : protocolUrl(protocol)) || prev.base_url,
+      models_source: config?.modelsSource ?? prev.models_source,
+      static_models: config?.staticModels ?? prev.static_models,
+      api_key: config?.apiKey || prev.api_key,
+      credentials: preset
+        ? mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {})
+        : prev.credentials,
+    }));
   }
 
-  function handlePresetChannelChange(nextChannelId: string) {
-    if (!selectedPreset) return;
-    const nextProtocol = resolvePresetProtocol(
-      selectedPreset,
-      nextChannelId,
-      form.protocol as ProviderProtocol,
-    );
-    const config = resolvePresetConfig(selectedPreset, nextProtocol, nextChannelId);
-    const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
-    setForm((prev) => {
-      const baseUrl = isVertexProviderSelection(prev)
-        ? (nextBaseUrl || defaultVertexBaseUrl(nextProtocol))
-        : nextBaseUrl;
+  function handleTemplateChange(nextPresetId: string) {
+    setSelectedPresetId(nextPresetId);
+    if (!nextPresetId) return; // "none" — leave current form values as the user typed them.
+    const preset = providerPresets.find((item) => item.id === nextPresetId);
+    if (!preset) return;
+    const protocol = resolvePresetProtocol(preset, form.protocol as ProviderProtocol);
+    const config = resolvePresetConfig(preset, protocol);
+    setForm((prev) => ({
+      ...prev,
+      protocol,
+      base_url: config.baseUrl || protocolUrl(protocol),
+      models_source: config.modelsSource,
+      static_models: config.staticModels,
+      api_key: config.apiKey || prev.api_key,
+      vendor: preset.id === DEFAULT_PRESET_ID ? undefined : preset.id,
+      preset_key: preset.id,
+      credentials: mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {}),
+    }));
+  }
+
+  function handleEditProtocolChange(nextProtocol: string) {
+    const protocol = resolveProtocol(nextProtocol) as ProviderProtocol | null;
+    if (!protocol) return;
+    setEditForm((prev) => {
+      const currentPreset = prev.preset_key
+        ? providerPresets.find((item) => item.id === prev.preset_key) ?? null
+        : null;
+      const preset = currentPreset && availableProtocolsForPreset(currentPreset).includes(protocol)
+        ? currentPreset
+        : null;
+      const config = preset ? resolvePresetConfig(preset, protocol) : null;
       return {
         ...prev,
-        channel: nextChannelId,
-        protocol: nextProtocol,
-        auth_mode: presetChannelAuthMode(selectedPreset, nextChannelId),
-        base_url: baseUrl,
-        models_source: config.modelsSource,
-        static_models: config.staticModels,
-        api_key: config.apiKey || prev.api_key,
+        preset_key: preset ? prev.preset_key : "",
+        protocol,
+        base_url: config?.baseUrl || (preset ? "" : protocolUrl(protocol)) || prev.base_url,
+        models_source: config?.modelsSource ?? prev.models_source,
+        static_models: config?.staticModels ?? prev.static_models,
+        api_key: config?.apiKey || prev.api_key,
+        credentials: preset
+          ? mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {})
+          : prev.credentials,
       };
     });
   }
 
-  function handleEditPresetChange(nextPresetId: string) {
-    if (!nextPresetId) return;
+  function handleEditTemplateChange(nextPresetId: string) {
+    if (!nextPresetId) {
+      setEditForm((prev) => ({ ...prev, preset_key: "" }));
+      return;
+    }
     const preset = providerPresets.find((item) => item.id === nextPresetId);
     if (!preset) return;
 
-    const nextChannelId = preset.channels?.[0]?.id ?? "";
-    const nextAuthMode = presetChannelAuthMode(preset, nextChannelId);
+    const protocol = resolvePresetProtocol(preset, editForm.protocol as ProviderProtocol);
+    const nextAuthMode = presetChannelAuthMode(preset, protocol);
     if (nextAuthMode === "oauth" && normalizeAuthMode(editingProvider?.auth_mode) !== "oauth") {
       setEditError(
         isZh
@@ -834,59 +806,36 @@ export default function ProvidersPage() {
     }
 
     setEditError(null);
-    setEditForm((prev) =>
-      prev
-        ? (() => {
-            const nextProtocol = resolvePresetProtocol(
-              preset,
-              nextChannelId,
-              (prev.protocol as ProviderProtocol) || (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol,
-            );
-            const config = resolvePresetConfig(preset, nextProtocol, nextChannelId);
-            const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
-            const baseUrl = isVertexProviderSelection(prev)
-              ? (nextBaseUrl || defaultVertexBaseUrl(nextProtocol))
-              : nextBaseUrl;
-            return {
-              ...prev,
-              vendor: preset.id === DEFAULT_PRESET_ID ? undefined : preset.id,
-              preset_key: preset.id,
-              channel: nextChannelId,
-              protocol: nextProtocol,
-              base_url: baseUrl,
-              models_source: config.modelsSource,
-              static_models: config.staticModels,
-              api_key: config.apiKey || prev.api_key,
-              credentials: mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {}),
-            };
-          })()
-        : prev,
-    );
+    const config = resolvePresetConfig(preset, protocol);
+    setEditForm((prev) => ({
+      ...prev,
+      protocol,
+      base_url: config.baseUrl || protocolUrl(protocol),
+      models_source: config.modelsSource,
+      static_models: config.staticModels,
+      api_key: config.apiKey || prev.api_key,
+      vendor: preset.id === DEFAULT_PRESET_ID ? undefined : preset.id,
+      preset_key: preset.id,
+      credentials: mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {}),
+    }));
   }
 
   function closeCreateForm() {
     setShowForm(false);
-    setSelectedPresetId(DEFAULT_PRESET_ID);
+    setSelectedPresetId("");
     setForm(emptyCreate);
   }
 
   const totalPages = Math.max(1, Math.ceil(providers.length / PAGE_SIZE));
   const pagedProviders = providers.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
-  const createChannelOptions = selectedPreset ? presetChannels(selectedPreset) : [fallbackChannelPreset()];
-  const createChannelValue =
-    selectedPreset?.channels?.length
-      ? (form.channel || createChannelOptions[0]?.id || "")
-      : (createChannelOptions[0]?.id ?? "default");
-  const createProtocolOptions = protocolOptions.filter((option) =>
-    availableProtocolsForPreset(selectedPreset, createChannelValue).includes(option.value),
-  );
-  const hasCreatePresets = providerPresets.length > 0;
-  const createUsesVertexServiceAccount = isVertexProviderSelection(form);
   const createCredentialFields = credentialFieldsForPreset(selectedPreset);
   const createPresetBaseUrl = selectedPreset
-    ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-compatible", createChannelValue).baseUrl
+    ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-compatible").baseUrl
     : "";
   const createBaseUrlMissing = !createPresetBaseUrl && !form.base_url?.trim();
+  const createTemplateOptions = providerPresets.filter((preset) =>
+    availableProtocolsForPreset(preset).includes((form.protocol as ProviderProtocol) || "openai-compatible"),
+  );
 
   useEffect(() => {
     if (page > totalPages - 1) {
@@ -937,13 +886,8 @@ export default function ProvidersPage() {
               return;
             }
             setShowForm(true);
-            const initialPresetId = providerPresets[0]?.id;
-            if (initialPresetId) {
-              handlePresetChange(initialPresetId);
-            } else {
-              setSelectedPresetId("");
-              setForm({ ...emptyCreate, auth_mode: "apikey" });
-            }
+            setSelectedPresetId("");
+            setForm({ ...emptyCreate, auth_mode: "apikey" });
           }}
           className="flex items-center gap-2"
         >
@@ -957,88 +901,50 @@ export default function ProvidersPage() {
         <div className="glass rounded-2xl p-6 space-y-6">
           <h2 className="text-lg font-semibold text-slate-900">{isZh ? "新建提供商" : "New Provider"}</h2>
           <div className="space-y-3">
-            {hasCreatePresets ? (
-              <ToggleGroup
-                type="single"
-                value={selectedPresetId}
-                onValueChange={handlePresetChange}
-                className="provider-preset-group"
-              >
-                {[...providerPresets]
-                  .sort((a, b) => (a.id === DEFAULT_PRESET_ID ? -1 : b.id === DEFAULT_PRESET_ID ? 1 : 0))
-                  .map((preset) => (
-                    <ToggleGroupItem
-                      key={preset.id}
-                      value={preset.id}
-                      variant="outline"
-                      size="lg"
-                      className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
-                      aria-label={presetLabel(preset, isZh)}
-                    >
-                      {preset.icon === "nyro" || preset.icon === "custom" ? (
-                        <>
-                          <NyroIcon
-                            size={26}
-                            className="provider-preset-icon provider-preset-icon-custom provider-preset-icon-colored"
-                          />
-                          <NyroIcon
-                            size={26}
-                            monochrome
-                            className="provider-preset-icon provider-preset-icon-custom provider-preset-icon-mono"
-                          />
-                        </>
-                      ) : (
-                        <>
-                          <ProviderIcon
-                            name={preset.icon ?? preset.label.en}
-                            size={26}
-                            className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
-                          />
-                          <ProviderIcon
-                            name={preset.icon ?? preset.label.en}
-                            size={26}
-                            monochrome
-                            className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
-                          />
-                        </>
-                      )}
-                      <span className={presetLabelClass(preset, isZh)}>{presetLabel(preset, isZh)}</span>
-                    </ToggleGroupItem>
-                  ))}
-              </ToggleGroup>
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
-                {isZh
-                  ? "当前没有可用的厂商预设。"
-                  : "No provider presets are available."}
-              </div>
-            )}
+            <ToggleGroup
+              type="single"
+              value={form.protocol}
+              onValueChange={(value) => {
+                if (value) handleProtocolChange(value);
+              }}
+              className="provider-preset-group"
+            >
+              {protocolOptions.map((option) => (
+                <ToggleGroupItem
+                  key={option.value}
+                  value={option.value}
+                  variant="outline"
+                  size="lg"
+                  className="provider-preset-card h-auto w-full px-4 py-5"
+                >
+                  {option.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
           </div>
           <div className="h-px bg-slate-200/70" />
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 space-y-2">
-                <ToggleGroup
-                  type="single"
-                  value={createChannelValue}
-                  onValueChange={(value) => {
-                    if (!value || !selectedPreset?.channels?.length) return;
-                    handlePresetChannelChange(value);
-                  }}
-                  className="provider-channel-group"
+                <FieldLabel>{isZh ? "厂商模板（可选）" : "Vendor template (optional)"}</FieldLabel>
+                <Select
+                  value={templateSelectValue(selectedPresetId)}
+                  onValueChange={(value) => handleTemplateChange(templateStateValue(value))}
                 >
-                  {createChannelOptions.map((channel) => (
-                    <ToggleGroupItem
-                      key={channel.id}
-                      value={channel.id}
-                      variant="outline"
-                      size="default"
-                      className="provider-preset-card provider-channel-item"
-                    >
-                      {channelLabel(channel, isZh)}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
+                  <SelectTrigger>
+                    <SelectValue placeholder={isZh ? "无 / 自定义" : "None / Custom"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={TEMPLATE_NONE_SENTINEL}>
+                      {isZh ? "无 / 自定义" : "None / Custom"}
+                    </SelectItem>
+                    {createTemplateOptions.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        {presetLabel(preset, isZh)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
@@ -1062,47 +968,6 @@ export default function ProvidersPage() {
                   isZh={isZh}
                 />
               ))}
-              <div className="space-y-2">
-                <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
-                <Select
-                  value={form.protocol}
-                  onValueChange={(value) => {
-                    const nextProtocol = value as ProviderProtocol;
-                    const config = selectedPreset
-                      ? resolvePresetConfig(selectedPreset, nextProtocol, form.channel)
-                      : {
-                          baseUrl: protocolUrl(nextProtocol),
-                          modelsSource: defaultModelsEndpoint(protocolUrl(nextProtocol), nextProtocol),
-                          staticModels: form.static_models ?? "",
-                        };
-                    const nextBaseUrl =
-                      selectedPreset && selectedPreset.id !== DEFAULT_PRESET_ID
-                        ? (config.baseUrl || form.base_url)
-                        : config.baseUrl;
-                    const baseUrl = createUsesVertexServiceAccount
-                      ? (nextBaseUrl || defaultVertexBaseUrl(nextProtocol))
-                      : nextBaseUrl;
-                    setForm({
-                      ...form,
-                      protocol: nextProtocol,
-                      base_url: baseUrl,
-                      models_source: form.models_source,
-                      static_models: config.staticModels,
-                    });
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={isZh ? "选择协议" : "Select protocol"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {createProtocolOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
               <div className="space-y-2">
                 <FieldLabel>Base URL</FieldLabel>
                 <Input
@@ -1199,9 +1064,6 @@ export default function ProvidersPage() {
             const tr = testResult[p.id];
             const status = tr ? (tr.success ? "success" : "failed") : null;
             const isEditing = editingId === p.id;
-            const editingPresetId = editForm.preset_key || DEFAULT_PRESET_ID;
-            const editingPreset =
-              providerPresets.find((preset) => preset.id === editingPresetId) ?? providerPresets[0] ?? null;
             const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-compatible") as ProviderProtocol];
             const selectedPreset = providerPresets.find((preset) => preset.id === (p.preset_key || p.vendor || ""));
             const selectedProviderName = selectedPreset
@@ -1209,23 +1071,21 @@ export default function ProvidersPage() {
               : (p.vendor || p.preset_key || p.name);
 
             if (isEditing) {
-              const editingChannelOptions = presetChannels(editingPreset);
-              const editingChannelValue =
-                editingPreset?.channels?.length
-                  ? (editForm.channel || editingChannelOptions[0]?.id || "")
-                  : (editingChannelOptions[0]?.id ?? "default");
-              const editingProtocolOptions = protocolOptions.filter((option) =>
-                availableProtocolsForPreset(editingPreset, editingChannelValue).includes(option.value),
-              );
-              const editUsesVertexServiceAccount = isVertexProviderSelection(editForm);
+              const editingPresetId = editForm.preset_key ?? "";
+              const editingPreset = editingPresetId
+                ? providerPresets.find((preset) => preset.id === editingPresetId) ?? null
+                : null;
               const editCredentialFields = credentialFieldsForPreset(editingPreset);
               const editPresetBaseUrl = editingPreset
-                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-compatible", editingChannelValue).baseUrl
+                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-compatible").baseUrl
                 : "";
               const editBaseUrlMissing = !editPresetBaseUrl && !editForm.base_url?.trim();
               const currentProviderIsOAuth =
                 normalizeAuthMode(p.auth_mode) === "oauth"
                 || normalizeAuthMode(editForm.auth_mode) === "oauth";
+              const editTemplateOptions = providerPresets.filter((preset) =>
+                availableProtocolsForPreset(preset).includes((editForm.protocol as ProviderProtocol) || "openai-compatible"),
+              );
               return (
                 <div key={p.id} className="glass rounded-2xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
@@ -1236,114 +1096,57 @@ export default function ProvidersPage() {
                   </div>
                   <div className="space-y-3">
                     <p className="text-sm font-semibold text-slate-700">
-                      {isZh ? "1. 供应商" : "1. Provider"}
+                      {isZh ? "1. 协议" : "1. Protocol"}
                     </p>
                     <ToggleGroup
                       type="single"
-                      value={editingPresetId}
-                      onValueChange={handleEditPresetChange}
+                      value={editForm.protocol ?? ""}
+                      onValueChange={(value) => {
+                        if (value) handleEditProtocolChange(value);
+                      }}
                       className="provider-preset-group"
                     >
-                      {[...providerPresets]
-                        .sort((a, b) => (a.id === DEFAULT_PRESET_ID ? -1 : b.id === DEFAULT_PRESET_ID ? 1 : 0))
-                        .map((preset) => (
+                      {protocolOptions.map((option) => (
                         <ToggleGroupItem
-                          key={preset.id}
-                          value={preset.id}
+                          key={option.value}
+                          value={option.value}
                           variant="outline"
                           size="lg"
-                          disabled={presetChannelAuthMode(preset, preset.channels?.[0]?.id ?? "") === "oauth" && !currentProviderIsOAuth}
-                          className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5 disabled:cursor-not-allowed disabled:opacity-50"
-                          aria-label={presetLabel(preset, isZh)}
+                          className="provider-preset-card h-auto w-full px-4 py-5"
                         >
-                          {preset.icon === "nyro" || preset.icon === "custom" ? (
-                            <>
-                              <NyroIcon
-                                size={26}
-                                className="provider-preset-icon provider-preset-icon-custom provider-preset-icon-colored"
-                              />
-                              <NyroIcon
-                                size={26}
-                                monochrome
-                                className="provider-preset-icon provider-preset-icon-custom provider-preset-icon-mono"
-                              />
-                            </>
-                          ) : (
-                            <>
-                              <ProviderIcon
-                                name={preset.icon ?? preset.label.en}
-                                size={26}
-                                className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
-                              />
-                              <ProviderIcon
-                                name={preset.icon ?? preset.label.en}
-                                size={26}
-                                monochrome
-                                className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
-                              />
-                            </>
-                          )}
-                          <span className={presetLabelClass(preset, isZh)}>{presetLabel(preset, isZh)}</span>
+                          {option.label}
                         </ToggleGroupItem>
                       ))}
                     </ToggleGroup>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2 space-y-2">
-                      <FieldLabel>{isZh ? "渠道" : "Channel"}</FieldLabel>
-                      <ToggleGroup
-                        type="single"
-                        value={editingChannelValue}
-                        onValueChange={(value) => {
-                          if (!value || !editingPreset?.channels?.length) return;
-                          const nextAuthMode = presetChannelAuthMode(editingPreset, value);
-                          if (nextAuthMode === "oauth" && !currentProviderIsOAuth) {
-                            setEditError(
-                              isZh
-                                ? "已有 Provider 不能在编辑时直接切到 OAuth 渠道，请新建一个 OAuth Provider。"
-                                : "Existing providers cannot switch directly to an OAuth channel while editing. Create a new OAuth provider instead.",
-                            );
-                            return;
-                          }
-                          const resolvedProtocol = resolvePresetProtocol(
-                            editingPreset,
-                            value,
-                            (editForm.protocol as ProviderProtocol) || (resolveProtocol(editingPreset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol,
-                          );
-                          const config = resolvePresetConfig(
-                            editingPreset,
-                            resolvedProtocol,
-                            value,
-                          );
-                          const nextBaseUrl = config.baseUrl || protocolUrl(resolvedProtocol);
-                          const baseUrl = editUsesVertexServiceAccount
-                            ? (nextBaseUrl || defaultVertexBaseUrl(resolvedProtocol))
-                            : nextBaseUrl;
-                          setEditError(null);
-                          setEditForm({
-                            ...editForm,
-                            channel: value,
-                            protocol: resolvedProtocol,
-                            base_url: baseUrl,
-                            models_source: config.modelsSource,
-                            static_models: config.staticModels,
-                          });
-                        }}
-                        className="provider-channel-group"
+                      <FieldLabel>{isZh ? "厂商模板（可选）" : "Vendor template (optional)"}</FieldLabel>
+                      <Select
+                        value={templateSelectValue(editingPresetId)}
+                        onValueChange={(value) => handleEditTemplateChange(templateStateValue(value))}
                       >
-                        {editingChannelOptions.map((channel) => (
-                          <ToggleGroupItem
-                            key={channel.id}
-                            value={channel.id}
-                            variant="outline"
-                            size="default"
-                            disabled={presetChannelAuthMode(editingPreset, channel.id) === "oauth" && !currentProviderIsOAuth}
-                            className="provider-preset-card provider-channel-item disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {channelLabel(channel, isZh)}
-                          </ToggleGroupItem>
-                        ))}
-                      </ToggleGroup>
+                        <SelectTrigger>
+                          <SelectValue placeholder={isZh ? "无 / 自定义" : "None / Custom"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={TEMPLATE_NONE_SENTINEL}>
+                            {isZh ? "无 / 自定义" : "None / Custom"}
+                          </SelectItem>
+                          {editTemplateOptions.map((preset) => (
+                            <SelectItem
+                              key={preset.id}
+                              value={preset.id}
+                              disabled={
+                                presetChannelAuthMode(preset, (editForm.protocol as ProviderProtocol) || null) === "oauth"
+                                && !currentProviderIsOAuth
+                              }
+                            >
+                              {presetLabel(preset, isZh)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-2">
                       <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
@@ -1367,47 +1170,6 @@ export default function ProvidersPage() {
                         isZh={isZh}
                       />
                     ))}
-                    <div className="space-y-2">
-                      <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
-                      <Select
-                        value={editForm.protocol ?? ""}
-                        onValueChange={(value) => {
-                          const nextProtocol = value as ProviderProtocol;
-                          const config = editingPreset
-                            ? resolvePresetConfig(editingPreset, nextProtocol, editForm.channel ?? undefined)
-                            : {
-                                baseUrl: protocolUrl(nextProtocol),
-                                modelsSource: defaultModelsEndpoint(protocolUrl(nextProtocol), nextProtocol),
-                                staticModels: editForm.static_models ?? "",
-                              };
-                          const nextBaseUrl =
-                            editingPreset && editingPreset.id !== DEFAULT_PRESET_ID
-                              ? (config.baseUrl || editForm.base_url || "")
-                              : config.baseUrl;
-                          const baseUrl = editUsesVertexServiceAccount
-                            ? (nextBaseUrl || defaultVertexBaseUrl(nextProtocol))
-                            : nextBaseUrl;
-                          setEditForm({
-                            ...editForm,
-                            protocol: nextProtocol,
-                            base_url: baseUrl,
-                            models_source: editForm.models_source,
-                            static_models: config.staticModels,
-                          });
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={isZh ? "选择协议" : "Select protocol"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {editingProtocolOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
                     <div className="space-y-2">
                       <FieldLabel>Base URL</FieldLabel>
                       <Input
