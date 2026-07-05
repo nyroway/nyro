@@ -34,7 +34,6 @@ message ConfigSnapshot {
 message Upstream {
   string id = 1;
   string name = 2;
-  string provider = 3;
   string protocol = 4;
   string base_url = 5;
   string credentials_json = 6;

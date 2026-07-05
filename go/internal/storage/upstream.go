@@ -12,7 +12,6 @@ import "encoding/json"
 type Upstream struct {
 	ID              string          `json:"id"`
 	Name            string          `json:"name"`
-	Provider        string          `json:"provider"`
 	Protocol        string          `json:"protocol,omitempty"`
 	BaseURL         string          `json:"base_url,omitempty"`
 	CredentialsJSON json.RawMessage `json:"credentials,omitempty"`
@@ -26,7 +25,6 @@ type Upstream struct {
 // CreateUpstream is the write DTO for creating an upstream.
 type CreateUpstream struct {
 	Name            string          `json:"name"`
-	Provider        string          `json:"provider"`
 	Protocol        string          `json:"protocol,omitempty"`
 	BaseURL         string          `json:"base_url,omitempty"`
 	CredentialsJSON json.RawMessage `json:"credentials,omitempty"`
@@ -38,7 +36,6 @@ type CreateUpstream struct {
 // UpdateUpstream is the partial-update DTO; nil fields mean "unchanged".
 type UpdateUpstream struct {
 	Name            *string          `json:"name,omitempty"`
-	Provider        *string          `json:"provider,omitempty"`
 	Protocol        *string          `json:"protocol,omitempty"`
 	BaseURL         *string          `json:"base_url,omitempty"`
 	CredentialsJSON *json.RawMessage `json:"credentials,omitempty"`

@@ -32,7 +32,7 @@ func TestAutoMigrateCreatesConfigSchemaTables(t *testing.T) {
 	}
 
 	for table, columns := range map[string][]string{
-		"upstreams":       {"provider", "credentials_json", "models_json", "proxy_url"},
+		"upstreams":       {"credentials_json", "models_json", "proxy_url"},
 		"routes":          {"model", "balance", "enable_auth", "enable_payload"},
 		"route_upstreams": {"route_id", "upstream_id", "model", "weight", "priority"},
 		"consumer_keys":   {"consumer_id", "key_prefix", "key_hash", "last_used_at"},

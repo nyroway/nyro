@@ -6,7 +6,6 @@ package model
 type Upstream struct {
 	ID              string `gorm:"column:id;primaryKey"`
 	Name            string `gorm:"column:name;uniqueIndex;not null"`
-	Provider        string `gorm:"column:provider;not null"`
 	Protocol        string `gorm:"column:protocol"`
 	BaseURL         string `gorm:"column:base_url"`
 	CredentialsJSON string `gorm:"column:credentials_json"`

@@ -24,7 +24,6 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
 		b.SetUpstream(storage.Upstream{
 			ID:              u.GetId(),
 			Name:            u.GetName(),
-			Provider:        u.GetProvider(),
 			Protocol:        u.GetProtocol(),
 			BaseURL:         u.GetBaseUrl(),
 			CredentialsJSON: rawJSON(u.GetCredentialsJson()),
@@ -101,7 +100,7 @@ func SnapshotFromStorage(s storage.Storage, version int64) (*pb.ConfigSnapshot, 
 	}
 	for _, u := range upstreams {
 		out.Upstreams = append(out.Upstreams, &pb.Upstream{
-			Id: u.ID, Name: u.Name, Provider: u.Provider, Protocol: u.Protocol,
+			Id: u.ID, Name: u.Name, Protocol: u.Protocol,
 			BaseUrl: u.BaseURL, CredentialsJson: jsonRaw(u.CredentialsJSON),
 			ModelsJson: jsonRaw(u.ModelsJSON), ProxyUrl: u.ProxyURL, Enabled: u.Enabled,
 		})
