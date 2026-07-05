@@ -15,7 +15,6 @@ import type { GoConsumer, GoRoute, GoUpstream } from "./go-schema";
 const upstream: GoUpstream = {
   id: "up_1",
   name: "OpenAI",
-  provider: "openai",
   protocol: "openai-compatible",
   base_url: "https://api.openai.com/v1",
   credentials: { api_key: "sk-test" },

@@ -1,7 +1,6 @@
 export interface GoUpstream {
   id: string;
   name: string;
-  provider: string;
   protocol?: string;
   base_url?: string;
   credentials?: Record<string, unknown> | string | null;
@@ -14,7 +13,6 @@ export interface GoUpstream {
 
 export interface GoCreateUpstream {
   name: string;
-  provider: string;
   protocol?: string;
   base_url?: string;
   credentials?: Record<string, unknown>;
@@ -25,7 +23,6 @@ export interface GoCreateUpstream {
 
 export interface GoUpdateUpstream {
   name?: string;
-  provider?: string;
   protocol?: string;
   base_url?: string;
   credentials?: Record<string, unknown>;
