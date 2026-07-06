@@ -608,15 +608,20 @@ body {
  * of that period), or the first line drifts out of alignment with the
  * first stripe.
  *
- * background-image is !important because this textarea also matches
+ * background-image, resize, and min-height are !important because this
+ * textarea also matches two other global rules further down this file:
  * `.content-surface :is(input:not(...):not(...):not(...), select,
- * textarea)` further down this file (and its html[data-theme="dark"]
- * variant) — that :is() selector's specificity is that of its most specific
- * branch (the input:not():not():not() one), so the whole rule outranks any
- * plain class selector on the textarea regardless of source order. It also
- * sets `background` as a shorthand, which resets background-image to
- * `none`. Chasing specificity with more classes would be a fragile arms
- * race against future global input styling; !important settles it.
+ * textarea)` (and its html[data-theme="dark"] variant) — whose :is()
+ * specificity is that of its most specific branch (the
+ * input:not():not():not() one), outranking any plain class selector
+ * regardless of source order, and which sets `background` as a shorthand
+ * (resetting background-image to `none`) — and `.content-surface textarea`,
+ * which sets `resize: vertical` and a fixed `min-height: 96px` (both would
+ * override the `resize-none`/`min-h-[48px]` Tailwind utility classes, which
+ * are plain single-class selectors of lower specificity than a class+
+ * element selector). Chasing specificity with more classes would be a
+ * fragile arms race against future global input styling; !important settles
+ * it, here and on the JSX-side Tailwind classes both.
  */
 .nyro-shadcn-input.model-textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -624,6 +629,8 @@ body {
   line-height: 24px;
   padding-top: 0;
   padding-bottom: 0;
+  resize: none !important;
+  min-height: 48px !important;
   background-attachment: local !important;
   background-image: repeating-linear-gradient(
     to bottom,

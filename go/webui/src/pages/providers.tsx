@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
@@ -239,6 +239,18 @@ function pickModelsMode(current: ModelsMode, modelsSource?: string, staticModels
   return current;
 }
 
+// autoGrowTextarea sizes a manual-model-list textarea to exactly fit its
+// content (no internal scrollbar, no user-draggable resize handle — see
+// the `resize-none` class on the element): height tracks line count only,
+// growing as the user adds lines and shrinking as they remove them.
+// Resetting to "auto" before reading scrollHeight is required so a shrink
+// (fewer lines) is measured correctly, not clamped to the previous height.
+function autoGrowTextarea(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
+
 // isCredentialFieldRequired resolves a field's `required`/`required_when`
 // gate against the currently entered credential values. `required_when`
 // values may be a single string or a list of acceptable strings (see e.g.
@@ -472,6 +484,8 @@ export default function ProvidersPage() {
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
   const activeTestRunRef = useRef(0);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
+  const modelsTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editModelsTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const { data: providers = [], isLoading } = useQuery<Provider[]>({
     queryKey: ["providers"],
@@ -811,6 +825,19 @@ export default function ProvidersPage() {
     logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
   }, [testLogs]);
 
+  // Auto-grow the manual model-list textareas to fit their content (see
+  // autoGrowTextarea) — re-measured whenever the text changes (typing,
+  // preset/protocol fill-in) or the segmented control switches into
+  // "static"/manual mode (the edit form's textarea isn't in the DOM at all
+  // while in "url"/auto mode, so it needs re-measuring the moment it mounts).
+  useLayoutEffect(() => {
+    autoGrowTextarea(modelsTextareaRef.current);
+  }, [form.models, modelsMode]);
+
+  useLayoutEffect(() => {
+    autoGrowTextarea(editModelsTextareaRef.current);
+  }, [editForm.models, editModelsMode]);
+
   useEffect(() => {
     saveProviderTestResults(testResult);
   }, [testResult]);
@@ -946,7 +973,7 @@ export default function ProvidersPage() {
                   onChange={(e) => setForm({ ...form, base_url: e.target.value })}
                 />
               </div>
-              <div className="col-span-2 space-y-2">
+              <div className="space-y-2">
                 <FieldLabel
                   info={
                     isZh
@@ -972,10 +999,10 @@ export default function ProvidersPage() {
                   className="provider-region-group"
                 >
                   <ToggleGroupItem value="url" variant="outline" size="sm">
-                    {isZh ? "URL 发现" : "URL Discovery"}
+                    {isZh ? "自动发现" : "Auto Discovery"}
                   </ToggleGroupItem>
                   <ToggleGroupItem value="static" variant="outline" size="sm">
-                    {isZh ? "静态填写" : "Static List"}
+                    {isZh ? "手动填写" : "Manual Entry"}
                   </ToggleGroupItem>
                 </ToggleGroup>
                 {modelsMode === "url" ? (
@@ -986,10 +1013,14 @@ export default function ProvidersPage() {
                   />
                 ) : (
                   <textarea
-                    className="model-textarea nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    ref={modelsTextareaRef}
+                    className="model-textarea nyro-shadcn-input flex min-h-[48px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
                     placeholder={isZh ? "每行一个模型名" : "One model name per line"}
                     value={form.models ?? ""}
-                    onChange={(e) => setForm({ ...form, models: e.target.value })}
+                    onChange={(e) => {
+                      setForm({ ...form, models: e.target.value });
+                      autoGrowTextarea(e.target);
+                    }}
                   />
                 )}
               </div>
@@ -1167,7 +1198,7 @@ export default function ProvidersPage() {
                         onChange={(e) => setEditForm({ ...editForm, base_url: e.target.value })}
                       />
                     </div>
-                    <div className="col-span-2 space-y-2">
+                    <div className="space-y-2">
                       <FieldLabel
                         info={
                           isZh
@@ -1193,10 +1224,10 @@ export default function ProvidersPage() {
                         className="provider-region-group"
                       >
                         <ToggleGroupItem value="url" variant="outline" size="sm">
-                          {isZh ? "URL 发现" : "URL Discovery"}
+                          {isZh ? "自动发现" : "Auto Discovery"}
                         </ToggleGroupItem>
                         <ToggleGroupItem value="static" variant="outline" size="sm">
-                          {isZh ? "静态填写" : "Static List"}
+                          {isZh ? "手动填写" : "Manual Entry"}
                         </ToggleGroupItem>
                       </ToggleGroup>
                       {editModelsMode === "url" ? (
@@ -1207,10 +1238,14 @@ export default function ProvidersPage() {
                         />
                       ) : (
                         <textarea
-                          className="model-textarea nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          ref={editModelsTextareaRef}
+                          className="model-textarea nyro-shadcn-input flex min-h-[48px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
                           placeholder={isZh ? "每行一个模型名" : "One model name per line"}
                           value={editForm.models ?? ""}
-                          onChange={(e) => setEditForm({ ...editForm, models: e.target.value })}
+                          onChange={(e) => {
+                            setEditForm({ ...editForm, models: e.target.value });
+                            autoGrowTextarea(e.target);
+                          }}
                         />
                       )}
                     </div>
