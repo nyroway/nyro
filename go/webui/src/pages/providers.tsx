@@ -282,6 +282,10 @@ function mergeCredentialValues(
   return out;
 }
 
+function defaultCredentialValues(fields: ProviderCredentialField[]): Record<string, string> {
+  return mergeCredentialValues(fields, {});
+}
+
 const CREDENTIAL_LABEL_ACRONYMS: Record<string, string> = { api: "API", url: "URL", id: "ID" };
 
 function credentialFieldLabel(field: ProviderCredentialField): string {
@@ -730,19 +734,19 @@ export default function ProvidersPage() {
     if (!nextPresetId) return; // "none" — leave current form values as the user typed them.
     const preset = providerPresets.find((item) => item.id === nextPresetId);
     if (!preset) return;
-    const protocol = resolvePresetProtocol(preset, form.protocol as ProviderProtocol);
+    const protocol = resolvePresetProtocol(preset);
     const config = resolvePresetConfig(preset, protocol);
-    setModelsMode((prev) => pickModelsMode(prev, config.modelsSource, config.staticModels));
-    setForm((prev) => ({
-      ...prev,
+    setModelsMode(pickModelsMode("url", config.modelsSource, config.staticModels));
+    setForm({
+      ...emptyCreate,
       protocol,
       base_url: config.baseUrl || protocolUrl(protocol),
       models_url: config.modelsSource,
       models: config.staticModels,
-      api_key: config.apiKey || prev.api_key,
+      api_key: config.apiKey || "",
       provider: isCustomProviderPreset(preset.id) ? "custom" : preset.id,
-      credentials: mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {}),
-    }));
+      credentials: defaultCredentialValues(credentialFieldsForPreset(preset)),
+    });
   }
 
   function handleEditProtocolChange(nextProtocol: string) {
