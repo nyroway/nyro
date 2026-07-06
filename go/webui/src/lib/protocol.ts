@@ -3,7 +3,7 @@
  * (go/internal/protocol/ids).
  *
  * Three orthogonal concepts:
- *   Protocol  — suite / wire-format family  (e.g. "openai-compatible")
+ *   Protocol  — suite / wire-format family  (e.g. "openai-chatcompletions")
  *   Endpoint  — specific API path           (e.g. "chat-completions")
  *   Vendor    — provider organisation       (e.g. "openai")
  *
@@ -19,12 +19,12 @@
 
 export type Protocol =
   | "anthropic-messages"
-  | "openai-compatible"
+  | "openai-chatcompletions"
   | "openai-responses"
-  | "gemini-content"
+  | "gemini-generatecontent"
   | "gemini-interactions"
   | "bedrock-converse"
-  | "azure-inference";
+  | "azure-modelinference";
 
 export interface ProtocolMeta {
   id: Protocol;
@@ -36,7 +36,7 @@ export interface ProtocolMeta {
   defaultBaseUrl: string;
 }
 
-// gemini-interactions, bedrock-converse, and azure-inference are
+// gemini-interactions, bedrock-converse, and azure-modelinference are
 // declared only — no codec is registered for them on the backend yet
 // (go/internal/protocol/ids/ids.go), so defaultBaseUrl is left empty.
 export const PROTOCOL_TABLE: ProtocolMeta[] = [
@@ -47,9 +47,9 @@ export const PROTOCOL_TABLE: ProtocolMeta[] = [
     defaultBaseUrl: "https://api.anthropic.com",
   },
   {
-    id: "openai-compatible",
-    name: "Compatible API",
-    fullName: "OpenAI Compatible API",
+    id: "openai-chatcompletions",
+    name: "ChatCompletions API",
+    fullName: "OpenAI ChatCompletions API",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
@@ -59,9 +59,9 @@ export const PROTOCOL_TABLE: ProtocolMeta[] = [
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
-    id: "gemini-content",
-    name: "Content API",
-    fullName: "Gemini Content API",
+    id: "gemini-generatecontent",
+    name: "GenerateContent API",
+    fullName: "Gemini GenerateContent API",
     defaultBaseUrl: "https://generativelanguage.googleapis.com",
   },
   {
@@ -77,7 +77,7 @@ export const PROTOCOL_TABLE: ProtocolMeta[] = [
     defaultBaseUrl: "",
   },
   {
-    id: "azure-inference",
+    id: "azure-modelinference",
     name: "Inference API",
     fullName: "Azure Inference API",
     defaultBaseUrl: "",
@@ -91,14 +91,14 @@ const PROTOCOL_ALIASES: Record<string, Protocol> = {
   "anthropic-messages": "anthropic-messages",
   claude: "anthropic-messages",
 
-  "openai-compatible": "openai-compatible",
-  openai: "openai-compatible",
+  "openai-chatcompletions": "openai-chatcompletions",
+  openai: "openai-chatcompletions",
 
   "openai-responses": "openai-responses",
   openaix: "openai-responses",
 
-  "gemini-content": "gemini-content",
-  gemini: "gemini-content",
+  "gemini-generatecontent": "gemini-generatecontent",
+  gemini: "gemini-generatecontent",
 
   "gemini-interactions": "gemini-interactions",
   geminix: "gemini-interactions",
@@ -106,14 +106,14 @@ const PROTOCOL_ALIASES: Record<string, Protocol> = {
   "bedrock-converse": "bedrock-converse",
   bedrock: "bedrock-converse",
 
-  "azure-inference": "azure-inference",
-  azure: "azure-inference",
+  "azure-modelinference": "azure-modelinference",
+  azure: "azure-modelinference",
 };
 
 /**
  * Resolve any raw protocol string to a canonical `Protocol`, or `null` if unknown.
  *
- * Accepts the canonical identifier (`"openai-compatible"`) or its single
+ * Accepts the canonical identifier (`"openai-chatcompletions"`) or its single
  * short alias (`"openai"`).
  */
 export function resolveProtocol(raw: string | null | undefined): Protocol | null {
@@ -171,7 +171,7 @@ export function parseProtocolEndpoint(raw: string | null | undefined): ProtocolE
 /** Returns true when the raw string resolves to an OpenAI-family protocol. */
 export function isOpenAiProtocol(raw: string | null | undefined): boolean {
   const p = resolveProtocol(raw);
-  return p === "openai-compatible" || p === "openai-responses";
+  return p === "openai-chatcompletions" || p === "openai-responses";
 }
 
 /**

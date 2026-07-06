@@ -1,7 +1,8 @@
 export interface Provider {
   id: string;
   name: string;
-  vendor?: string | null;
+  /** Preset id (e.g. "openai"/"anthropic") or "custom"; selects the credential/protocol preset. */
+  provider?: string | null;
   protocol: string;
   base_url: string;
   api_key?: string;
@@ -11,15 +12,14 @@ export interface Provider {
   proxy_url?: string | null;
   /** Derived display-only flag: `Boolean(proxy_url)`. Not a separate stored field. */
   use_proxy: boolean;
-  auth_mode?: "apikey" | "oauth";
   oauth_status?: ProviderOAuthStatus;
   oauth_expires_at?: string | null;
   oauth_last_error?: string | null;
   oauth_updated_at?: string | null;
-  preset_key?: string | null;
-  channel?: string | null;
-  models_source?: string | null;
-  static_models?: string | null;
+  /** Discovery endpoint URL; mutually exclusive with `models`. */
+  models_url?: string | null;
+  /** Newline-joined static model list (textarea UX); mutually exclusive with `models_url`. */
+  models?: string | null;
   is_enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -191,12 +191,12 @@ export interface ModelCapabilities {
 
 export type ProviderProtocol =
   | "anthropic-messages"
-  | "openai-compatible"
+  | "openai-chatcompletions"
   | "openai-responses"
-  | "gemini-content"
+  | "gemini-generatecontent"
   | "gemini-interactions"
   | "bedrock-converse"
-  | "azure-inference";
+  | "azure-modelinference";
 
 export interface ProviderChannelPreset {
   id: string;
@@ -247,16 +247,16 @@ export interface ProviderPreset {
 
 export interface CreateProvider {
   name: string;
-  vendor?: string;
+  /** Preset id (e.g. "openai"/"anthropic") or "custom"; required on create. */
+  provider: string;
   protocol: string;
   base_url: string;
   /** Real per-upstream proxy address; empty/absent = no proxy. */
   proxy_url?: string;
-  auth_mode?: "apikey" | "oauth";
-  preset_key?: string;
-  channel?: string;
-  models_source?: string;
-  static_models?: string;
+  /** Discovery endpoint URL; mutually exclusive with `models`. */
+  models_url?: string;
+  /** Newline-joined static model list (textarea UX); mutually exclusive with `models_url`. */
+  models?: string;
   api_key: string;
   /** Full credential field values keyed by field name; takes priority over `api_key` when non-empty. */
   credentials?: Record<string, string>;
@@ -264,16 +264,15 @@ export interface CreateProvider {
 
 export interface UpdateProvider {
   name?: string;
-  vendor?: string;
+  provider?: string;
   protocol?: string;
   base_url?: string;
   /** Real per-upstream proxy address; empty/absent = no proxy. */
   proxy_url?: string;
-  auth_mode?: "apikey" | "oauth";
-  preset_key?: string;
-  channel?: string;
-  models_source?: string;
-  static_models?: string;
+  /** Discovery endpoint URL; mutually exclusive with `models`. */
+  models_url?: string;
+  /** Newline-joined static model list (textarea UX); mutually exclusive with `models_url`. */
+  models?: string;
   api_key?: string;
   /** Full credential field values keyed by field name; takes priority over `api_key` when set. */
   credentials?: Record<string, string>;

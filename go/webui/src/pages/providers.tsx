@@ -63,30 +63,27 @@ function protocolUrl(protocol: string) {
 
 const emptyCreate: CreateProvider = {
   name: "",
-  vendor: undefined,
-  protocol: "openai-compatible",
+  provider: "custom",
+  protocol: "openai-chatcompletions",
   base_url: "https://api.openai.com/v1",
   proxy_url: "",
-  auth_mode: "apikey",
-  preset_key: "",
-  channel: "",
-  models_source: "",
-  static_models: "",
+  models_url: "",
+  models: "",
   api_key: "",
   credentials: {},
 };
 const PAGE_SIZE = 7;
 const DEFAULT_PRESET_ID = "nyro";
 // Only protocols with a registered codec are user-selectable here.
-// gemini-interactions/bedrock-converse/azure-inference are declared in
+// gemini-interactions/bedrock-converse/azure-modelinference are declared in
 // ProviderProtocol (and on the backend, go/internal/protocol/ids) but have
 // no codec yet — offering them would let a user pick a protocol that fails
 // at request time.
 const protocolOptions = [
   { label: "Anthropic Messages API", value: "anthropic-messages" },
-  { label: "OpenAI Compatible API", value: "openai-compatible" },
+  { label: "OpenAI ChatCompletions API", value: "openai-chatcompletions" },
   { label: "OpenAI Responses API", value: "openai-responses" },
-  { label: "Gemini Content API", value: "gemini-content" },
+  { label: "Gemini GenerateContent API", value: "gemini-generatecontent" },
 ] as const satisfies ReadonlyArray<{ label: string; value: ProviderProtocol }>;
 
 function validateProviderEndpoint(
@@ -134,7 +131,7 @@ function resolvePresetProtocol(
   preferred?: ProviderProtocol,
 ): ProviderProtocol {
   const available = availableProtocolsForPreset(preset);
-  const canonicalDefault = (resolveProtocol(preset.defaultProtocol) ?? "openai-compatible") as ProviderProtocol;
+  const canonicalDefault = (resolveProtocol(preset.defaultProtocol) ?? "openai-chatcompletions") as ProviderProtocol;
   if (preferred && available.includes(preferred)) return preferred;
   if (available.includes(canonicalDefault)) return canonicalDefault;
   return available[0] ?? canonicalDefault;
@@ -172,32 +169,13 @@ function fallbackProviderPreset(): ProviderPreset {
   return {
     id: DEFAULT_PRESET_ID,
     label: { zh: "自定义", en: "Custom" },
-    defaultProtocol: "openai-compatible",
+    defaultProtocol: "openai-chatcompletions",
     channels: [],
   };
 }
 
 function presetChannels(preset?: ProviderPreset | null) {
   return preset?.channels?.length ? preset.channels : [fallbackChannelPreset()];
-}
-
-function presetChannelAuthMode(
-  preset?: ProviderPreset | null,
-  protocol?: ProviderProtocol | null,
-): "apikey" | "oauth" {
-  const channels = presetChannels(preset);
-  const channel =
-    (protocol
-      ? channels.find((item) =>
-          Object.keys(item.baseUrls ?? {}).some((key) => resolveProtocol(key) === protocol),
-        )
-      : undefined) ?? channels[0];
-  return channel?.authMode === "oauth" ? "oauth" : "apikey";
-}
-
-function normalizeAuthMode(mode?: string | null): "apikey" | "oauth" {
-  if (!mode) return "apikey";
-  return mode.trim().toLowerCase() === "oauth" ? "oauth" : "apikey";
 }
 
 function nextProviderCopyName(providers: Provider[], originalName: string) {
@@ -507,10 +485,6 @@ export default function ProvidersPage() {
     () => (providerPresetsRaw.length ? providerPresetsRaw : [fallbackProviderPreset()]),
     [providerPresetsRaw],
   );
-  const editingProvider = useMemo(
-    () => providers.find((provider) => provider.id === editingId) ?? null,
-    [providers, editingId],
-  );
   const [form, setForm] = useState<CreateProvider>(emptyCreate);
   const selectedPreset = useMemo(
     () => providerPresets.find((preset) => preset.id === selectedPresetId) ?? null,
@@ -520,17 +494,14 @@ export default function ProvidersPage() {
   const [editForm, setEditForm] = useState<UpdateProvider & { id: string }>({
     id: "",
     name: "",
-    vendor: undefined,
+    provider: "custom",
     protocol: "",
     base_url: "",
     proxy_url: "",
-    preset_key: "",
-    channel: "",
-    models_source: "",
-    static_models: "",
+    models_url: "",
+    models: "",
     api_key: "",
     credentials: {},
-    auth_mode: "apikey",
   });
   const createMut = useMutation({
     mutationFn: (input: CreateProvider) => backend<Provider>("create_provider", { input }),
@@ -638,7 +609,7 @@ export default function ProvidersPage() {
     };
 
     try {
-      const protocol = (resolveProtocol(provider.protocol || "openai") ?? "openai-compatible") as ProviderProtocol;
+      const protocol = (resolveProtocol(provider.protocol || "openai") ?? "openai-chatcompletions") as ProviderProtocol;
       const baseUrl = provider.base_url?.trim() ?? "";
 
       appendTestLog("info", isZh ? `开始测试 ${provider.name}...` : `Start testing ${provider.name}...`);
@@ -692,25 +663,22 @@ export default function ProvidersPage() {
   function startEdit(p: Provider) {
     setEditingId(p.id);
     setEditError(null);
-    const protocol = (resolveProtocol(p.protocol) ?? "openai-compatible") as ProviderProtocol;
-    const presetForEdit = p.preset_key
-      ? providerPresets.find((item) => item.id === p.preset_key) ?? null
+    const protocol = (resolveProtocol(p.protocol) ?? "openai-chatcompletions") as ProviderProtocol;
+    const presetForEdit = p.provider
+      ? providerPresets.find((item) => item.id === p.provider) ?? null
       : null;
-    setEditModelsMode(pickModelsMode("url", p.models_source ?? undefined, p.static_models ?? undefined));
+    setEditModelsMode(pickModelsMode("url", p.models_url ?? undefined, p.models ?? undefined));
     setEditForm({
       id: p.id,
       name: p.name,
-      vendor: p.vendor ?? (p.preset_key || undefined),
+      provider: presetForEdit ? presetForEdit.id : (p.provider ?? "custom"),
       protocol,
       base_url: p.base_url,
       proxy_url: p.proxy_url ?? "",
-      preset_key: presetForEdit ? presetForEdit.id : "",
-      channel: p.channel || "",
-      models_source: p.models_source ?? "",
-      static_models: p.static_models ?? "",
+      models_url: p.models_url ?? "",
+      models: p.models ?? "",
       api_key: p.api_key ?? "",
       credentials: p.credentials ?? {},
-      auth_mode: normalizeAuthMode(p.auth_mode),
     });
   }
 
@@ -727,8 +695,8 @@ export default function ProvidersPage() {
       ...prev,
       protocol,
       base_url: config?.baseUrl || (preset ? "" : protocolUrl(protocol)) || prev.base_url,
-      models_source: config?.modelsSource ?? prev.models_source,
-      static_models: config?.staticModels ?? prev.static_models,
+      models_url: config?.modelsSource ?? prev.models_url,
+      models: config?.staticModels ?? prev.models,
       api_key: config?.apiKey || prev.api_key,
       credentials: preset
         ? mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {})
@@ -748,11 +716,10 @@ export default function ProvidersPage() {
       ...prev,
       protocol,
       base_url: config.baseUrl || protocolUrl(protocol),
-      models_source: config.modelsSource,
-      static_models: config.staticModels,
+      models_url: config.modelsSource,
+      models: config.staticModels,
       api_key: config.apiKey || prev.api_key,
-      vendor: preset.id === DEFAULT_PRESET_ID ? undefined : preset.id,
-      preset_key: preset.id,
+      provider: preset.id === DEFAULT_PRESET_ID ? "custom" : preset.id,
       credentials: mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {}),
     }));
   }
@@ -760,8 +727,8 @@ export default function ProvidersPage() {
   function handleEditProtocolChange(nextProtocol: string) {
     const protocol = resolveProtocol(nextProtocol) as ProviderProtocol | null;
     if (!protocol) return;
-    const currentPreset = editForm.preset_key
-      ? providerPresets.find((item) => item.id === editForm.preset_key) ?? null
+    const currentPreset = editForm.provider && editForm.provider !== "custom"
+      ? providerPresets.find((item) => item.id === editForm.provider) ?? null
       : null;
     const preset = currentPreset && availableProtocolsForPreset(currentPreset).includes(protocol)
       ? currentPreset
@@ -770,11 +737,11 @@ export default function ProvidersPage() {
     if (config) setEditModelsMode((prevMode) => pickModelsMode(prevMode, config.modelsSource, config.staticModels));
     setEditForm((prev) => ({
       ...prev,
-      preset_key: preset ? prev.preset_key : "",
+      provider: preset ? prev.provider : "custom",
       protocol,
       base_url: config?.baseUrl || (preset ? "" : protocolUrl(protocol)) || prev.base_url,
-      models_source: config?.modelsSource ?? prev.models_source,
-      static_models: config?.staticModels ?? prev.static_models,
+      models_url: config?.modelsSource ?? prev.models_url,
+      models: config?.staticModels ?? prev.models,
       api_key: config?.apiKey || prev.api_key,
       credentials: preset
         ? mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {})
@@ -784,23 +751,13 @@ export default function ProvidersPage() {
 
   function handleEditTemplateChange(nextPresetId: string) {
     if (!nextPresetId) {
-      setEditForm((prev) => ({ ...prev, preset_key: "" }));
+      setEditForm((prev) => ({ ...prev, provider: "custom" }));
       return;
     }
     const preset = providerPresets.find((item) => item.id === nextPresetId);
     if (!preset) return;
 
     const protocol = resolvePresetProtocol(preset, editForm.protocol as ProviderProtocol);
-    const nextAuthMode = presetChannelAuthMode(preset, protocol);
-    if (nextAuthMode === "oauth" && normalizeAuthMode(editingProvider?.auth_mode) !== "oauth") {
-      setEditError(
-        isZh
-          ? "已有 Provider 不能在编辑时直接切到 OAuth 渠道，请新建一个 OAuth Provider。"
-          : "Existing providers cannot switch directly to an OAuth channel while editing. Create a new OAuth provider instead.",
-      );
-      return;
-    }
-
     setEditError(null);
     const config = resolvePresetConfig(preset, protocol);
     setEditModelsMode((prev) => pickModelsMode(prev, config.modelsSource, config.staticModels));
@@ -808,11 +765,10 @@ export default function ProvidersPage() {
       ...prev,
       protocol,
       base_url: config.baseUrl || protocolUrl(protocol),
-      models_source: config.modelsSource,
-      static_models: config.staticModels,
+      models_url: config.modelsSource,
+      models: config.staticModels,
       api_key: config.apiKey || prev.api_key,
-      vendor: preset.id === DEFAULT_PRESET_ID ? undefined : preset.id,
-      preset_key: preset.id,
+      provider: preset.id === DEFAULT_PRESET_ID ? "custom" : preset.id,
       credentials: mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {}),
     }));
   }
@@ -839,7 +795,7 @@ export default function ProvidersPage() {
   const pagedProviders = providers.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
   const createCredentialFields = credentialFieldsForPreset(selectedPreset);
   const createPresetBaseUrl = selectedPreset
-    ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-compatible").baseUrl
+    ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-chatcompletions").baseUrl
     : "";
   const createBaseUrlMissing = !createPresetBaseUrl && !form.base_url?.trim();
   const createProtocolOptions = availableProtocolsForPreset(selectedPreset);
@@ -895,7 +851,7 @@ export default function ProvidersPage() {
             setShowForm(true);
             setSelectedPresetId("");
             setModelsMode("url");
-            setForm({ ...emptyCreate, auth_mode: "apikey" });
+            setForm(emptyCreate);
           }}
           className="flex items-center gap-2"
         >
@@ -1009,8 +965,8 @@ export default function ProvidersPage() {
                     setModelsMode(mode);
                     setForm((prev) => ({
                       ...prev,
-                      models_source: mode === "url" ? prev.models_source : "",
-                      static_models: mode === "static" ? prev.static_models : "",
+                      models_url: mode === "url" ? prev.models_url : "",
+                      models: mode === "static" ? prev.models : "",
                     }));
                   }}
                   className="provider-region-group"
@@ -1024,16 +980,16 @@ export default function ProvidersPage() {
                 </ToggleGroup>
                 {modelsMode === "url" ? (
                   <Input
-                    placeholder={isZh ? "可选，支持 https:// 或 ai://models.dev/..." : "Optional, supports https:// or ai://models.dev/..."}
-                    value={form.models_source ?? ""}
-                    onChange={(e) => setForm({ ...form, models_source: e.target.value })}
+                    placeholder={isZh ? "可选，填写发现地址（https://）" : "Optional, https:// discovery URL"}
+                    value={form.models_url ?? ""}
+                    onChange={(e) => setForm({ ...form, models_url: e.target.value })}
                   />
                 ) : (
                   <textarea
                     className="nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
                     placeholder={isZh ? "每行一个模型名" : "One model name per line"}
-                    value={form.static_models ?? ""}
-                    onChange={(e) => setForm({ ...form, static_models: e.target.value })}
+                    value={form.models ?? ""}
+                    onChange={(e) => setForm({ ...form, models: e.target.value })}
                   />
                 )}
               </div>
@@ -1049,7 +1005,7 @@ export default function ProvidersPage() {
               <div className="flex gap-3">
                 <Button
                   onClick={() => {
-                    const protocol = form.protocol || "openai-compatible";
+                    const protocol = form.protocol || "openai-chatcompletions";
                     const baseUrl = toGatewayBaseUrl(form.base_url ?? "");
                     const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                     if (validation) {
@@ -1103,25 +1059,22 @@ export default function ProvidersPage() {
             const tr = testResult[p.id];
             const status = tr ? (tr.success ? "success" : "failed") : null;
             const isEditing = editingId === p.id;
-            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-compatible") as ProviderProtocol];
-            const selectedPreset = providerPresets.find((preset) => preset.id === (p.preset_key || p.vendor || ""));
+            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-chatcompletions") as ProviderProtocol];
+            const selectedPreset = providerPresets.find((preset) => preset.id === (p.provider || ""));
             const selectedProviderName = selectedPreset
               ? presetLabel(selectedPreset, isZh)
-              : (p.vendor || p.preset_key || p.name);
+              : (p.provider || p.name);
 
             if (isEditing) {
-              const editingPresetId = editForm.preset_key ?? "";
+              const editingPresetId = editForm.provider ?? "";
               const editingPreset = editingPresetId
                 ? providerPresets.find((preset) => preset.id === editingPresetId) ?? null
                 : null;
               const editCredentialFields = credentialFieldsForPreset(editingPreset);
               const editPresetBaseUrl = editingPreset
-                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-compatible").baseUrl
+                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-chatcompletions").baseUrl
                 : "";
               const editBaseUrlMissing = !editPresetBaseUrl && !editForm.base_url?.trim();
-              const currentProviderIsOAuth =
-                normalizeAuthMode(p.auth_mode) === "oauth"
-                || normalizeAuthMode(editForm.auth_mode) === "oauth";
               const editProtocolOptions = availableProtocolsForPreset(editingPreset);
               return (
                 <div key={p.id} className="glass rounded-2xl p-5 space-y-4">
@@ -1148,10 +1101,6 @@ export default function ProvidersPage() {
                           size="lg"
                           className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
                           aria-label={presetLabel(preset, isZh)}
-                          disabled={
-                            presetChannelAuthMode(preset, (editForm.protocol as ProviderProtocol) || null) === "oauth"
-                            && !currentProviderIsOAuth
-                          }
                         >
                           <ProviderIcon
                             name={preset.icon ?? preset.label.en}
@@ -1237,8 +1186,8 @@ export default function ProvidersPage() {
                           setEditModelsMode(mode);
                           setEditForm((prev) => ({
                             ...prev,
-                            models_source: mode === "url" ? prev.models_source : "",
-                            static_models: mode === "static" ? prev.static_models : "",
+                            models_url: mode === "url" ? prev.models_url : "",
+                            models: mode === "static" ? prev.models : "",
                           }));
                         }}
                         className="provider-region-group"
@@ -1252,16 +1201,16 @@ export default function ProvidersPage() {
                       </ToggleGroup>
                       {editModelsMode === "url" ? (
                         <Input
-                          placeholder={isZh ? "可选，支持 https:// 或 ai://models.dev/..." : "Optional, supports https:// or ai://models.dev/..."}
-                          value={editForm.models_source ?? ""}
-                          onChange={(e) => setEditForm({ ...editForm, models_source: e.target.value })}
+                          placeholder={isZh ? "可选，填写发现地址（https://）" : "Optional, https:// discovery URL"}
+                          value={editForm.models_url ?? ""}
+                          onChange={(e) => setEditForm({ ...editForm, models_url: e.target.value })}
                         />
                       ) : (
                         <textarea
                           className="nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
                           placeholder={isZh ? "每行一个模型名" : "One model name per line"}
-                          value={editForm.static_models ?? ""}
-                          onChange={(e) => setEditForm({ ...editForm, static_models: e.target.value })}
+                          value={editForm.models ?? ""}
+                          onChange={(e) => setEditForm({ ...editForm, models: e.target.value })}
                         />
                       )}
                     </div>
@@ -1278,7 +1227,7 @@ export default function ProvidersPage() {
                     <Button
                       onClick={() => {
                         setEditError(null);
-                        const protocol = editForm.protocol || "openai-compatible";
+                        const protocol = editForm.protocol || "openai-chatcompletions";
                         const baseUrl = toGatewayBaseUrl(editForm.base_url ?? "");
                         const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                         if (validation) {
@@ -1287,14 +1236,12 @@ export default function ProvidersPage() {
                         }
                         const input: UpdateProvider = {
                           name: editForm.name || undefined,
-                          vendor: editForm.vendor || undefined,
+                          provider: editForm.provider || undefined,
                           protocol,
                           base_url: baseUrl,
                           proxy_url: editForm.proxy_url ?? "",
-                          preset_key: editForm.preset_key || undefined,
-                          channel: editForm.channel || undefined,
-                          models_source: editForm.models_source ?? "",
-                          static_models: editForm.static_models || undefined,
+                          models_url: editForm.models_url ?? "",
+                          models: editForm.models || undefined,
                           credentials: editForm.credentials && Object.keys(editForm.credentials).length
                             ? editForm.credentials
                             : undefined,
@@ -1356,11 +1303,11 @@ export default function ProvidersPage() {
                             variant={
                               protocol === "anthropic-messages"
                                 ? "warning"
-                                : protocol === "gemini-content"
+                                : protocol === "gemini-generatecontent"
                                   ? "secondary"
                                   : "success"
                             }
-                            className={`connect-label-badge ${protocol === "gemini-content" ? "bg-violet-50 text-violet-700" : ""}`}
+                            className={`connect-label-badge ${protocol === "gemini-generatecontent" ? "bg-violet-50 text-violet-700" : ""}`}
                           >
                             {PROTOCOL_TABLE.find((pt) => pt.id === protocol)?.fullName ?? protocol}
                           </Badge>

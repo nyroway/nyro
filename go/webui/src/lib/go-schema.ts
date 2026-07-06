@@ -1,10 +1,12 @@
 export interface GoUpstream {
   id: string;
   name: string;
+  provider?: string;
   protocol?: string;
   base_url?: string;
   credentials?: Record<string, unknown> | string | null;
-  models?: Record<string, unknown> | string | null;
+  models?: string[] | null;
+  models_url?: string;
   proxy_url?: string;
   enabled: boolean;
   created_at?: string;
@@ -13,20 +15,24 @@ export interface GoUpstream {
 
 export interface GoCreateUpstream {
   name: string;
+  provider: string;
   protocol?: string;
   base_url?: string;
   credentials?: Record<string, unknown>;
-  models?: Record<string, unknown>;
+  models?: string[];
+  models_url?: string;
   proxy_url?: string;
   enabled?: boolean;
 }
 
 export interface GoUpdateUpstream {
   name?: string;
+  provider?: string;
   protocol?: string;
   base_url?: string;
   credentials?: Record<string, unknown>;
-  models?: Record<string, unknown>;
+  models?: string[];
+  models_url?: string;
   proxy_url?: string;
   enabled?: boolean;
 }
@@ -156,9 +162,5 @@ export interface GoProviderPreset {
       required_when?: Record<string, unknown>;
     }>;
   };
-  models: {
-    kind: string;
-    url?: string;
-    values?: string[];
-  };
+  models_url?: string;
 }

@@ -105,45 +105,43 @@ function quotaValue(quotas: GoConsumerQuota[], type: string, window: string | un
 }
 
 export function providerFromUpstream(upstream: GoUpstream): Provider {
-  const models = parseJSONRecord(upstream.models);
   return {
     id: upstream.id,
     name: upstream.name,
-    vendor: null,
+    provider: upstream.provider ?? null,
     protocol: upstream.protocol ?? "",
     base_url: upstream.base_url ?? "",
     api_key: apiKeyFromCredentials(upstream.credentials),
     credentials: credentialsRecord(upstream.credentials),
     proxy_url: upstream.proxy_url ?? "",
     use_proxy: Boolean(upstream.proxy_url),
-    auth_mode: "apikey",
-    preset_key: stringValue(models.preset_key) ?? null,
-    channel: stringValue(models.channel) ?? null,
-    models_source: stringValue(models.models_source) ?? null,
-    static_models: stringValue(models.static_models) ?? null,
+    models_url: upstream.models_url ?? null,
+    models: upstream.models?.length ? upstream.models.join("\n") : null,
     is_enabled: upstream.enabled,
     created_at: upstream.created_at ?? "",
     updated_at: upstream.updated_at ?? "",
   };
 }
 
+function modelsArrayFromText(text?: string): string[] | undefined {
+  if (!text) return undefined;
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines.length ? lines : undefined;
+}
+
 export function createUpstreamFromProvider(input: CreateProvider): GoCreateUpstream {
-  const presetKey = input.vendor || input.preset_key || input.name;
   const credentials =
     input.credentials && Object.keys(input.credentials).length > 0
       ? input.credentials
       : { api_key: input.api_key };
   return {
     name: input.name,
+    provider: input.provider ?? "custom",
     protocol: input.protocol,
     base_url: input.base_url,
     credentials,
-    models: {
-      preset_key: input.preset_key ?? presetKey,
-      channel: input.channel,
-      models_source: input.models_source,
-      static_models: input.static_models,
-    },
+    models: modelsArrayFromText(input.models ?? undefined),
+    models_url: input.models_url || undefined,
     proxy_url: input.proxy_url?.trim() ?? "",
     enabled: true,
   };
@@ -152,6 +150,7 @@ export function createUpstreamFromProvider(input: CreateProvider): GoCreateUpstr
 export function updateUpstreamFromProvider(input: UpdateProvider): GoUpdateUpstream {
   const out: GoUpdateUpstream = {};
   if (input.name !== undefined) out.name = input.name;
+  if (input.provider !== undefined) out.provider = input.provider ?? undefined;
   if (input.protocol !== undefined) out.protocol = input.protocol;
   if (input.base_url !== undefined) out.base_url = input.base_url;
   if (input.credentials !== undefined) {
@@ -161,19 +160,8 @@ export function updateUpstreamFromProvider(input: UpdateProvider): GoUpdateUpstr
   }
   if (input.proxy_url !== undefined) out.proxy_url = input.proxy_url.trim();
   if (input.is_enabled !== undefined) out.enabled = input.is_enabled;
-  if (
-    input.preset_key !== undefined ||
-    input.channel !== undefined ||
-    input.models_source !== undefined ||
-    input.static_models !== undefined
-  ) {
-    out.models = {
-      preset_key: input.preset_key,
-      channel: input.channel,
-      models_source: input.models_source,
-      static_models: input.static_models,
-    };
-  }
+  if (input.models !== undefined) out.models = modelsArrayFromText(input.models ?? undefined) ?? [];
+  if (input.models_url !== undefined) out.models_url = input.models_url ?? "";
   return out;
 }
 
@@ -278,19 +266,16 @@ export function updateConsumerFromApiKey(input: UpdateApiKey): GoUpdateConsumer 
 }
 
 export function providerPresetFromGoPreset(preset: GoProviderPreset): ProviderPreset {
-  // preset.models.kind is "dynamic" | "static" (a discovery-method tag, not a
-  // URL) — modelsSource must carry the actual discovery URL, which only
-  // exists when kind is "dynamic". A static preset has no discovery URL,
-  // only a fixed model list (already carried via staticModels below).
-  const modelsSource = preset.models.kind === "dynamic" ? preset.models.url : undefined;
+  // Presets no longer carry a static model list — only an optional default
+  // discovery URL. `staticModels` is intentionally left unset on the
+  // synthesized channel.
   const channels: ProviderChannelPreset[] = preset.protocols.map((protocol) => ({
     id: protocol.id,
     label: { en: protocol.id, zh: protocol.id },
     authMode: "apikey",
     baseUrls: { [protocol.id]: protocol.base_url ?? "" },
-    modelsSource,
-    staticModels: preset.models.values,
-    modelsEndpoint: preset.models.url,
+    modelsSource: preset.models_url,
+    modelsEndpoint: preset.models_url,
   }));
   return {
     id: preset.id,

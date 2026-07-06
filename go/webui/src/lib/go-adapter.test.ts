@@ -98,37 +98,48 @@ describe("quota round-trip (rpm/rpd/tpm/tpd/concurrency)", () => {
   });
 });
 
-describe("provider <-> upstream credentials/models JSON blob round-trip", () => {
-  it("parses a stringified credentials/models JSON blob back into a Provider", () => {
+describe("provider <-> upstream credentials/models round-trip", () => {
+  it("parses a stringified credentials JSON blob and a models array back into a Provider", () => {
     const upstream: GoUpstream = {
       id: "up_1",
       name: "OpenAI",
-      protocol: "openai-compatible",
+      provider: "openai",
+      protocol: "openai-chatcompletions",
       base_url: "https://api.openai.com/v1",
       credentials: JSON.stringify({ api_key: "sk-test" }),
-      models: JSON.stringify({ preset_key: "openai", channel: "default", static_models: "gpt-4o" }),
+      models: ["gpt-4o"],
       proxy_url: "",
       enabled: true,
     };
     const provider = providerFromUpstream(upstream);
     expect(provider.api_key).toBe("sk-test");
     expect(provider.credentials).toEqual({ api_key: "sk-test" });
-    expect(provider.preset_key).toBe("openai");
-    expect(provider.channel).toBe("default");
-    expect(provider.static_models).toBe("gpt-4o");
+    expect(provider.provider).toBe("openai");
+    expect(provider.models).toBe("gpt-4o");
   });
 
-  it("parses an already-object credentials/models blob (no double JSON.parse)", () => {
+  it("newline-joins a multi-entry models array", () => {
+    const upstream: GoUpstream = {
+      id: "up_1b",
+      name: "OpenAI",
+      models: ["m1", "m2"],
+      enabled: true,
+    };
+    const provider = providerFromUpstream(upstream);
+    expect(provider.models).toBe("m1\nm2");
+  });
+
+  it("parses an already-object credentials blob (no double JSON.parse)", () => {
     const upstream: GoUpstream = {
       id: "up_2",
       name: "Anthropic",
+      provider: "anthropic",
       credentials: { api_key: "sk-ant" },
-      models: { preset_key: "anthropic" },
       enabled: true,
     };
     const provider = providerFromUpstream(upstream);
     expect(provider.api_key).toBe("sk-ant");
-    expect(provider.preset_key).toBe("anthropic");
+    expect(provider.provider).toBe("anthropic");
   });
 
   it("falls back to an empty record for malformed/non-JSON credentials, never throwing", () => {
@@ -143,29 +154,27 @@ describe("provider <-> upstream credentials/models JSON blob round-trip", () => 
     expect(provider.credentials).toEqual({});
   });
 
-  it("builds a GoCreateUpstream credentials blob from CreateProvider, preferring the structured credentials map over the single api_key field", () => {
+  it("builds a GoCreateUpstream credentials blob and models/models_url from CreateProvider, preferring the structured credentials map over the single api_key field", () => {
     const input: CreateProvider = {
       name: "OpenAI",
-      protocol: "openai-compatible",
+      provider: "openai",
+      protocol: "openai-chatcompletions",
       base_url: "https://api.openai.com/v1",
       api_key: "sk-should-be-ignored",
       credentials: { api_key: "sk-real", org_id: "org-1" },
-      preset_key: "openai",
     };
     const out = createUpstreamFromProvider(input);
     expect(out.credentials).toEqual({ api_key: "sk-real", org_id: "org-1" });
-    expect(out.models).toEqual({
-      preset_key: "openai",
-      channel: undefined,
-      models_source: undefined,
-      static_models: undefined,
-    });
+    expect(out.provider).toBe("openai");
+    expect(out.models).toBeUndefined();
+    expect(out.models_url).toBeUndefined();
   });
 
   it("falls back to { api_key } when CreateProvider has no structured credentials map", () => {
     const input: CreateProvider = {
       name: "OpenAI",
-      protocol: "openai-compatible",
+      provider: "custom",
+      protocol: "openai-chatcompletions",
       base_url: "https://api.openai.com/v1",
       api_key: "sk-plain",
     };
@@ -175,33 +184,32 @@ describe("provider <-> upstream credentials/models JSON blob round-trip", () => 
 });
 
 describe("providerPresetFromGoPreset model discovery mapping", () => {
-  it("carries the real discovery URL into modelsSource for a dynamic-discovery preset", () => {
+  it("carries the real discovery URL into modelsSource for a preset with a default discovery URL", () => {
     const preset: GoProviderPreset = {
       id: "openai",
       name: "OpenAI",
       priority: 2,
-      default_protocol: "openai-compatible",
-      protocols: [{ id: "openai-compatible", base_url: "https://api.openai.com/v1" }],
+      default_protocol: "openai-chatcompletions",
+      protocols: [{ id: "openai-chatcompletions", base_url: "https://api.openai.com/v1" }],
       credentials: { fields: [] },
-      models: { kind: "dynamic", url: "https://api.openai.com/v1/models" },
+      models_url: "https://api.openai.com/v1/models",
     };
     const out = providerPresetFromGoPreset(preset);
     expect(out.channels?.[0]?.modelsSource).toBe("https://api.openai.com/v1/models");
     expect(out.channels?.[0]?.staticModels).toBeUndefined();
   });
 
-  it("leaves modelsSource unset (not the literal kind tag) for a static-list preset", () => {
+  it("leaves modelsSource unset for a preset with no default discovery URL", () => {
     const preset: GoProviderPreset = {
       id: "custom-static",
       name: "Custom Static",
       priority: 9,
-      default_protocol: "openai-compatible",
-      protocols: [{ id: "openai-compatible", base_url: "https://example.com/v1" }],
+      default_protocol: "openai-chatcompletions",
+      protocols: [{ id: "openai-chatcompletions", base_url: "https://example.com/v1" }],
       credentials: { fields: [] },
-      models: { kind: "static", values: ["model-a", "model-b"] },
     };
     const out = providerPresetFromGoPreset(preset);
     expect(out.channels?.[0]?.modelsSource).toBeUndefined();
-    expect(out.channels?.[0]?.staticModels).toEqual(["model-a", "model-b"]);
+    expect(out.channels?.[0]?.staticModels).toBeUndefined();
   });
 });
