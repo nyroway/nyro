@@ -225,3 +225,201 @@ func TestTestHTTPClientProxyRouting(t *testing.T) {
 		t.Error("valid proxyURL: transport has no Proxy function")
 	}
 }
+
+// TestUpstreamModelsManual verifies a manual models_json list is returned
+// directly by /upstreams/{id}/models with no HTTP call involved.
+func TestUpstreamModelsManual(t *testing.T) {
+	r, _ := newEngine(t, "")
+
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"m1","provider":"custom","base_url":"https://x","credentials":{"api_key":"k"},"models":["m1","m2"]}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = do(r, "GET", "/api/v1/upstreams/"+u.ID+"/models", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("models → %d %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Models) != 2 || out.Models[0] != "m1" || out.Models[1] != "m2" {
+		t.Errorf("models = %+v, want [m1 m2]", out.Models)
+	}
+}
+
+// TestUpstreamModelsCustomNoDiscovery verifies a custom upstream with neither
+// models_url nor a static models list returns 200 with an empty list, not an
+// error.
+func TestUpstreamModelsCustomNoDiscovery(t *testing.T) {
+	r, _ := newEngine(t, "")
+
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"m2","provider":"custom","base_url":"https://x","credentials":{"api_key":"k"}}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = do(r, "GET", "/api/v1/upstreams/"+u.ID+"/models", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("models → %d %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Models) != 0 {
+		t.Errorf("models = %+v, want empty", out.Models)
+	}
+}
+
+// TestUpstreamModelsLiveDiscoveryCached verifies live discovery hits the
+// upstream's models_url once and serves the second request from the TTL
+// cache (no second HTTP round-trip).
+func TestUpstreamModelsLiveDiscoveryCached(t *testing.T) {
+	var hits int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"m-a"},{"id":"m-b"}]}`))
+	}))
+	defer ts.Close()
+
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"m3","provider":"custom","base_url":"https://x","credentials":{"api_key":"k"},"models_url":"`+ts.URL+`/models"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 2; i++ {
+		rec = do(r, "GET", "/api/v1/upstreams/"+u.ID+"/models", "", nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("models call %d → %d %s", i, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			Models []string `json:"models"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Models) != 2 || out.Models[0] != "m-a" || out.Models[1] != "m-b" {
+			t.Errorf("call %d models = %+v, want [m-a m-b]", i, out.Models)
+		}
+	}
+	if hits != 1 {
+		t.Errorf("upstream discovery hits = %d, want 1 (second call should be cached)", hits)
+	}
+}
+
+// TestUpstreamModelsCacheInvalidatedOnUpdate verifies that updating an
+// upstream's models_url invalidates the previously cached discovery result,
+// so the new endpoint's models are served (not the stale cached ones).
+func TestUpstreamModelsCacheInvalidatedOnUpdate(t *testing.T) {
+	var hits1, hits2 int
+	ts1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits1++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"old-a"}]}`))
+	}))
+	defer ts1.Close()
+	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits2++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"new-a"}]}`))
+	}))
+	defer ts2.Close()
+
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"m4","provider":"custom","base_url":"https://x","credentials":{"api_key":"k"},"models_url":"`+ts1.URL+`/models"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	// Prime the cache against ts1.
+	rec = do(r, "GET", "/api/v1/upstreams/"+u.ID+"/models", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("models (priming) → %d %s", rec.Code, rec.Body.String())
+	}
+	if hits1 != 1 {
+		t.Fatalf("hits1 = %d, want 1 after priming", hits1)
+	}
+
+	// Update models_url to point at ts2 — must invalidate the cache.
+	rec = do(r, "PUT", "/api/v1/upstreams/"+u.ID, "", []byte(`{"models_url":"`+ts2.URL+`/models"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update → %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(r, "GET", "/api/v1/upstreams/"+u.ID+"/models", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("models (post-update) → %d %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Models) != 1 || out.Models[0] != "new-a" {
+		t.Errorf("post-update models = %+v, want [new-a]", out.Models)
+	}
+	if hits2 != 1 {
+		t.Errorf("hits2 = %d, want 1 (stale ts1 cache entry must not leak into this response)", hits2)
+	}
+}
+
+// TestUpstreamTestConnectivityUsesResolvedModelsURL verifies /test resolves
+// modelsDiscoveryURL (upstream's own models_url, here overriding openai's
+// real preset URL) instead of guessing a path from protocol+base_url, and
+// doesn't escape to the real internet for a known preset.
+func TestUpstreamTestConnectivityUsesResolvedModelsURL(t *testing.T) {
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"m5","provider":"openai","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models_url":"`+ts.URL+`/custom-models"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = do(r, "POST", "/api/v1/upstreams/"+u.ID+"/test", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("test → %d %s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/custom-models" {
+		t.Errorf("test hit path %q, want /custom-models (resolved models_url, not a guessed base_url+/models path)", gotPath)
+	}
+}

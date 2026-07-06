@@ -90,6 +90,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			u, err := s.Upstreams().Update(chi.URLParam(r, "id"), in)
 			if err == nil {
 				bumpEpoch(s)
+				discoveryCache.invalidate(chi.URLParam(r, "id"))
 			}
 			ok(w, u, err)
 		})
@@ -99,6 +100,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				return
 			}
 			bumpEpoch(s)
+			discoveryCache.invalidate(chi.URLParam(r, "id"))
 			w.WriteHeader(http.StatusNoContent)
 		})
 		g.Post("/upstreams/{id}/test", func(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +109,14 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
-			modelsURL := modelsDiscoveryURL(u.Protocol, u.BaseURL)
+			// modelsURL resolves to u's own models_url or its provider preset's
+			// default; when neither is available (custom upstream with only a
+			// static models list, or an unregistered provider), fall back to a
+			// bare connectivity check against base_url instead of erroring out.
+			modelsURL := modelsDiscoveryURL(*u)
+			if modelsURL == "" {
+				modelsURL = u.BaseURL
+			}
 			req, _ := http.NewRequest("GET", modelsURL, nil)
 			auth, authErr := provider.AuthenticatorFor(u.Provider, u.Protocol, provider.UpstreamRuntime{
 				Name:            u.Name,
@@ -136,6 +145,19 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			_ = resp.Body.Close()
 			success := resp.StatusCode < 400
 			webutil.JSON(w, http.StatusOK, map[string]any{"success": success, "latency_ms": latency, "status_code": resp.StatusCode})
+		})
+		g.Get("/upstreams/{id}/models", func(w http.ResponseWriter, r *http.Request) {
+			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
+			if err != nil || u == nil {
+				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
+				return
+			}
+			models, err := modelsForUpstream(r.Context(), *u)
+			if err != nil {
+				webutil.JSON(w, http.StatusOK, map[string]any{"models": []string{}, "error": err.Error()})
+				return
+			}
+			webutil.JSON(w, http.StatusOK, map[string]any{"models": models})
 		})
 
 		// ── routes ──
@@ -367,20 +389,6 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			webutil.JSON(w, http.StatusOK, out)
 		})
 	})
-}
-
-// modelsDiscoveryURL returns the models-list discovery URL for an upstream
-// purely from its protocol + base_url (protocol-first upstreams have no
-// vendor id to key a provider lookup on).
-func modelsDiscoveryURL(protocol, baseURL string) string {
-	path := "/models"
-	switch protocol {
-	case provider.ProtocolAnthropicMessages:
-		path = "/v1/models"
-	case provider.ProtocolGeminiGenerateContent:
-		path = "/v1beta/models"
-	}
-	return strings.TrimRight(baseURL, "/") + path
 }
 
 // testHTTPClient returns the HTTP client used for the one-off
