@@ -11,12 +11,12 @@ func TestOpenRouterDefinition(t *testing.T) {
 	if !ok {
 		t.Fatal("openrouter not found")
 	}
-	if d.DefaultProtocol != "openai-compatible" {
-		t.Errorf("DefaultProtocol = %q, want openai-compatible", d.DefaultProtocol)
+	if d.DefaultProtocol != "openai-chatcompletions" {
+		t.Errorf("DefaultProtocol = %q, want openai-chatcompletions", d.DefaultProtocol)
 	}
 	// OpenRouter serves all three wire formats under /api/v1.
-	if !provider.SupportsProtocol(d, "openai-compatible") {
-		t.Error("should support openai-compatible")
+	if !provider.SupportsProtocol(d, "openai-chatcompletions") {
+		t.Error("should support openai-chatcompletions")
 	}
 	if !provider.SupportsProtocol(d, "openai-responses") {
 		t.Error("should support openai-responses")

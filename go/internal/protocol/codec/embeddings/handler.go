@@ -8,7 +8,7 @@ import (
 // EmbeddingsHandler is the OpenAI-compatible /v1/embeddings EndpointHandler.
 type EmbeddingsHandler struct{}
 
-func (EmbeddingsHandler) Endpoint() ids.ProtocolEndpoint { return ids.OpenAICompatibleEmbeddingsV1 }
+func (EmbeddingsHandler) Endpoint() ids.ProtocolEndpoint { return ids.OpenAIEmbeddingsV1 }
 
 func (EmbeddingsHandler) MakeRequestDecoder() codec.RequestDecoder { return requestDecoder{} }
 func (EmbeddingsHandler) MakeRequestEncoder() codec.RequestEncoder { return requestEncoder{} }

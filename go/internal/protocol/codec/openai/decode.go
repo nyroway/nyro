@@ -18,7 +18,7 @@ func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
 	}
 
 	req := ir.NewAiRequest(w.Model, nil)
-	req.Meta.SourceProtocol = &ids.OpenAICompatibleChatCompletionsV1
+	req.Meta.SourceProtocol = &ids.OpenAIChatCompletionsV1
 
 	msgs := make([]ir.Message, 0, len(w.Messages))
 	for _, m := range w.Messages {

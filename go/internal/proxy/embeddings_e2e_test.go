@@ -34,7 +34,7 @@ func TestDispatchEmbeddingsEndToEnd(t *testing.T) {
 	st := memory.New()
 	core := st.Storage()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "emb", Protocol: "openai-compatible", BaseURL: upstream.URL,
+		Name: "emb", Protocol: "openai-embeddings", BaseURL: upstream.URL,
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 	_, _ = core.Routes().Create(storage.CreateRoute{

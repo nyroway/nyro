@@ -352,10 +352,10 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 		g.Get("/protocol-credentials", func(w http.ResponseWriter, r *http.Request) {
 			protocols := []string{
-				provider.ProtocolOpenAICompatible,
+				provider.ProtocolOpenAIChatCompletions,
 				provider.ProtocolOpenAIResponses,
 				provider.ProtocolAnthropicMessages,
-				provider.ProtocolGeminiContent,
+				provider.ProtocolGeminiGenerateContent,
 			}
 			out := make([]protocolCredentialsView, len(protocols))
 			for i, p := range protocols {
@@ -377,7 +377,7 @@ func modelsDiscoveryURL(protocol, baseURL string) string {
 	switch protocol {
 	case provider.ProtocolAnthropicMessages:
 		path = "/v1/models"
-	case provider.ProtocolGeminiContent:
+	case provider.ProtocolGeminiGenerateContent:
 		path = "/v1beta/models"
 	}
 	return strings.TrimRight(baseURL, "/") + path

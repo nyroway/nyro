@@ -10,7 +10,7 @@ func TestCoreUpstreamCRUD(t *testing.T) {
 	s := New().Storage()
 
 	created, err := s.Upstreams().Create(storage.CreateUpstream{
-		Name: "openai-main", Protocol: "openai-compatible",
+		Name: "openai-main", Protocol: "openai-chatcompletions",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)

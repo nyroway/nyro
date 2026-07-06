@@ -4,10 +4,10 @@ import "testing"
 
 func TestCredentialSchemaFor(t *testing.T) {
 	knownProtocols := []string{
-		ProtocolOpenAICompatible,
+		ProtocolOpenAIChatCompletions,
 		ProtocolOpenAIResponses,
 		ProtocolAnthropicMessages,
-		ProtocolGeminiContent,
+		ProtocolGeminiGenerateContent,
 	}
 	for _, p := range knownProtocols {
 		t.Run(p, func(t *testing.T) {

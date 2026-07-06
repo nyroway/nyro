@@ -1,9 +1,9 @@
-// Package ids defines the three-layer protocol identity used across the
-// gateway: Protocol (the wire-format suite) and ProtocolEndpoint (a specific
-// API endpoint).
+// Package ids defines the two-layer protocol identity used across the
+// gateway: Protocol (a single concrete wire-format API surface) and
+// ProtocolEndpoint (that protocol at a specific version).
 //
-// Canonical string form: "{protocol}/{name}/{version}"
-// (e.g. "openai-compatible/chat-completions/v1").
+// Canonical string form: "{protocol}/{version}"
+// (e.g. "openai-chatcompletions/v1").
 //
 // Ported from crates/nyro-core/src/protocol/ids.rs. EndpointCapabilities and
 // StreamCaps (also in ids.rs) describe codec/negotiator behaviour and are
@@ -12,9 +12,9 @@ package ids
 
 import "fmt"
 
-// Protocol is a top-level protocol suite (wire-format family). A Protocol
-// groups one or more ProtocolEndpoints that share the same request/response
-// wire format. It is orthogonal to Vendor — multiple vendors (OpenAI,
+// Protocol is a single concrete wire-format API surface — one logical
+// operation (chat, embeddings, generate-content, ...) with one request/
+// response shape. It is orthogonal to Vendor — multiple vendors (OpenAI,
 // Moonshot, DeepSeek, ...) may implement the same Protocol.
 //
 // A protocol ID is independent of transport (authentication, URL structure,
@@ -23,15 +23,16 @@ import "fmt"
 //
 // Identifier | Name (short) | FullName | Alias:
 //
-//	anthropic-messages  | Messages API      | Anthropic Messages API | claude
-//	openai-compatible   | Compatible API    | OpenAI Compatible API  | openai
-//	openai-responses    | Responses API     | OpenAI Responses API   | openaix
-//	gemini-content      | Content API       | Gemini Content API     | gemini
-//	gemini-interactions | Interactions API  | Gemini Interactions API| geminix
-//	bedrock-converse    | Converse API      | Bedrock Converse API   | bedrock
-//	azure-inference     | Inference API     | Azure Inference API    | azure
+//	anthropic-messages      | Messages API      | Anthropic Messages API   | claude
+//	openai-chatcompletions  | Chat Completions API | OpenAI Chat Completions API | openai
+//	openai-embeddings       | Embeddings API    | OpenAI Embeddings API    | embeddings
+//	openai-responses        | Responses API     | OpenAI Responses API     | responses
+//	gemini-generatecontent  | GenerateContent API | Gemini GenerateContent API | gemini
+//	gemini-interactions     | Interactions API  | Gemini Interactions API  | interactions
+//	bedrock-converse        | Converse API      | Bedrock Converse API     | bedrock
+//	azure-modelinference    | Model Inference API | Azure Model Inference API | azure
 //
-// gemini-interactions, bedrock-converse, and azure-inference are
+// gemini-interactions, bedrock-converse, and azure-modelinference are
 // declared only (ParseProtocol/Name/FullName recognize them, provider
 // definitions may reference them as defaults) — no codec is registered for
 // them yet.
@@ -43,14 +44,14 @@ import "fmt"
 //	  - any model (unify) → bedrock-converse    (Converse API; cross-model unified schema)
 //
 //	Azure (api-key header or Azure AD):
-//	  - OpenAI GPT/o (Azure OpenAI Service) → azure-inference   (deployment in path, api-version query)
+//	  - OpenAI GPT/o (Azure OpenAI Service) → azure-modelinference   (deployment in path, api-version query)
 //	  - Claude (AI Foundry serverless)      → anthropic-messages     (Foundry anthropic endpoint)
-//	  - Foundry non-Claude (Llama/Mistral)  → openai-compatible (AI Model Inference API)
+//	  - Foundry non-Claude (Llama/Mistral)  → openai-chatcompletions (AI Model Inference API)
 //
 //	GCP Vertex AI (OAuth / service-account):
-//	  - Gemini            → gemini-content  (generateContent)
-//	  - Claude            → anthropic-messages      (rawPredict; model in path)
-//	  - some 3rd-party    → openai-compatible  (/endpoints/openapi; partial coverage)
+//	  - Gemini            → gemini-generatecontent  (generateContent)
+//	  - Claude            → anthropic-messages       (rawPredict; model in path)
+//	  - some 3rd-party    → openai-chatcompletions   (/endpoints/openapi; partial coverage)
 //	  - other 3rd-party   → publisher-native via rawPredict (no unified layer)
 //
 // anthropic-messages is the common denominator: Claude on all three clouds
@@ -58,16 +59,19 @@ import "fmt"
 type Protocol string
 
 const (
-	ProtocolAnthropicMessages Protocol = "anthropic-messages"
-	ProtocolOpenAICompatible  Protocol = "openai-compatible"
-	ProtocolOpenAIResponses   Protocol = "openai-responses"
-	ProtocolGeminiContent     Protocol = "gemini-content"
+	ProtocolAnthropicMessages     Protocol = "anthropic-messages"
+	ProtocolOpenAIChatCompletions Protocol = "openai-chatcompletions"
+	// ProtocolOpenAIEmbeddings is split out of the old openai-compatible
+	// family; not exposed as a selectable protocol yet.
+	ProtocolOpenAIEmbeddings      Protocol = "openai-embeddings"
+	ProtocolOpenAIResponses       Protocol = "openai-responses"
+	ProtocolGeminiGenerateContent Protocol = "gemini-generatecontent"
 	// Transport-specific or not-yet-implemented protocols; no codec is
 	// registered for these yet — they exist so provider definitions can
 	// declare them as defaults, and ParseProtocol/Name/FullName recognize them.
-	ProtocolGeminiInteractions Protocol = "gemini-interactions"
-	ProtocolBedrockConverse    Protocol = "bedrock-converse"
-	ProtocolAzureInference     Protocol = "azure-inference"
+	ProtocolGeminiInteractions  Protocol = "gemini-interactions"
+	ProtocolBedrockConverse     Protocol = "bedrock-converse"
+	ProtocolAzureModelInference Protocol = "azure-modelinference"
 )
 
 // String returns the canonical kebab-case identifier.
@@ -81,18 +85,20 @@ func (p Protocol) Name() string {
 	switch p {
 	case ProtocolAnthropicMessages:
 		return "Messages API"
-	case ProtocolOpenAICompatible:
-		return "Compatible API"
+	case ProtocolOpenAIChatCompletions:
+		return "Chat Completions API"
+	case ProtocolOpenAIEmbeddings:
+		return "Embeddings API"
 	case ProtocolOpenAIResponses:
 		return "Responses API"
-	case ProtocolGeminiContent:
-		return "Content API"
+	case ProtocolGeminiGenerateContent:
+		return "GenerateContent API"
 	case ProtocolGeminiInteractions:
 		return "Interactions API"
 	case ProtocolBedrockConverse:
 		return "Converse API"
-	case ProtocolAzureInference:
-		return "Inference API"
+	case ProtocolAzureModelInference:
+		return "Model Inference API"
 	}
 	return "Unknown"
 }
@@ -103,18 +109,20 @@ func (p Protocol) FullName() string {
 	switch p {
 	case ProtocolAnthropicMessages:
 		return "Anthropic Messages API"
-	case ProtocolOpenAICompatible:
-		return "OpenAI Compatible API"
+	case ProtocolOpenAIChatCompletions:
+		return "OpenAI Chat Completions API"
+	case ProtocolOpenAIEmbeddings:
+		return "OpenAI Embeddings API"
 	case ProtocolOpenAIResponses:
 		return "OpenAI Responses API"
-	case ProtocolGeminiContent:
-		return "Gemini Content API"
+	case ProtocolGeminiGenerateContent:
+		return "Gemini GenerateContent API"
 	case ProtocolGeminiInteractions:
 		return "Gemini Interactions API"
 	case ProtocolBedrockConverse:
 		return "Bedrock Converse API"
-	case ProtocolAzureInference:
-		return "Azure Inference API"
+	case ProtocolAzureModelInference:
+		return "Azure Model Inference API"
 	}
 	return "Unknown"
 }
@@ -127,46 +135,45 @@ func ParseProtocol(s string) (Protocol, error) {
 	switch s {
 	case "anthropic-messages", "claude":
 		return ProtocolAnthropicMessages, nil
-	case "openai-compatible", "openai":
-		return ProtocolOpenAICompatible, nil
-	case "openai-responses", "openaix":
+	case "openai-chatcompletions", "openai":
+		return ProtocolOpenAIChatCompletions, nil
+	case "openai-embeddings", "embeddings":
+		return ProtocolOpenAIEmbeddings, nil
+	case "openai-responses", "responses":
 		return ProtocolOpenAIResponses, nil
-	case "gemini-content", "gemini":
-		return ProtocolGeminiContent, nil
-	case "gemini-interactions", "geminix":
+	case "gemini-generatecontent", "gemini":
+		return ProtocolGeminiGenerateContent, nil
+	case "gemini-interactions", "interactions":
 		return ProtocolGeminiInteractions, nil
 	case "bedrock-converse", "bedrock":
 		return ProtocolBedrockConverse, nil
-	case "azure-inference", "azure":
-		return ProtocolAzureInference, nil
+	case "azure-modelinference", "azure":
+		return ProtocolAzureModelInference, nil
 	}
 	return "", fmt.Errorf("unknown protocol: %s", s)
 }
 
-// ProtocolEndpoint is a specific API endpoint within a Protocol.
+// ProtocolEndpoint is a Protocol at a specific wire-format version.
 //
-// Canonical display: "{protocol}/{name}/{version}".
+// Canonical display: "{protocol}/{version}".
 type ProtocolEndpoint struct {
 	Protocol Protocol
-	// Name is the endpoint name (kebab-case, matches the final path segment of
-	// the ingress route).
-	Name string
 	// Version is the wire-format version string as the vendor labels it.
 	Version string
 }
 
-// String returns the canonical "{protocol}/{name}/{version}" form.
+// String returns the canonical "{protocol}/{version}" form.
 func (e ProtocolEndpoint) String() string {
-	return fmt.Sprintf("%s/%s/%s", e.Protocol, e.Name, e.Version)
+	return fmt.Sprintf("%s/%s", e.Protocol, e.Version)
 }
 
 // Canonical ProtocolEndpoint values.
 var (
-	OpenAICompatibleChatCompletionsV1 = ProtocolEndpoint{ProtocolOpenAICompatible, "chat-completions", "v1"}
-	OpenAICompatibleEmbeddingsV1      = ProtocolEndpoint{ProtocolOpenAICompatible, "embeddings", "v1"}
-	OpenAIResponsesV1                 = ProtocolEndpoint{ProtocolOpenAIResponses, "responses", "v1"}
-	AnthropicMessages20230601         = ProtocolEndpoint{ProtocolAnthropicMessages, "messages", "2023-06-01"}
-	GeminiContentV1Beta               = ProtocolEndpoint{ProtocolGeminiContent, "generate-content", "v1beta"}
+	OpenAIChatCompletionsV1     = ProtocolEndpoint{ProtocolOpenAIChatCompletions, "v1"}
+	OpenAIEmbeddingsV1          = ProtocolEndpoint{ProtocolOpenAIEmbeddings, "v1"}
+	OpenAIResponsesV1           = ProtocolEndpoint{ProtocolOpenAIResponses, "v1"}
+	AnthropicMessages20230601   = ProtocolEndpoint{ProtocolAnthropicMessages, "2023-06-01"}
+	GeminiGenerateContentV1Beta = ProtocolEndpoint{ProtocolGeminiGenerateContent, "v1beta"}
 )
 
 // ProtocolID is a backward-compat alias; prefer ProtocolEndpoint.
@@ -178,14 +185,14 @@ type ProtocolID = ProtocolEndpoint
 // routing (e.g. an Anthropic client hitting an OpenAI-compatible provider).
 func ChatEndpointFor(p Protocol) (ProtocolEndpoint, bool) {
 	switch p {
-	case ProtocolOpenAICompatible:
-		return OpenAICompatibleChatCompletionsV1, true
+	case ProtocolOpenAIChatCompletions:
+		return OpenAIChatCompletionsV1, true
 	case ProtocolOpenAIResponses:
 		return OpenAIResponsesV1, true
 	case ProtocolAnthropicMessages:
 		return AnthropicMessages20230601, true
-	case ProtocolGeminiContent:
-		return GeminiContentV1Beta, true
+	case ProtocolGeminiGenerateContent:
+		return GeminiGenerateContentV1Beta, true
 	}
 	return ProtocolEndpoint{}, false
 }

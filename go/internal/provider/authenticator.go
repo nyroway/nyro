@@ -18,11 +18,11 @@ const DefaultAnthropicVersion = defaultAnthropicVersion
 // named vendor (if any) it happens to be configured as.
 func AuthenticatorFor(protocol string, up UpstreamRuntime) (Authenticator, error) {
 	switch protocol {
-	case ProtocolOpenAICompatible, ProtocolOpenAIResponses:
+	case ProtocolOpenAIChatCompletions, ProtocolOpenAIResponses:
 		return NewBearerAuthenticator(up.CredentialsJSON)
 	case ProtocolAnthropicMessages:
 		return newAnthropicAuthenticator(up.CredentialsJSON)
-	case ProtocolGeminiContent:
+	case ProtocolGeminiGenerateContent:
 		return newGeminiContentAuthenticator(up.CredentialsJSON)
 	default:
 		if len(up.CredentialsJSON) == 0 {
@@ -46,7 +46,7 @@ func newAnthropicAuthenticator(credentials json.RawMessage) (Authenticator, erro
 }
 
 // newGeminiContentAuthenticator builds the fixed x-goog-api-key authenticator
-// used for the gemini-content protocol, reusing geminiAuthenticator (gemini.go)
+// used for the gemini-generatecontent protocol, reusing geminiAuthenticator (gemini.go)
 // with openaiCompatible forced false (Vertex/OAuth branching is out of scope).
 func newGeminiContentAuthenticator(credentials json.RawMessage) (Authenticator, error) {
 	var c apiKeyCredentials

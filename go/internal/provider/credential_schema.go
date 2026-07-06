@@ -7,7 +7,7 @@ package provider
 // without changing callers.
 func CredentialSchemaFor(protocol string) CredentialSchema {
 	switch protocol {
-	case ProtocolOpenAICompatible, ProtocolOpenAIResponses, ProtocolAnthropicMessages, ProtocolGeminiContent:
+	case ProtocolOpenAIChatCompletions, ProtocolOpenAIResponses, ProtocolAnthropicMessages, ProtocolGeminiGenerateContent:
 		return CredentialSchema{Fields: []CredentialField{{Name: "api_key", Type: "string", Required: true}}}
 	default:
 		return CredentialSchema{Fields: []CredentialField{{Name: "api_key", Type: "string", Required: false}}}
