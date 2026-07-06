@@ -736,7 +736,7 @@ export default function ProvidersPage() {
     if (!nextPresetId) return; // "none" — leave current form values as the user typed them.
     const preset = providerPresets.find((item) => item.id === nextPresetId);
     if (!preset) return;
-    const protocol = resolvePresetProtocol(preset);
+    const protocol = isCustomProviderPreset(preset.id) ? protocolOptions[0].value : resolvePresetProtocol(preset);
     const config = resolvePresetConfig(preset, protocol);
     setModelsMode(pickModelsMode("url", config.modelsSource, config.staticModels));
     setForm({

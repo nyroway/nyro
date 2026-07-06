@@ -27,6 +27,7 @@ describe("create provider preset switching", () => {
     const body = handleTemplateChangeSource();
 
     expect(body).toContain('setModelsMode(pickModelsMode("url", config.modelsSource, config.staticModels));');
+    expect(body).toContain("const protocol = isCustomProviderPreset(preset.id) ? protocolOptions[0].value : resolvePresetProtocol(preset);");
     expect(body).toContain("setForm({");
     expect(body).toContain("...emptyCreate,");
     expect(body).toContain('api_key: config.apiKey || "",');
