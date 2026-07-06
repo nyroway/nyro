@@ -607,8 +607,17 @@ body {
  * to the gradient's period, and vertical padding must be 0 (or a multiple
  * of that period), or the first line drifts out of alignment with the
  * first stripe.
+ *
+ * The stripe rules below are written against the two-class selector
+ * `.nyro-shadcn-input.model-textarea` (and its dark-theme equivalent),
+ * deliberately more specific than plain `.nyro-shadcn-input` / its
+ * `html[data-theme="dark"] .nyro-shadcn-input` override further down this
+ * file. Those rules set `background` as a shorthand (e.g. `background:
+ * #ffffff`), which resets `background-image` to `none` — a same-or-lower-
+ * specificity `.model-textarea { background-image: ... }` would get
+ * silently canceled by them regardless of source order.
  */
-.model-textarea {
+.nyro-shadcn-input.model-textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 24px;
@@ -624,7 +633,7 @@ body {
   );
 }
 
-html[data-theme="dark"] .model-textarea {
+html[data-theme="dark"] .nyro-shadcn-input.model-textarea {
   background-image: repeating-linear-gradient(
     to bottom,
     rgba(255, 255, 255, 0.055) 0px,
