@@ -986,7 +986,7 @@ export default function ProvidersPage() {
                   />
                 ) : (
                   <textarea
-                    className="nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="model-textarea nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
                     placeholder={isZh ? "每行一个模型名" : "One model name per line"}
                     value={form.models ?? ""}
                     onChange={(e) => setForm({ ...form, models: e.target.value })}
@@ -1207,7 +1207,7 @@ export default function ProvidersPage() {
                         />
                       ) : (
                         <textarea
-                          className="nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="model-textarea nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
                           placeholder={isZh ? "每行一个模型名" : "One model name per line"}
                           value={editForm.models ?? ""}
                           onChange={(e) => setEditForm({ ...editForm, models: e.target.value })}

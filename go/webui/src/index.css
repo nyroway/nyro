@@ -599,6 +599,41 @@ body {
   border-radius: 999px !important;
 }
 
+/*
+ * .model-textarea gives the manual "one model id per line" textarea a
+ * horizontal-ruled look, so each line reads as its own row instead of
+ * blurring into one block of text. Pure CSS via a background stripe
+ * periodic with line-height — line-height must stay a fixed px value equal
+ * to the gradient's period, and vertical padding must be 0 (or a multiple
+ * of that period), or the first line drifts out of alignment with the
+ * first stripe.
+ */
+.model-textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 24px;
+  padding-top: 0;
+  padding-bottom: 0;
+  background-attachment: local;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(15, 23, 42, 0.045) 0px,
+    rgba(15, 23, 42, 0.045) 24px,
+    transparent 24px,
+    transparent 48px
+  );
+}
+
+html[data-theme="dark"] .model-textarea {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.055) 0px,
+    rgba(255, 255, 255, 0.055) 24px,
+    transparent 24px,
+    transparent 48px
+  );
+}
+
 .provider-channel-group {
   width: fit-content;
   max-width: 100%;
