@@ -13,6 +13,15 @@ function handleTemplateChangeSource() {
   return source.slice(start, end);
 }
 
+function handleProtocolChangeSource() {
+  const start = source.indexOf("function handleProtocolChange");
+  const end = source.indexOf("\n  function handleTemplateChange", start);
+  if (start < 0 || end < 0) {
+    throw new Error("Could not locate handleProtocolChange");
+  }
+  return source.slice(start, end);
+}
+
 describe("create provider preset switching", () => {
   it("resets create form fields instead of carrying values from the previous provider", () => {
     const body = handleTemplateChangeSource();
@@ -26,5 +35,13 @@ describe("create provider preset switching", () => {
     expect(body).not.toContain("...prev");
     expect(body).not.toContain("prev.api_key");
     expect(body).not.toContain("prev.credentials");
+  });
+
+  it("treats Custom as manual protocol configuration so Base URL follows protocol defaults", () => {
+    const body = handleProtocolChangeSource();
+
+    expect(body).toContain("&& !isCustomProviderPreset(selectedPreset.id)");
+    expect(body).toContain("base_url: config?.baseUrl || protocolUrl(protocol) || prev.base_url,");
+    expect(body).not.toContain('base_url: config?.baseUrl || (preset ? "" : protocolUrl(protocol)) || prev.base_url,');
   });
 });

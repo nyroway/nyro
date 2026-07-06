@@ -710,16 +710,18 @@ export default function ProvidersPage() {
   function handleProtocolChange(nextProtocol: string) {
     const protocol = resolveProtocol(nextProtocol) as ProviderProtocol | null;
     if (!protocol) return;
-    const preset = selectedPreset && availableProtocolsForPreset(selectedPreset).includes(protocol)
+    const preset = selectedPreset
+      && !isCustomProviderPreset(selectedPreset.id)
+      && availableProtocolsForPreset(selectedPreset).includes(protocol)
       ? selectedPreset
       : null;
-    if (!preset && selectedPresetId) setSelectedPresetId("");
+    if (!preset && selectedPresetId && !isCustomProviderPreset(selectedPresetId)) setSelectedPresetId("");
     const config = preset ? resolvePresetConfig(preset, protocol) : null;
     if (config) setModelsMode((prev) => pickModelsMode(prev, config.modelsSource, config.staticModels));
     setForm((prev) => ({
       ...prev,
       protocol,
-      base_url: config?.baseUrl || (preset ? "" : protocolUrl(protocol)) || prev.base_url,
+      base_url: config?.baseUrl || protocolUrl(protocol) || prev.base_url,
       models_url: config?.modelsSource ?? prev.models_url,
       models: config?.staticModels ?? prev.models,
       api_key: config?.apiKey || prev.api_key,
