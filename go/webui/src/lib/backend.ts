@@ -12,7 +12,7 @@ import {
   updateUpstreamFromProvider,
 } from "./go-adapter";
 import type { GoConsumer, GoProviderPreset, GoRoute, GoUpstream } from "./go-schema";
-import type { CreateApiKey, CreateModel, CreateProvider, UpdateApiKey, UpdateModel, UpdateProvider } from "./types";
+import type { CreateApiKey, CreateModel, CreateProvider, ProviderHealthEvent, UpdateApiKey, UpdateModel, UpdateProvider } from "./types";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -64,6 +64,71 @@ async function invokeHTTP<T>(cmd: string, args?: Record<string, unknown>): Promi
   // returns null rather than falling back to the full response object.
   const value = json && typeof json === "object" && "data" in json ? json.data : json;
   return mapping.transform ? (mapping.transform(value) as T) : (value as T);
+}
+
+export function decodeProviderHealthSSEFrame(frame: string): ProviderHealthEvent | null {
+  const data = frame
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
+  if (!data) return null;
+  return JSON.parse(data) as ProviderHealthEvent;
+}
+
+export async function streamProviderDraftHealth(
+  input: CreateProvider,
+  onEvent: (event: ProviderHealthEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = getAdminToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const resp = await fetch("/api/v1/upstreams/test-draft/stream", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(createUpstreamFromProvider(input)),
+    signal,
+  });
+
+  if (resp.status === 401 && window.location.pathname !== "/login") {
+    clearAdminToken();
+    window.location.replace("/login");
+    throw new Error("Authentication required");
+  }
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${resp.status}`);
+  }
+  if (!resp.body) {
+    throw new Error("Streaming response body is not available");
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const event = decodeProviderHealthSSEFrame(frame);
+      if (event) onEvent(event);
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
+  buffer += decoder.decode();
+  const tail = buffer.trim();
+  if (tail) {
+    const event = decodeProviderHealthSSEFrame(tail);
+    if (event) onEvent(event);
+  }
 }
 
 interface HTTPMapping {

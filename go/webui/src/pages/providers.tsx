@@ -1,12 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend } from "@/lib/backend";
+import { backend, streamProviderDraftHealth } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
   Provider,
   CreateProvider,
   UpdateProvider,
   TestResult,
+  ProviderHealthEvent,
   ProviderPreset,
   ProviderChannelPreset,
   ProviderCredentialField,
@@ -486,6 +487,9 @@ export default function ProvidersPage() {
   const [testLogs, setTestLogs] = useState<TestLogEntry[]>([]);
   const [isTestRunning, setIsTestRunning] = useState(false);
   const [testTarget, setTestTarget] = useState<Provider | null>(null);
+  const [testDialogMode, setTestDialogMode] = useState<"provider" | "create">("provider");
+  const [pendingCreateInput, setPendingCreateInput] = useState<CreateProvider | null>(null);
+  const [createHealthPassed, setCreateHealthPassed] = useState(false);
   const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
   const [providerToCopy, setProviderToCopy] = useState<Provider | null>(null);
   const [appendTargets, setAppendTargets] = useState(false);
@@ -494,6 +498,7 @@ export default function ProvidersPage() {
   const [editModelsMode, setEditModelsMode] = useState<ModelsMode>("url");
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
   const activeTestRunRef = useRef(0);
+  const activeTestAbortRef = useRef<AbortController | null>(null);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
   const modelsTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editModelsTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -530,10 +535,12 @@ export default function ProvidersPage() {
   });
   const createMut = useMutation({
     mutationFn: (input: CreateProvider) => backend<Provider>("create_provider", { input }),
-    onSuccess: async (createdProvider: Provider) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["providers"] });
+      setPendingCreateInput(null);
+      setCreateHealthPassed(false);
+      setTestDialogOpen(false);
       closeCreateForm();
-      await handleTest(createdProvider);
     },
     onError: (error: unknown) => {
       showErrorDialog("创建提供商失败", "Failed to create provider", error);
@@ -604,9 +611,13 @@ export default function ProvidersPage() {
 
   function closeTestDialog() {
     activeTestRunRef.current += 1;
+    activeTestAbortRef.current?.abort();
+    activeTestAbortRef.current = null;
     setIsTestRunning(false);
     setTestingId(null);
     setTestDialogOpen(false);
+    setPendingCreateInput(null);
+    setCreateHealthPassed(false);
   }
 
   async function handleTest(provider: Provider) {
@@ -682,6 +693,89 @@ export default function ProvidersPage() {
         `${isZh ? "✗ 测试失败" : "✗ Test failed"}: ${message}`,
         "error",
       );
+    }
+  }
+
+  function healthCheckName(check: ProviderHealthEvent["check"]) {
+    switch (check) {
+      case "config":
+        return isZh ? "配置校验" : "Configuration validation";
+      case "credentials":
+        return isZh ? "凭证校验" : "Credential validation";
+      case "models":
+        return isZh ? "模型发现" : "Model discovery";
+      case "model_request":
+        return isZh ? "模型测试" : "Model request test";
+      default:
+        return isZh ? "健康检查" : "Health check";
+    }
+  }
+
+  function appendCreateHealthEvent(event: ProviderHealthEvent) {
+    if (event.type === "complete") {
+      setCreateHealthPassed(event.success === true);
+      appendTestLog(
+        event.success ? "success" : "error",
+        event.success
+          ? (isZh ? "✓ 测试全部通过，点击完成创建" : "✓ All checks passed. Click Create Provider to finish.")
+          : `${isZh ? "✗ 测试未通过" : "✗ Checks failed"}${event.error ? `: ${event.error}` : ""}`,
+      );
+      setIsTestRunning(false);
+      return;
+    }
+
+    const name = healthCheckName(event.check);
+    if (event.status === "running") {
+      appendTestLog("info", `▶ ${name}${event.model ? ` (${event.model})` : ""}`);
+      return;
+    }
+    if (event.status === "passed") {
+      const latency = event.latency_ms != null ? ` ${event.latency_ms}ms` : "";
+      appendTestLog(
+        "success",
+        `✓ ${name}${event.model ? ` (${event.model})` : ""}${latency}`,
+      );
+      return;
+    }
+    if (event.status === "failed") {
+      appendTestLog("error", `✗ ${name}: ${event.error ?? event.message ?? (isZh ? "失败" : "failed")}`);
+    }
+  }
+
+  async function handleCreateHealthCheck(input: CreateProvider) {
+    const runId = activeTestRunRef.current + 1;
+    activeTestRunRef.current = runId;
+    const abortController = new AbortController();
+    activeTestAbortRef.current = abortController;
+    const isCanceled = () => activeTestRunRef.current !== runId;
+
+    setTestingId(null);
+    setTestTarget(null);
+    setTestDialogMode("create");
+    setPendingCreateInput(input);
+    setCreateHealthPassed(false);
+    setTestLogs([]);
+    setTestDialogOpen(true);
+    setIsTestRunning(true);
+
+    appendTestLog("info", isZh ? `开始创建前测试 ${input.name}...` : `Start pre-create checks for ${input.name}...`);
+    appendTestLog("info", isZh ? "会向上游发送一次最小模型请求用于验证模型可用性" : "A minimal upstream model request will be sent to verify model availability.");
+
+    try {
+      await streamProviderDraftHealth(input, (event) => {
+        if (isCanceled()) return;
+        appendCreateHealthEvent(event);
+      }, abortController.signal);
+    } catch (error: unknown) {
+      if (isCanceled() || abortController.signal.aborted) return;
+      const message = normalizeErrorMessage(error);
+      appendTestLog("error", `${isZh ? "✗ 流式测试失败" : "✗ Streaming health check failed"}: ${message}`);
+      setCreateHealthPassed(false);
+      setIsTestRunning(false);
+    } finally {
+      if (!isCanceled()) {
+        activeTestAbortRef.current = null;
+      }
     }
   }
 
@@ -1046,18 +1140,19 @@ export default function ProvidersPage() {
                       protocol,
                       base_url: baseUrl,
                     };
-                    createMut.mutate(input);
+                    void handleCreateHealthCheck(input);
                   }}
                   disabled={
                     createMut.isPending
+                    || isTestRunning
                     || !form.name.trim()
                     || missingRequiredCredentials(createCredentialFields, form.credentials ?? {})
                     || createBaseUrlMissing
                   }
                 >
-                  {createMut.isPending
-                    ? (isZh ? "创建中..." : "Creating...")
-                    : (isZh ? "创建" : "Create")}
+                  {isTestRunning
+                    ? (isZh ? "测试中..." : "Testing...")
+                    : (isZh ? "测试并创建" : "Test & Create")}
                 </Button>
               <Button
                 onClick={closeCreateForm}
@@ -1476,10 +1571,14 @@ export default function ProvidersPage() {
         <DialogContent className="w-[min(92vw,720px)]">
           <DialogHeader>
             <DialogTitle>
-              {isZh ? `测试 ${testTarget?.name ?? ""}` : `Test ${testTarget?.name ?? ""}`}
+              {testDialogMode === "create"
+                ? (isZh ? `创建前测试 ${pendingCreateInput?.name ?? ""}` : `Pre-create test ${pendingCreateInput?.name ?? ""}`)
+                : (isZh ? `测试 ${testTarget?.name ?? ""}` : `Test ${testTarget?.name ?? ""}`)}
             </DialogTitle>
             <DialogDescription>
-              {isZh ? "实时展示 Provider 测试日志" : "Real-time logs for provider testing"}
+              {testDialogMode === "create"
+                ? (isZh ? "实时展示创建前验证流水线" : "Real-time pre-create validation pipeline")
+                : (isZh ? "实时展示 Provider 测试日志" : "Real-time logs for provider testing")}
             </DialogDescription>
           </DialogHeader>
           <div
@@ -1506,11 +1605,19 @@ export default function ProvidersPage() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="secondary" onClick={closeTestDialog}>
-              {isTestRunning
-                ? (isZh ? "取消" : "Cancel")
-                : (isZh ? "关闭" : "Close")}
-            </Button>
+            {testDialogMode === "create" && createHealthPassed && pendingCreateInput ? (
+              <Button onClick={() => createMut.mutate(pendingCreateInput)} disabled={createMut.isPending}>
+                {createMut.isPending
+                  ? (isZh ? "创建中..." : "Creating...")
+                  : (isZh ? "完成创建" : "Create Provider")}
+              </Button>
+            ) : (
+              <Button variant="secondary" onClick={closeTestDialog}>
+                {isTestRunning
+                  ? (isZh ? "取消" : "Cancel")
+                  : (isZh ? "关闭" : "Close")}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

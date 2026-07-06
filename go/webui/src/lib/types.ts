@@ -178,6 +178,18 @@ export interface TestResult {
   error?: string;
 }
 
+export interface ProviderHealthEvent {
+  type: "check" | "complete";
+  check?: "config" | "credentials" | "models" | "model_request";
+  status?: "running" | "passed" | "failed";
+  message?: string;
+  model?: string;
+  latency_ms?: number;
+  status_code?: number;
+  error?: string;
+  success?: boolean;
+}
+
 export interface ModelCapabilities {
   provider: string;
   model_id: string;

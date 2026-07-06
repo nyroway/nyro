@@ -3,8 +3,10 @@ package admin
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -560,5 +562,105 @@ func TestUpstreamTestConnectivityUsesResolvedModelsURL(t *testing.T) {
 	}
 	if gotPath != "/custom-models" {
 		t.Errorf("test hit path %q, want /custom-models (resolved models_url, not a guessed base_url+/models path)", gotPath)
+	}
+}
+
+func TestUpstreamDraftHealthStreamRunsModelTestWithoutPersisting(t *testing.T) {
+	var gotPath string
+	var gotAuth string
+	var gotModel string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Model     string  `json:"model"`
+			MaxTokens *uint32 `json:"max_tokens"`
+		}
+		_ = json.Unmarshal(body, &req)
+		gotModel = req.Model
+		if req.MaxTokens == nil || *req.MaxTokens != 1 {
+			t.Errorf("max_tokens = %v, want 1", req.MaxTokens)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}]}`))
+	}))
+	defer ts.Close()
+
+	r, st := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams/test-draft/stream", "",
+		[]byte(`{"name":"draft","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("draft health stream → %d %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("content-type = %q, want text/event-stream", ct)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`"check":"config"`,
+		`"check":"credentials"`,
+		`"check":"models"`,
+		`"check":"model_request"`,
+		`"type":"complete"`,
+		`"success":true`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("stream body missing %s:\n%s", want, body)
+		}
+	}
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("model test path = %q, want /v1/chat/completions", gotPath)
+	}
+	if gotAuth != "Bearer k" {
+		t.Errorf("authorization = %q, want Bearer k", gotAuth)
+	}
+	if gotModel != "gpt-test" {
+		t.Errorf("model = %q, want gpt-test", gotModel)
+	}
+	ups, err := st.Storage().Upstreams().List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ups) != 0 {
+		t.Fatalf("draft health persisted upstreams: %+v", ups)
+	}
+}
+
+func TestUpstreamDraftHealthStreamRequiresModelSource(t *testing.T) {
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams/test-draft/stream", "",
+		[]byte(`{"name":"draft","provider":"custom","protocol":"openai-chatcompletions","base_url":"https://example.test","credentials":{"api_key":"k"}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("draft health stream → %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"check":"models"`) || !strings.Contains(body, `"status":"failed"`) {
+		t.Fatalf("stream body did not fail at model resolution:\n%s", body)
+	}
+	if !strings.Contains(body, `"success":false`) {
+		t.Fatalf("stream body missing failed completion:\n%s", body)
+	}
+}
+
+func TestUpstreamDraftHealthStreamRejectsInvalidModelResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"not":"a chat completion"}`))
+	}))
+	defer ts.Close()
+
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams/test-draft/stream", "",
+		[]byte(`{"name":"draft","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("draft health stream → %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"check":"model_request"`) || !strings.Contains(body, `"status":"failed"`) {
+		t.Fatalf("stream body did not fail at model request validation:\n%s", body)
+	}
+	if !strings.Contains(body, `"success":false`) {
+		t.Fatalf("stream body missing failed completion:\n%s", body)
 	}
 }

@@ -85,6 +85,14 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			}
 			created(w, u, err)
 		})
+		g.Post("/upstreams/test-draft/stream", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.CreateUpstream
+			if err := webutil.Decode(r, &in); err != nil {
+				badRequest(w, err)
+				return
+			}
+			streamDraftUpstreamHealth(w, r, s, in)
+		})
 		g.Put("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.UpdateUpstream
 			if err := webutil.Decode(r, &in); err != nil {
