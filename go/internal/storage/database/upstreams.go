@@ -46,10 +46,12 @@ func (s upstreamStore) Create(in storage.CreateUpstream) (storage.Upstream, erro
 	m := &model.Upstream{
 		ID:              newID(),
 		Name:            in.Name,
+		Provider:        in.Provider,
 		Protocol:        in.Protocol,
 		BaseURL:         in.BaseURL,
 		CredentialsJSON: jsonRaw(in.CredentialsJSON),
 		ModelsJSON:      jsonRaw(in.ModelsJSON),
+		ModelsURL:       in.ModelsURL,
 		ProxyURL:        in.ProxyURL,
 		Enabled:         enabled,
 		CreatedAt:       now,
@@ -70,6 +72,9 @@ func (s upstreamStore) Update(id string, in storage.UpdateUpstream) (storage.Ups
 	if in.Name != nil {
 		m.Name = *in.Name
 	}
+	if in.Provider != nil {
+		m.Provider = *in.Provider
+	}
 	if in.Protocol != nil {
 		m.Protocol = *in.Protocol
 	}
@@ -81,6 +86,9 @@ func (s upstreamStore) Update(id string, in storage.UpdateUpstream) (storage.Ups
 	}
 	if in.ModelsJSON != nil {
 		m.ModelsJSON = jsonRaw(*in.ModelsJSON)
+	}
+	if in.ModelsURL != nil {
+		m.ModelsURL = *in.ModelsURL
 	}
 	if in.ProxyURL != nil {
 		m.ProxyURL = *in.ProxyURL

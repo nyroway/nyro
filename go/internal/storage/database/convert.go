@@ -44,10 +44,12 @@ func upstreamFromModel(m *model.Upstream) storage.Upstream {
 	return storage.Upstream{
 		ID:              m.ID,
 		Name:            m.Name,
+		Provider:        m.Provider,
 		Protocol:        m.Protocol,
 		BaseURL:         m.BaseURL,
 		CredentialsJSON: rawJSON(m.CredentialsJSON),
 		ModelsJSON:      rawJSON(m.ModelsJSON),
+		ModelsURL:       m.ModelsURL,
 		ProxyURL:        m.ProxyURL,
 		Enabled:         m.Enabled,
 		CreatedAt:       m.CreatedAt,

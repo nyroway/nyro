@@ -29,10 +29,12 @@ func newUpstream(db *gorm.DB, opts ...gen.DOOption) upstream {
 	_upstream.ALL = field.NewAsterisk(tableName)
 	_upstream.ID = field.NewString(tableName, "id")
 	_upstream.Name = field.NewString(tableName, "name")
+	_upstream.Provider = field.NewString(tableName, "provider")
 	_upstream.Protocol = field.NewString(tableName, "protocol")
 	_upstream.BaseURL = field.NewString(tableName, "base_url")
 	_upstream.CredentialsJSON = field.NewString(tableName, "credentials_json")
 	_upstream.ModelsJSON = field.NewString(tableName, "models_json")
+	_upstream.ModelsURL = field.NewString(tableName, "models_url")
 	_upstream.ProxyURL = field.NewString(tableName, "proxy_url")
 	_upstream.Enabled = field.NewBool(tableName, "enabled")
 	_upstream.CreatedAt = field.NewString(tableName, "created_at")
@@ -49,10 +51,12 @@ type upstream struct {
 	ALL             field.Asterisk
 	ID              field.String
 	Name            field.String
+	Provider        field.String
 	Protocol        field.String
 	BaseURL         field.String
 	CredentialsJSON field.String
 	ModelsJSON      field.String
+	ModelsURL       field.String
 	ProxyURL        field.String
 	Enabled         field.Bool
 	CreatedAt       field.String
@@ -75,10 +79,12 @@ func (u *upstream) updateTableName(table string) *upstream {
 	u.ALL = field.NewAsterisk(table)
 	u.ID = field.NewString(table, "id")
 	u.Name = field.NewString(table, "name")
+	u.Provider = field.NewString(table, "provider")
 	u.Protocol = field.NewString(table, "protocol")
 	u.BaseURL = field.NewString(table, "base_url")
 	u.CredentialsJSON = field.NewString(table, "credentials_json")
 	u.ModelsJSON = field.NewString(table, "models_json")
+	u.ModelsURL = field.NewString(table, "models_url")
 	u.ProxyURL = field.NewString(table, "proxy_url")
 	u.Enabled = field.NewBool(table, "enabled")
 	u.CreatedAt = field.NewString(table, "created_at")
@@ -107,13 +113,15 @@ func (u *upstream) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (u *upstream) fillFieldMap() {
-	u.fieldMap = make(map[string]field.Expr, 10)
+	u.fieldMap = make(map[string]field.Expr, 12)
 	u.fieldMap["id"] = u.ID
 	u.fieldMap["name"] = u.Name
+	u.fieldMap["provider"] = u.Provider
 	u.fieldMap["protocol"] = u.Protocol
 	u.fieldMap["base_url"] = u.BaseURL
 	u.fieldMap["credentials_json"] = u.CredentialsJSON
 	u.fieldMap["models_json"] = u.ModelsJSON
+	u.fieldMap["models_url"] = u.ModelsURL
 	u.fieldMap["proxy_url"] = u.ProxyURL
 	u.fieldMap["enabled"] = u.Enabled
 	u.fieldMap["created_at"] = u.CreatedAt
