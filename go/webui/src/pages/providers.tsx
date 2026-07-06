@@ -777,30 +777,6 @@ export default function ProvidersPage() {
     }));
   }
 
-  function handleEditTemplateChange(nextPresetId: string) {
-    if (!nextPresetId) {
-      setEditForm((prev) => ({ ...prev, provider: "custom" }));
-      return;
-    }
-    const preset = providerPresets.find((item) => item.id === nextPresetId);
-    if (!preset) return;
-
-    const protocol = resolvePresetProtocol(preset, editForm.protocol as ProviderProtocol);
-    setEditError(null);
-    const config = resolvePresetConfig(preset, protocol);
-    setEditModelsMode((prev) => pickModelsMode(prev, config.modelsSource, config.staticModels));
-    setEditForm((prev) => ({
-      ...prev,
-      protocol,
-      base_url: config.baseUrl || protocolUrl(protocol),
-      models_url: config.modelsSource,
-      models: config.staticModels,
-      api_key: config.apiKey || prev.api_key,
-      provider: preset.id === DEFAULT_PRESET_ID ? "custom" : preset.id,
-      credentials: mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {}),
-    }));
-  }
-
   // No "none / custom" option in the quickselect anymore — always keep a
   // real vendor selected, defaulting to the highest-priority preset
   // (providerPresets is already priority-sorted by the backend) whenever the
@@ -1125,6 +1101,13 @@ export default function ProvidersPage() {
                 : "";
               const editBaseUrlMissing = !editPresetBaseUrl && !editForm.base_url?.trim();
               const editProtocolOptions = availableProtocolsForPreset(editingPreset);
+              // provider is fixed at creation time and can't be changed on
+              // edit (it anchors the persisted credential/auth-scheme
+              // lookup) — the quickselect shows only the assigned preset,
+              // locked. Falls back to the full list only if the provider id
+              // doesn't match any known preset (e.g. legacy/"custom" data),
+              // so the picker is never left empty.
+              const editLockedPresets = editingPreset ? [editingPreset] : providerPresets;
               return (
                 <div key={p.id} className="glass rounded-2xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
@@ -1134,20 +1117,23 @@ export default function ProvidersPage() {
                     </button>
                   </div>
                   <div className="space-y-3">
-                    <ToggleGroup
-                      type="single"
-                      value={editingPresetId}
-                      onValueChange={(value) => {
-                        if (value) handleEditTemplateChange(value);
-                      }}
-                      className="provider-preset-group"
+                    <FieldLabel
+                      info={
+                        isZh
+                          ? "创建后不可更改提供商预设"
+                          : "The provider preset can't be changed after creation"
+                      }
                     >
-                      {providerPresets.map((preset) => (
+                      {isZh ? "提供商" : "Provider"}
+                    </FieldLabel>
+                    <ToggleGroup type="single" value={editingPresetId} className="provider-preset-group">
+                      {editLockedPresets.map((preset) => (
                         <ToggleGroupItem
                           key={preset.id}
                           value={preset.id}
                           variant="outline"
                           size="lg"
+                          disabled
                           className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
                           aria-label={presetLabel(preset, isZh)}
                         >
@@ -1169,7 +1155,7 @@ export default function ProvidersPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
+                      <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
                       <Input
                         placeholder={isZh ? "提供商名称" : "Provider name"}
                         value={editForm.name ?? ""}
@@ -1177,7 +1163,7 @@ export default function ProvidersPage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
+                      <FieldLabel required>{isZh ? "协议" : "Protocol"}</FieldLabel>
                       <Select
                         value={editForm.protocol ?? ""}
                         onValueChange={(value) => handleEditProtocolChange(value)}
@@ -1209,7 +1195,7 @@ export default function ProvidersPage() {
                       />
                     ))}
                     <div className="space-y-2">
-                      <FieldLabel>Base URL</FieldLabel>
+                      <FieldLabel required>Base URL</FieldLabel>
                       <Input
                         placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
                         value={editForm.base_url ?? ""}
@@ -1217,7 +1203,19 @@ export default function ProvidersPage() {
                       />
                     </div>
                     <div className="space-y-2">
+                      <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
+                      <Input
+                        placeholder="http://127.0.0.1:7890"
+                        value={editForm.proxy_url ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, proxy_url: e.target.value })}
+                      />
+                    </div>
+                    {/* Empty spacer: keeps Model Discovery from sharing this
+                        row with anything, while its own field stays half-width. */}
+                    <div aria-hidden="true" />
+                    <div className="space-y-2">
                       <FieldLabel
+                        required
                         info={
                           isZh
                             ? "用于创建模型时自动获取可用模型列表"
@@ -1266,14 +1264,6 @@ export default function ProvidersPage() {
                           }}
                         />
                       )}
-                    </div>
-                    <div className="space-y-2">
-                      <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
-                      <Input
-                        placeholder="http://127.0.0.1:7890"
-                        value={editForm.proxy_url ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, proxy_url: e.target.value })}
-                      />
                     </div>
                   </div>
                   <div className="flex gap-3">
