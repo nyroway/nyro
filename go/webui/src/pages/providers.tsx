@@ -55,6 +55,10 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { resolveProtocol, PROTOCOL_TABLE, protocolDisplayName } from "@/lib/protocol";
+import {
+  isCustomProviderPreset,
+  withCustomProviderPreset,
+} from "@/lib/provider-presets";
 
 function protocolUrl(protocol: string) {
   return PROTOCOL_TABLE.find((p) => p.id === resolveProtocol(protocol))?.defaultBaseUrl
@@ -73,7 +77,6 @@ const emptyCreate: CreateProvider = {
   credentials: {},
 };
 const PAGE_SIZE = 7;
-const DEFAULT_PRESET_ID = "nyro";
 // Only protocols with a registered codec are user-selectable here.
 // gemini-interactions/bedrock-converse/azure-modelinference are declared in
 // ProviderProtocol (and on the backend, go/internal/protocol/ids) but have
@@ -107,7 +110,7 @@ function validateProviderEndpoint(
 }
 
 function availableProtocolsForPreset(preset?: ProviderPreset | null): ProviderProtocol[] {
-  if (!preset || preset.id === DEFAULT_PRESET_ID) {
+  if (!preset || isCustomProviderPreset(preset.id)) {
     return protocolOptions.map((item) => item.value);
   }
 
@@ -165,15 +168,6 @@ function fallbackChannelPreset(): ProviderChannelPreset {
   };
 }
 
-function fallbackProviderPreset(): ProviderPreset {
-  return {
-    id: DEFAULT_PRESET_ID,
-    label: { zh: "自定义", en: "Custom" },
-    defaultProtocol: "openai-chatcompletions",
-    channels: [],
-  };
-}
-
 function presetChannels(preset?: ProviderPreset | null) {
   return preset?.channels?.length ? preset.channels : [fallbackChannelPreset()];
 }
@@ -216,9 +210,8 @@ function resolvePresetConfig(
 }
 
 // The single-field fallback used for presets whose `credentials.fields[]` is
-// empty or absent (should not normally happen for real backend presets, but
-// covers the offline fallbackProviderPreset() and any future preset with no
-// declared credential schema).
+// empty or absent (including the frontend-only Custom preset and any future
+// preset with no declared credential schema).
 const DEFAULT_CREDENTIAL_FIELDS: ProviderCredentialField[] = [
   { name: "api_key", type: "secret", required: true },
 ];
@@ -510,7 +503,7 @@ export default function ProvidersPage() {
     queryFn: () => backend("get_provider_presets"),
   });
   const providerPresets = useMemo(
-    () => (providerPresetsRaw.length ? providerPresetsRaw : [fallbackProviderPreset()]),
+    () => withCustomProviderPreset(providerPresetsRaw),
     [providerPresetsRaw],
   );
   const [form, setForm] = useState<CreateProvider>(emptyCreate);
@@ -747,7 +740,7 @@ export default function ProvidersPage() {
       models_url: config.modelsSource,
       models: config.staticModels,
       api_key: config.apiKey || prev.api_key,
-      provider: preset.id === DEFAULT_PRESET_ID ? "custom" : preset.id,
+      provider: isCustomProviderPreset(preset.id) ? "custom" : preset.id,
       credentials: mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {}),
     }));
   }
@@ -777,9 +770,8 @@ export default function ProvidersPage() {
     }));
   }
 
-  // No "none / custom" option in the quickselect anymore — always keep a
-  // real vendor selected, defaulting to the highest-priority preset
-  // (providerPresets is already priority-sorted by the backend) whenever the
+  // Always keep a valid quickselect option selected, defaulting to the
+  // highest-priority backend preset and falling back to Custom whenever the
   // current selection is empty or no longer valid (e.g. right after opening
   // the create form, or if the preset list changes underneath it).
   useEffect(() => {
