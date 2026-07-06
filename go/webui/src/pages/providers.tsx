@@ -324,7 +324,7 @@ function CredentialFieldInput({
   if (field.type === "enum" && field.values?.length) {
     return (
       <div className="space-y-2">
-        <FieldLabel>{label}</FieldLabel>
+        <FieldLabel required={field.required}>{label}</FieldLabel>
         <Select value={value || field.default || field.values[0]} onValueChange={onChange}>
           <SelectTrigger>
             <SelectValue placeholder={label} />
@@ -344,7 +344,7 @@ function CredentialFieldInput({
   if (isJsonBlob) {
     return (
       <div className="col-span-2 space-y-2">
-        <FieldLabel>{label}</FieldLabel>
+        <FieldLabel required={field.required}>{label}</FieldLabel>
         <textarea
           placeholder={isZh ? "粘贴 JSON 内容" : "Paste JSON content"}
           value={value}
@@ -361,7 +361,7 @@ function CredentialFieldInput({
 
   return (
     <div className="space-y-2">
-      <FieldLabel>{label}</FieldLabel>
+      <FieldLabel required={field.required}>{label}</FieldLabel>
       {isSecret ? (
         <div className="relative">
           <Input
@@ -387,10 +387,24 @@ function CredentialFieldInput({
   );
 }
 
-function FieldLabel({ children, info }: { children: string; info?: string }) {
+function FieldLabel({
+  children,
+  info,
+  required,
+}: {
+  children: string;
+  info?: string;
+  required?: boolean;
+}) {
   return (
     <label className="ml-1 inline-flex items-center gap-1 text-xs leading-none font-normal text-slate-900">
       <span>{children}</span>
+      {required ? (
+        <span className="text-red-500">
+          <span aria-hidden="true">*</span>
+          <span className="sr-only">required</span>
+        </span>
+      ) : null}
       {info ? (
         <TooltipProvider delayDuration={120}>
           <Tooltip>
@@ -929,7 +943,7 @@ export default function ProvidersPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
+                <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
                 <Input
                   placeholder={isZh ? "例如 OpenAI 生产" : "e.g. OpenAI Production"}
                   value={form.name}
@@ -937,7 +951,7 @@ export default function ProvidersPage() {
                 />
               </div>
               <div className="space-y-2">
-                <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
+                <FieldLabel required>{isZh ? "协议" : "Protocol"}</FieldLabel>
                 <Select value={form.protocol} onValueChange={(value) => handleProtocolChange(value)}>
                   <SelectTrigger>
                     <SelectValue />
@@ -966,7 +980,7 @@ export default function ProvidersPage() {
                 />
               ))}
               <div className="space-y-2">
-                <FieldLabel>Base URL</FieldLabel>
+                <FieldLabel required>Base URL</FieldLabel>
                 <Input
                   placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
                   value={form.base_url}
@@ -974,7 +988,19 @@ export default function ProvidersPage() {
                 />
               </div>
               <div className="space-y-2">
+                <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
+                <Input
+                  placeholder="http://127.0.0.1:7890"
+                  value={form.proxy_url ?? ""}
+                  onChange={(e) => setForm({ ...form, proxy_url: e.target.value })}
+                />
+              </div>
+              {/* Empty spacer: keeps Model Discovery from sharing this row
+                  with anything, while its own field stays half-width. */}
+              <div aria-hidden="true" />
+              <div className="space-y-2">
                 <FieldLabel
+                  required
                   info={
                     isZh
                       ? "用于创建模型时自动获取可用模型列表"
@@ -1023,14 +1049,6 @@ export default function ProvidersPage() {
                     }}
                   />
                 )}
-              </div>
-              <div className="space-y-2">
-                <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
-                <Input
-                  placeholder="http://127.0.0.1:7890"
-                  value={form.proxy_url ?? ""}
-                  onChange={(e) => setForm({ ...form, proxy_url: e.target.value })}
-                />
               </div>
             </div>
               <div className="flex gap-3">
