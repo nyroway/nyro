@@ -24,13 +24,13 @@ import "fmt"
 // Identifier | Name (short) | FullName | Alias:
 //
 //	anthropic-messages      | Messages API      | Anthropic Messages API   | claude
-//	openai-chatcompletions  | Chat Completions API | OpenAI Chat Completions API | openai
+//	openai-chatcompletions  | ChatCompletions API | OpenAI Chat Completions API | openai
 //	openai-embeddings       | Embeddings API    | OpenAI Embeddings API    | embeddings
 //	openai-responses        | Responses API     | OpenAI Responses API     | responses
 //	gemini-generatecontent  | GenerateContent API | Gemini GenerateContent API | gemini
 //	gemini-interactions     | Interactions API  | Gemini Interactions API  | interactions
 //	bedrock-converse        | Converse API      | Bedrock Converse API     | bedrock
-//	azure-modelinference    | Model Inference API | Azure Model Inference API | azure
+//	azure-modelinference    | ModelInference API | Azure AI Model Inference API | azure
 //
 // gemini-interactions, bedrock-converse, and azure-modelinference are
 // declared only (ParseProtocol/Name/FullName recognize them, provider
@@ -86,7 +86,7 @@ func (p Protocol) Name() string {
 	case ProtocolAnthropicMessages:
 		return "Messages API"
 	case ProtocolOpenAIChatCompletions:
-		return "Chat Completions API"
+		return "ChatCompletions API"
 	case ProtocolOpenAIEmbeddings:
 		return "Embeddings API"
 	case ProtocolOpenAIResponses:
@@ -98,7 +98,7 @@ func (p Protocol) Name() string {
 	case ProtocolBedrockConverse:
 		return "Converse API"
 	case ProtocolAzureModelInference:
-		return "Model Inference API"
+		return "ModelInference API"
 	}
 	return "Unknown"
 }
@@ -122,7 +122,7 @@ func (p Protocol) FullName() string {
 	case ProtocolBedrockConverse:
 		return "Bedrock Converse API"
 	case ProtocolAzureModelInference:
-		return "Azure Model Inference API"
+		return "Azure AI Model Inference API"
 	}
 	return "Unknown"
 }
