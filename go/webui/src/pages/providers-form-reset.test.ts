@@ -30,6 +30,7 @@ describe("create provider preset switching", () => {
     expect(body).toContain("const protocol = isCustomProviderPreset(preset.id) ? protocolOptions[0].value : resolvePresetProtocol(preset);");
     expect(body).toContain("setForm({");
     expect(body).toContain("...emptyCreate,");
+    expect(body).toContain('name: isCustomProviderPreset(preset.id) ? "" : preset.name,');
     expect(body).toContain('api_key: config.apiKey || "",');
     expect(body).toContain("credentials: defaultCredentialValues(credentialFieldsForPreset(preset)),");
     expect(body).not.toContain("setForm((prev)");

@@ -5,7 +5,7 @@ export const CUSTOM_PROVIDER_PRESET_ID = "custom";
 export function customProviderPreset(): ProviderPreset {
   return {
     id: CUSTOM_PROVIDER_PRESET_ID,
-    label: { zh: "自定义", en: "Custom" },
+    name: "Custom",
     icon: CUSTOM_PROVIDER_PRESET_ID,
     defaultProtocol: "openai-chatcompletions",
     channels: [],

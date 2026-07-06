@@ -77,20 +77,23 @@ export function decodeProviderHealthSSEFrame(frame: string): ProviderHealthEvent
   return JSON.parse(data) as ProviderHealthEvent;
 }
 
-export async function streamProviderDraftHealth(
-  input: CreateProvider,
+async function streamProviderHealthEvents(
+  url: string,
+  init: RequestInit,
   onEvent: (event: ProviderHealthEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    ...(init.headers as Record<string, string> | undefined),
+  };
   const token = getAdminToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
-  const resp = await fetch("/api/v1/upstreams/test-draft/stream", {
+  const resp = await fetch(url, {
     method: "POST",
+    ...init,
     headers,
-    body: JSON.stringify(createUpstreamFromProvider(input)),
     signal,
   });
 
@@ -131,6 +134,35 @@ export async function streamProviderDraftHealth(
   }
 }
 
+export async function streamProviderDraftHealth(
+  input: CreateProvider,
+  onEvent: (event: ProviderHealthEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  await streamProviderHealthEvents(
+    "/api/v1/upstreams/test-draft/stream",
+    {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(createUpstreamFromProvider(input)),
+    },
+    onEvent,
+    signal,
+  );
+}
+
+export async function streamProviderHealth(
+  id: string,
+  onEvent: (event: ProviderHealthEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  await streamProviderHealthEvents(
+    `/api/v1/upstreams/${id}/test`,
+    {},
+    onEvent,
+    signal,
+  );
+}
+
 interface HTTPMapping {
   method: string;
   url: string;
@@ -167,8 +199,6 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
       };
     case "delete_provider":
       return { method: "DELETE", url: `${base}/upstreams/${args?.id}` };
-    case "test_provider":
-      return { method: "POST", url: `${base}/upstreams/${args?.id}/test` };
     case "copy_provider":
     case "test_provider_models":
     case "get_provider_models":

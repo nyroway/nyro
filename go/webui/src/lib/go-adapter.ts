@@ -271,15 +271,13 @@ export function providerPresetFromGoPreset(preset: GoProviderPreset): ProviderPr
   // synthesized channel.
   const channels: ProviderChannelPreset[] = preset.protocols.map((protocol) => ({
     id: protocol.id,
-    label: { en: protocol.id, zh: protocol.id },
-    authMode: "apikey",
     baseUrls: { [protocol.id]: protocol.base_url ?? "" },
     modelsSource: preset.models_url,
     modelsEndpoint: preset.models_url,
   }));
   return {
     id: preset.id,
-    label: { en: preset.name, zh: preset.name },
+    name: preset.name,
     icon: preset.id,
     priority: preset.priority,
     defaultProtocol: preset.default_protocol,

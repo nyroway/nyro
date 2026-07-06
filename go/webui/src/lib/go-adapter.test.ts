@@ -195,8 +195,11 @@ describe("providerPresetFromGoPreset model discovery mapping", () => {
       models_url: "https://api.openai.com/v1/models",
     };
     const out = providerPresetFromGoPreset(preset);
+    expect(out.name).toBe("OpenAI");
     expect(out.channels?.[0]?.modelsSource).toBe("https://api.openai.com/v1/models");
     expect(out.channels?.[0]?.staticModels).toBeUndefined();
+    expect(out.channels?.[0]).not.toHaveProperty("label");
+    expect(out.channels?.[0]).not.toHaveProperty("authMode");
   });
 
   it("leaves modelsSource unset for a preset with no default discovery URL", () => {

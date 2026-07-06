@@ -139,42 +139,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
-			// modelsURL resolves to u's own models_url or its provider preset's
-			// default; when neither is available (custom upstream with only a
-			// static models list, or an unregistered provider), fall back to a
-			// bare connectivity check against base_url instead of erroring out.
-			modelsURL := modelsDiscoveryURL(*u)
-			if modelsURL == "" {
-				modelsURL = u.BaseURL
-			}
-			req, _ := http.NewRequest("GET", modelsURL, nil)
-			auth, authErr := provider.AuthenticatorFor(u.Provider, u.Protocol, provider.UpstreamRuntime{
-				Name:            u.Name,
-				Provider:        u.Provider,
-				Protocol:        u.Protocol,
-				BaseURL:         u.BaseURL,
-				CredentialsJSON: u.CredentialsJSON,
-				ProxyURL:        u.ProxyURL,
-			})
-			if authErr != nil {
-				webutil.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": int64(0), "error": authErr.Error()})
-				return
-			}
-			if err := auth.Apply(r.Context(), req); err != nil {
-				webutil.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": int64(0), "error": err.Error()})
-				return
-			}
-			client := testHTTPClient(u.ProxyURL, 10*time.Second)
-			start := time.Now()
-			resp, err := client.Do(req)
-			latency := time.Since(start).Milliseconds()
-			if err != nil {
-				webutil.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": latency, "error": err.Error()})
-				return
-			}
-			_ = resp.Body.Close()
-			success := resp.StatusCode < 400
-			webutil.JSON(w, http.StatusOK, map[string]any{"success": success, "latency_ms": latency, "status_code": resp.StatusCode})
+			streamSavedUpstreamHealth(w, r, s, *u)
 		})
 		g.Get("/upstreams/{id}/models", func(w http.ResponseWriter, r *http.Request) {
 			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
@@ -421,13 +386,12 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 	})
 }
 
-// testHTTPClient returns the HTTP client used for the one-off
-// /upstreams/{id}/test connectivity check, routed through proxyURL (the
-// upstream's own ProxyURL) when it's a valid absolute URL (scheme+host).
+// testHTTPClient returns the HTTP client used by admin-side upstream discovery
+// and health checks, routed through proxyURL when it's a valid absolute URL.
 // This mirrors the same-purpose logic in the data-plane gateway
-// (internal/proxy/gateway.go's httpClientFor) so a "test" and a real request
-// take the same route — but skips its caching, since this handler only runs
-// per test click, not per request.
+// (internal/proxy/gateway.go's httpClientFor) so an admin test and a real
+// request take the same route, but skips caching because these calls are not
+// on the request hot path.
 func testHTTPClient(proxyURL string, timeout time.Duration) *http.Client {
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {

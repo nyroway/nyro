@@ -19,3 +19,12 @@ describe("create provider health gate", () => {
     expect(source).toContain("closeCreateForm();");
   });
 });
+
+describe("provider list health check", () => {
+  it("uses the same streaming health pipeline as create", () => {
+    expect(source).toContain("streamProviderHealth(provider.id,");
+    expect(source).toContain("setTestDialogMode(\"provider\")");
+    expect(source).toContain("appendHealthEvent(event)");
+    expect(source).not.toContain("backend<TestResult>(\"test_provider\"");
+  });
+});

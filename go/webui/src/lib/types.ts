@@ -212,11 +212,6 @@ export type ProviderProtocol =
 
 export interface ProviderChannelPreset {
   id: string;
-  label: {
-    zh: string;
-    en: string;
-  };
-  authMode?: "apikey" | "oauth";
   baseUrls: Record<string, string>;
   modelsSource?: string;
   apiKey?: string;
@@ -244,10 +239,7 @@ export interface ProviderCredentialField {
 
 export interface ProviderPreset {
   id: string;
-  label: {
-    zh: string;
-    en: string;
-  };
+  name: string;
   icon?: string;
   /** Display order in the vendor quickselect (lower sorts first). */
   priority?: number;

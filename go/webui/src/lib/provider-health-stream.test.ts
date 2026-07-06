@@ -1,5 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { decodeProviderHealthSSEFrame } from "./backend";
+
+const source = readFileSync(resolve(__dirname, "backend.ts"), "utf8");
 
 describe("provider draft health SSE decoding", () => {
   it("decodes health events from SSE frames", () => {
@@ -18,5 +22,13 @@ describe("provider draft health SSE decoding", () => {
 
   it("ignores frames without JSON data", () => {
     expect(decodeProviderHealthSSEFrame("event: ping")).toBeNull();
+  });
+});
+
+describe("provider health stream endpoint", () => {
+  it("uses the saved provider test URL directly", () => {
+    expect(source).toContain("`/api/v1/upstreams/${id}/test`");
+    expect(source).not.toContain("/test/stream");
+    expect(source).not.toContain("case \"test_provider\"");
   });
 });

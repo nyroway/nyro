@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, streamProviderDraftHealth } from "@/lib/backend";
+import { backend, streamProviderDraftHealth, streamProviderHealth } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
   Provider,
@@ -141,12 +141,12 @@ function resolvePresetProtocol(
   return available[0] ?? canonicalDefault;
 }
 
-function presetLabel(preset: ProviderPreset, isZh: boolean) {
-  return isZh ? preset.label.zh : preset.label.en;
+function presetLabel(preset: ProviderPreset) {
+  return preset.name;
 }
 
-function presetLabelClass(preset: ProviderPreset, isZh: boolean) {
-  const len = presetLabel(preset, isZh).trim().length;
+function presetLabelClass(preset: ProviderPreset) {
+  const len = presetLabel(preset).trim().length;
   if (len >= 16) return "provider-preset-label provider-preset-label-micro";
   if (len >= 12) return "provider-preset-label provider-preset-label-compact";
   return "provider-preset-label";
@@ -164,7 +164,6 @@ function joinStaticModels(models?: string[]) {
 function fallbackChannelPreset(): ProviderChannelPreset {
   return {
     id: "default",
-    label: { zh: "默认", en: "Default" },
     baseUrls: {},
   };
 }
@@ -318,6 +317,9 @@ function CredentialFieldInput({
   const label = credentialFieldLabel(field);
   const isSecret = field.type === "secret";
   const isJsonBlob = isSecret && /json/i.test(field.name);
+  const credentialPlaceholder = field.name === "api_key"
+    ? (isZh ? "如：sk-..." : "e.g. sk-...")
+    : (isZh ? `请输入 ${label}` : `Enter ${label}`);
 
   if (field.type === "enum" && field.values?.length) {
     return (
@@ -363,7 +365,7 @@ function CredentialFieldInput({
       {isSecret ? (
         <div className="relative">
           <Input
-            placeholder={field.name === "api_key" ? "sk-..." : label}
+            placeholder={credentialPlaceholder}
             type={reveal ? "text" : "password"}
             value={value}
             className="pr-10"
@@ -379,7 +381,7 @@ function CredentialFieldInput({
           </button>
         </div>
       ) : (
-        <Input value={value} placeholder={label} onChange={(e) => onChange(e.target.value)} />
+        <Input value={value} placeholder={credentialPlaceholder} onChange={(e) => onChange(e.target.value)} />
       )}
     </div>
   );
@@ -623,10 +625,13 @@ export default function ProvidersPage() {
   async function handleTest(provider: Provider) {
     const runId = activeTestRunRef.current + 1;
     activeTestRunRef.current = runId;
+    const abortController = new AbortController();
+    activeTestAbortRef.current = abortController;
     const isCanceled = () => activeTestRunRef.current !== runId;
 
     setTestingId(provider.id);
     setTestTarget(provider);
+    setTestDialogMode("provider");
     setTestLogs([]);
     setTestDialogOpen(true);
     setIsTestRunning(true);
@@ -636,63 +641,54 @@ export default function ProvidersPage() {
       return next;
     });
 
-    const finish = (result: TestResult, finalMessage: string, level: "success" | "error") => {
+    const finish = (result: TestResult) => {
       if (isCanceled()) return;
-      appendTestLog(level, finalMessage);
       setTestResult((prev) => ({ ...prev, [provider.id]: result }));
       setIsTestRunning(false);
       setTestingId(null);
     };
 
+    let modelResult: TestResult = { success: false, latency_ms: 0 };
+    let completed = false;
+
     try {
-      const protocol = (resolveProtocol(provider.protocol || "openai") ?? "openai-chatcompletions") as ProviderProtocol;
-      const baseUrl = provider.base_url?.trim() ?? "";
-
       appendTestLog("info", isZh ? `开始测试 ${provider.name}...` : `Start testing ${provider.name}...`);
-      appendTestLog("info", isZh ? "▶ 连通性检测" : "▶ Connectivity check");
-      appendTestLog("info", `→ [${protocol}] ${baseUrl}`);
+      appendTestLog("info", isZh ? "会向上游发送一次最小模型请求用于验证模型可用性" : "A minimal upstream model request will be sent to verify model availability.");
 
-      const connectivity = await backend<TestResult>("test_provider", { id: provider.id });
-      if (isCanceled()) return;
-
-      if (!connectivity.success) {
-        const reason = connectivity.error ?? (isZh ? "连接失败" : "Connectivity check failed");
-        finish(
-          {
-            success: false,
-            latency_ms: connectivity.latency_ms ?? 0,
-            model: undefined,
-            error: reason,
-          },
-          `${isZh ? "✗ 连通性检测失败" : "✗ Connectivity check failed"}: ${reason}`,
-          "error",
-        );
-        return;
+      await streamProviderHealth(provider.id, (event) => {
+        if (isCanceled()) return;
+        appendHealthEvent(event);
+        if (event.type === "check" && event.check === "model_request" && (event.status === "passed" || event.status === "failed")) {
+          modelResult = {
+            success: event.status === "passed",
+            latency_ms: event.latency_ms ?? 0,
+            model: event.model,
+            error: event.status === "failed" ? event.error ?? event.message : undefined,
+          };
+        }
+        if (event.type === "complete") {
+          completed = true;
+          finish({
+            ...modelResult,
+            success: event.success === true,
+            error: event.success ? undefined : event.error ?? modelResult.error,
+          });
+        }
+      }, abortController.signal);
+      if (!completed && !isCanceled() && !abortController.signal.aborted) {
+        const message = isZh ? "测试未返回完成事件" : "Health check did not return a completion event";
+        appendTestLog("error", `✗ ${message}`);
+        finish({ success: false, latency_ms: modelResult.latency_ms, model: modelResult.model, error: message });
       }
-
-      appendTestLog(
-        "success",
-        `${isZh ? "✓ 连接成功，响应" : "✓ Connectivity ok, latency"} ${connectivity.latency_ms}ms`,
-      );
-
-      finish(
-        {
-          success: true,
-          latency_ms: connectivity.latency_ms,
-          model: undefined,
-          error: undefined,
-        },
-        isZh ? "✓ 连通性测试完成" : "✓ Connectivity test completed",
-        "success",
-      );
     } catch (error: unknown) {
-      if (isCanceled()) return;
+      if (isCanceled() || abortController.signal.aborted) return;
       const message = normalizeErrorMessage(error);
-      finish(
-        { success: false, latency_ms: 0, model: undefined, error: message },
-        `${isZh ? "✗ 测试失败" : "✗ Test failed"}: ${message}`,
-        "error",
-      );
+      appendTestLog("error", `${isZh ? "✗ 测试失败" : "✗ Test failed"}: ${message}`);
+      finish({ success: false, latency_ms: 0, model: undefined, error: message });
+    } finally {
+      if (!isCanceled()) {
+        activeTestAbortRef.current = null;
+      }
     }
   }
 
@@ -711,16 +707,16 @@ export default function ProvidersPage() {
     }
   }
 
-  function appendCreateHealthEvent(event: ProviderHealthEvent) {
+  function appendHealthEvent(event: ProviderHealthEvent, mode: "provider" | "create" = "provider") {
     if (event.type === "complete") {
-      setCreateHealthPassed(event.success === true);
       appendTestLog(
         event.success ? "success" : "error",
         event.success
-          ? (isZh ? "✓ 测试全部通过，点击完成创建" : "✓ All checks passed. Click Create Provider to finish.")
+          ? (mode === "create"
+            ? (isZh ? "✓ 测试全部通过，点击完成创建" : "✓ All checks passed. Click Create Provider to finish.")
+            : (isZh ? "✓ 测试全部通过" : "✓ All checks passed."))
           : `${isZh ? "✗ 测试未通过" : "✗ Checks failed"}${event.error ? `: ${event.error}` : ""}`,
       );
-      setIsTestRunning(false);
       return;
     }
 
@@ -764,7 +760,11 @@ export default function ProvidersPage() {
     try {
       await streamProviderDraftHealth(input, (event) => {
         if (isCanceled()) return;
-        appendCreateHealthEvent(event);
+        appendHealthEvent(event, "create");
+        if (event.type === "complete") {
+          setCreateHealthPassed(event.success === true);
+          setIsTestRunning(false);
+        }
       }, abortController.signal);
     } catch (error: unknown) {
       if (isCanceled() || abortController.signal.aborted) return;
@@ -835,6 +835,7 @@ export default function ProvidersPage() {
     setModelsMode(pickModelsMode("url", config.modelsSource, config.staticModels));
     setForm({
       ...emptyCreate,
+      name: isCustomProviderPreset(preset.id) ? "" : preset.name,
       protocol,
       base_url: config.baseUrl || protocolUrl(protocol),
       models_url: config.modelsSource,
@@ -989,22 +990,22 @@ export default function ProvidersPage() {
                   variant="outline"
                   size="lg"
                   className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
-                  aria-label={presetLabel(preset, isZh)}
+                  aria-label={presetLabel(preset)}
                 >
                   <ProviderIcon
                     iconKey={preset.icon}
-                    name={preset.icon ?? preset.label.en}
+                    name={preset.icon ?? preset.name}
                     size={26}
                     className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
                   />
                   <ProviderIcon
                     iconKey={preset.icon}
-                    name={preset.icon ?? preset.label.en}
+                    name={preset.icon ?? preset.name}
                     size={26}
                     monochrome
                     className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
                   />
-                  <span className={presetLabelClass(preset, isZh)}>{presetLabel(preset, isZh)}</span>
+                  <span className={presetLabelClass(preset)}>{presetLabel(preset)}</span>
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
@@ -1015,7 +1016,7 @@ export default function ProvidersPage() {
               <div className="space-y-2">
                 <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
                 <Input
-                  placeholder={isZh ? "例如 OpenAI 生产" : "e.g. OpenAI Production"}
+                  placeholder={isZh ? "如：OpenAI 生产环境" : "e.g. OpenAI Production"}
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
@@ -1052,7 +1053,7 @@ export default function ProvidersPage() {
               <div className="space-y-2">
                 <FieldLabel required>Base URL</FieldLabel>
                 <Input
-                  placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
+                  placeholder={isZh ? "如：https://api.openai.com/v1" : "e.g. https://api.openai.com/v1"}
                   value={form.base_url}
                   onChange={(e) => setForm({ ...form, base_url: e.target.value })}
                 />
@@ -1060,7 +1061,7 @@ export default function ProvidersPage() {
               <div className="space-y-2">
                 <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
                 <Input
-                  placeholder="http://127.0.0.1:7890"
+                  placeholder={isZh ? "如：http://127.0.0.1:7890" : "e.g. http://127.0.0.1:7890"}
                   value={form.proxy_url ?? ""}
                   onChange={(e) => setForm({ ...form, proxy_url: e.target.value })}
                 />
@@ -1103,7 +1104,7 @@ export default function ProvidersPage() {
                 </ToggleGroup>
                 {modelsMode === "url" ? (
                   <Input
-                    placeholder={isZh ? "可选，填写发现地址（https://）" : "Optional, https:// discovery URL"}
+                    placeholder={isZh ? "如：https://api.openai.com/v1/models" : "e.g. https://api.openai.com/v1/models"}
                     value={form.models_url ?? ""}
                     onChange={(e) => setForm({ ...form, models_url: e.target.value })}
                   />
@@ -1112,7 +1113,7 @@ export default function ProvidersPage() {
                     ref={modelsTextareaRef}
                     rows={1}
                     className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder={isZh ? "每行一个模型名" : "One model name per line"}
+                    placeholder={isZh ? "每行一个模型名，如：gpt-4o" : "One model per line, e.g. gpt-4o"}
                     value={form.models ?? ""}
                     onChange={(e) => {
                       setForm({ ...form, models: e.target.value });
@@ -1183,7 +1184,7 @@ export default function ProvidersPage() {
             const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-chatcompletions") as ProviderProtocol];
             const selectedPreset = providerPresets.find((preset) => preset.id === (p.provider || ""));
             const selectedProviderName = selectedPreset
-              ? presetLabel(selectedPreset, isZh)
+              ? presetLabel(selectedPreset)
               : (p.provider || p.name);
 
             if (isEditing) {
@@ -1231,22 +1232,22 @@ export default function ProvidersPage() {
                           size="lg"
                           disabled
                           className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
-                          aria-label={presetLabel(preset, isZh)}
+                          aria-label={presetLabel(preset)}
                         >
                           <ProviderIcon
                             iconKey={preset.icon}
-                            name={preset.icon ?? preset.label.en}
+                            name={preset.icon ?? preset.name}
                             size={26}
                             className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
                           />
                           <ProviderIcon
                             iconKey={preset.icon}
-                            name={preset.icon ?? preset.label.en}
+                            name={preset.icon ?? preset.name}
                             size={26}
                             monochrome
                             className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
                           />
-                          <span className={presetLabelClass(preset, isZh)}>{presetLabel(preset, isZh)}</span>
+                          <span className={presetLabelClass(preset)}>{presetLabel(preset)}</span>
                         </ToggleGroupItem>
                       ))}
                     </ToggleGroup>
@@ -1255,7 +1256,7 @@ export default function ProvidersPage() {
                     <div className="space-y-2">
                       <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
                       <Input
-                        placeholder={isZh ? "提供商名称" : "Provider name"}
+                        placeholder={isZh ? "如：OpenAI 生产环境" : "e.g. OpenAI Production"}
                         value={editForm.name ?? ""}
                         onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                       />
@@ -1295,7 +1296,7 @@ export default function ProvidersPage() {
                     <div className="space-y-2">
                       <FieldLabel required>Base URL</FieldLabel>
                       <Input
-                        placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
+                        placeholder={isZh ? "如：https://api.openai.com/v1" : "e.g. https://api.openai.com/v1"}
                         value={editForm.base_url ?? ""}
                         onChange={(e) => setEditForm({ ...editForm, base_url: e.target.value })}
                       />
@@ -1303,7 +1304,7 @@ export default function ProvidersPage() {
                     <div className="space-y-2">
                       <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
                       <Input
-                        placeholder="http://127.0.0.1:7890"
+                        placeholder={isZh ? "如：http://127.0.0.1:7890" : "e.g. http://127.0.0.1:7890"}
                         value={editForm.proxy_url ?? ""}
                         onChange={(e) => setEditForm({ ...editForm, proxy_url: e.target.value })}
                       />
@@ -1346,7 +1347,7 @@ export default function ProvidersPage() {
                       </ToggleGroup>
                       {editModelsMode === "url" ? (
                         <Input
-                          placeholder={isZh ? "可选，填写发现地址（https://）" : "Optional, https:// discovery URL"}
+                          placeholder={isZh ? "如：https://api.openai.com/v1/models" : "e.g. https://api.openai.com/v1/models"}
                           value={editForm.models_url ?? ""}
                           onChange={(e) => setEditForm({ ...editForm, models_url: e.target.value })}
                         />
@@ -1355,7 +1356,7 @@ export default function ProvidersPage() {
                           ref={editModelsTextareaRef}
                           rows={1}
                           className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          placeholder={isZh ? "每行一个模型名" : "One model name per line"}
+                          placeholder={isZh ? "每行一个模型名，如：gpt-4o" : "One model per line, e.g. gpt-4o"}
                           value={editForm.models ?? ""}
                           onChange={(e) => {
                             setEditForm({ ...editForm, models: e.target.value });

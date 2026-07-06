@@ -38,6 +38,10 @@ type healthEventWriter struct {
 	flusher http.Flusher
 }
 
+type upstreamHealthOptions struct {
+	checkNameConflict bool
+}
+
 func newHealthEventWriter(w http.ResponseWriter) *healthEventWriter {
 	flusher, _ := w.(http.Flusher)
 	return &healthEventWriter{w: w, flusher: flusher}
@@ -55,6 +59,14 @@ func (e *healthEventWriter) send(ev upstreamHealthEvent) {
 }
 
 func streamDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, in storage.CreateUpstream) {
+	streamUpstreamHealth(w, r, s, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true})
+}
+
+func streamSavedUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, u storage.Upstream) {
+	streamUpstreamHealth(w, r, s, u, upstreamHealthOptions{})
+}
+
+func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, u storage.Upstream, opts upstreamHealthOptions) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -65,24 +77,25 @@ func streamDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage
 		events.send(upstreamHealthEvent{Type: "complete", Success: &success, Error: errMsg})
 	}
 
-	u := draftUpstream(in)
 	events.send(upstreamHealthEvent{Type: "check", Check: "config", Status: "running", Message: "Validating provider configuration"})
-	if strings.TrimSpace(in.Name) == "" {
+	if strings.TrimSpace(u.Name) == "" {
 		msg := "provider name is required"
 		events.send(upstreamHealthEvent{Type: "check", Check: "config", Status: "failed", Error: msg})
 		complete(false, msg)
 		return
 	}
-	if err := validateNewUpstreamFields(in.Provider, in.BaseURL, in.ModelsJSON, in.ModelsURL); err != nil {
+	if err := validateNewUpstreamFields(u.Provider, u.BaseURL, u.ModelsJSON, u.ModelsURL); err != nil {
 		events.send(upstreamHealthEvent{Type: "check", Check: "config", Status: "failed", Error: err.Error()})
 		complete(false, err.Error())
 		return
 	}
-	if exists, _ := s.Upstreams().ExistsByName(in.Name, ""); exists {
-		msg := "upstream name already exists"
-		events.send(upstreamHealthEvent{Type: "check", Check: "config", Status: "failed", Error: msg})
-		complete(false, msg)
-		return
+	if opts.checkNameConflict {
+		if exists, _ := s.Upstreams().ExistsByName(u.Name, ""); exists {
+			msg := "upstream name already exists"
+			events.send(upstreamHealthEvent{Type: "check", Check: "config", Status: "failed", Error: msg})
+			complete(false, msg)
+			return
+		}
 	}
 	events.send(upstreamHealthEvent{Type: "check", Check: "config", Status: "passed", Message: "Configuration is valid"})
 

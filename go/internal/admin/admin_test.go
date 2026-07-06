@@ -533,38 +533,6 @@ func TestUpdateUpstreamClearsModelsWhenSwitchingToDiscovery(t *testing.T) {
 	}
 }
 
-// TestUpstreamTestConnectivityUsesResolvedModelsURL verifies /test resolves
-// modelsDiscoveryURL (upstream's own models_url, here overriding openai's
-// real preset URL) instead of guessing a path from protocol+base_url, and
-// doesn't escape to the real internet for a known preset.
-func TestUpstreamTestConnectivityUsesResolvedModelsURL(t *testing.T) {
-	var gotPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	r, _ := newEngine(t, "")
-	rec := do(r, "POST", "/api/v1/upstreams", "",
-		[]byte(`{"name":"m5","provider":"openai","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models_url":"`+ts.URL+`/custom-models"}`))
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
-	}
-	var u storage.Upstream
-	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
-		t.Fatal(err)
-	}
-
-	rec = do(r, "POST", "/api/v1/upstreams/"+u.ID+"/test", "", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("test → %d %s", rec.Code, rec.Body.String())
-	}
-	if gotPath != "/custom-models" {
-		t.Errorf("test hit path %q, want /custom-models (resolved models_url, not a guessed base_url+/models path)", gotPath)
-	}
-}
-
 func TestUpstreamDraftHealthStreamRunsModelTestWithoutPersisting(t *testing.T) {
 	var gotPath string
 	var gotAuth string
@@ -624,6 +592,70 @@ func TestUpstreamDraftHealthStreamRunsModelTestWithoutPersisting(t *testing.T) {
 	}
 	if len(ups) != 0 {
 		t.Fatalf("draft health persisted upstreams: %+v", ups)
+	}
+}
+
+func TestUpstreamHealthStreamRunsModelTestForSavedProvider(t *testing.T) {
+	var gotPath string
+	var gotAuth string
+	var gotModel string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Model     string  `json:"model"`
+			MaxTokens *uint32 `json:"max_tokens"`
+		}
+		_ = json.Unmarshal(body, &req)
+		gotModel = req.Model
+		if req.MaxTokens == nil || *req.MaxTokens != 1 {
+			t.Errorf("max_tokens = %v, want 1", req.MaxTokens)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_saved","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}]}`))
+	}))
+	defer ts.Close()
+
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"saved","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = do(r, "POST", "/api/v1/upstreams/"+u.ID+"/test", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("saved health stream → %d %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("content-type = %q, want text/event-stream", ct)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`"check":"config"`,
+		`"check":"credentials"`,
+		`"check":"models"`,
+		`"check":"model_request"`,
+		`"type":"complete"`,
+		`"success":true`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("stream body missing %s:\n%s", want, body)
+		}
+	}
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("model test path = %q, want /v1/chat/completions", gotPath)
+	}
+	if gotAuth != "Bearer k" {
+		t.Errorf("authorization = %q, want Bearer k", gotAuth)
+	}
+	if gotModel != "gpt-test" {
+		t.Errorf("model = %q, want gpt-test", gotModel)
 	}
 }
 
