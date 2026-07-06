@@ -604,7 +604,7 @@ body {
  * horizontal-ruled look, so each line reads as its own row instead of
  * blurring into one block of text. Pure CSS via a background stripe
  * periodic with line-height — line-height must stay a fixed px value equal
- * to the gradient's period, and vertical padding must be 0 (or a multiple
+ * to each colored stripe, and vertical padding must be 0 (or a multiple
  * of that period), or the first line drifts out of alignment with the
  * first stripe.
  *
@@ -617,7 +617,7 @@ body {
  * regardless of source order, and which sets `background` as a shorthand
  * (resetting background-image to `none`) — and `.content-surface textarea`,
  * which sets `resize: vertical` and a fixed `min-height: 96px` (both would
- * override the `resize-none`/`min-h-[48px]` Tailwind utility classes, which
+ * override the `resize-none`/`min-h-[40px]` Tailwind utility classes, which
  * are plain single-class selectors of lower specificity than a class+
  * element selector). Chasing specificity with more classes would be a
  * fragile arms race against future global input styling; !important settles
@@ -626,18 +626,18 @@ body {
 .nyro-shadcn-input.model-textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
-  line-height: 24px;
+  line-height: 40px;
   padding-top: 0;
   padding-bottom: 0;
   resize: none !important;
-  min-height: 48px !important;
+  min-height: 40px !important;
   background-attachment: local !important;
   background-image: repeating-linear-gradient(
     to bottom,
     rgba(15, 23, 42, 0.045) 0px,
-    rgba(15, 23, 42, 0.045) 24px,
-    transparent 24px,
-    transparent 48px
+    rgba(15, 23, 42, 0.045) 40px,
+    transparent 40px,
+    transparent 80px
   ) !important;
 }
 
@@ -645,9 +645,9 @@ html[data-theme="dark"] .nyro-shadcn-input.model-textarea {
   background-image: repeating-linear-gradient(
     to bottom,
     rgba(255, 255, 255, 0.055) 0px,
-    rgba(255, 255, 255, 0.055) 24px,
-    transparent 24px,
-    transparent 48px
+    rgba(255, 255, 255, 0.055) 40px,
+    transparent 40px,
+    transparent 80px
   ) !important;
 }
 
