@@ -40,6 +40,11 @@ type Definition struct {
 	Credentials     CredentialSchema
 	Models          ModelDiscovery
 	Extra           map[string]any // provider-level custom data (e.g. anthropic_version, api_version)
+	// Priority controls display order in the control-plane preset list
+	// (lower sorts first). Vendors without an explicit priority default to
+	// 0, which sorts before any positive value — set one explicitly for
+	// anything that should NOT be first.
+	Priority int
 }
 
 // Protocol describes one protocol endpoint supported by a provider.
@@ -162,20 +167,22 @@ func List() []Provider {
 	return out
 }
 
-// Definitions returns every provider's static description in stable ID order
-// (control-plane). This is the single source of truth for vendor presets.
+// Definitions returns every provider's static description in Priority order
+// (ties broken by ID for determinism). This is the single source of truth
+// for vendor presets, including their display order in the control plane.
 func Definitions() []Definition {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	ids := make([]string, 0, len(registry))
-	for id := range registry {
-		ids = append(ids, id)
+	out := make([]Definition, 0, len(registry))
+	for _, p := range registry {
+		out = append(out, p.Definition())
 	}
-	sort.Strings(ids)
-	out := make([]Definition, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, registry[id].Definition())
-	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority < out[j].Priority
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out
 }
 

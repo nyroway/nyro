@@ -12,6 +12,7 @@ func init() {
 		Def: Definition{
 			ID:              "openrouter",
 			Name:            "OpenRouter",
+			Priority:        5,
 			DefaultProtocol: ProtocolOpenAICompatible,
 			Protocols: []Protocol{
 				// All three live under /api/v1: chat/completions, responses, messages.

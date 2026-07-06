@@ -2,8 +2,6 @@ package proxy
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -132,36 +130,29 @@ func resolveProxySettings(snap *xds.ConfigSnapshot) proxySettings {
 	return ps
 }
 
-// httpClientFor returns the HTTP client for an upstream provider, built from
-// the current snapshot's settings.proxy timeouts. When useProxy is false (or
-// the proxy is disabled/empty in settings) it returns the direct client; when
-// useProxy is true and "proxy_enabled" is on, it returns a client routed
-// through "proxy_url". Both clients are cached and rebuilt only when their
-// resolved configuration (timeouts, proxy URL, HTTP/1.1 force) changes.
-func (g *Gateway) httpClientFor(useProxy bool) (*http.Client, error) {
+// httpClientFor returns the HTTP client for an upstream's outbound requests,
+// built from the current snapshot's settings.proxy timeouts. proxyURL is the
+// upstream's own Upstream.ProxyURL (empty means no proxy — the direct client
+// is returned). A non-empty proxyURL that isn't a valid absolute URL
+// (scheme+host) — including any leftover pre-fix "enabled" sentinel value,
+// which parses "successfully" as a bare relative path with no scheme/host —
+// falls back to the direct client rather than failing the request outright.
+// Both clients are cached and rebuilt only when their resolved configuration
+// (timeouts, proxy URL) changes.
+func (g *Gateway) httpClientFor(proxyURL string) (*http.Client, error) {
 	snap := g.snapshot()
 	ps := resolveProxySettings(snap)
 
-	if !useProxy {
-		return g.directClient(ps), nil
-	}
-	enabled, _ := snap.SettingGet("proxy_enabled")
-	if !parseBoolSetting(enabled) {
-		return g.directClient(ps), nil
-	}
-	proxyURL, _ := snap.SettingGet("proxy_url")
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {
-		return nil, errors.New("upstream proxy_url is empty")
+		return g.directClient(ps), nil
 	}
 	parsed, err := url.Parse(proxyURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse proxy_url: %w", err)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return g.directClient(ps), nil
 	}
-	forceHTTP1Str, _ := snap.SettingGet("proxy_force_http1")
-	forceHTTP1 := parseBoolSetting(forceHTTP1Str)
 
-	cacheKey := proxyURL + "|" + strconv.FormatBool(forceHTTP1) + "|" + ps.RequestTimeout.String() + "|" + ps.ConnectTimeout.String()
+	cacheKey := proxyURL + "|" + ps.RequestTimeout.String() + "|" + ps.ConnectTimeout.String()
 	g.clientMu.Lock()
 	defer g.clientMu.Unlock()
 	if g.proxyClient != nil && g.proxyClientKey == cacheKey {
@@ -174,11 +165,7 @@ func (g *Gateway) httpClientFor(useProxy bool) (*http.Client, error) {
 		MaxIdleConns:        256,
 		MaxIdleConnsPerHost: 64,
 		IdleConnTimeout:     90 * time.Second,
-	}
-	if forceHTTP1 {
-		transport.ForceAttemptHTTP2 = false
-	} else {
-		transport.ForceAttemptHTTP2 = true
+		ForceAttemptHTTP2:   true,
 	}
 	client := &http.Client{Timeout: ps.RequestTimeout, Transport: transport}
 	g.proxyClient = client
@@ -208,13 +195,4 @@ func (g *Gateway) directClient(ps proxySettings) *http.Client {
 	g.client = client
 	g.clientKey = cacheKey
 	return client
-}
-
-// parseBoolSetting parses a settings-stored boolean (true/1/yes/on).
-func parseBoolSetting(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "true", "1", "yes", "on":
-		return true
-	}
-	return false
 }

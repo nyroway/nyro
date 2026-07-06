@@ -141,6 +141,7 @@ export interface GoUpdateConsumer {
 export interface GoProviderPreset {
   id: string;
   name: string;
+  priority: number;
   default_protocol: string;
   default_model?: string;
   protocols: Array<{ id: string; base_url?: string }>;

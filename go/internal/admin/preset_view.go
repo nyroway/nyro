@@ -9,6 +9,7 @@ import "github.com/nyroway/nyro/go/internal/provider"
 type presetView struct {
 	ID              string             `json:"id"`
 	Name            string             `json:"name"`
+	Priority        int                `json:"priority"`
 	DefaultProtocol string             `json:"default_protocol"`
 	DefaultModel    string             `json:"default_model,omitempty"`
 	Protocols       []presetProtocol   `json:"protocols"`
@@ -72,6 +73,7 @@ func toPresetView(d provider.Definition) presetView {
 	pv := presetView{
 		ID:              d.ID,
 		Name:            d.Name,
+		Priority:        d.Priority,
 		DefaultProtocol: d.DefaultProtocol,
 		DefaultModel:    d.DefaultModel,
 		Protocols:       make([]presetProtocol, 0, len(d.Protocols)),

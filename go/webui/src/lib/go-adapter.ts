@@ -114,6 +114,7 @@ export function providerFromUpstream(upstream: GoUpstream): Provider {
     base_url: upstream.base_url ?? "",
     api_key: apiKeyFromCredentials(upstream.credentials),
     credentials: credentialsRecord(upstream.credentials),
+    proxy_url: upstream.proxy_url ?? "",
     use_proxy: Boolean(upstream.proxy_url),
     auth_mode: "apikey",
     preset_key: stringValue(models.preset_key) ?? null,
@@ -143,7 +144,7 @@ export function createUpstreamFromProvider(input: CreateProvider): GoCreateUpstr
       models_source: input.models_source,
       static_models: input.static_models,
     },
-    proxy_url: input.use_proxy ? "enabled" : "",
+    proxy_url: input.proxy_url?.trim() ?? "",
     enabled: true,
   };
 }
@@ -158,7 +159,7 @@ export function updateUpstreamFromProvider(input: UpdateProvider): GoUpdateUpstr
   } else if (input.api_key !== undefined) {
     out.credentials = { api_key: input.api_key };
   }
-  if (input.use_proxy !== undefined) out.proxy_url = input.use_proxy ? "enabled" : "";
+  if (input.proxy_url !== undefined) out.proxy_url = input.proxy_url.trim();
   if (input.is_enabled !== undefined) out.enabled = input.is_enabled;
   if (
     input.preset_key !== undefined ||
@@ -277,12 +278,17 @@ export function updateConsumerFromApiKey(input: UpdateApiKey): GoUpdateConsumer 
 }
 
 export function providerPresetFromGoPreset(preset: GoProviderPreset): ProviderPreset {
+  // preset.models.kind is "dynamic" | "static" (a discovery-method tag, not a
+  // URL) — modelsSource must carry the actual discovery URL, which only
+  // exists when kind is "dynamic". A static preset has no discovery URL,
+  // only a fixed model list (already carried via staticModels below).
+  const modelsSource = preset.models.kind === "dynamic" ? preset.models.url : undefined;
   const channels: ProviderChannelPreset[] = preset.protocols.map((protocol) => ({
     id: protocol.id,
     label: { en: protocol.id, zh: protocol.id },
     authMode: "apikey",
     baseUrls: { [protocol.id]: protocol.base_url ?? "" },
-    modelsSource: preset.models.kind,
+    modelsSource,
     staticModels: preset.models.values,
     modelsEndpoint: preset.models.url,
   }));
@@ -290,6 +296,7 @@ export function providerPresetFromGoPreset(preset: GoProviderPreset): ProviderPr
     id: preset.id,
     label: { en: preset.name, zh: preset.name },
     icon: preset.id,
+    priority: preset.priority,
     defaultProtocol: preset.default_protocol,
     channels,
     credentialFields: preset.credentials?.fields ?? [],

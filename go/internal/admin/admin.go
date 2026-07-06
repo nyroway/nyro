@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -124,7 +125,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				webutil.JSON(w, http.StatusOK, map[string]any{"success": false, "latency_ms": int64(0), "error": err.Error()})
 				return
 			}
-			client := &http.Client{Timeout: 10 * time.Second}
+			client := testHTTPClient(u.ProxyURL, 10*time.Second)
 			start := time.Now()
 			resp, err := client.Do(req)
 			latency := time.Since(start).Milliseconds()
@@ -380,6 +381,25 @@ func modelsDiscoveryURL(protocol, baseURL string) string {
 		path = "/v1beta/models"
 	}
 	return strings.TrimRight(baseURL, "/") + path
+}
+
+// testHTTPClient returns the HTTP client used for the one-off
+// /upstreams/{id}/test connectivity check, routed through proxyURL (the
+// upstream's own ProxyURL) when it's a valid absolute URL (scheme+host).
+// This mirrors the same-purpose logic in the data-plane gateway
+// (internal/proxy/gateway.go's httpClientFor) so a "test" and a real request
+// take the same route — but skips its caching, since this handler only runs
+// per test click, not per request.
+func testHTTPClient(proxyURL string, timeout time.Duration) *http.Client {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return &http.Client{Timeout: timeout}
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return &http.Client{Timeout: timeout}
+	}
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: http.ProxyURL(parsed)}}
 }
 
 func bearerAuth(token string) func(http.Handler) http.Handler {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -201,5 +202,26 @@ func TestMutationsBumpEpoch(t *testing.T) {
 		if after := epoch(); after == before {
 			t.Errorf("%s: config_epoch unchanged (%q) — gateways will not be notified", s.name, after)
 		}
+	}
+}
+
+func TestTestHTTPClientProxyRouting(t *testing.T) {
+	direct := testHTTPClient("", 5*time.Second)
+	if direct.Transport != nil {
+		t.Errorf("empty proxyURL: want default transport (nil), got %T", direct.Transport)
+	}
+
+	invalid := testHTTPClient("enabled", 5*time.Second) // legacy pre-fix sentinel, not a real URL
+	if invalid.Transport != nil {
+		t.Errorf("invalid proxyURL: want default transport (nil, i.e. no proxy), got %T", invalid.Transport)
+	}
+
+	proxied := testHTTPClient("http://proxy.example:8080", 5*time.Second)
+	tr, ok := proxied.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("valid proxyURL: transport is %T, want *http.Transport", proxied.Transport)
+	}
+	if tr.Proxy == nil {
+		t.Error("valid proxyURL: transport has no Proxy function")
 	}
 }

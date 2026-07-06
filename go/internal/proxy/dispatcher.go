@@ -151,7 +151,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 			continue // can't authenticate for this backend → next backend
 		}
 
-		client, cErr := g.httpClientFor(p.ProxyURL != "")
+		client, cErr := g.httpClientFor(p.ProxyURL)
 		if cErr != nil {
 			g.Router.Record(router.KeyOf(target), false, 0)
 			continue // can't build a client for this backend → next backend

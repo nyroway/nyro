@@ -10,49 +10,40 @@ import (
 	"github.com/nyroway/nyro/go/internal/xds"
 )
 
-// TestGatewayHTTPClientForProxy verifies upstream.proxy_url routing: when off
-// (or proxy disabled) the direct client is used; when on with proxy_enabled +
-// proxy_url, a distinct client with a Proxy transport is returned (cached by
-// url|force_http1|timeouts); an empty proxy_url errors.
+// TestGatewayHTTPClientForProxy verifies per-upstream proxy routing: an empty
+// proxyURL uses the direct client; a malformed proxyURL (including a
+// leftover pre-fix "enabled" sentinel) falls back to the direct client
+// instead of erroring; a valid proxyURL returns a distinct, cached client
+// with a Proxy transport; two different valid URLs return distinct clients.
 func TestGatewayHTTPClientForProxy(t *testing.T) {
 	st := memory.New()
 	gw := NewGateway()
 	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
-	direct, err := gw.httpClientFor(false)
+	direct, err := gw.httpClientFor("")
 	if err != nil {
 		t.Fatalf("direct client: %v", err)
 	}
 
-	// use_proxy=false → direct client (same cached instance on repeat calls).
-	if c, err := gw.httpClientFor(false); err != nil || c != direct {
-		t.Errorf("use_proxy=false: want direct client, got %v err=%v", c, err)
+	// empty proxyURL → direct client (same cached instance on repeat calls).
+	if c, err := gw.httpClientFor(""); err != nil || c != direct {
+		t.Errorf("empty proxyURL: want direct client, got %v err=%v", c, err)
 	}
 
-	// use_proxy=true but proxy disabled → direct client.
-	if err := st.Storage().Settings().Set("proxy_enabled", "false"); err != nil {
-		t.Fatal(err)
-	}
-	_ = gw.Cache.LoadAndSwap(st.Storage()) // reflect the settings change in the in-memory cache
-	if c, err := gw.httpClientFor(true); err != nil || c != direct {
-		t.Errorf("proxy disabled: want direct client, got %v err=%v", c, err)
+	// leftover legacy "enabled" sentinel (pre-fix placeholder, not a real
+	// URL) → falls back to direct rather than erroring the dispatch.
+	if c, err := gw.httpClientFor("enabled"); err != nil || c != direct {
+		t.Errorf("legacy \"enabled\" sentinel: want direct client (no error), got %v err=%v", c, err)
 	}
 
-	// use_proxy=true + enabled + proxy_url → distinct proxied client.
-	if err := st.Storage().Settings().Set("proxy_enabled", "true"); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Storage().Settings().Set("proxy_url", "http://proxy.example:8080"); err != nil {
-		t.Fatal(err)
-	}
-	_ = gw.Cache.LoadAndSwap(st.Storage())
-	c, err := gw.httpClientFor(true)
+	// valid proxyURL → distinct proxied client.
+	c, err := gw.httpClientFor("http://proxy.example:8080")
 	if err != nil {
 		t.Fatalf("proxied client: %v", err)
 	}
 	if c == direct {
-		t.Error("use_proxy=true + enabled: want distinct proxied client, got direct")
+		t.Error("valid proxyURL: want distinct proxied client, got direct")
 	}
 	tr, ok := c.Transport.(*http.Transport)
 	if !ok {
@@ -62,19 +53,19 @@ func TestGatewayHTTPClientForProxy(t *testing.T) {
 		t.Error("proxied client transport has no Proxy function")
 	}
 
-	// cached on second call (same url|force_http1|timeouts).
-	c2, _ := gw.httpClientFor(true)
+	// cached on second call (same url|timeouts).
+	c2, _ := gw.httpClientFor("http://proxy.example:8080")
 	if c2 != c {
 		t.Error("proxied client not cached across calls")
 	}
 
-	// empty proxy_url → error.
-	if err := st.Storage().Settings().Set("proxy_url", ""); err != nil {
-		t.Fatal(err)
+	// a different proxyURL → distinct client (not the stale cached one).
+	c3, err := gw.httpClientFor("http://other-proxy.example:9090")
+	if err != nil {
+		t.Fatalf("second proxied client: %v", err)
 	}
-	_ = gw.Cache.LoadAndSwap(st.Storage())
-	if _, err := gw.httpClientFor(true); err == nil {
-		t.Error("empty proxy_url: want error, got nil")
+	if c3 == c {
+		t.Error("different proxyURL: want a distinct client, got the previous one")
 	}
 }
 

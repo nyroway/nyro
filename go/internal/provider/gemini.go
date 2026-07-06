@@ -19,6 +19,7 @@ func init() {
 		Def: Definition{
 			ID:              "gemini",
 			Name:            "Gemini",
+			Priority:        3,
 			DefaultProtocol: ProtocolGeminiContent,
 			DefaultModel:    "gemini-2.0-flash",
 			Protocols: []Protocol{

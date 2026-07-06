@@ -5,10 +5,8 @@ import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type { ExportData, GatewayStatus, ImportResult } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 import { Download, HelpCircle, Upload, Save, Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Select,
@@ -27,7 +25,6 @@ import {
 // The real, backend-read settings keys this page exposes. This list is the
 // source of truth cross-checked against the Go backend (not the plan doc's
 // example YAML, not the retired Rust WebUI's field names):
-//   - proxy_enabled / proxy_url            -> go/internal/proxy/gateway.go
 //   - proxy.request_timeout/.connect_timeout/.max_retries/.retry_on_status/
 //     .max_body_bytes                     -> go/internal/proxy/gateway.go (resolveProxySettings)
 //   - obs_logs_sink/obs_metrics_sink/obs_traces_sink/obs_otlp_endpoint/
@@ -36,9 +33,10 @@ import {
 // Legacy `log_retention_days` (never read; the real key is
 // `obs_logs_retention_days`), `enable_payload` (a per-route column, not a
 // global setting — see models.tsx), and `proxy_bypass` (no backend consumer
-// anywhere) have been removed from this page.
-const PROXY_ENABLED_KEY = "proxy_enabled";
-const PROXY_URL_KEY = "proxy_url";
+// anywhere) have been removed from this page. `proxy_enabled`/`proxy_url`
+// were removed too: the proxy address is a connection destination, not a
+// forwarding-behavior parameter, so it belongs per-upstream (Providers page)
+// — see go/internal/proxy/gateway.go's httpClientFor(proxyURL string).
 const PROXY_REQUEST_TIMEOUT_KEY = "proxy.request_timeout";
 const PROXY_CONNECT_TIMEOUT_KEY = "proxy.connect_timeout";
 const PROXY_MAX_RETRIES_KEY = "proxy.max_retries";
@@ -145,14 +143,6 @@ function HelpHint({ text }: { text: string }) {
   );
 }
 
-function ToggleStatusLabel({ enabled, isZh }: { enabled: boolean; isZh: boolean }) {
-  return (
-    <Badge variant={enabled ? "success" : "secondary"} className="connect-label-badge">
-      {enabled ? (isZh ? "已启用" : "Enabled") : (isZh ? "未启用" : "Disabled")}
-    </Badge>
-  );
-}
-
 export default function SettingsPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
@@ -168,14 +158,6 @@ export default function SettingsPage() {
   });
 
   // --- Proxy settings ---
-  const { data: proxyEnabledSetting } = useQuery<string | null>({
-    queryKey: ["setting", PROXY_ENABLED_KEY],
-    queryFn: () => backend("get_setting", { key: PROXY_ENABLED_KEY }),
-  });
-  const { data: proxyUrlSetting } = useQuery<string | null>({
-    queryKey: ["setting", PROXY_URL_KEY],
-    queryFn: () => backend("get_setting", { key: PROXY_URL_KEY }),
-  });
   const { data: proxyRequestTimeoutSetting } = useQuery<string | null>({
     queryKey: ["setting", PROXY_REQUEST_TIMEOUT_KEY],
     queryFn: () => backend("get_setting", { key: PROXY_REQUEST_TIMEOUT_KEY }),
@@ -222,11 +204,6 @@ export default function SettingsPage() {
     obsTracesRetentionSetting,
   ] = obsQueries.map((q) => q.data ?? null);
 
-  const normalizedProxyEnabledSetting = ["1", "true", "yes", "on"].includes(
-    (proxyEnabledSetting ?? "").trim().toLowerCase(),
-  );
-  const [proxyEnabled, setProxyEnabled] = useState(false);
-  const [proxyUrl, setProxyUrl] = useState("");
   const [proxyRequestTimeout, setProxyRequestTimeout] = useState("");
   const [proxyConnectTimeout, setProxyConnectTimeout] = useState("");
   const [proxyMaxRetries, setProxyMaxRetries] = useState("");
@@ -242,8 +219,6 @@ export default function SettingsPage() {
   const [obsTracesRetention, setObsTracesRetention] = useState("");
 
   const proxyBaseline = {
-    enabled: normalizedProxyEnabledSetting,
-    url: (proxyUrlSetting ?? "").trim(),
     requestTimeout: (proxyRequestTimeoutSetting ?? PROXY_REQUEST_TIMEOUT_DEFAULT).trim(),
     connectTimeout: (proxyConnectTimeoutSetting ?? PROXY_CONNECT_TIMEOUT_DEFAULT).trim(),
     maxRetries: (proxyMaxRetriesSetting ?? PROXY_MAX_RETRIES_DEFAULT).trim(),
@@ -254,9 +229,7 @@ export default function SettingsPage() {
   const connectTimeoutInvalid = !isValidGoDuration(proxyConnectTimeout);
 
   const proxyDirty =
-    proxyEnabled !== proxyBaseline.enabled
-    || proxyUrl.trim() !== proxyBaseline.url
-    || proxyRequestTimeout.trim() !== proxyBaseline.requestTimeout
+    proxyRequestTimeout.trim() !== proxyBaseline.requestTimeout
     || proxyConnectTimeout.trim() !== proxyBaseline.connectTimeout
     || proxyMaxRetries.trim() !== proxyBaseline.maxRetries
     || proxyRetryOnStatus.trim() !== proxyBaseline.retryOnStatus
@@ -281,8 +254,6 @@ export default function SettingsPage() {
     || obsTracesRetention.trim() !== obsBaseline.tracesRetention;
 
   useEffect(() => {
-    setProxyEnabled(proxyBaseline.enabled);
-    setProxyUrl(proxyBaseline.url);
     setProxyRequestTimeout(proxyBaseline.requestTimeout);
     setProxyConnectTimeout(proxyBaseline.connectTimeout);
     setProxyMaxRetries(proxyBaseline.maxRetries);
@@ -290,8 +261,6 @@ export default function SettingsPage() {
     setProxyMaxBodyBytes(proxyBaseline.maxBodyBytes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    normalizedProxyEnabledSetting,
-    proxyUrlSetting,
     proxyRequestTimeoutSetting,
     proxyConnectTimeoutSetting,
     proxyMaxRetriesSetting,
@@ -331,8 +300,6 @@ export default function SettingsPage() {
 
   const saveProxyMut = useMutation({
     mutationFn: async (input: {
-      enabled: boolean;
-      url: string;
       requestTimeout: string;
       connectTimeout: string;
       maxRetries: string;
@@ -348,8 +315,6 @@ export default function SettingsPage() {
         );
       }
       await Promise.all([
-        backend("set_setting", { key: PROXY_ENABLED_KEY, value: input.enabled ? "true" : "false" }),
-        backend("set_setting", { key: PROXY_URL_KEY, value: input.url }),
         backend("set_setting", { key: PROXY_REQUEST_TIMEOUT_KEY, value: input.requestTimeout }),
         backend("set_setting", { key: PROXY_CONNECT_TIMEOUT_KEY, value: input.connectTimeout }),
         backend("set_setting", { key: PROXY_MAX_RETRIES_KEY, value: input.maxRetries }),
@@ -359,8 +324,6 @@ export default function SettingsPage() {
     },
     onSuccess: () => {
       for (const key of [
-        PROXY_ENABLED_KEY,
-        PROXY_URL_KEY,
         PROXY_REQUEST_TIMEOUT_KEY,
         PROXY_CONNECT_TIMEOUT_KEY,
         PROXY_MAX_RETRIES_KEY,
@@ -371,7 +334,7 @@ export default function SettingsPage() {
       }
     },
     onError: (error: unknown) => {
-      showErrorDialog("保存代理设置失败", "Failed to save proxy settings", error);
+      showErrorDialog("保存转发参数失败", "Failed to save forwarding settings", error);
     },
   });
 
@@ -461,17 +424,9 @@ export default function SettingsPage() {
   }
 
   function handleSaveProxy() {
-    const url = proxyUrl.trim();
-    if (proxyEnabled && !url) {
-      setErrorDialog({
-        title: isZh ? "无法保存代理配置" : "Cannot Save Proxy Settings",
-        description: isZh ? "请先填写代理 URL，再保存代理配置。" : "Please set proxy URL before saving proxy settings.",
-      });
-      return;
-    }
     if (requestTimeoutInvalid || connectTimeoutInvalid) {
       setErrorDialog({
-        title: isZh ? "无法保存代理配置" : "Cannot Save Proxy Settings",
+        title: isZh ? "无法保存转发参数" : "Cannot Save Forwarding Settings",
         description: isZh
           ? "请求超时/连接超时必须是 Go duration 格式，如 120s、2m、1h30m。"
           : "Request Timeout / Connect Timeout must be a Go duration, e.g. 120s, 2m, 1h30m.",
@@ -479,8 +434,6 @@ export default function SettingsPage() {
       return;
     }
     saveProxyMut.mutate({
-      enabled: proxyEnabled,
-      url,
       requestTimeout: proxyRequestTimeout.trim() || PROXY_REQUEST_TIMEOUT_DEFAULT,
       connectTimeout: proxyConnectTimeout.trim() || PROXY_CONNECT_TIMEOUT_DEFAULT,
       maxRetries: proxyMaxRetries.trim() || PROXY_MAX_RETRIES_DEFAULT,
@@ -534,31 +487,10 @@ export default function SettingsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-        {/* Proxy Configuration */}
+        {/* Forwarding Settings */}
         <div className="glass rounded-2xl p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "代理配置" : "Proxy Configuration"}</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "转发参数" : "Forwarding Settings"}</h2>
           <div className="rounded-xl bg-slate-50 p-4 space-y-3">
-            <div className="space-y-1.5">
-              <label className="ml-1 text-xs text-slate-700">{isZh ? "代理" : "Proxy"}</label>
-              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                <div className="flex items-center gap-2">
-                  <ToggleStatusLabel enabled={proxyEnabled} isZh={isZh} />
-                </div>
-                <Switch
-                  checked={proxyEnabled}
-                  disabled={saveProxyMut.isPending}
-                  onCheckedChange={setProxyEnabled}
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="ml-1 text-xs text-slate-700">{isZh ? "代理 URL" : "Proxy URL"}</label>
-              <Input
-                placeholder="http://127.0.0.1:7890"
-                value={proxyUrl}
-                onChange={(e) => setProxyUrl(e.target.value)}
-              />
-            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">

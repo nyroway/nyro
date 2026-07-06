@@ -12,6 +12,7 @@ func init() {
 		Def: Definition{
 			ID:              "openai",
 			Name:            "OpenAI",
+			Priority:        2,
 			DefaultProtocol: ProtocolOpenAICompatible,
 			DefaultModel:    "gpt-4o-mini",
 			Protocols: []Protocol{

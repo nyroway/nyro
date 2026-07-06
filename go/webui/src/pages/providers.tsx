@@ -34,7 +34,6 @@ import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -55,7 +54,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { resolveProtocol, PROTOCOL_TABLE } from "@/lib/protocol";
+import { resolveProtocol, PROTOCOL_TABLE, protocolDisplayName } from "@/lib/protocol";
 
 function protocolUrl(protocol: string) {
   return PROTOCOL_TABLE.find((p) => p.id === resolveProtocol(protocol))?.defaultBaseUrl
@@ -67,7 +66,7 @@ const emptyCreate: CreateProvider = {
   vendor: undefined,
   protocol: "openai-compatible",
   base_url: "https://api.openai.com/v1",
-  use_proxy: false,
+  proxy_url: "",
   auth_mode: "apikey",
   preset_key: "",
   channel: "",
@@ -78,21 +77,6 @@ const emptyCreate: CreateProvider = {
 };
 const PAGE_SIZE = 7;
 const DEFAULT_PRESET_ID = "nyro";
-// Radix's <Select.Item> forbids value="" (it reserves the empty string to mean
-// "clear selection / show placeholder"), but "" is this page's real
-// no-template-selected state everywhere else (selectedPresetId, editForm.preset_key).
-// Only the rendered <SelectItem> uses this sentinel; translate at the Select
-// boundary via templateSelectValue/templateStateValue so "" keeps flowing
-// through the rest of the page.
-const TEMPLATE_NONE_SENTINEL = "__none__";
-
-function templateSelectValue(value: string): string {
-  return value === "" ? TEMPLATE_NONE_SENTINEL : value;
-}
-
-function templateStateValue(value: string): string {
-  return value === TEMPLATE_NONE_SENTINEL ? "" : value;
-}
 // Only protocols with a registered codec are user-selectable here.
 // gemini-interactions/bedrock-converse/azure-inference are declared in
 // ProviderProtocol (and on the backend, go/internal/protocol/ids) but have
@@ -158,6 +142,13 @@ function resolvePresetProtocol(
 
 function presetLabel(preset: ProviderPreset, isZh: boolean) {
   return isZh ? preset.label.zh : preset.label.en;
+}
+
+function presetLabelClass(preset: ProviderPreset, isZh: boolean) {
+  const len = presetLabel(preset, isZh).trim().length;
+  if (len >= 16) return "provider-preset-label provider-preset-label-micro";
+  if (len >= 12) return "provider-preset-label provider-preset-label-compact";
+  return "provider-preset-label";
 }
 
 function toGatewayBaseUrl(url: string) {
@@ -258,6 +249,18 @@ function credentialFieldsForPreset(preset?: ProviderPreset | null): ProviderCred
   return preset?.credentialFields?.length ? preset.credentialFields : DEFAULT_CREDENTIAL_FIELDS;
 }
 
+// Model discovery is either a remote URL or a static list — mutually
+// exclusive in the UI even though both fields exist independently on the
+// wire. When a preset/protocol change fills one of them, switch the segmented
+// control to match; if neither is filled, leave the user's current choice as-is.
+type ModelsMode = "url" | "static";
+
+function pickModelsMode(current: ModelsMode, modelsSource?: string, staticModels?: string): ModelsMode {
+  if (modelsSource && modelsSource.trim()) return "url";
+  if (staticModels && staticModels.trim()) return "static";
+  return current;
+}
+
 // isCredentialFieldRequired resolves a field's `required`/`required_when`
 // gate against the currently entered credential values. `required_when`
 // values may be a single string or a list of acceptable strings (see e.g.
@@ -296,10 +299,12 @@ function mergeCredentialValues(
   return out;
 }
 
+const CREDENTIAL_LABEL_ACRONYMS: Record<string, string> = { api: "API", url: "URL", id: "ID" };
+
 function credentialFieldLabel(field: ProviderCredentialField): string {
   return field.name
     .split("_")
-    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .map((part) => CREDENTIAL_LABEL_ACRONYMS[part.toLowerCase()] ?? (part ? part.charAt(0).toUpperCase() + part.slice(1) : part))
     .join(" ");
 }
 
@@ -484,6 +489,8 @@ export default function ProvidersPage() {
   const [providerToCopy, setProviderToCopy] = useState<Provider | null>(null);
   const [appendTargets, setAppendTargets] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState("");
+  const [modelsMode, setModelsMode] = useState<ModelsMode>("url");
+  const [editModelsMode, setEditModelsMode] = useState<ModelsMode>("url");
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
   const activeTestRunRef = useRef(0);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -496,10 +503,6 @@ export default function ProvidersPage() {
     queryKey: ["provider-presets"],
     queryFn: () => backend("get_provider_presets"),
   });
-  const { data: proxyEnabledSetting } = useQuery<string | null>({
-    queryKey: ["setting", "proxy_enabled"],
-    queryFn: () => backend("get_setting", { key: "proxy_enabled" }),
-  });
   const providerPresets = useMemo(
     () => (providerPresetsRaw.length ? providerPresetsRaw : [fallbackProviderPreset()]),
     [providerPresetsRaw],
@@ -508,20 +511,11 @@ export default function ProvidersPage() {
     () => providers.find((provider) => provider.id === editingId) ?? null,
     [providers, editingId],
   );
-  const isGlobalProxyEnabled = useMemo(() => {
-    const normalized = (proxyEnabledSetting ?? "").trim().toLowerCase();
-    return ["1", "true", "yes", "on"].includes(normalized);
-  }, [proxyEnabledSetting]);
   const [form, setForm] = useState<CreateProvider>(emptyCreate);
   const selectedPreset = useMemo(
     () => providerPresets.find((preset) => preset.id === selectedPresetId) ?? null,
     [providerPresets, selectedPresetId],
   );
-  useEffect(() => {
-    if (!selectedPresetId) return; // "" (no template) is always valid.
-    if (providerPresets.some((preset) => preset.id === selectedPresetId)) return;
-    setSelectedPresetId("");
-  }, [providerPresets, selectedPresetId]);
 
   const [editForm, setEditForm] = useState<UpdateProvider & { id: string }>({
     id: "",
@@ -529,7 +523,7 @@ export default function ProvidersPage() {
     vendor: undefined,
     protocol: "",
     base_url: "",
-    use_proxy: false,
+    proxy_url: "",
     preset_key: "",
     channel: "",
     models_source: "",
@@ -702,13 +696,14 @@ export default function ProvidersPage() {
     const presetForEdit = p.preset_key
       ? providerPresets.find((item) => item.id === p.preset_key) ?? null
       : null;
+    setEditModelsMode(pickModelsMode("url", p.models_source ?? undefined, p.static_models ?? undefined));
     setEditForm({
       id: p.id,
       name: p.name,
       vendor: p.vendor ?? (p.preset_key || undefined),
       protocol,
       base_url: p.base_url,
-      use_proxy: p.use_proxy,
+      proxy_url: p.proxy_url ?? "",
       preset_key: presetForEdit ? presetForEdit.id : "",
       channel: p.channel || "",
       models_source: p.models_source ?? "",
@@ -727,6 +722,7 @@ export default function ProvidersPage() {
       : null;
     if (!preset && selectedPresetId) setSelectedPresetId("");
     const config = preset ? resolvePresetConfig(preset, protocol) : null;
+    if (config) setModelsMode((prev) => pickModelsMode(prev, config.modelsSource, config.staticModels));
     setForm((prev) => ({
       ...prev,
       protocol,
@@ -747,6 +743,7 @@ export default function ProvidersPage() {
     if (!preset) return;
     const protocol = resolvePresetProtocol(preset, form.protocol as ProviderProtocol);
     const config = resolvePresetConfig(preset, protocol);
+    setModelsMode((prev) => pickModelsMode(prev, config.modelsSource, config.staticModels));
     setForm((prev) => ({
       ...prev,
       protocol,
@@ -763,27 +760,26 @@ export default function ProvidersPage() {
   function handleEditProtocolChange(nextProtocol: string) {
     const protocol = resolveProtocol(nextProtocol) as ProviderProtocol | null;
     if (!protocol) return;
-    setEditForm((prev) => {
-      const currentPreset = prev.preset_key
-        ? providerPresets.find((item) => item.id === prev.preset_key) ?? null
-        : null;
-      const preset = currentPreset && availableProtocolsForPreset(currentPreset).includes(protocol)
-        ? currentPreset
-        : null;
-      const config = preset ? resolvePresetConfig(preset, protocol) : null;
-      return {
-        ...prev,
-        preset_key: preset ? prev.preset_key : "",
-        protocol,
-        base_url: config?.baseUrl || (preset ? "" : protocolUrl(protocol)) || prev.base_url,
-        models_source: config?.modelsSource ?? prev.models_source,
-        static_models: config?.staticModels ?? prev.static_models,
-        api_key: config?.apiKey || prev.api_key,
-        credentials: preset
-          ? mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {})
-          : prev.credentials,
-      };
-    });
+    const currentPreset = editForm.preset_key
+      ? providerPresets.find((item) => item.id === editForm.preset_key) ?? null
+      : null;
+    const preset = currentPreset && availableProtocolsForPreset(currentPreset).includes(protocol)
+      ? currentPreset
+      : null;
+    const config = preset ? resolvePresetConfig(preset, protocol) : null;
+    if (config) setEditModelsMode((prevMode) => pickModelsMode(prevMode, config.modelsSource, config.staticModels));
+    setEditForm((prev) => ({
+      ...prev,
+      preset_key: preset ? prev.preset_key : "",
+      protocol,
+      base_url: config?.baseUrl || (preset ? "" : protocolUrl(protocol)) || prev.base_url,
+      models_source: config?.modelsSource ?? prev.models_source,
+      static_models: config?.staticModels ?? prev.static_models,
+      api_key: config?.apiKey || prev.api_key,
+      credentials: preset
+        ? mergeCredentialValues(credentialFieldsForPreset(preset), prev.credentials ?? {})
+        : prev.credentials,
+    }));
   }
 
   function handleEditTemplateChange(nextPresetId: string) {
@@ -807,6 +803,7 @@ export default function ProvidersPage() {
 
     setEditError(null);
     const config = resolvePresetConfig(preset, protocol);
+    setEditModelsMode((prev) => pickModelsMode(prev, config.modelsSource, config.staticModels));
     setEditForm((prev) => ({
       ...prev,
       protocol,
@@ -820,9 +817,21 @@ export default function ProvidersPage() {
     }));
   }
 
+  // No "none / custom" option in the quickselect anymore — always keep a
+  // real vendor selected, defaulting to the highest-priority preset
+  // (providerPresets is already priority-sorted by the backend) whenever the
+  // current selection is empty or no longer valid (e.g. right after opening
+  // the create form, or if the preset list changes underneath it).
+  useEffect(() => {
+    if (providerPresets.some((preset) => preset.id === selectedPresetId)) return;
+    const fallback = providerPresets[0];
+    if (fallback) handleTemplateChange(fallback.id);
+  }, [providerPresets, selectedPresetId]);
+
   function closeCreateForm() {
     setShowForm(false);
     setSelectedPresetId("");
+    setModelsMode("url");
     setForm(emptyCreate);
   }
 
@@ -833,9 +842,7 @@ export default function ProvidersPage() {
     ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-compatible").baseUrl
     : "";
   const createBaseUrlMissing = !createPresetBaseUrl && !form.base_url?.trim();
-  const createTemplateOptions = providerPresets.filter((preset) =>
-    availableProtocolsForPreset(preset).includes((form.protocol as ProviderProtocol) || "openai-compatible"),
-  );
+  const createProtocolOptions = availableProtocolsForPreset(selectedPreset);
 
   useEffect(() => {
     if (page > totalPages - 1) {
@@ -887,6 +894,7 @@ export default function ProvidersPage() {
             }
             setShowForm(true);
             setSelectedPresetId("");
+            setModelsMode("url");
             setForm({ ...emptyCreate, auth_mode: "apikey" });
           }}
           className="flex items-center gap-2"
@@ -903,21 +911,33 @@ export default function ProvidersPage() {
           <div className="space-y-3">
             <ToggleGroup
               type="single"
-              value={form.protocol}
+              value={selectedPresetId}
               onValueChange={(value) => {
-                if (value) handleProtocolChange(value);
+                if (value) handleTemplateChange(value);
               }}
               className="provider-preset-group"
             >
-              {protocolOptions.map((option) => (
+              {providerPresets.map((preset) => (
                 <ToggleGroupItem
-                  key={option.value}
-                  value={option.value}
+                  key={preset.id}
+                  value={preset.id}
                   variant="outline"
                   size="lg"
-                  className="provider-preset-card h-auto w-full px-4 py-5"
+                  className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
+                  aria-label={presetLabel(preset, isZh)}
                 >
-                  {option.label}
+                  <ProviderIcon
+                    name={preset.icon ?? preset.label.en}
+                    size={26}
+                    className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
+                  />
+                  <ProviderIcon
+                    name={preset.icon ?? preset.label.en}
+                    size={26}
+                    monochrome
+                    className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
+                  />
+                  <span className={presetLabelClass(preset, isZh)}>{presetLabel(preset, isZh)}</span>
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
@@ -925,27 +945,6 @@ export default function ProvidersPage() {
           <div className="h-px bg-slate-200/70" />
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2 space-y-2">
-                <FieldLabel>{isZh ? "厂商模板（可选）" : "Vendor template (optional)"}</FieldLabel>
-                <Select
-                  value={templateSelectValue(selectedPresetId)}
-                  onValueChange={(value) => handleTemplateChange(templateStateValue(value))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={isZh ? "无 / 自定义" : "None / Custom"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={TEMPLATE_NONE_SENTINEL}>
-                      {isZh ? "无 / 自定义" : "None / Custom"}
-                    </SelectItem>
-                    {createTemplateOptions.map((preset) => (
-                      <SelectItem key={preset.id} value={preset.id}>
-                        {presetLabel(preset, isZh)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
               <div className="space-y-2">
                 <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
                 <Input
@@ -953,6 +952,21 @@ export default function ProvidersPage() {
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
+              </div>
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
+                <Select value={form.protocol} onValueChange={(value) => handleProtocolChange(value)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {createProtocolOptions.map((protocol) => (
+                      <SelectItem key={protocol} value={protocol}>
+                        {protocolDisplayName(protocol) ?? protocol}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               {createCredentialFields.map((field) => (
                 <CredentialFieldInput
@@ -976,7 +990,7 @@ export default function ProvidersPage() {
                   onChange={(e) => setForm({ ...form, base_url: e.target.value })}
                 />
               </div>
-              <div className="space-y-2">
+              <div className="col-span-2 space-y-2">
                 <FieldLabel
                   info={
                     isZh
@@ -984,28 +998,53 @@ export default function ProvidersPage() {
                       : "Used to auto-fetch available model list when creating models"
                   }
                 >
-                  {isZh ? "模型发现源" : "Model Discovery Source"}
+                  {isZh ? "模型发现" : "Model Discovery"}
                 </FieldLabel>
+                <ToggleGroup
+                  type="single"
+                  value={modelsMode}
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    const mode = value as ModelsMode;
+                    setModelsMode(mode);
+                    setForm((prev) => ({
+                      ...prev,
+                      models_source: mode === "url" ? prev.models_source : "",
+                      static_models: mode === "static" ? prev.static_models : "",
+                    }));
+                  }}
+                  className="provider-region-group"
+                >
+                  <ToggleGroupItem value="url" variant="outline" size="sm">
+                    {isZh ? "URL 发现" : "URL Discovery"}
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="static" variant="outline" size="sm">
+                    {isZh ? "静态填写" : "Static List"}
+                  </ToggleGroupItem>
+                </ToggleGroup>
+                {modelsMode === "url" ? (
+                  <Input
+                    placeholder={isZh ? "可选，支持 https:// 或 ai://models.dev/..." : "Optional, supports https:// or ai://models.dev/..."}
+                    value={form.models_source ?? ""}
+                    onChange={(e) => setForm({ ...form, models_source: e.target.value })}
+                  />
+                ) : (
+                  <textarea
+                    className="nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder={isZh ? "每行一个模型名" : "One model name per line"}
+                    value={form.static_models ?? ""}
+                    onChange={(e) => setForm({ ...form, static_models: e.target.value })}
+                  />
+                )}
+              </div>
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
                 <Input
-                  placeholder={isZh ? "可选，支持 https:// 或 ai://models.dev/..." : "Optional, supports https:// or ai://models.dev/..."}
-                  value={form.models_source ?? ""}
-                  onChange={(e) => setForm({ ...form, models_source: e.target.value })}
+                  placeholder="http://127.0.0.1:7890"
+                  value={form.proxy_url ?? ""}
+                  onChange={(e) => setForm({ ...form, proxy_url: e.target.value })}
                 />
               </div>
-              {isGlobalProxyEnabled && (
-                <div className="space-y-2">
-                  <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
-                  <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                    <span className="text-xs text-slate-600">
-                      {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
-                    </span>
-                    <Switch
-                      checked={Boolean(form.use_proxy)}
-                      onCheckedChange={(checked) => setForm({ ...form, use_proxy: checked })}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
               <div className="flex gap-3">
                 <Button
@@ -1083,9 +1122,7 @@ export default function ProvidersPage() {
               const currentProviderIsOAuth =
                 normalizeAuthMode(p.auth_mode) === "oauth"
                 || normalizeAuthMode(editForm.auth_mode) === "oauth";
-              const editTemplateOptions = providerPresets.filter((preset) =>
-                availableProtocolsForPreset(preset).includes((editForm.protocol as ProviderProtocol) || "openai-compatible"),
-              );
+              const editProtocolOptions = availableProtocolsForPreset(editingPreset);
               return (
                 <div key={p.id} className="glass rounded-2xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
@@ -1095,59 +1132,44 @@ export default function ProvidersPage() {
                     </button>
                   </div>
                   <div className="space-y-3">
-                    <p className="text-sm font-semibold text-slate-700">
-                      {isZh ? "1. 协议" : "1. Protocol"}
-                    </p>
                     <ToggleGroup
                       type="single"
-                      value={editForm.protocol ?? ""}
+                      value={editingPresetId}
                       onValueChange={(value) => {
-                        if (value) handleEditProtocolChange(value);
+                        if (value) handleEditTemplateChange(value);
                       }}
                       className="provider-preset-group"
                     >
-                      {protocolOptions.map((option) => (
+                      {providerPresets.map((preset) => (
                         <ToggleGroupItem
-                          key={option.value}
-                          value={option.value}
+                          key={preset.id}
+                          value={preset.id}
                           variant="outline"
                           size="lg"
-                          className="provider-preset-card h-auto w-full px-4 py-5"
+                          className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
+                          aria-label={presetLabel(preset, isZh)}
+                          disabled={
+                            presetChannelAuthMode(preset, (editForm.protocol as ProviderProtocol) || null) === "oauth"
+                            && !currentProviderIsOAuth
+                          }
                         >
-                          {option.label}
+                          <ProviderIcon
+                            name={preset.icon ?? preset.label.en}
+                            size={26}
+                            className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
+                          />
+                          <ProviderIcon
+                            name={preset.icon ?? preset.label.en}
+                            size={26}
+                            monochrome
+                            className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
+                          />
+                          <span className={presetLabelClass(preset, isZh)}>{presetLabel(preset, isZh)}</span>
                         </ToggleGroupItem>
                       ))}
                     </ToggleGroup>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="col-span-2 space-y-2">
-                      <FieldLabel>{isZh ? "厂商模板（可选）" : "Vendor template (optional)"}</FieldLabel>
-                      <Select
-                        value={templateSelectValue(editingPresetId)}
-                        onValueChange={(value) => handleEditTemplateChange(templateStateValue(value))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={isZh ? "无 / 自定义" : "None / Custom"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={TEMPLATE_NONE_SENTINEL}>
-                            {isZh ? "无 / 自定义" : "None / Custom"}
-                          </SelectItem>
-                          {editTemplateOptions.map((preset) => (
-                            <SelectItem
-                              key={preset.id}
-                              value={preset.id}
-                              disabled={
-                                presetChannelAuthMode(preset, (editForm.protocol as ProviderProtocol) || null) === "oauth"
-                                && !currentProviderIsOAuth
-                              }
-                            >
-                              {presetLabel(preset, isZh)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
                     <div className="space-y-2">
                       <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
                       <Input
@@ -1155,6 +1177,24 @@ export default function ProvidersPage() {
                         value={editForm.name ?? ""}
                         onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
+                      <Select
+                        value={editForm.protocol ?? ""}
+                        onValueChange={(value) => handleEditProtocolChange(value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {editProtocolOptions.map((protocol) => (
+                            <SelectItem key={protocol} value={protocol}>
+                              {protocolDisplayName(protocol) ?? protocol}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     {editCredentialFields.map((field) => (
                       <CredentialFieldInput
@@ -1178,7 +1218,7 @@ export default function ProvidersPage() {
                         onChange={(e) => setEditForm({ ...editForm, base_url: e.target.value })}
                       />
                     </div>
-                    <div className="space-y-2">
+                    <div className="col-span-2 space-y-2">
                       <FieldLabel
                         info={
                           isZh
@@ -1186,28 +1226,53 @@ export default function ProvidersPage() {
                             : "Used to auto-fetch available model list when creating models"
                         }
                       >
-                        {isZh ? "模型发现源" : "Model Discovery Source"}
+                        {isZh ? "模型发现" : "Model Discovery"}
                       </FieldLabel>
+                      <ToggleGroup
+                        type="single"
+                        value={editModelsMode}
+                        onValueChange={(value) => {
+                          if (!value) return;
+                          const mode = value as ModelsMode;
+                          setEditModelsMode(mode);
+                          setEditForm((prev) => ({
+                            ...prev,
+                            models_source: mode === "url" ? prev.models_source : "",
+                            static_models: mode === "static" ? prev.static_models : "",
+                          }));
+                        }}
+                        className="provider-region-group"
+                      >
+                        <ToggleGroupItem value="url" variant="outline" size="sm">
+                          {isZh ? "URL 发现" : "URL Discovery"}
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="static" variant="outline" size="sm">
+                          {isZh ? "静态填写" : "Static List"}
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                      {editModelsMode === "url" ? (
+                        <Input
+                          placeholder={isZh ? "可选，支持 https:// 或 ai://models.dev/..." : "Optional, supports https:// or ai://models.dev/..."}
+                          value={editForm.models_source ?? ""}
+                          onChange={(e) => setEditForm({ ...editForm, models_source: e.target.value })}
+                        />
+                      ) : (
+                        <textarea
+                          className="nyro-shadcn-input flex min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          placeholder={isZh ? "每行一个模型名" : "One model name per line"}
+                          value={editForm.static_models ?? ""}
+                          onChange={(e) => setEditForm({ ...editForm, static_models: e.target.value })}
+                        />
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
                       <Input
-                        placeholder={isZh ? "可选，支持 https:// 或 ai://models.dev/..." : "Optional, supports https:// or ai://models.dev/..."}
-                        value={editForm.models_source ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, models_source: e.target.value })}
+                        placeholder="http://127.0.0.1:7890"
+                        value={editForm.proxy_url ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, proxy_url: e.target.value })}
                       />
                     </div>
-                    {isGlobalProxyEnabled && (
-                      <div className="space-y-2">
-                        <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
-                        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                          <span className="text-xs text-slate-600">
-                            {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
-                          </span>
-                          <Switch
-                            checked={Boolean(editForm.use_proxy)}
-                            onCheckedChange={(checked) => setEditForm({ ...editForm, use_proxy: checked })}
-                          />
-                        </div>
-                      </div>
-                    )}
                   </div>
                   <div className="flex gap-3">
                     <Button
@@ -1225,7 +1290,7 @@ export default function ProvidersPage() {
                           vendor: editForm.vendor || undefined,
                           protocol,
                           base_url: baseUrl,
-                          use_proxy: Boolean(editForm.use_proxy),
+                          proxy_url: editForm.proxy_url ?? "",
                           preset_key: editForm.preset_key || undefined,
                           channel: editForm.channel || undefined,
                           models_source: editForm.models_source ?? "",
@@ -1300,9 +1365,9 @@ export default function ProvidersPage() {
                             {PROTOCOL_TABLE.find((pt) => pt.id === protocol)?.fullName ?? protocol}
                           </Badge>
                         ))}
-                        {isGlobalProxyEnabled && p.use_proxy && (
+                        {p.proxy_url && (
                           <Badge variant="success" className="connect-label-badge">
-                            {isZh ? "本地代理" : "Proxy"}
+                            {isZh ? "代理" : "Proxy"}
                           </Badge>
                         )}
                         {!p.is_enabled && (

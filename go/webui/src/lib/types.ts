@@ -7,6 +7,9 @@ export interface Provider {
   api_key?: string;
   /** Full multi-field credential object (e.g. AWS/Azure/GCP fields), keyed by field name. */
   credentials?: Record<string, string>;
+  /** The real per-upstream proxy address (empty/absent = no proxy). */
+  proxy_url?: string | null;
+  /** Derived display-only flag: `Boolean(proxy_url)`. Not a separate stored field. */
   use_proxy: boolean;
   auth_mode?: "apikey" | "oauth";
   oauth_status?: ProviderOAuthStatus;
@@ -234,6 +237,8 @@ export interface ProviderPreset {
     en: string;
   };
   icon?: string;
+  /** Display order in the vendor quickselect (lower sorts first). */
+  priority?: number;
   defaultProtocol: string;
   channels?: ProviderChannelPreset[];
   /** The preset's full credential schema (`credentials.fields[]` from the Go backend). */
@@ -245,7 +250,8 @@ export interface CreateProvider {
   vendor?: string;
   protocol: string;
   base_url: string;
-  use_proxy?: boolean;
+  /** Real per-upstream proxy address; empty/absent = no proxy. */
+  proxy_url?: string;
   auth_mode?: "apikey" | "oauth";
   preset_key?: string;
   channel?: string;
@@ -261,7 +267,8 @@ export interface UpdateProvider {
   vendor?: string;
   protocol?: string;
   base_url?: string;
-  use_proxy?: boolean;
+  /** Real per-upstream proxy address; empty/absent = no proxy. */
+  proxy_url?: string;
   auth_mode?: "apikey" | "oauth";
   preset_key?: string;
   channel?: string;

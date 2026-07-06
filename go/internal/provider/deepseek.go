@@ -12,6 +12,7 @@ func init() {
 		Def: Definition{
 			ID:              "deepseek",
 			Name:            "DeepSeek",
+			Priority:        4,
 			DefaultProtocol: ProtocolOpenAICompatible,
 			DefaultModel:    "deepseek-chat",
 			Protocols: []Protocol{

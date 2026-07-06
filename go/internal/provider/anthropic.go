@@ -22,6 +22,7 @@ func init() {
 		Def: Definition{
 			ID:              "anthropic",
 			Name:            "Anthropic",
+			Priority:        1,
 			DefaultProtocol: ProtocolAnthropicMessages,
 			DefaultModel:    "claude-sonnet-4-6",
 			Protocols:       []Protocol{{ID: ProtocolAnthropicMessages, BaseURL: "https://api.anthropic.com"}},

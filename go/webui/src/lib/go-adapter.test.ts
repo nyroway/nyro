@@ -5,10 +5,11 @@ import {
   createConsumerFromApiKey,
   createUpstreamFromProvider,
   providerFromUpstream,
+  providerPresetFromGoPreset,
   updateConsumerFromApiKey,
 } from "./go-adapter";
 import type { CreateApiKey, CreateProvider, UpdateApiKey } from "./types";
-import type { GoUpstream } from "./go-schema";
+import type { GoProviderPreset, GoUpstream } from "./go-schema";
 
 // These tests cover the highest-risk adapter round-trips called out in the
 // Task 12 review: quota (rpm/rpd/tpm/tpd/concurrency) mapping between the
@@ -170,5 +171,37 @@ describe("provider <-> upstream credentials/models JSON blob round-trip", () => 
     };
     const out = createUpstreamFromProvider(input);
     expect(out.credentials).toEqual({ api_key: "sk-plain" });
+  });
+});
+
+describe("providerPresetFromGoPreset model discovery mapping", () => {
+  it("carries the real discovery URL into modelsSource for a dynamic-discovery preset", () => {
+    const preset: GoProviderPreset = {
+      id: "openai",
+      name: "OpenAI",
+      priority: 2,
+      default_protocol: "openai-compatible",
+      protocols: [{ id: "openai-compatible", base_url: "https://api.openai.com/v1" }],
+      credentials: { fields: [] },
+      models: { kind: "dynamic", url: "https://api.openai.com/v1/models" },
+    };
+    const out = providerPresetFromGoPreset(preset);
+    expect(out.channels?.[0]?.modelsSource).toBe("https://api.openai.com/v1/models");
+    expect(out.channels?.[0]?.staticModels).toBeUndefined();
+  });
+
+  it("leaves modelsSource unset (not the literal kind tag) for a static-list preset", () => {
+    const preset: GoProviderPreset = {
+      id: "custom-static",
+      name: "Custom Static",
+      priority: 9,
+      default_protocol: "openai-compatible",
+      protocols: [{ id: "openai-compatible", base_url: "https://example.com/v1" }],
+      credentials: { fields: [] },
+      models: { kind: "static", values: ["model-a", "model-b"] },
+    };
+    const out = providerPresetFromGoPreset(preset);
+    expect(out.channels?.[0]?.modelsSource).toBeUndefined();
+    expect(out.channels?.[0]?.staticModels).toEqual(["model-a", "model-b"]);
   });
 });
