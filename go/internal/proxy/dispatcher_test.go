@@ -54,17 +54,19 @@ func newTestGatewayProto(t *testing.T, upstreamURL, protocol string) *Gateway {
 }
 
 // newTestGatewayProviderProto is like newTestGatewayProto but also takes a
-// providerID label for call-site readability (e.g. "anthropic", "gemini").
-// Auth resolution is purely protocol-driven (provider.AuthenticatorFor keys
-// off protocol, not provider id) and storage.CreateUpstream no longer has a
-// Provider field at all, so providerID is not stored anywhere — it exists
-// only to make call sites self-documenting.
-func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol string) *Gateway { //nolint:unparam
+// providerID (e.g. "anthropic", "gemini") that's stored on the upstream row.
+// Auth resolution is provider-scheme-first: provider.AuthenticatorFor looks
+// up providerID's registered Definition.Auth first, falling back to a
+// protocol-keyed default only when providerID doesn't match a known preset
+// (as with the "test" placeholder id used by newTestGatewayProto/Proto below,
+// which exercises the protocol-fallback path). Passing a real preset id here
+// exercises the real scheme-lookup path end-to-end from the dispatcher.
+func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol string) *Gateway {
 	t.Helper()
 	st := memory.New()
 	core := st.Storage()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "test", Protocol: protocol, BaseURL: upstreamURL,
+		Name: "test", Provider: providerID, Protocol: protocol, BaseURL: upstreamURL,
 		CredentialsJSON: []byte(`{"api_key":"test-key"}`),
 	})
 	_, _ = core.Routes().Create(storage.CreateRoute{

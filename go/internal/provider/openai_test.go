@@ -32,11 +32,7 @@ func TestOpenAIDefinition(t *testing.T) {
 }
 
 func TestOpenAIAuthenticator(t *testing.T) {
-	p, ok := provider.Get("openai")
-	if !ok {
-		t.Fatal("openai not found")
-	}
-	auth, err := p.NewAuthenticator(context.Background(), provider.UpstreamRuntime{
+	auth, err := provider.AuthenticatorFor("openai", "openai-chatcompletions", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{"api_key":"sk-test"}`),
 	})
 	if err != nil {

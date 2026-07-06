@@ -32,11 +32,7 @@ func TestAnthropicDefinition(t *testing.T) {
 }
 
 func TestAnthropicAuthenticator(t *testing.T) {
-	p, ok := provider.Get("anthropic")
-	if !ok {
-		t.Fatal("anthropic not found")
-	}
-	auth, err := p.NewAuthenticator(context.Background(), provider.UpstreamRuntime{
+	auth, err := provider.AuthenticatorFor("anthropic", "anthropic-messages", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{"api_key":"sk-ant"}`),
 	})
 	if err != nil {

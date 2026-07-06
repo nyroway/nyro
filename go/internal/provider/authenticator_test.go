@@ -11,7 +11,7 @@ import (
 
 func TestAuthenticatorForOpenAICompatibleAndResponsesUseBearer(t *testing.T) {
 	for _, protocol := range []string{"openai-chatcompletions", "openai-responses"} {
-		auth, err := provider.AuthenticatorFor(protocol, provider.UpstreamRuntime{
+		auth, err := provider.AuthenticatorFor("openai", protocol, provider.UpstreamRuntime{
 			CredentialsJSON: json.RawMessage(`{"api_key":"sk-test"}`),
 		})
 		if err != nil {
@@ -28,7 +28,7 @@ func TestAuthenticatorForOpenAICompatibleAndResponsesUseBearer(t *testing.T) {
 }
 
 func TestAuthenticatorForOpenAICompatibleMissingAPIKeyErrors(t *testing.T) {
-	_, err := provider.AuthenticatorFor("openai-chatcompletions", provider.UpstreamRuntime{
+	_, err := provider.AuthenticatorFor("openai", "openai-chatcompletions", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{}`),
 	})
 	if err == nil {
@@ -37,7 +37,7 @@ func TestAuthenticatorForOpenAICompatibleMissingAPIKeyErrors(t *testing.T) {
 }
 
 func TestAuthenticatorForAnthropicMessagesSetsHeaders(t *testing.T) {
-	auth, err := provider.AuthenticatorFor("anthropic-messages", provider.UpstreamRuntime{
+	auth, err := provider.AuthenticatorFor("anthropic", "anthropic-messages", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{"api_key":"anthropic-key"}`),
 	})
 	if err != nil {
@@ -56,7 +56,7 @@ func TestAuthenticatorForAnthropicMessagesSetsHeaders(t *testing.T) {
 }
 
 func TestAuthenticatorForAnthropicMessagesMissingAPIKeyErrors(t *testing.T) {
-	_, err := provider.AuthenticatorFor("anthropic-messages", provider.UpstreamRuntime{
+	_, err := provider.AuthenticatorFor("anthropic", "anthropic-messages", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{}`),
 	})
 	if err == nil {
@@ -65,7 +65,7 @@ func TestAuthenticatorForAnthropicMessagesMissingAPIKeyErrors(t *testing.T) {
 }
 
 func TestAuthenticatorForGeminiContentSetsFixedHeader(t *testing.T) {
-	auth, err := provider.AuthenticatorFor("gemini-generatecontent", provider.UpstreamRuntime{
+	auth, err := provider.AuthenticatorFor("gemini", "gemini-generatecontent", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{"api_key":"gemini-key"}`),
 	})
 	if err != nil {
@@ -84,7 +84,7 @@ func TestAuthenticatorForGeminiContentSetsFixedHeader(t *testing.T) {
 }
 
 func TestAuthenticatorForGeminiContentMissingAPIKeyErrors(t *testing.T) {
-	_, err := provider.AuthenticatorFor("gemini-generatecontent", provider.UpstreamRuntime{
+	_, err := provider.AuthenticatorFor("gemini", "gemini-generatecontent", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{}`),
 	})
 	if err == nil {
@@ -93,7 +93,7 @@ func TestAuthenticatorForGeminiContentMissingAPIKeyErrors(t *testing.T) {
 }
 
 func TestAuthenticatorForUnknownProtocolFallsBackToBearerWithCredentials(t *testing.T) {
-	auth, err := provider.AuthenticatorFor("some-unknown-protocol", provider.UpstreamRuntime{
+	auth, err := provider.AuthenticatorFor("", "some-unknown-protocol", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{"api_key":"fallback-key"}`),
 	})
 	if err != nil {
@@ -109,7 +109,7 @@ func TestAuthenticatorForUnknownProtocolFallsBackToBearerWithCredentials(t *test
 }
 
 func TestAuthenticatorForUnknownProtocolNoopWhenNoCredentials(t *testing.T) {
-	auth, err := provider.AuthenticatorFor("some-unknown-protocol", provider.UpstreamRuntime{})
+	auth, err := provider.AuthenticatorFor("some-unknown-provider", "some-unknown-protocol", provider.UpstreamRuntime{})
 	if err != nil {
 		t.Fatalf("empty credentials should yield Noop, got error: %v", err)
 	}
@@ -123,11 +123,36 @@ func TestAuthenticatorForUnknownProtocolNoopWhenNoCredentials(t *testing.T) {
 }
 
 func TestAuthenticatorForEmptyProtocolFallsBackLikeUnknown(t *testing.T) {
-	auth, err := provider.AuthenticatorFor("", provider.UpstreamRuntime{})
+	auth, err := provider.AuthenticatorFor("", "", provider.UpstreamRuntime{})
 	if err != nil {
 		t.Fatalf("empty protocol + no credentials should yield Noop, got error: %v", err)
 	}
 	if _, ok := auth.(provider.NoopAuthenticator); !ok {
 		t.Errorf("expected NoopAuthenticator, got %T", auth)
+	}
+}
+
+// TestAuthenticatorForUnknownProviderKnownProtocolUsesProtocolFallback covers
+// "custom" upstreams and legacy rows whose provider id doesn't match any
+// registered preset: with an unregistered/empty providerID but a known
+// protocol, AuthenticatorFor must still resolve the matching scheme via the
+// protocol fallback in authSchemeFor, not fall through to the bare-bearer/
+// noop default.
+func TestAuthenticatorForUnknownProviderKnownProtocolUsesProtocolFallback(t *testing.T) {
+	auth, err := provider.AuthenticatorFor("some-unknown-provider", "anthropic-messages", provider.UpstreamRuntime{
+		CredentialsJSON: json.RawMessage(`{"api_key":"fallback-anthropic-key"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
+	if err := auth.Apply(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := req.Header.Get("x-api-key"); got != "fallback-anthropic-key" {
+		t.Errorf("x-api-key = %q, want fallback-anthropic-key", got)
+	}
+	if got := req.Header.Get("anthropic-version"); got != provider.DefaultAnthropicVersion {
+		t.Errorf("anthropic-version = %q, want %q", got, provider.DefaultAnthropicVersion)
 	}
 }

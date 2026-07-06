@@ -1,8 +1,9 @@
 // Package provider holds the built-in vendor definitions. Each vendor is a
-// self-registering file that owns its protocols, default model, credential
-// schema, model discovery, and authentication (NewAuthenticator). The control
-// plane consumes Definition via Lookup/Definitions; the data plane consumes
-// NewAuthenticator.
+// self-registering file that contributes a pure-data Definition: protocols,
+// default model, credential schema, default discovery URL, and outbound auth
+// scheme id. The control plane consumes Definition via Lookup/Definitions;
+// the data plane's authentication behavior lives in a small auth-scheme
+// registry (authenticator.go) keyed by Definition.Auth, not in this file.
 package provider
 
 import (
@@ -15,22 +16,12 @@ import (
 	"sync"
 )
 
-// Provider is a built-in provider adapter shared by the control plane and the
-// data plane. The control plane consumes the static Definition (configuration
-// shape, model discovery, credential schema); the data plane consumes
-// NewAuthenticator for outbound authentication and request preparation.
-type Provider interface {
-	// Definition returns the provider's static description (control-plane data).
-	Definition() Definition
-	// NewAuthenticator returns the outbound authenticator for one upstream.
-	NewAuthenticator(ctx context.Context, upstream UpstreamRuntime) (Authenticator, error)
-}
-
-// Definition is a provider's static description: configuration shape, model
-// discovery, credential schema, and provider-specific extension data. It is
-// pure data with no net/http dependency and is consumed directly by the
-// control plane (admin/config/preset derivation). Add provider-specific fields
-// here — or carry them via Extra — without breaking the Provider interface.
+// Definition is a provider's static description: configuration shape,
+// default model-discovery URL, credential schema, outbound auth scheme id,
+// and provider-specific extension data. It is pure data with no net/http
+// dependency and is consumed directly by the control plane (admin/config/
+// preset derivation) and by the data plane's auth-scheme dispatch
+// (AuthenticatorFor, via Auth).
 type Definition struct {
 	ID              string
 	Name            string
@@ -38,8 +29,18 @@ type Definition struct {
 	DefaultModel    string
 	Protocols       []Protocol
 	Credentials     CredentialSchema
-	Models          ModelDiscovery
-	Extra           map[string]any // provider-level custom data (e.g. anthropic_version, api_version)
+	// ModelsURL is this provider's default model-discovery endpoint (used as
+	// the fallback when an upstream doesn't set its own models_url). Empty
+	// for providers with no default discovery endpoint.
+	ModelsURL string
+	// Auth is the outbound authentication scheme id this provider uses:
+	// "bearer" (Authorization: Bearer <api_key>), "anthropic" (x-api-key +
+	// anthropic-version), or "gemini" (x-goog-api-key). AuthenticatorFor
+	// dispatches on this field (looked up via the upstream's stored
+	// `provider` id), falling back to a protocol-keyed default when the
+	// provider id is unknown/empty (e.g. "custom" upstreams).
+	Auth  string
+	Extra map[string]any // provider-level custom data (e.g. anthropic_version, api_version)
 	// Priority controls display order in the control-plane preset list
 	// (lower sorts first). Vendors without an explicit priority default to
 	// 0, which sorts before any positive value — set one explicitly for
@@ -56,25 +57,12 @@ type Protocol struct {
 // UpstreamRuntime is the provider-facing runtime view of an upstream.
 type UpstreamRuntime struct {
 	Name            string
+	Provider        string
 	Protocol        string
 	BaseURL         string
 	CredentialsJSON json.RawMessage
-	ModelsJSON      json.RawMessage
 	ProxyURL        string
 }
-
-// ModelDiscovery describes how a provider's models are discovered.
-type ModelDiscovery struct {
-	Kind   string   // KindDynamic: fetch from URL; KindStatic: use Values
-	URL    string   // KindDynamic: full discovery URL (response parsed as openai {data:[{id}]})
-	Values []string // KindStatic: model list
-}
-
-// ModelDiscovery kinds.
-const (
-	KindDynamic = "dynamic"
-	KindStatic  = "static"
-)
 
 // CredentialSchema describes the credential object expected by a provider.
 type CredentialSchema struct {
@@ -99,49 +87,32 @@ type Authenticator interface {
 
 var (
 	registryMu sync.RWMutex
-	registry   = map[string]Provider{}
+	registry   = map[string]Definition{}
 )
 
-// Register adds a built-in provider to the registry. A nil provider, an empty
-// ID, or a duplicate ID panic — mirroring database/sql.Register — so wiring
-// mistakes surface immediately at startup rather than as silent overrides.
-func Register(p Provider) {
-	if p == nil {
-		return
-	}
-	id := p.Definition().ID
-	if id == "" {
+// Register adds a built-in provider preset. An empty ID or a duplicate ID
+// panics — wiring mistakes surface immediately at startup.
+func Register(d Definition) {
+	if d.ID == "" {
 		panic("provider: Register called with empty Definition ID")
 	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	if _, dup := registry[id]; dup {
-		panic(fmt.Sprintf("provider: duplicate registration: %q", id))
+	if _, dup := registry[d.ID]; dup {
+		panic(fmt.Sprintf("provider: duplicate registration: %q", d.ID))
 	}
-	registry[id] = p
+	registry[d.ID] = d
 }
 
-// Get returns a registered provider by id (data-plane entry: holds behavior).
-// id is normalized first (trimmed, lowercased) before registry lookup.
-func Get(id string) (Provider, bool) {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	p, ok := registry[normalizeID(id)]
-	return p, ok
-}
-
-// Lookup returns a registered provider's static description by id (control-plane
-// entry: pure data, no behavior). Named Lookup — not Definition — because Go
-// keeps types and functions in one package scope, so a func Definition would
-// clash with the Definition type above.
+// Lookup returns a registered provider's static description by id (case-
+// insensitive, trimmed). This is the sole read path — the control plane
+// (admin/config/preset derivation) and the data plane (auth scheme lookup)
+// both use it.
 func Lookup(id string) (Definition, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	p, ok := registry[normalizeID(id)]
-	if !ok {
-		return Definition{}, false
-	}
-	return p.Definition(), true
+	d, ok := registry[normalizeID(id)]
+	return d, ok
 }
 
 // normalizeID trims and lowercases id before registry lookup. Vendor id
@@ -151,22 +122,6 @@ func normalizeID(id string) string {
 	return strings.TrimSpace(strings.ToLower(id))
 }
 
-// List returns all providers in stable ID order (data-plane).
-func List() []Provider {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	ids := make([]string, 0, len(registry))
-	for id := range registry {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	out := make([]Provider, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, registry[id])
-	}
-	return out
-}
-
 // Definitions returns every provider's static description in Priority order
 // (ties broken by ID for determinism). This is the single source of truth
 // for vendor presets, including their display order in the control plane.
@@ -174,8 +129,8 @@ func Definitions() []Definition {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	out := make([]Definition, 0, len(registry))
-	for _, p := range registry {
-		out = append(out, p.Definition())
+	for _, d := range registry {
+		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Priority != out[j].Priority {
@@ -197,13 +152,6 @@ func SupportsProtocol(d Definition, protocol string) bool {
 }
 
 // HealthCheckModel returns the model used for provider connectivity checks.
-// It prefers DefaultModel, then the first discovered/static model.
 func HealthCheckModel(d Definition) string {
-	if d.DefaultModel != "" {
-		return d.DefaultModel
-	}
-	if models := d.Models.Values; len(models) > 0 {
-		return models[0]
-	}
-	return ""
+	return d.DefaultModel
 }

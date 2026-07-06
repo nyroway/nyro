@@ -145,7 +145,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		}
 		plugin.RunPhaseHooks(plugin.PhaseOnUpstream, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
 
-		auth, authErr := provider.AuthenticatorFor(p.Protocol, runtimeFromUpstream(*p))
+		auth, authErr := provider.AuthenticatorFor(p.Provider, p.Protocol, runtimeFromUpstream(*p))
 		if authErr != nil {
 			g.Router.Record(router.KeyOf(target), false, 0)
 			continue // can't authenticate for this backend → next backend
@@ -247,10 +247,10 @@ func (g *Gateway) callUpstream(client *http.Client, r *http.Request, outbound co
 func runtimeFromUpstream(u storage.Upstream) provider.UpstreamRuntime {
 	return provider.UpstreamRuntime{
 		Name:            u.Name,
+		Provider:        u.Provider,
 		Protocol:        u.Protocol,
 		BaseURL:         u.BaseURL,
 		CredentialsJSON: u.CredentialsJSON,
-		ModelsJSON:      u.ModelsJSON,
 		ProxyURL:        u.ProxyURL,
 	}
 }

@@ -1,34 +1,20 @@
 package provider_test
 
 import (
-	"context"
-	"reflect"
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/provider"
 )
 
 // allBuiltinIDs is the full set of built-in provider IDs; tests iterate it to
-// guarantee every vendor is registered with a provider-specific concrete type.
+// guarantee every vendor is registered.
 //
 // Temporarily reduced to anthropic/openai/gemini/deepseek/openrouter; other
 // vendor providers were removed and can be reinstated (with their own files)
-// later. The "custom" fallback provider was removed in favor of protocol-based
-// AuthenticatorFor (see authenticator.go).
+// later. The "custom" fallback provider was removed in favor of
+// scheme-keyed AuthenticatorFor (see authenticator.go).
 var allBuiltinIDs = []string{
 	"openai", "anthropic", "gemini", "deepseek", "openrouter",
-}
-
-func TestProvidersAreConcreteImplementations(t *testing.T) {
-	for _, id := range allBuiltinIDs {
-		p, ok := provider.Get(id)
-		if !ok {
-			t.Fatalf("%s provider not found", id)
-		}
-		if got := reflect.TypeOf(p).Name(); got == "DefaultProvider" {
-			t.Fatalf("%s registered as DefaultProvider; want provider-specific concrete type", id)
-		}
-	}
 }
 
 func TestDefinitionsReturnsAllBuiltins(t *testing.T) {
@@ -47,29 +33,14 @@ func TestDefinitionsReturnsAllBuiltins(t *testing.T) {
 	}
 }
 
-func TestHealthCheckModelFallsBackToFirstDiscoveredStaticModel(t *testing.T) {
-	def := provider.Definition{Models: provider.ModelDiscovery{Values: []string{"first-model", "second-model"}}}
-	if got := provider.HealthCheckModel(def); got != "first-model" {
-		t.Fatalf("HealthCheckModel() = %q, want first-model", got)
-	}
-	def.DefaultModel = "explicit-model"
+func TestHealthCheckModelReturnsDefaultModel(t *testing.T) {
+	def := provider.Definition{DefaultModel: "explicit-model"}
 	if got := provider.HealthCheckModel(def); got != "explicit-model" {
-		t.Fatalf("HealthCheckModel() with DefaultModel = %q, want explicit-model", got)
+		t.Fatalf("HealthCheckModel() = %q, want explicit-model", got)
 	}
-}
-
-func TestGetNormalizesID(t *testing.T) {
-	cases := map[string]string{
-		"OpenAI": "openai", " anthropic ": "anthropic",
-	}
-	for alias, want := range cases {
-		p, ok := provider.Get(alias)
-		if !ok {
-			t.Fatalf("Get(%q) not found", alias)
-		}
-		if got := p.Definition().ID; got != want {
-			t.Errorf("Get(%q).Definition().ID = %q, want %q", alias, got, want)
-		}
+	def.DefaultModel = ""
+	if got := provider.HealthCheckModel(def); got != "" {
+		t.Fatalf("HealthCheckModel() with empty DefaultModel = %q, want empty", got)
 	}
 }
 
@@ -86,16 +57,7 @@ func TestDuplicateRegistrationPanics(t *testing.T) {
 			t.Fatal("Register of duplicate ID did not panic")
 		}
 	}()
-	provider.Register(dupProvider{})
-}
-
-// dupProvider collides with the built-in "openai" ID to assert Register panics
-// on duplicates (mirroring database/sql.Register).
-type dupProvider struct{}
-
-func (dupProvider) Definition() provider.Definition { return provider.Definition{ID: "openai"} }
-func (dupProvider) NewAuthenticator(context.Context, provider.UpstreamRuntime) (provider.Authenticator, error) {
-	return provider.NoopAuthenticator{}, nil
+	provider.Register(provider.Definition{ID: "openai"})
 }
 
 // hasCredentialField reports whether d declares a credential field named name.

@@ -7,14 +7,14 @@ import "github.com/nyroway/nyro/go/internal/provider"
 // serializable view derived from the single source of truth
 // (provider.Definitions): no channels, no OAuth, English-only names.
 type presetView struct {
-	ID              string             `json:"id"`
-	Name            string             `json:"name"`
-	Priority        int                `json:"priority"`
-	DefaultProtocol string             `json:"default_protocol"`
-	DefaultModel    string             `json:"default_model,omitempty"`
-	Protocols       []presetProtocol   `json:"protocols"`
-	Credentials     credentialView     `json:"credentials"`
-	Models          modelDiscoveryView `json:"models"`
+	ID              string           `json:"id"`
+	Name            string           `json:"name"`
+	Priority        int              `json:"priority"`
+	DefaultProtocol string           `json:"default_protocol"`
+	DefaultModel    string           `json:"default_model,omitempty"`
+	Protocols       []presetProtocol `json:"protocols"`
+	Credentials     credentialView   `json:"credentials"`
+	ModelsURL       string           `json:"models_url,omitempty"`
 }
 
 type presetProtocol struct {
@@ -42,12 +42,6 @@ type credentialFieldView struct {
 type protocolCredentialsView struct {
 	Protocol string                `json:"protocol"`
 	Fields   []credentialFieldView `json:"fields"`
-}
-
-type modelDiscoveryView struct {
-	Kind   string   `json:"kind"`
-	URL    string   `json:"url,omitempty"`
-	Values []string `json:"values,omitempty"`
 }
 
 // toCredentialFieldViews projects provider.CredentialField values into their
@@ -78,11 +72,7 @@ func toPresetView(d provider.Definition) presetView {
 		DefaultModel:    d.DefaultModel,
 		Protocols:       make([]presetProtocol, 0, len(d.Protocols)),
 		Credentials:     credentialView{Fields: toCredentialFieldViews(d.Credentials.Fields)},
-		Models: modelDiscoveryView{
-			Kind:   d.Models.Kind,
-			URL:    d.Models.URL,
-			Values: d.Models.Values,
-		},
+		ModelsURL:       d.ModelsURL,
 	}
 	for _, p := range d.Protocols {
 		pv.Protocols = append(pv.Protocols, presetProtocol{ID: p.ID, BaseURL: p.BaseURL})

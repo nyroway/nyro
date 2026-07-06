@@ -7,23 +7,6 @@ import (
 	"net/http"
 )
 
-// DefaultProvider provides common Provider behavior for providers that only
-// need to override specific hooks such as authentication or request
-// preparation. It aggregates one Definition for static data and returns a
-// no-op authenticator by default.
-type DefaultProvider struct {
-	Def Definition
-}
-
-// Definition returns the provider's static description.
-func (p DefaultProvider) Definition() Definition { return p.Def }
-
-// NewAuthenticator returns a no-op authenticator by default; providers
-// override it to apply real authentication or request signing.
-func (p DefaultProvider) NewAuthenticator(context.Context, UpstreamRuntime) (Authenticator, error) {
-	return NoopAuthenticator{}, nil
-}
-
 // NoopAuthenticator leaves outbound requests unchanged.
 type NoopAuthenticator struct{}
 

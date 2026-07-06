@@ -109,12 +109,12 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			}
 			modelsURL := modelsDiscoveryURL(u.Protocol, u.BaseURL)
 			req, _ := http.NewRequest("GET", modelsURL, nil)
-			auth, authErr := provider.AuthenticatorFor(u.Protocol, provider.UpstreamRuntime{
+			auth, authErr := provider.AuthenticatorFor(u.Provider, u.Protocol, provider.UpstreamRuntime{
 				Name:            u.Name,
+				Provider:        u.Provider,
 				Protocol:        u.Protocol,
 				BaseURL:         u.BaseURL,
 				CredentialsJSON: u.CredentialsJSON,
-				ModelsJSON:      u.ModelsJSON,
 				ProxyURL:        u.ProxyURL,
 			})
 			if authErr != nil {
