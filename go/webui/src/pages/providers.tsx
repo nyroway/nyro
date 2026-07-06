@@ -1241,7 +1241,7 @@ export default function ProvidersPage() {
                           base_url: baseUrl,
                           proxy_url: editForm.proxy_url ?? "",
                           models_url: editForm.models_url ?? "",
-                          models: editForm.models || undefined,
+                          models: editForm.models ?? "",
                           credentials: editForm.credentials && Object.keys(editForm.credentials).length
                             ? editForm.credentials
                             : undefined,

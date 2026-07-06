@@ -71,6 +71,10 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				badRequest(w, err)
 				return
 			}
+			if err := validateNewUpstreamFields(in.Provider, in.BaseURL, in.ModelsJSON, in.ModelsURL); err != nil {
+				badRequest(w, err)
+				return
+			}
 			if exists, _ := s.Upstreams().ExistsByName(in.Name, ""); exists {
 				conflict(w, "upstream name already exists")
 				return
@@ -87,10 +91,28 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				badRequest(w, err)
 				return
 			}
-			u, err := s.Upstreams().Update(chi.URLParam(r, "id"), in)
+			normalizeEmptyModelsJSON(&in)
+			id := chi.URLParam(r, "id")
+			existing, err := s.Upstreams().Get(id)
+			if err != nil || existing == nil {
+				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
+				return
+			}
+			modelsJSON, modelsURL := existing.ModelsJSON, existing.ModelsURL
+			if in.ModelsJSON != nil {
+				modelsJSON = *in.ModelsJSON
+			}
+			if in.ModelsURL != nil {
+				modelsURL = *in.ModelsURL
+			}
+			if err := validateModelsMutualExclusion(modelsJSON, modelsURL); err != nil {
+				badRequest(w, err)
+				return
+			}
+			u, err := s.Upstreams().Update(id, in)
 			if err == nil {
 				bumpEpoch(s)
-				discoveryCache.invalidate(chi.URLParam(r, "id"))
+				discoveryCache.invalidate(id)
 			}
 			ok(w, u, err)
 		})

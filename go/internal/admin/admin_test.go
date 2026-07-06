@@ -330,6 +330,48 @@ func TestUpstreamModelsLiveDiscoveryCached(t *testing.T) {
 	}
 }
 
+// TestUpstreamModelsDiscoveryHTTPErrorSurfaced verifies a non-2xx discovery
+// response (e.g. an auth failure) is surfaced as an error rather than
+// silently decoding to an empty model list and being cached as a success —
+// a body with no "data" array (which a 401/403 error page commonly has)
+// must not be mistaken for "zero models available".
+func TestUpstreamModelsDiscoveryHTTPErrorSurfaced(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid api key"}`))
+	}))
+	defer ts.Close()
+
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"m7","provider":"custom","base_url":"https://x","credentials":{"api_key":"k"},"models_url":"`+ts.URL+`/models"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = do(r, "GET", "/api/v1/upstreams/"+u.ID+"/models", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("models → %d %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Models []string `json:"models"`
+		Error  string   `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Error == "" {
+		t.Errorf("expected a non-empty error for a 401 discovery response, got %+v", out)
+	}
+	if len(out.Models) != 0 {
+		t.Errorf("models = %+v, want empty on discovery error", out.Models)
+	}
+}
+
 // TestUpstreamModelsCacheInvalidatedOnUpdate verifies that updating an
 // upstream's models_url invalidates the previously cached discovery result,
 // so the new endpoint's models are served (not the stale cached ones).
@@ -389,6 +431,103 @@ func TestUpstreamModelsCacheInvalidatedOnUpdate(t *testing.T) {
 	}
 	if hits2 != 1 {
 		t.Errorf("hits2 = %d, want 1 (stale ts1 cache entry must not leak into this response)", hits2)
+	}
+}
+
+// TestCreateUpstreamRejectsInvalidFields verifies the admin REST API enforces
+// the same invariants as the YAML config-loading path (see
+// go/docs/schema/config.md): provider is required and must resolve to a
+// known preset or "custom", models/models_url are mutually exclusive, and
+// "custom" requires an explicit base_url.
+func TestCreateUpstreamRejectsInvalidFields(t *testing.T) {
+	r, _ := newEngine(t, "")
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"missing provider", `{"name":"a","credentials":{"api_key":"k"}}`},
+		{"unknown provider", `{"name":"a","provider":"nope","credentials":{"api_key":"k"}}`},
+		{"models and models_url both set", `{"name":"a","provider":"openai","models":["m1"],"models_url":"https://x/models","credentials":{"api_key":"k"}}`},
+		{"custom missing base_url", `{"name":"a","provider":"custom","credentials":{"api_key":"k"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(r, "POST", "/api/v1/upstreams", "", []byte(tc.body))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("create → %d %s, want 400", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestUpdateUpstreamRejectsModelsMutualExclusion verifies an update that
+// would leave both models and models_url set on the merged (existing +
+// incoming) state is rejected, even when only one of the two fields is
+// present in the update payload.
+func TestUpdateUpstreamRejectsModelsMutualExclusion(t *testing.T) {
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"m5","provider":"custom","base_url":"https://x","credentials":{"api_key":"k"},"models":["m1"]}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	// Setting models_url without clearing the existing static `models` list
+	// must be rejected, not silently leave both set.
+	rec = do(r, "PUT", "/api/v1/upstreams/"+u.ID, "", []byte(`{"models_url":"https://x/models"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("update → %d %s, want 400 (models + models_url would both be set)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateUpstreamClearsModelsWhenSwitchingToDiscovery verifies that
+// sending an empty `models` array (as the WebUI does when switching a
+// static-list upstream to URL discovery — see go-adapter.ts's
+// updateUpstreamFromProvider) actually clears models_json, rather than
+// persisting the literal empty-array string "[]" (which would read back as
+// "a static list is still present" and shadow the new models_url both in
+// modelsForUpstream and in the mutual-exclusion check on the next update).
+func TestUpdateUpstreamClearsModelsWhenSwitchingToDiscovery(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"discovered-a"}]}`))
+	}))
+	defer ts.Close()
+
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"m6","provider":"custom","base_url":"https://x","credentials":{"api_key":"k"},"models":["m1","m2"]}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	// Switch to discovery: clear models (sent as []), set models_url.
+	rec = do(r, "PUT", "/api/v1/upstreams/"+u.ID, "",
+		[]byte(`{"models":[],"models_url":"`+ts.URL+`/models"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update → %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = do(r, "GET", "/api/v1/upstreams/"+u.ID+"/models", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("models → %d %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Models) != 1 || out.Models[0] != "discovered-a" {
+		t.Errorf("models = %+v, want [discovered-a] (the manual list should no longer shadow discovery)", out.Models)
 	}
 }
 

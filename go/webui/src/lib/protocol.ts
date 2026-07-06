@@ -1,14 +1,14 @@
 /**
- * Protocol utilities — mirrors the backend three-layer identity model
+ * Protocol utilities — mirrors the backend protocol identity model
  * (go/internal/protocol/ids).
  *
- * Three orthogonal concepts:
- *   Protocol  — suite / wire-format family  (e.g. "openai-chatcompletions")
- *   Endpoint  — specific API path           (e.g. "chat-completions")
- *   Vendor    — provider organisation       (e.g. "openai")
+ * A Protocol identifies one concrete wire-format API surface (an
+ * "interface"), vendor-prefixed but vendor-orthogonal in use. The canonical
+ * endpoint form is `{protocol}/{version}` (e.g. "openai-chatcompletions/v1")
+ * — there is no separate "endpoint name" layer.
  *
- * UI only surfaces the Protocol display name; endpoints and versions are
- * internal implementation details not shown to users.
+ * UI only surfaces the Protocol display name; the version is an internal
+ * implementation detail not shown to users.
  *
  * Each protocol has exactly one short alias — keep this table in sync with
  * go/internal/protocol/ids/ids.go's ParseProtocol. There is no legacy/
@@ -49,7 +49,7 @@ export const PROTOCOL_TABLE: ProtocolMeta[] = [
   {
     id: "openai-chatcompletions",
     name: "ChatCompletions API",
-    fullName: "OpenAI ChatCompletions API",
+    fullName: "OpenAI Chat Completions API",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
@@ -78,8 +78,8 @@ export const PROTOCOL_TABLE: ProtocolMeta[] = [
   },
   {
     id: "azure-modelinference",
-    name: "Inference API",
-    fullName: "Azure Inference API",
+    name: "ModelInference API",
+    fullName: "Azure AI Model Inference API",
     defaultBaseUrl: "",
   },
 ];
@@ -95,13 +95,13 @@ const PROTOCOL_ALIASES: Record<string, Protocol> = {
   openai: "openai-chatcompletions",
 
   "openai-responses": "openai-responses",
-  openaix: "openai-responses",
+  responses: "openai-responses",
 
   "gemini-generatecontent": "gemini-generatecontent",
   gemini: "gemini-generatecontent",
 
   "gemini-interactions": "gemini-interactions",
-  geminix: "gemini-interactions",
+  interactions: "gemini-interactions",
 
   "bedrock-converse": "bedrock-converse",
   bedrock: "bedrock-converse",

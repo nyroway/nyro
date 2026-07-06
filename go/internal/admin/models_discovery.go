@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -132,6 +133,9 @@ func fetchModels(ctx context.Context, u storage.Upstream, discoveryURL string) (
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("discovery request failed: %s", resp.Status)
+	}
 	var body struct {
 		Data []struct {
 			ID string `json:"id"`
