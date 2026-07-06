@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -67,8 +68,42 @@ type UpstreamSpec struct {
 	BaseURL     string            `yaml:"base_url,omitempty"`
 	Credentials map[string]string `yaml:"credentials,omitempty"`
 	Proxy       UpstreamProxySpec `yaml:"proxy,omitempty"`
-	Models      []string          `yaml:"models,omitempty"`
-	Enabled     *bool             `yaml:"enabled,omitempty"`
+	// Models is the static model list (mutually exclusive with ModelsURL).
+	Models []string `yaml:"models,omitempty"`
+	// ModelsURL is a discovery endpoint queried at runtime for this upstream's
+	// model list (mutually exclusive with Models). Known providers may omit
+	// it and fall back to the preset's default discovery URL; "custom" has no
+	// preset, so it must set ModelsURL or Models explicitly.
+	ModelsURL string `yaml:"models_url,omitempty"`
+	Enabled   *bool  `yaml:"enabled,omitempty"`
+}
+
+// validate checks the fields that ApplyTo cannot recover from by falling
+// back to a provider preset: provider is required (it is now persisted
+// control-plane metadata, not just an input-only template key), models and
+// models_url are mutually exclusive, and "custom" — having no preset to fall
+// back on — must supply both a base_url and a model source (models or
+// models_url).
+func (u UpstreamSpec) validate() error {
+	if strings.TrimSpace(u.Provider) == "" {
+		return fmt.Errorf("upstream %q: provider is required", u.Name)
+	}
+	if len(u.Models) > 0 && u.ModelsURL != "" {
+		return fmt.Errorf("upstream %q: models and models_url are mutually exclusive", u.Name)
+	}
+	if u.Provider == "custom" {
+		if u.BaseURL == "" {
+			return fmt.Errorf("upstream %q: base_url is required for provider \"custom\"", u.Name)
+		}
+		if u.ModelsURL == "" && len(u.Models) == 0 {
+			return fmt.Errorf("upstream %q: provider \"custom\" requires models or models_url", u.Name)
+		}
+		return nil
+	}
+	if _, ok := provider.Lookup(u.Provider); !ok {
+		return fmt.Errorf("upstream %q: unknown provider %q", u.Name, u.Provider)
+	}
+	return nil
 }
 
 // ── routes ──
@@ -168,41 +203,39 @@ func LoadYAML(path string) (*Config, []string, error) {
 func (c *Config) ApplyTo(st storage.Storage) error {
 	upstreamIDs := map[string]string{}
 	for _, u := range c.Upstreams {
+		if err := u.validate(); err != nil {
+			return err
+		}
 		credsJSON, err := json.Marshal(u.Credentials)
 		if err != nil {
 			return fmt.Errorf("encode credentials for upstream %q: %w", u.Name, err)
 		}
-		protocolVal, baseURL, models := u.Protocol, u.BaseURL, u.Models
-		if u.Provider != "" {
-			if def, ok := provider.Lookup(u.Provider); ok {
-				if protocolVal == "" {
-					protocolVal = def.DefaultProtocol
-				}
-				if baseURL == "" {
-					for _, p := range def.Protocols {
-						if p.ID == protocolVal {
-							baseURL = p.BaseURL
-							break
-						}
+		protocolVal, baseURL := u.Protocol, u.BaseURL
+		if def, ok := provider.Lookup(u.Provider); ok {
+			if protocolVal == "" {
+				protocolVal = def.DefaultProtocol
+			}
+			if baseURL == "" {
+				for _, p := range def.Protocols {
+					if p.ID == protocolVal {
+						baseURL = p.BaseURL
+						break
 					}
-				}
-				if len(models) == 0 && def.Models.Kind == provider.KindStatic {
-					models = def.Models.Values
 				}
 			}
 		}
 
 		var modelsJSON []byte
-		if len(models) > 0 {
-			modelsJSON, err = json.Marshal(models)
+		if len(u.Models) > 0 {
+			modelsJSON, err = json.Marshal(u.Models)
 			if err != nil {
 				return fmt.Errorf("encode models for upstream %q: %w", u.Name, err)
 			}
 		}
 		created, err := st.Upstreams().Create(storage.CreateUpstream{
-			Name: u.Name, Protocol: protocolVal, BaseURL: baseURL,
-			CredentialsJSON: credsJSON, ModelsJSON: modelsJSON, ProxyURL: u.Proxy.URL,
-			Enabled: u.Enabled,
+			Name: u.Name, Provider: u.Provider, Protocol: protocolVal, BaseURL: baseURL,
+			CredentialsJSON: credsJSON, ModelsJSON: modelsJSON, ModelsURL: u.ModelsURL,
+			ProxyURL: u.Proxy.URL, Enabled: u.Enabled,
 		})
 		if err != nil {
 			return fmt.Errorf("create upstream %q: %w", u.Name, err)

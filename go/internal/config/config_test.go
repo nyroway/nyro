@@ -119,8 +119,9 @@ consumers:
 
 // TestApplyTo_ProviderTemplateExpansion verifies that an UpstreamSpec setting
 // only `provider` (plus credentials) expands to the vendor's default
-// protocol/base_url at ApplyTo time — provider is an input-only template key
-// and is never itself persisted to storage.
+// protocol/base_url at ApplyTo time. Provider is also persisted verbatim (it
+// anchors the control-plane preset, the model discovery fallback, and the
+// outbound auth scheme lookup).
 func TestApplyTo_ProviderTemplateExpansion(t *testing.T) {
 	cfg := &Config{
 		Upstreams: []UpstreamSpec{{
@@ -137,6 +138,9 @@ func TestApplyTo_ProviderTemplateExpansion(t *testing.T) {
 		t.Fatalf("upstream not seeded: %+v", ups)
 	}
 	u := ups[0]
+	if u.Provider != "openai" {
+		t.Errorf("Provider = %q, want openai to be persisted", u.Provider)
+	}
 	if u.Protocol != "openai-compatible" {
 		t.Errorf("Protocol = %q, want openai-compatible (from provider default)", u.Protocol)
 	}
@@ -171,6 +175,80 @@ func TestApplyTo_ProviderTemplateExplicitProtocolWins(t *testing.T) {
 	// base_url still filled in from the provider def for the explicit protocol.
 	if u.BaseURL != "https://api.openai.com/v1" {
 		t.Errorf("BaseURL = %q, want https://api.openai.com/v1 (from provider default for openai-responses)", u.BaseURL)
+	}
+}
+
+func TestApplyTo_RequiresProvider(t *testing.T) {
+	cfg := &Config{Upstreams: []UpstreamSpec{{Name: "x"}}}
+	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+		t.Error("expected error for missing provider")
+	}
+}
+
+func TestApplyTo_ModelsAndModelsURLMutuallyExclusive(t *testing.T) {
+	cfg := &Config{Upstreams: []UpstreamSpec{{
+		Name: "x", Provider: "openai", Models: []string{"gpt-4o"}, ModelsURL: "https://x/models",
+	}}}
+	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+		t.Error("expected error for models + models_url both set")
+	}
+}
+
+func TestApplyTo_UnknownProvider(t *testing.T) {
+	cfg := &Config{Upstreams: []UpstreamSpec{{Name: "x", Provider: "nope"}}}
+	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+		t.Error("expected error for unknown provider")
+	}
+}
+
+func TestApplyTo_CustomRequiresBaseURLAndModelSource(t *testing.T) {
+	cases := []struct {
+		name string
+		spec UpstreamSpec
+	}{
+		{"missing base_url", UpstreamSpec{Name: "x", Provider: "custom", ModelsURL: "https://x/models"}},
+		{"missing model source", UpstreamSpec{Name: "x", Provider: "custom", BaseURL: "https://x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{Upstreams: []UpstreamSpec{tc.spec}}
+			if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+				t.Errorf("expected error for %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestApplyTo_CustomWithBaseURLAndModels(t *testing.T) {
+	cfg := &Config{Upstreams: []UpstreamSpec{{
+		Name: "x", Provider: "custom", BaseURL: "https://x", Models: []string{"m1"},
+	}}}
+	st := memory.New()
+	core := st.Storage()
+	if err := cfg.ApplyTo(core); err != nil {
+		t.Fatalf("ApplyTo: %v", err)
+	}
+	got, _ := core.Upstreams().List()
+	if len(got) != 1 || got[0].Provider != "custom" || got[0].BaseURL != "https://x" {
+		t.Errorf("upstream not seeded as expected: %+v", got)
+	}
+}
+
+func TestApplyTo_PersistsModelsURL(t *testing.T) {
+	cfg := &Config{Upstreams: []UpstreamSpec{{
+		Name: "x", Provider: "openai", ModelsURL: "https://api.openai.com/v1/models", Credentials: map[string]string{"api_key": "sk-x"},
+	}}}
+	st := memory.New()
+	core := st.Storage()
+	if err := cfg.ApplyTo(core); err != nil {
+		t.Fatalf("ApplyTo: %v", err)
+	}
+	ups, _ := core.Upstreams().List()
+	if len(ups) != 1 || ups[0].ModelsURL != "https://api.openai.com/v1/models" {
+		t.Errorf("models_url not persisted: %+v", ups)
+	}
+	if len(ups[0].ModelsJSON) != 0 {
+		t.Errorf("models_json should be empty when models_url is set: %+v", ups[0].ModelsJSON)
 	}
 }
 
