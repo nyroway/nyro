@@ -892,11 +892,13 @@ export default function ProvidersPage() {
                   aria-label={presetLabel(preset, isZh)}
                 >
                   <ProviderIcon
+                    iconKey={preset.icon}
                     name={preset.icon ?? preset.label.en}
                     size={26}
                     className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
                   />
                   <ProviderIcon
+                    iconKey={preset.icon}
                     name={preset.icon ?? preset.label.en}
                     size={26}
                     monochrome
@@ -1131,11 +1133,13 @@ export default function ProvidersPage() {
                           aria-label={presetLabel(preset, isZh)}
                         >
                           <ProviderIcon
+                            iconKey={preset.icon}
                             name={preset.icon ?? preset.label.en}
                             size={26}
                             className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
                           />
                           <ProviderIcon
+                            iconKey={preset.icon}
                             name={preset.icon ?? preset.label.en}
                             size={26}
                             monochrome
@@ -1313,6 +1317,7 @@ export default function ProvidersPage() {
                   <div className="flex items-center gap-3">
                     <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100">
                       <ProviderIcon
+                        iconKey={selectedPreset?.icon}
                         name={p.name}
                         protocol={p.protocol}
                         baseUrl={p.base_url}
@@ -1320,6 +1325,7 @@ export default function ProvidersPage() {
                         className="provider-preset-icon provider-preset-icon-colored rounded-xl border border-slate-300/70 bg-transparent"
                       />
                       <ProviderIcon
+                        iconKey={selectedPreset?.icon}
                         name={p.name}
                         protocol={p.protocol}
                         baseUrl={p.base_url}
