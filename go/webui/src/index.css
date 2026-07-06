@@ -608,14 +608,15 @@ body {
  * of that period), or the first line drifts out of alignment with the
  * first stripe.
  *
- * The stripe rules below are written against the two-class selector
- * `.nyro-shadcn-input.model-textarea` (and its dark-theme equivalent),
- * deliberately more specific than plain `.nyro-shadcn-input` / its
- * `html[data-theme="dark"] .nyro-shadcn-input` override further down this
- * file. Those rules set `background` as a shorthand (e.g. `background:
- * #ffffff`), which resets `background-image` to `none` — a same-or-lower-
- * specificity `.model-textarea { background-image: ... }` would get
- * silently canceled by them regardless of source order.
+ * background-image is !important because this textarea also matches
+ * `.content-surface :is(input:not(...):not(...):not(...), select,
+ * textarea)` further down this file (and its html[data-theme="dark"]
+ * variant) — that :is() selector's specificity is that of its most specific
+ * branch (the input:not():not():not() one), so the whole rule outranks any
+ * plain class selector on the textarea regardless of source order. It also
+ * sets `background` as a shorthand, which resets background-image to
+ * `none`. Chasing specificity with more classes would be a fragile arms
+ * race against future global input styling; !important settles it.
  */
 .nyro-shadcn-input.model-textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -623,14 +624,14 @@ body {
   line-height: 24px;
   padding-top: 0;
   padding-bottom: 0;
-  background-attachment: local;
+  background-attachment: local !important;
   background-image: repeating-linear-gradient(
     to bottom,
     rgba(15, 23, 42, 0.045) 0px,
     rgba(15, 23, 42, 0.045) 24px,
     transparent 24px,
     transparent 48px
-  );
+  ) !important;
 }
 
 html[data-theme="dark"] .nyro-shadcn-input.model-textarea {
@@ -640,7 +641,7 @@ html[data-theme="dark"] .nyro-shadcn-input.model-textarea {
     rgba(255, 255, 255, 0.055) 24px,
     transparent 24px,
     transparent 48px
-  );
+  ) !important;
 }
 
 .provider-channel-group {
