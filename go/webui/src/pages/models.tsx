@@ -7,14 +7,13 @@ import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon,
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
-  CreateModel,
-  CreateModelBackend,
+  CreateRoute,
+  CreateRouteUpstream,
   ModelCapabilities,
-  Provider,
-  Model as ModelType,
+  Upstream,
+  Route,
   ModelBalance,
-  UpdateModel,
-  UpsertModelBackend,
+  UpdateRoute,
 } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
@@ -44,16 +43,17 @@ type ModelForm = {
 
 type ModelBackendForm = {
   id?: string;
-  provider_id: string;
+  upstream_id: string;
   model: string;
   weight: number;
   priority: number;
+  enabled: boolean;
 };
 
 const emptyCreate: ModelForm = {
   name: "",
   balance: "weighted",
-  targets: [{ provider_id: "", model: "", weight: 100, priority: 1 }],
+  targets: [{ upstream_id: "", model: "", weight: 100, priority: 1, enabled: true }],
   enable_auth: false,
   enable_payload: false,
 };
@@ -64,10 +64,12 @@ function FieldLabel({ children }: { children: string }) {
 
 function balanceLabel(value: ModelBalance, isZh: boolean) {
   if (value === "priority") return isZh ? "主备分级" : "Priority";
+  if (value === "cooldown") return isZh ? "故障冷却" : "Cooldown";
+  if (value === "latency") return isZh ? "最低延迟" : "Latency";
   return isZh ? "加权轮询" : "Weighted";
 }
 
-function hasProviderModelsEndpoint(provider?: Provider) {
+function hasProviderModelsEndpoint(provider?: Upstream) {
   return Boolean(provider);
 }
 
@@ -155,8 +157,8 @@ type TargetRowProps = {
   target: ModelBackendForm;
   balance: ModelBalance;
   isZh: boolean;
-  providerOptions: Array<{ value: string; label: string; provider: Provider }>;
-  providerMap: Map<string, Provider>;
+  providerOptions: Array<{ value: string; label: string; provider: Upstream }>;
+  providerMap: Map<string, Upstream>;
   onUpdate: (index: number, patch: Partial<ModelBackendForm>) => void;
   onRemove: (index: number) => void;
   disableRemove: boolean;
@@ -175,18 +177,18 @@ function TargetRow({
   disableRemove,
 }: TargetRowProps) {
   const [capsQueryModel, setCapsQueryModel] = useState("");
-  const provider = providerMap.get(target.provider_id);
+  const provider = providerMap.get(target.upstream_id);
   const providerHasModelDiscovery = hasProviderModelsEndpoint(provider);
 
   const { data: targetModels = [] } = useQuery<string[]>({
-    queryKey: ["provider-models", mode, index, target.provider_id],
-    queryFn: () => backend("get_provider_models", { id: target.provider_id }),
-    enabled: !!target.provider_id && providerHasModelDiscovery,
+    queryKey: ["provider-models", mode, index, target.upstream_id],
+    queryFn: () => backend("get_provider_models", { id: target.upstream_id }),
+    enabled: !!target.upstream_id && providerHasModelDiscovery,
     staleTime: 60_000,
   });
 
   useEffect(() => {
-    if (!target.provider_id || !providerHasModelDiscovery) {
+    if (!target.upstream_id || !providerHasModelDiscovery) {
       setCapsQueryModel("");
       return;
     }
@@ -194,37 +196,35 @@ function TargetRow({
       setCapsQueryModel(target.model.trim());
     }, 1000);
     return () => window.clearTimeout(handle);
-  }, [target.provider_id, target.model, providerHasModelDiscovery]);
+  }, [target.upstream_id, target.model, providerHasModelDiscovery]);
 
   const { data: modelCaps } = useQuery<ModelCapabilities | null>({
-    queryKey: ["model-capabilities", mode, index, target.provider_id, capsQueryModel],
+    queryKey: ["model-capabilities", mode, index, target.upstream_id, capsQueryModel],
     queryFn: async () => {
-      if (!target.provider_id || !capsQueryModel.trim()) return null;
+      if (!target.upstream_id || !capsQueryModel.trim()) return null;
       try {
         return await backend<ModelCapabilities>("get_model_capabilities", {
-          providerId: target.provider_id,
+          providerId: target.upstream_id,
           model: capsQueryModel.trim(),
         });
       } catch {
         return null;
       }
     },
-    enabled: Boolean(target.provider_id && capsQueryModel.trim() && providerHasModelDiscovery),
+    enabled: Boolean(target.upstream_id && capsQueryModel.trim() && providerHasModelDiscovery),
     retry: false,
     staleTime: 60_000,
   });
 
-  const rowClassName = balance === "weighted"
-    ? "grid w-full grid-cols-[minmax(0,2.8fr)_minmax(0,5.2fr)_minmax(0,1.25fr)_32px] items-center gap-2.5"
-    : "grid w-full grid-cols-[minmax(0,2.8fr)_minmax(0,5.2fr)_minmax(0,1.25fr)_32px] items-center gap-2.5";
+  const rowClassName = "grid w-full grid-cols-[minmax(0,2.6fr)_minmax(0,4.8fr)_minmax(0,1.4fr)_28px_32px] items-center gap-2.5";
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
       <div className={rowClassName}>
         <Select
-          value={target.provider_id || undefined}
+          value={target.upstream_id || undefined}
           onValueChange={(value) => {
-            onUpdate(index, { provider_id: value, model: "" });
+            onUpdate(index, { upstream_id: value, model: "" });
             setCapsQueryModel("");
           }}
         >
@@ -282,20 +282,34 @@ function TargetRow({
             onChange={(e) => onUpdate(index, { weight: Math.max(0, Number(e.target.value || 0)) })}
             placeholder={isZh ? "权重" : "Weight"}
           />
+        ) : balance === "priority" ? (
+          <Input
+            className="bg-white"
+            type="number"
+            value={target.priority}
+            onChange={(e) => onUpdate(index, { priority: Number(e.target.value || 0) })}
+            placeholder={isZh ? "优先级（越小越优先）" : "Priority (lower = higher)"}
+          />
         ) : (
-          <Select
-            value={String(target.priority)}
-            onValueChange={(value) => onUpdate(index, { priority: Number(value) })}
-          >
-            <SelectTrigger className="bg-white">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">{isZh ? "主" : "Primary"}</SelectItem>
-              <SelectItem value="2">{isZh ? "备" : "Fallback"}</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="truncate rounded-lg border border-dashed border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-400">
+            {balance === "latency"
+              ? (isZh ? "按延迟自动排序" : "Ordered by latency automatically")
+              : (isZh ? "按声明顺序，自动跳过冷却中的目标" : "Declared order, skips targets in cooldown")}
+          </div>
         )}
+
+        <button
+          type="button"
+          onClick={() => onUpdate(index, { enabled: !target.enabled })}
+          title={target.enabled ? (isZh ? "禁用该目标" : "Disable target") : (isZh ? "启用该目标" : "Enable target")}
+          className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100"
+        >
+          {target.enabled ? (
+            <ToggleRight className="h-4 w-4 text-green-500" />
+          ) : (
+            <ToggleLeft className="h-4 w-4 text-slate-400" />
+          )}
+        </button>
 
         <button
           type="button"
@@ -324,7 +338,7 @@ export default function ModelsPage() {
   const [createForm, setCreateForm] = useState<ModelForm>(emptyCreate);
   const [editForm, setEditForm] = useState<(ModelForm & { id: string }) | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [modelToDelete, setModelToDelete] = useState<ModelType | null>(null);
+  const [modelToDelete, setModelToDelete] = useState<Route | null>(null);
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
 
   function formatErrorMessage(error: unknown) {
@@ -338,13 +352,13 @@ export default function ModelsPage() {
     });
   }
 
-  const { data: routes = [], isLoading } = useQuery<ModelType[]>({
+  const { data: routes = [], isLoading } = useQuery<Route[]>({
     queryKey: ["routes"],
-    queryFn: () => backend("list_models"),
+    queryFn: () => backend("list_routes"),
   });
-  const { data: providers = [] } = useQuery<Provider[]>({
+  const { data: providers = [] } = useQuery<Upstream[]>({
     queryKey: ["providers"],
-    queryFn: () => backend("get_providers"),
+    queryFn: () => backend("list_upstreams"),
   });
   const { data: globalEnablePayload } = useQuery<string | null>({
     queryKey: ["setting", "enable_payload"],
@@ -355,7 +369,7 @@ export default function ModelsPage() {
   );
 
   const createMut = useMutation({
-    mutationFn: (input: CreateModel) => backend("create_model", { input }),
+    mutationFn: (input: CreateRoute) => backend("create_route", { input }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["routes"] });
       setShowForm(false);
@@ -366,7 +380,7 @@ export default function ModelsPage() {
     },
   });
   const updateMut = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: UpdateModel }) => backend("update_model", { id, input }),
+    mutationFn: ({ id, input }: { id: string; input: UpdateRoute }) => backend("update_route", { id, input }),
     onSuccess: () => {
       setEditError(null);
       setEditingId(null);
@@ -379,18 +393,18 @@ export default function ModelsPage() {
     },
   });
   const deleteMut = useMutation({
-    mutationFn: (id: string) => backend("delete_model", { id }),
+    mutationFn: (id: string) => backend("delete_route", { id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
     onError: (error: unknown) => {
       showErrorDialog("删除模型失败", "Failed to delete model", error);
     },
   });
 
-  const [modelToDisable, setModelToDisable] = useState<ModelType | null>(null);
+  const [modelToDisable, setModelToDisable] = useState<Route | null>(null);
 
   const toggleEnabledMut = useMutation({
-    mutationFn: ({ id, is_enabled }: { id: string; is_enabled: boolean }) =>
-      backend("update_model", { id, input: { is_enabled } }),
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      backend("update_route", { id, input: { enabled } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
     onError: (error: unknown) => {
       showErrorDialog("操作失败", "Operation failed", error);
@@ -410,21 +424,22 @@ export default function ModelsPage() {
     if (page > totalPages - 1) setPage(0);
   }, [page, totalPages]);
 
-  function startEdit(route: ModelType) {
+  function startEdit(route: Route) {
     setEditingId(route.id);
     setEditError(null);
-    const targets = route.targets?.length
-      ? route.targets.map((t) => ({
+    const targets = route.upstreams?.length
+      ? route.upstreams.map((t) => ({
           id: t.id,
-          provider_id: t.provider_id,
+          upstream_id: t.upstream_id,
           model: t.model,
           weight: t.weight ?? 100,
           priority: t.priority ?? 1,
+          enabled: t.enabled ?? true,
         }))
-      : [{ provider_id: route.target_provider, model: route.target_model, weight: 100, priority: 1 }];
+      : [{ upstream_id: "", model: "", weight: 100, priority: 1, enabled: true }];
     setEditForm({
       id: route.id,
-      name: route.name,
+      name: route.model,
       balance: route.balance ?? "weighted",
       targets,
       enable_auth: route.enable_auth,
@@ -453,13 +468,13 @@ export default function ModelsPage() {
   function addCreateTarget() {
     setCreateForm((prev) => ({
       ...prev,
-      targets: [...prev.targets, { provider_id: "", model: "", weight: 100, priority: 1 }],
+      targets: [...prev.targets, { upstream_id: "", model: "", weight: 100, priority: 1, enabled: true }],
     }));
   }
 
   function addEditTarget() {
     setEditForm((prev) => (prev
-      ? { ...prev, targets: [...prev.targets, { provider_id: "", model: "", weight: 100, priority: 1 }] }
+      ? { ...prev, targets: [...prev.targets, { upstream_id: "", model: "", weight: 100, priority: 1, enabled: true }] }
       : prev));
   }
 
@@ -525,6 +540,8 @@ export default function ModelsPage() {
                 <SelectContent>
                   <SelectItem value="weighted">{isZh ? "加权轮询" : "Weighted"}</SelectItem>
                   <SelectItem value="priority">{isZh ? "主备分级" : "Priority"}</SelectItem>
+                  <SelectItem value="cooldown">{isZh ? "故障冷却" : "Cooldown"}</SelectItem>
+                  <SelectItem value="latency">{isZh ? "最低延迟" : "Latency"}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -591,7 +608,7 @@ export default function ModelsPage() {
               disabled={
                 createMut.isPending ||
                 !createForm.name.trim() ||
-                createForm.targets.some((target) => !target.provider_id || !target.model.trim())
+                createForm.targets.some((target) => !target.upstream_id || !target.model.trim())
               }
             >
               {createMut.isPending ? (isZh ? "创建中..." : "Creating...") : (isZh ? "创建" : "Create")}
@@ -659,6 +676,8 @@ export default function ModelsPage() {
                         <SelectContent>
                           <SelectItem value="weighted">{isZh ? "加权轮询" : "Weighted"}</SelectItem>
                           <SelectItem value="priority">{isZh ? "主备分级" : "Priority"}</SelectItem>
+                          <SelectItem value="cooldown">{isZh ? "故障冷却" : "Cooldown"}</SelectItem>
+                          <SelectItem value="latency">{isZh ? "最低延迟" : "Latency"}</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -757,10 +776,10 @@ export default function ModelsPage() {
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600">{route.name}</code>
-                    {route.targets && route.targets.length > 1 && (
+                      <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600">{route.model}</code>
+                    {route.upstreams && route.upstreams.length > 1 && (
                       <Badge variant="success" className="connect-label-badge">
-                        {isZh ? `共 ${route.targets.length} 个目标` : `${route.targets.length} Targets`}
+                        {isZh ? `共 ${route.upstreams.length} 个目标` : `${route.upstreams.length} Targets`}
                       </Badge>
                     )}
                     <Badge
@@ -779,7 +798,7 @@ export default function ModelsPage() {
                         {isZh ? "记录载荷" : "Payloads"}
                       </Badge>
                     )}
-                    {!route.is_enabled && (
+                    {!route.enabled && (
                       <Badge variant="danger" className="connect-label-badge">
                         {isZh ? "已禁用" : "Disabled"}
                       </Badge>
@@ -790,16 +809,16 @@ export default function ModelsPage() {
                 <div className="flex items-center gap-0.5">
                   <button
                     onClick={() => {
-                      if (route.is_enabled) {
+                      if (route.enabled) {
                         setModelToDisable(route);
                       } else {
-                        toggleEnabledMut.mutate({ id: route.id, is_enabled: true });
+                        toggleEnabledMut.mutate({ id: route.id, enabled: true });
                       }
                     }}
-                    title={route.is_enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
+                    title={route.enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
                     className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
                   >
-                    {route.is_enabled ? (
+                    {route.enabled ? (
                       <ToggleRight className="h-4 w-4 text-green-500" />
                     ) : (
                       <ToggleLeft className="h-4 w-4 text-slate-400" />
@@ -861,7 +880,7 @@ export default function ModelsPage() {
         confirmText={isZh ? "禁用" : "Disable"}
         onConfirm={() => {
           if (!modelToDisable) return;
-          toggleEnabledMut.mutate({ id: modelToDisable.id, is_enabled: false });
+          toggleEnabledMut.mutate({ id: modelToDisable.id, enabled: false });
           setModelToDisable(null);
         }}
       />
@@ -874,8 +893,8 @@ export default function ModelsPage() {
         description={
           modelToDelete
             ? (isZh
-              ? `此操作不可撤销。确认删除「${modelToDelete.name}」吗？`
-              : `This action cannot be undone. Delete "${modelToDelete.name}"?`)
+              ? `此操作不可撤销。确认删除「${modelToDelete.model}」吗？`
+              : `This action cannot be undone. Delete "${modelToDelete.model}"?`)
             : undefined
         }
         cancelText={isZh ? "取消" : "Cancel"}
@@ -901,40 +920,35 @@ export default function ModelsPage() {
   );
 }
 
-function buildCreatePayload(form: ModelForm): CreateModel {
-  const targets: CreateModelBackend[] = form.targets.map((target) => ({
-    provider_id: target.provider_id,
+function buildCreatePayload(form: ModelForm): CreateRoute {
+  const upstreams: CreateRouteUpstream[] = form.targets.map((target) => ({
+    upstream_id: target.upstream_id,
     model: target.model.trim(),
     weight: target.weight,
     priority: target.priority,
+    enabled: target.enabled,
   }));
-  const primary = targets[0] ?? { provider_id: "", model: "" };
   return {
-    name: form.name.trim(),
+    model: form.name.trim(),
     balance: form.balance,
-    targets,
-    target_provider: primary.provider_id,
-    target_model: primary.model,
+    upstreams,
     enable_auth: form.enable_auth,
     enable_payload: form.enable_payload,
   };
 }
 
-function buildUpdatePayload(form: ModelForm & { id: string }): UpdateModel {
-  const targets: UpsertModelBackend[] = form.targets.map((target) => ({
-    id: target.id,
-    provider_id: target.provider_id,
+function buildUpdatePayload(form: ModelForm & { id: string }): UpdateRoute {
+  const upstreams: CreateRouteUpstream[] = form.targets.map((target) => ({
+    upstream_id: target.upstream_id,
     model: target.model.trim(),
     weight: target.weight,
     priority: target.priority,
+    enabled: target.enabled,
   }));
-  const primary = targets[0] ?? { provider_id: "", model: "" };
   return {
-    name: form.name.trim(),
+    model: form.name.trim(),
     balance: form.balance,
-    targets,
-    target_provider: primary.provider_id,
-    target_model: primary.model,
+    upstreams,
     enable_auth: form.enable_auth,
     enable_payload: form.enable_payload,
   };

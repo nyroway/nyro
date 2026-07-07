@@ -48,7 +48,7 @@ export interface RouteUpstream {
   created_at?: string;
 }
 
-export type ModelBalance = "weighted" | "priority";
+export type ModelBalance = "weighted" | "priority" | "cooldown" | "latency";
 
 export interface Route {
   id: string;
