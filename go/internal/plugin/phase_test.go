@@ -43,7 +43,7 @@ func TestRunPhaseHooksInvokesRegisteredHook(t *testing.T) {
 	if got := atomic.LoadInt32(&n); got != 1 {
 		t.Errorf("hook fired on wrong phase: %d", got)
 	}
-	if Kernel().Count() < 1 {
-		t.Error("Kernel should report the registered hook")
+	if len(hooks) < 1 {
+		t.Error("hooks should contain the registered hook")
 	}
 }

@@ -10,7 +10,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/nyroway/nyro/go/internal/observability"
-	"github.com/nyroway/nyro/go/internal/plugin"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/webutil"
@@ -421,9 +420,6 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				return
 			}
 			webutil.JSON(w, http.StatusOK, st)
-		})
-		g.Get("/extensions", func(w http.ResponseWriter, r *http.Request) {
-			webutil.JSON(w, http.StatusOK, map[string]any{"count": plugin.Kernel().Count()})
 		})
 		g.Get("/provider-presets", func(w http.ResponseWriter, r *http.Request) {
 			defs := provider.Definitions()
