@@ -141,6 +141,22 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			}
 			streamSavedUpstreamHealth(w, r, s, *u)
 		})
+		g.Post("/upstreams/{id}/routes/import/stream", func(w http.ResponseWriter, r *http.Request) {
+			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
+			if err != nil || u == nil {
+				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
+				return
+			}
+			streamImportUpstreamRoutes(w, r, s, *u)
+		})
+		g.Get("/upstreams/{id}/routes/import/preview", func(w http.ResponseWriter, r *http.Request) {
+			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
+			if err != nil || u == nil {
+				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
+				return
+			}
+			previewUpstreamRouteImport(w, r, s, *u)
+		})
 		g.Get("/upstreams/{id}/models", func(w http.ResponseWriter, r *http.Request) {
 			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
 			if err != nil || u == nil {

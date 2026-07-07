@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, streamProviderDraftHealth, streamProviderHealth } from "@/lib/backend";
+import { backend, streamProviderDraftHealth, streamProviderHealth, streamProviderRouteImport } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
   Provider,
@@ -8,6 +8,8 @@ import type {
   UpdateProvider,
   TestResult,
   ProviderHealthEvent,
+  RouteImportEvent,
+  RouteImportPreview,
   ProviderPreset,
   ProviderChannelPreset,
   ProviderCredentialField,
@@ -30,12 +32,12 @@ import {
   Info,
   ToggleRight,
   ToggleLeft,
+  Route as RouteIcon,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -172,17 +174,6 @@ function presetChannels(preset?: ProviderPreset | null) {
   return preset?.channels?.length ? preset.channels : [fallbackChannelPreset()];
 }
 
-function nextProviderCopyName(providers: Provider[], originalName: string) {
-  const base = `${originalName}_Copy`;
-  const existingNames = new Set(providers.map((provider) => provider.name));
-  if (!existingNames.has(base)) return base;
-
-  for (let index = 2; ; index += 1) {
-    const candidate = `${base}${index}`;
-    if (!existingNames.has(candidate)) return candidate;
-  }
-}
-
 function resolvePresetConfig(
   preset: ProviderPreset,
   protocol: ProviderProtocol,
@@ -218,6 +209,14 @@ const DEFAULT_CREDENTIAL_FIELDS: ProviderCredentialField[] = [
 
 function credentialFieldsForPreset(preset?: ProviderPreset | null): ProviderCredentialField[] {
   return preset?.credentialFields?.length ? preset.credentialFields : DEFAULT_CREDENTIAL_FIELDS;
+}
+
+function splitApiKeyCredentialField(fields: ProviderCredentialField[]) {
+  const apiKeyField = fields.find((field) => field.name === "api_key") ?? null;
+  return {
+    apiKeyField,
+    otherFields: fields.filter((field) => field.name !== "api_key"),
+  };
 }
 
 // Model discovery is either a remote URL or a static list — mutually
@@ -484,17 +483,17 @@ export default function ProvidersPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [routeImportingId, setRouteImportingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, TestResult>>(loadProviderTestResults);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [testLogs, setTestLogs] = useState<TestLogEntry[]>([]);
   const [isTestRunning, setIsTestRunning] = useState(false);
   const [testTarget, setTestTarget] = useState<Provider | null>(null);
-  const [testDialogMode, setTestDialogMode] = useState<"provider" | "create">("provider");
+  const [testDialogMode, setTestDialogMode] = useState<"provider" | "create" | "route_import">("provider");
   const [pendingCreateInput, setPendingCreateInput] = useState<CreateProvider | null>(null);
   const [createHealthPassed, setCreateHealthPassed] = useState(false);
   const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
-  const [providerToCopy, setProviderToCopy] = useState<Provider | null>(null);
-  const [appendTargets, setAppendTargets] = useState(false);
+  const [routeImportPreview, setRouteImportPreview] = useState<{ provider: Provider; preview: RouteImportPreview } | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState("");
   const [modelsMode, setModelsMode] = useState<ModelsMode>("url");
   const [editModelsMode, setEditModelsMode] = useState<ModelsMode>("url");
@@ -573,18 +572,6 @@ export default function ProvidersPage() {
     },
   });
 
-  const copyMut = useMutation({
-    mutationFn: ({ id, appendTargets }: { id: string; appendTargets: boolean }) =>
-      backend<Provider>("copy_provider", { id, options: { append_targets: appendTargets } }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["providers"] });
-      qc.invalidateQueries({ queryKey: ["routes"] });
-    },
-    onError: (error: unknown) => {
-      showErrorDialog("复制提供商失败", "Failed to copy provider", error);
-    },
-  });
-
   const [providerToDisable, setProviderToDisable] = useState<Provider | null>(null);
 
   const toggleEnabledMut = useMutation({
@@ -617,6 +604,7 @@ export default function ProvidersPage() {
     activeTestAbortRef.current = null;
     setIsTestRunning(false);
     setTestingId(null);
+    setRouteImportingId(null);
     setTestDialogOpen(false);
     setPendingCreateInput(null);
     setCreateHealthPassed(false);
@@ -707,6 +695,17 @@ export default function ProvidersPage() {
     }
   }
 
+  function routeImportStageName(stage: RouteImportEvent["stage"]) {
+    switch (stage) {
+      case "models":
+        return isZh ? "模型发现" : "Model discovery";
+      case "creating":
+        return isZh ? "路由导入" : "Route import";
+      default:
+        return isZh ? "导入" : "Import";
+    }
+  }
+
   function appendHealthEvent(event: ProviderHealthEvent, mode: "provider" | "create" = "provider") {
     if (event.type === "complete") {
       appendTestLog(
@@ -735,6 +734,92 @@ export default function ProvidersPage() {
     }
     if (event.status === "failed") {
       appendTestLog("error", `✗ ${name}: ${event.error ?? event.message ?? (isZh ? "失败" : "failed")}`);
+    }
+  }
+
+  function appendRouteImportEvent(event: RouteImportEvent) {
+    if (event.type === "complete") {
+      const summary = isZh
+        ? `发现 ${event.discovered ?? 0} 个，创建 ${event.created ?? 0} 个，跳过 ${event.skipped ?? 0} 个，失败 ${event.failed ?? 0} 个`
+        : `Discovered ${event.discovered ?? 0}, created ${event.created ?? 0}, skipped ${event.skipped ?? 0}, failed ${event.failed ?? 0}`;
+      appendTestLog(event.success ? "success" : "error", `${event.success ? "✓" : "✗"} ${summary}`);
+      return;
+    }
+    if (event.type === "stage") {
+      const name = routeImportStageName(event.stage);
+      if (event.status === "running") {
+        appendTestLog("info", `▶ ${name}`);
+      } else if (event.status === "passed") {
+        const count = event.count != null ? ` (${event.count})` : "";
+        appendTestLog("success", `✓ ${name}${count}`);
+      } else if (event.status === "failed") {
+        appendTestLog("error", `✗ ${name}: ${event.error ?? event.message ?? (isZh ? "失败" : "failed")}`);
+      }
+      return;
+    }
+    if (event.type === "route") {
+      if (event.status === "created") {
+        appendTestLog("success", `✓ ${event.model ?? ""}`);
+      } else if (event.status === "skipped") {
+        appendTestLog("info", `- ${event.model ?? ""} ${isZh ? "已存在，跳过" : "already exists, skipped"}`);
+      } else if (event.status === "failed") {
+        appendTestLog("error", `✗ ${event.model ?? ""}: ${event.error ?? event.reason ?? (isZh ? "失败" : "failed")}`);
+      }
+    }
+  }
+
+  async function handleImportRoutes(provider: Provider) {
+    const runId = activeTestRunRef.current + 1;
+    activeTestRunRef.current = runId;
+    const abortController = new AbortController();
+    activeTestAbortRef.current = abortController;
+    const isCanceled = () => activeTestRunRef.current !== runId;
+
+    setRouteImportingId(provider.id);
+    setTestingId(null);
+    setTestTarget(provider);
+    setTestDialogMode("route_import");
+    setPendingCreateInput(null);
+    setCreateHealthPassed(false);
+    setTestLogs([]);
+    setTestDialogOpen(true);
+    setIsTestRunning(true);
+
+    appendTestLog("info", isZh ? `开始导入 ${provider.name} 的模型路由...` : `Start importing routes for ${provider.name}...`);
+    appendTestLog("info", isZh ? "已有同名路由会自动跳过，不会修改现有路由。" : "Existing routes with the same name are skipped; existing routes are not modified.");
+
+    try {
+      await streamProviderRouteImport(provider.id, (event) => {
+        if (isCanceled()) return;
+        appendRouteImportEvent(event);
+        if (event.type === "complete") {
+          setIsTestRunning(false);
+          setRouteImportingId(null);
+          qc.invalidateQueries({ queryKey: ["routes"] });
+        }
+      }, abortController.signal);
+    } catch (error: unknown) {
+      if (isCanceled() || abortController.signal.aborted) return;
+      const message = normalizeErrorMessage(error);
+      appendTestLog("error", `${isZh ? "✗ 导入失败" : "✗ Import failed"}: ${message}`);
+      setIsTestRunning(false);
+      setRouteImportingId(null);
+    } finally {
+      if (!isCanceled()) {
+        activeTestAbortRef.current = null;
+      }
+    }
+  }
+
+  async function handlePreviewRouteImport(provider: Provider) {
+    setRouteImportingId(provider.id);
+    try {
+      const preview = await backend<RouteImportPreview>("preview_provider_route_import", { id: provider.id });
+      setRouteImportPreview({ provider, preview });
+    } catch (error: unknown) {
+      showErrorDialog("预览导入失败", "Failed to preview route import", error);
+    } finally {
+      setRouteImportingId(null);
     }
   }
 
@@ -891,6 +976,7 @@ export default function ProvidersPage() {
   const totalPages = Math.max(1, Math.ceil(providers.length / PAGE_SIZE));
   const pagedProviders = providers.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
   const createCredentialFields = credentialFieldsForPreset(selectedPreset);
+  const createCredentialLayout = splitApiKeyCredentialField(createCredentialFields);
   const createPresetBaseUrl = selectedPreset
     ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-chatcompletions").baseUrl
     : "";
@@ -1036,20 +1122,21 @@ export default function ProvidersPage() {
                   </SelectContent>
                 </Select>
               </div>
-              {createCredentialFields.map((field) => (
+              {createCredentialLayout.apiKeyField ? (
                 <CredentialFieldInput
-                  key={field.name}
-                  field={field}
-                  value={form.credentials?.[field.name] ?? ""}
+                  field={createCredentialLayout.apiKeyField}
+                  value={form.credentials?.[createCredentialLayout.apiKeyField.name] ?? ""}
                   onChange={(value) =>
                     setForm((prev) => ({
                       ...prev,
-                      credentials: { ...(prev.credentials ?? {}), [field.name]: value },
+                      credentials: { ...(prev.credentials ?? {}), [createCredentialLayout.apiKeyField!.name]: value },
                     }))
                   }
                   isZh={isZh}
                 />
-              ))}
+              ) : (
+                <div aria-hidden="true" />
+              )}
               <div className="space-y-2">
                 <FieldLabel required>Base URL</FieldLabel>
                 <Input
@@ -1058,17 +1145,6 @@ export default function ProvidersPage() {
                   onChange={(e) => setForm({ ...form, base_url: e.target.value })}
                 />
               </div>
-              <div className="space-y-2">
-                <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
-                <Input
-                  placeholder={isZh ? "如：http://127.0.0.1:7890" : "e.g. http://127.0.0.1:7890"}
-                  value={form.proxy_url ?? ""}
-                  onChange={(e) => setForm({ ...form, proxy_url: e.target.value })}
-                />
-              </div>
-              {/* Empty spacer: keeps Model Discovery from sharing this row
-                  with anything, while its own field stays half-width. */}
-              <div aria-hidden="true" />
               <div className="space-y-2">
                 <FieldLabel
                   required
@@ -1080,6 +1156,25 @@ export default function ProvidersPage() {
                 >
                   {isZh ? "模型发现" : "Model Discovery"}
                 </FieldLabel>
+                {modelsMode === "url" ? (
+                  <Input
+                    placeholder={isZh ? "如：https://api.openai.com/v1/models" : "e.g. https://api.openai.com/v1/models"}
+                    value={form.models_url ?? ""}
+                    onChange={(e) => setForm({ ...form, models_url: e.target.value })}
+                  />
+                ) : (
+                  <textarea
+                    ref={modelsTextareaRef}
+                    rows={1}
+                    className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder={isZh ? "每行一个模型名，如：gpt-4o" : "One model per line, e.g. gpt-4o"}
+                    value={form.models ?? ""}
+                    onChange={(e) => {
+                      setForm({ ...form, models: e.target.value });
+                      autoGrowTextarea(e.target);
+                    }}
+                  />
+                )}
                 <ToggleGroup
                   type="single"
                   value={modelsMode}
@@ -1102,26 +1197,29 @@ export default function ProvidersPage() {
                     {isZh ? "手动填写" : "Manual Entry"}
                   </ToggleGroupItem>
                 </ToggleGroup>
-                {modelsMode === "url" ? (
-                  <Input
-                    placeholder={isZh ? "如：https://api.openai.com/v1/models" : "e.g. https://api.openai.com/v1/models"}
-                    value={form.models_url ?? ""}
-                    onChange={(e) => setForm({ ...form, models_url: e.target.value })}
-                  />
-                ) : (
-                  <textarea
-                    ref={modelsTextareaRef}
-                    rows={1}
-                    className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder={isZh ? "每行一个模型名，如：gpt-4o" : "One model per line, e.g. gpt-4o"}
-                    value={form.models ?? ""}
-                    onChange={(e) => {
-                      setForm({ ...form, models: e.target.value });
-                      autoGrowTextarea(e.target);
-                    }}
-                  />
-                )}
               </div>
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
+                <Input
+                  placeholder={isZh ? "如：http://127.0.0.1:7890" : "e.g. http://127.0.0.1:7890"}
+                  value={form.proxy_url ?? ""}
+                  onChange={(e) => setForm({ ...form, proxy_url: e.target.value })}
+                />
+              </div>
+              {createCredentialLayout.otherFields.map((field) => (
+                <CredentialFieldInput
+                  key={field.name}
+                  field={field}
+                  value={form.credentials?.[field.name] ?? ""}
+                  onChange={(value) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      credentials: { ...(prev.credentials ?? {}), [field.name]: value },
+                    }))
+                  }
+                  isZh={isZh}
+                />
+              ))}
             </div>
               <div className="flex gap-3">
                 <Button
@@ -1193,6 +1291,7 @@ export default function ProvidersPage() {
                 ? providerPresets.find((preset) => preset.id === editingPresetId) ?? null
                 : null;
               const editCredentialFields = credentialFieldsForPreset(editingPreset);
+              const editCredentialLayout = splitApiKeyCredentialField(editCredentialFields);
               const editPresetBaseUrl = editingPreset
                 ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-chatcompletions").baseUrl
                 : "";
@@ -1279,20 +1378,21 @@ export default function ProvidersPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    {editCredentialFields.map((field) => (
+                    {editCredentialLayout.apiKeyField ? (
                       <CredentialFieldInput
-                        key={field.name}
-                        field={field}
-                        value={editForm.credentials?.[field.name] ?? ""}
+                        field={editCredentialLayout.apiKeyField}
+                        value={editForm.credentials?.[editCredentialLayout.apiKeyField.name] ?? ""}
                         onChange={(value) =>
                           setEditForm((prev) => ({
                             ...prev,
-                            credentials: { ...(prev.credentials ?? {}), [field.name]: value },
+                            credentials: { ...(prev.credentials ?? {}), [editCredentialLayout.apiKeyField!.name]: value },
                           }))
                         }
                         isZh={isZh}
                       />
-                    ))}
+                    ) : (
+                      <div aria-hidden="true" />
+                    )}
                     <div className="space-y-2">
                       <FieldLabel required>Base URL</FieldLabel>
                       <Input
@@ -1301,17 +1401,6 @@ export default function ProvidersPage() {
                         onChange={(e) => setEditForm({ ...editForm, base_url: e.target.value })}
                       />
                     </div>
-                    <div className="space-y-2">
-                      <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
-                      <Input
-                        placeholder={isZh ? "如：http://127.0.0.1:7890" : "e.g. http://127.0.0.1:7890"}
-                        value={editForm.proxy_url ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, proxy_url: e.target.value })}
-                      />
-                    </div>
-                    {/* Empty spacer: keeps Model Discovery from sharing this
-                        row with anything, while its own field stays half-width. */}
-                    <div aria-hidden="true" />
                     <div className="space-y-2">
                       <FieldLabel
                         required
@@ -1323,6 +1412,25 @@ export default function ProvidersPage() {
                       >
                         {isZh ? "模型发现" : "Model Discovery"}
                       </FieldLabel>
+                      {editModelsMode === "url" ? (
+                        <Input
+                          placeholder={isZh ? "如：https://api.openai.com/v1/models" : "e.g. https://api.openai.com/v1/models"}
+                          value={editForm.models_url ?? ""}
+                          onChange={(e) => setEditForm({ ...editForm, models_url: e.target.value })}
+                        />
+                      ) : (
+                        <textarea
+                          ref={editModelsTextareaRef}
+                          rows={1}
+                          className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          placeholder={isZh ? "每行一个模型名，如：gpt-4o" : "One model per line, e.g. gpt-4o"}
+                          value={editForm.models ?? ""}
+                          onChange={(e) => {
+                            setEditForm({ ...editForm, models: e.target.value });
+                            autoGrowTextarea(e.target);
+                          }}
+                        />
+                      )}
                       <ToggleGroup
                         type="single"
                         value={editModelsMode}
@@ -1345,26 +1453,29 @@ export default function ProvidersPage() {
                           {isZh ? "手动填写" : "Manual Entry"}
                         </ToggleGroupItem>
                       </ToggleGroup>
-                      {editModelsMode === "url" ? (
-                        <Input
-                          placeholder={isZh ? "如：https://api.openai.com/v1/models" : "e.g. https://api.openai.com/v1/models"}
-                          value={editForm.models_url ?? ""}
-                          onChange={(e) => setEditForm({ ...editForm, models_url: e.target.value })}
-                        />
-                      ) : (
-                        <textarea
-                          ref={editModelsTextareaRef}
-                          rows={1}
-                          className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          placeholder={isZh ? "每行一个模型名，如：gpt-4o" : "One model per line, e.g. gpt-4o"}
-                          value={editForm.models ?? ""}
-                          onChange={(e) => {
-                            setEditForm({ ...editForm, models: e.target.value });
-                            autoGrowTextarea(e.target);
-                          }}
-                        />
-                      )}
                     </div>
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
+                      <Input
+                        placeholder={isZh ? "如：http://127.0.0.1:7890" : "e.g. http://127.0.0.1:7890"}
+                        value={editForm.proxy_url ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, proxy_url: e.target.value })}
+                      />
+                    </div>
+                    {editCredentialLayout.otherFields.map((field) => (
+                      <CredentialFieldInput
+                        key={field.name}
+                        field={field}
+                        value={editForm.credentials?.[field.name] ?? ""}
+                        onChange={(value) =>
+                          setEditForm((prev) => ({
+                            ...prev,
+                            credentials: { ...(prev.credentials ?? {}), [field.name]: value },
+                          }))
+                        }
+                        isZh={isZh}
+                      />
+                    ))}
                   </div>
                   <div className="flex gap-3">
                     <Button
@@ -1501,7 +1612,7 @@ export default function ProvidersPage() {
                     </button>
                     <button
                       onClick={() => handleTest(p)}
-                      disabled={Boolean(testingId)}
+                      disabled={Boolean(testingId) || Boolean(routeImportingId)}
                       title={isZh ? "测试" : "Test"}
                       className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-500 cursor-pointer disabled:opacity-50"
                     >
@@ -1509,6 +1620,18 @@ export default function ProvidersPage() {
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
                         <Zap className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handlePreviewRouteImport(p)}
+                      disabled={Boolean(testingId) || Boolean(routeImportingId)}
+                      title={isZh ? "导入模型路由" : "Import model routes"}
+                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-emerald-50 hover:text-emerald-600 cursor-pointer disabled:opacity-50"
+                    >
+                      {routeImportingId === p.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RouteIcon className="h-3.5 w-3.5" />
                       )}
                     </button>
                     <button
@@ -1574,12 +1697,16 @@ export default function ProvidersPage() {
             <DialogTitle>
               {testDialogMode === "create"
                 ? (isZh ? `创建前测试 ${pendingCreateInput?.name ?? ""}` : `Pre-create test ${pendingCreateInput?.name ?? ""}`)
-                : (isZh ? `测试 ${testTarget?.name ?? ""}` : `Test ${testTarget?.name ?? ""}`)}
+                : testDialogMode === "route_import"
+                  ? (isZh ? `导入模型路由 ${testTarget?.name ?? ""}` : `Import routes for ${testTarget?.name ?? ""}`)
+                  : (isZh ? `测试 ${testTarget?.name ?? ""}` : `Test ${testTarget?.name ?? ""}`)}
             </DialogTitle>
             <DialogDescription>
               {testDialogMode === "create"
                 ? (isZh ? "实时展示创建前验证流水线" : "Real-time pre-create validation pipeline")
-                : (isZh ? "实时展示 Provider 测试日志" : "Real-time logs for provider testing")}
+                : testDialogMode === "route_import"
+                  ? (isZh ? "实时展示模型路由导入进度" : "Real-time progress for route import")
+                  : (isZh ? "实时展示 Provider 测试日志" : "Real-time logs for provider testing")}
             </DialogDescription>
           </DialogHeader>
           <div
@@ -1639,53 +1766,65 @@ export default function ProvidersPage() {
         }}
       />
       <ConfirmDialog
-        open={Boolean(providerToCopy)}
+        open={Boolean(routeImportPreview)}
         onOpenChange={(open) => {
-          if (!open && !copyMut.isPending) {
-            setProviderToCopy(null);
-            setAppendTargets(false);
-          }
+          if (!open) setRouteImportPreview(null);
         }}
-        title={isZh ? "确认复制提供商" : "Confirm provider copy"}
+        title={isZh ? "确认导入模型路由" : "Confirm route import"}
         description={
-          providerToCopy
+          routeImportPreview
             ? (isZh
-              ? `复制「${providerToCopy.name}」为「${nextProviderCopyName(providers, providerToCopy.name)}」，新提供商默认禁用。`
-              : `Copy "${providerToCopy.name}" as "${nextProviderCopyName(providers, providerToCopy.name)}" (disabled by default).`)
+              ? `将从「${routeImportPreview.provider.name}」导入当前模型列表。`
+              : `Import the current model list from "${routeImportPreview.provider.name}".`)
             : undefined
         }
-        content={
-          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-            <Checkbox
-              checked={appendTargets}
-              onCheckedChange={(checked) => setAppendTargets(checked === true)}
-              disabled={copyMut.isPending}
-              aria-label={isZh ? "追加模型目标" : "Append model targets"}
-              className="mt-0.5"
-            />
-            <span className="space-y-1">
-              <span className="block font-medium text-slate-800">
-                {isZh ? "追加模型目标" : "Append model targets"}
-              </span>
-              <span className="block text-xs text-slate-500">
+        content={routeImportPreview ? (
+          <div className="space-y-3 text-sm text-slate-700">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="text-xs text-slate-500">{isZh ? "发现" : "Discovered"}</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">{routeImportPreview.preview.discovered}</div>
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <div className="text-xs text-emerald-700">{isZh ? "将创建" : "Create"}</div>
+                <div className="mt-1 text-lg font-semibold text-emerald-800">{routeImportPreview.preview.create.length}</div>
+              </div>
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <div className="text-xs text-amber-700">{isZh ? "跳过" : "Skip"}</div>
+                <div className="mt-1 text-lg font-semibold text-amber-800">{routeImportPreview.preview.skip.length}</div>
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="text-xs font-medium text-slate-600">{isZh ? "将创建的路由" : "Routes to create"}</div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {routeImportPreview.preview.create.slice(0, 8).map((model) => (
+                  <Badge key={model} variant="success" className="connect-label-badge">{model}</Badge>
+                ))}
+                {routeImportPreview.preview.create.length > 8 && (
+                  <Badge variant="secondary" className="connect-label-badge">+{routeImportPreview.preview.create.length - 8}</Badge>
+                )}
+                {routeImportPreview.preview.create.length === 0 && (
+                  <span className="text-xs text-slate-500">{isZh ? "没有需要创建的路由" : "No routes need to be created"}</span>
+                )}
+              </div>
+            </div>
+            {routeImportPreview.preview.skip.length > 0 && (
+              <p className="text-xs text-slate-500">
                 {isZh
-                  ? "在引用该提供商的现有模型中追加指向新提供商的目标。"
-                  : "Append targets pointing to the new provider in existing models that reference this provider."}
-              </span>
-            </span>
-          </label>
-        }
+                  ? `已有 ${routeImportPreview.preview.skip.length} 个同名路由会被跳过，不会修改现有路由。`
+                  : `${routeImportPreview.preview.skip.length} existing routes will be skipped; existing routes are not modified.`}
+              </p>
+            )}
+          </div>
+        ) : undefined}
         cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={copyMut.isPending ? (isZh ? "复制中..." : "Copying...") : (isZh ? "确认复制" : "Copy")}
-        confirmClassName="bg-slate-900 text-white hover:bg-slate-800"
+        confirmText={isZh ? "确认导入" : "Import"}
+        confirmClassName="bg-emerald-600 text-white hover:bg-emerald-500"
         onConfirm={() => {
-          if (!providerToCopy || copyMut.isPending) return;
-          copyMut.mutate({ id: providerToCopy.id, appendTargets }, {
-            onSuccess: () => {
-              setProviderToCopy(null);
-              setAppendTargets(false);
-            },
-          });
+          if (!routeImportPreview) return;
+          const provider = routeImportPreview.provider;
+          setRouteImportPreview(null);
+          void handleImportRoutes(provider);
         }}
       />
       <ConfirmDialog

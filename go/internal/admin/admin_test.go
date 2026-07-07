@@ -44,6 +44,23 @@ func do(r http.Handler, method, path, token string, body []byte) *httptest.Respo
 	return rec
 }
 
+func sseDataObjects(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var item map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &item); err != nil {
+			t.Fatalf("decode SSE data %q: %v", line, err)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 func TestAdminAuth(t *testing.T) {
 	r, _ := newEngine(t, "secret")
 	if rec := do(r, "GET", "/api/v1/upstreams", "", nil); rec.Code != http.StatusUnauthorized {
@@ -98,6 +115,133 @@ func TestAdminRouteAndSettings(t *testing.T) {
 	rec = do(r, "GET", "/api/v1/settings/log_retention_days", "", nil)
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"value":"7"`)) {
 		t.Errorf("get setting → %s", rec.Body.String())
+	}
+}
+
+func TestImportUpstreamRoutesStreamCreatesMissingAndSkipsExisting(t *testing.T) {
+	r, st := newEngine(t, "")
+	core := st.Storage()
+	up, err := core.Upstreams().Create(storage.CreateUpstream{
+		Name:            "P",
+		Provider:        "custom",
+		Protocol:        "openai-chatcompletions",
+		BaseURL:         "https://example.com/v1",
+		CredentialsJSON: []byte(`{"api_key":"k"}`),
+		ModelsJSON:      []byte(`["m-new","m-existing","m-new"," "]`),
+	})
+	if err != nil {
+		t.Fatalf("seed upstream: %v", err)
+	}
+	if _, err := core.Routes().Create(storage.CreateRoute{
+		Model: "m-existing",
+		Upstreams: []storage.CreateRouteUpstream{{
+			UpstreamID: up.ID,
+			Model:      "m-existing",
+		}},
+	}); err != nil {
+		t.Fatalf("seed existing route: %v", err)
+	}
+
+	beforeEpoch, _ := core.Settings().Get("config_epoch")
+	rec := do(r, "POST", "/api/v1/upstreams/"+up.ID+"/routes/import/stream", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("import → %d %s", rec.Code, rec.Body.String())
+	}
+	events := sseDataObjects(t, rec.Body.String())
+	seenModelsPassed := false
+	seenCreated := false
+	seenSkipped := false
+	seenComplete := false
+	for _, event := range events {
+		if event["type"] == "stage" && event["stage"] == "models" && event["status"] == "passed" && event["count"] == float64(2) {
+			seenModelsPassed = true
+		}
+		if event["type"] == "route" && event["model"] == "m-new" && event["status"] == "created" {
+			seenCreated = true
+		}
+		if event["type"] == "route" && event["model"] == "m-existing" && event["status"] == "skipped" {
+			seenSkipped = true
+		}
+		if event["type"] == "complete" && event["success"] == true && event["discovered"] == float64(2) &&
+			event["created"] == float64(1) && event["skipped"] == float64(1) {
+			seenComplete = true
+		}
+	}
+	if !seenModelsPassed || !seenCreated || !seenSkipped || !seenComplete {
+		t.Fatalf("missing expected import events: models=%v created=%v skipped=%v complete=%v events=%+v",
+			seenModelsPassed, seenCreated, seenSkipped, seenComplete, events)
+	}
+
+	routes, err := core.Routes().List()
+	if err != nil {
+		t.Fatalf("list routes: %v", err)
+	}
+	if len(routes) != 2 {
+		t.Fatalf("routes len = %d, want 2: %+v", len(routes), routes)
+	}
+	created, err := core.Routes().ByModel("m-new")
+	if err != nil || created == nil {
+		t.Fatalf("created route missing: route=%+v err=%v", created, err)
+	}
+	if len(created.Upstreams) != 1 || created.Upstreams[0].UpstreamID != up.ID || created.Upstreams[0].Model != "m-new" {
+		t.Fatalf("created target = %+v, want one target for m-new on upstream %s", created.Upstreams, up.ID)
+	}
+	afterEpoch, _ := core.Settings().Get("config_epoch")
+	if afterEpoch == beforeEpoch {
+		t.Fatalf("config_epoch unchanged after route import (%q)", afterEpoch)
+	}
+}
+
+func TestPreviewUpstreamRouteImportPlansWithoutCreatingRoutes(t *testing.T) {
+	r, st := newEngine(t, "")
+	core := st.Storage()
+	up, err := core.Upstreams().Create(storage.CreateUpstream{
+		Name:            "P",
+		Provider:        "custom",
+		Protocol:        "openai-chatcompletions",
+		BaseURL:         "https://example.com/v1",
+		CredentialsJSON: []byte(`{"api_key":"k"}`),
+		ModelsJSON:      []byte(`["m-new","m-existing","m-new"]`),
+	})
+	if err != nil {
+		t.Fatalf("seed upstream: %v", err)
+	}
+	if _, err := core.Routes().Create(storage.CreateRoute{
+		Model: "m-existing",
+		Upstreams: []storage.CreateRouteUpstream{{
+			UpstreamID: up.ID,
+			Model:      "m-existing",
+		}},
+	}); err != nil {
+		t.Fatalf("seed existing route: %v", err)
+	}
+
+	beforeEpoch, _ := core.Settings().Get("config_epoch")
+	rec := do(r, "GET", "/api/v1/upstreams/"+up.ID+"/routes/import/preview", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview → %d %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Discovered int      `json:"discovered"`
+		Create     []string `json:"create"`
+		Skip       []string `json:"skip"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Discovered != 2 || len(out.Create) != 1 || out.Create[0] != "m-new" || len(out.Skip) != 1 || out.Skip[0] != "m-existing" {
+		t.Fatalf("preview = %+v, want discovered=2 create=[m-new] skip=[m-existing]", out)
+	}
+	routes, err := core.Routes().List()
+	if err != nil {
+		t.Fatalf("list routes: %v", err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("preview created routes: len=%d routes=%+v", len(routes), routes)
+	}
+	afterEpoch, _ := core.Settings().Get("config_epoch")
+	if afterEpoch != beforeEpoch {
+		t.Fatalf("preview changed config_epoch: before=%q after=%q", beforeEpoch, afterEpoch)
 	}
 }
 

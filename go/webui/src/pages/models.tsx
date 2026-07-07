@@ -68,8 +68,7 @@ function balanceLabel(value: ModelBalance, isZh: boolean) {
 }
 
 function hasProviderModelsEndpoint(provider?: Provider) {
-  void provider;
-  return false;
+  return Boolean(provider);
 }
 
 function withCurrentModel(options: string[], current?: string) {
@@ -775,9 +774,9 @@ export default function ModelsPage() {
                         {isZh ? "鉴权" : "Auth"}
                       </Badge>
                     )}
-                    {route.enable_payload === false && (
-                      <Badge variant="danger" className="connect-label-badge">
-                        {isZh ? "不记录载荷" : "No Payloads"}
+                    {route.enable_payload === true && (
+                      <Badge variant="success" className="connect-label-badge">
+                        {isZh ? "记录载荷" : "Payloads"}
                       </Badge>
                     )}
                     {!route.is_enabled && (

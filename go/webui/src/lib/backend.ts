@@ -12,7 +12,7 @@ import {
   updateUpstreamFromProvider,
 } from "./go-adapter";
 import type { GoConsumer, GoProviderPreset, GoRoute, GoUpstream } from "./go-schema";
-import type { CreateApiKey, CreateModel, CreateProvider, ProviderHealthEvent, UpdateApiKey, UpdateModel, UpdateProvider } from "./types";
+import type { CreateApiKey, CreateModel, CreateProvider, ProviderHealthEvent, RouteImportEvent, RouteImportPreview, UpdateApiKey, UpdateModel, UpdateProvider } from "./types";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -66,7 +66,7 @@ async function invokeHTTP<T>(cmd: string, args?: Record<string, unknown>): Promi
   return mapping.transform ? (mapping.transform(value) as T) : (value as T);
 }
 
-export function decodeProviderHealthSSEFrame(frame: string): ProviderHealthEvent | null {
+function decodeSSEDataFrame<T>(frame: string): T | null {
   const data = frame
     .split(/\r?\n/)
     .filter((line) => line.startsWith("data:"))
@@ -74,7 +74,15 @@ export function decodeProviderHealthSSEFrame(frame: string): ProviderHealthEvent
     .join("\n")
     .trim();
   if (!data) return null;
-  return JSON.parse(data) as ProviderHealthEvent;
+  return JSON.parse(data) as T;
+}
+
+export function decodeProviderHealthSSEFrame(frame: string): ProviderHealthEvent | null {
+  return decodeSSEDataFrame<ProviderHealthEvent>(frame);
+}
+
+export function decodeRouteImportSSEFrame(frame: string): RouteImportEvent | null {
+  return decodeSSEDataFrame<RouteImportEvent>(frame);
 }
 
 async function streamProviderHealthEvents(
@@ -134,6 +142,59 @@ async function streamProviderHealthEvents(
   }
 }
 
+async function streamRouteImportEvents(
+  url: string,
+  onEvent: (event: RouteImportEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = {};
+  const token = getAdminToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const resp = await fetch(url, {
+    method: "POST",
+    headers,
+    signal,
+  });
+
+  if (resp.status === 401 && window.location.pathname !== "/login") {
+    clearAdminToken();
+    window.location.replace("/login");
+    throw new Error("Authentication required");
+  }
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${resp.status}`);
+  }
+  if (!resp.body) {
+    throw new Error("Streaming response body is not available");
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const event = decodeRouteImportSSEFrame(frame);
+      if (event) onEvent(event);
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
+  buffer += decoder.decode();
+  const tail = buffer.trim();
+  if (tail) {
+    const event = decodeRouteImportSSEFrame(tail);
+    if (event) onEvent(event);
+  }
+}
+
 export async function streamProviderDraftHealth(
   input: CreateProvider,
   onEvent: (event: ProviderHealthEvent) => void,
@@ -158,6 +219,18 @@ export async function streamProviderHealth(
   await streamProviderHealthEvents(
     `/api/v1/upstreams/${id}/test`,
     {},
+    onEvent,
+    signal,
+  );
+}
+
+export async function streamProviderRouteImport(
+  id: string,
+  onEvent: (event: RouteImportEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  await streamRouteImportEvents(
+    `/api/v1/upstreams/${id}/routes/import/stream`,
     onEvent,
     signal,
   );
@@ -199,14 +272,24 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
       };
     case "delete_provider":
       return { method: "DELETE", url: `${base}/upstreams/${args?.id}` };
-    case "copy_provider":
     case "test_provider_models":
-    case "get_provider_models":
     case "get_model_capabilities":
     case "get_provider_oauth_status":
     case "reconnect_provider_oauth":
     case "logout_provider_oauth":
       throw new Error("This provider workflow is not available in the Go WebUI yet.");
+    case "get_provider_models":
+      return {
+        method: "GET",
+        url: `${base}/upstreams/${args?.id}/models`,
+        transform: (value) => (value as { models?: string[] }).models ?? [],
+      };
+    case "preview_provider_route_import":
+      return {
+        method: "GET",
+        url: `${base}/upstreams/${args?.id}/routes/import/preview`,
+        transform: (value) => value as RouteImportPreview,
+      };
     case "init_oauth_session":
     case "get_oauth_session_status":
     case "cancel_oauth_session":

@@ -190,6 +190,28 @@ export interface ProviderHealthEvent {
   success?: boolean;
 }
 
+export interface RouteImportEvent {
+  type: "stage" | "route" | "complete";
+  stage?: "models" | "creating";
+  status?: "running" | "passed" | "failed" | "created" | "skipped";
+  message?: string;
+  model?: string;
+  reason?: string;
+  error?: string;
+  count?: number;
+  success?: boolean;
+  discovered?: number;
+  created?: number;
+  skipped?: number;
+  failed?: number;
+}
+
+export interface RouteImportPreview {
+  discovered: number;
+  create: string[];
+  skip: string[];
+}
+
 export interface ModelCapabilities {
   provider: string;
   model_id: string;
