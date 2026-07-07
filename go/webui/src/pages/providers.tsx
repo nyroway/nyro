@@ -3,9 +3,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { backend, streamProviderDraftHealth, streamProviderEditDraftHealth, streamProviderHealth, streamProviderRouteImport } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
-  Provider,
-  CreateProvider,
-  UpdateProvider,
+  Upstream,
+  CreateUpstream,
+  UpdateUpstream,
+  ProviderPresetDTO,
   TestResult,
   ProviderHealthEvent,
   RouteImportEvent,
@@ -68,7 +69,149 @@ function protocolUrl(protocol: string) {
     ?? "https://api.openai.com/v1";
 }
 
-const emptyCreate: CreateProvider = {
+// ---------------------------------------------------------------------------
+// UI-local form-state shapes and backend DTO <-> UI conversion helpers.
+//
+// The Go backend's `Upstream`/`CreateUpstream`/`UpdateUpstream` (see
+// lib/types.ts) treat `credentials` as an opaque JSON blob and `models` as a
+// `string[]`. This page's create/edit forms instead work with a flattened,
+// page-local shape (`api_key: string`, `credentials: Record<string,string>`,
+// `models` as a newline-joined textarea string, and a derived `is_enabled`
+// boolean) — that flattening is purely a display/editing concern of this
+// page, not a network DTO, so it's kept local here rather than exported.
+// These helpers convert across that boundary in both directions: reading a
+// backend `Upstream` to populate the edit form, and serializing this page's
+// form state into `CreateUpstream`/`UpdateUpstream` before submitting.
+type ProviderFormState = {
+  name: string;
+  provider: string;
+  protocol: string;
+  base_url: string;
+  proxy_url?: string;
+  models_url?: string;
+  models?: string;
+  api_key: string;
+  credentials?: Record<string, string>;
+};
+
+type ProviderFormUpdate = {
+  name?: string;
+  provider?: string;
+  protocol?: string;
+  base_url?: string;
+  proxy_url?: string;
+  models_url?: string;
+  models?: string;
+  api_key?: string;
+  credentials?: Record<string, string>;
+  is_enabled?: boolean;
+};
+
+function parseJSONRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object") return value as Record<string, unknown>;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function apiKeyFromCredentials(value: unknown): string {
+  const raw = parseJSONRecord(value).api_key;
+  return typeof raw === "string" ? raw : "";
+}
+
+// credentialsRecord flattens an upstream's opaque credentials JSON blob into a
+// string-keyed record for editing in the WebUI's dynamic credential-field
+// form. Non-string values (should not normally occur) are stringified rather
+// than dropped, so round-tripping through the form never silently loses data.
+function credentialsRecord(value: unknown): Record<string, string> {
+  const parsed = parseJSONRecord(value);
+  const out: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(parsed)) {
+    if (typeof raw === "string") out[key] = raw;
+    else if (raw != null) out[key] = String(raw);
+  }
+  return out;
+}
+
+function modelsArrayFromText(text?: string): string[] | undefined {
+  if (!text) return undefined;
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines.length ? lines : undefined;
+}
+
+// buildCreateUpstreamInput serializes this page's create-form state into the
+// `CreateUpstream` body sent to `POST /api/v1/upstreams`.
+function buildCreateUpstreamInput(input: ProviderFormState): CreateUpstream {
+  const credentials =
+    input.credentials && Object.keys(input.credentials).length > 0
+      ? input.credentials
+      : { api_key: input.api_key };
+  return {
+    name: input.name,
+    provider: input.provider || "custom",
+    protocol: input.protocol,
+    base_url: input.base_url,
+    credentials,
+    models: modelsArrayFromText(input.models ?? undefined),
+    models_url: input.models_url || undefined,
+    proxy_url: input.proxy_url?.trim() ?? "",
+    enabled: true,
+  };
+}
+
+// buildUpdateUpstreamInput serializes this page's edit-form state into the
+// `UpdateUpstream` body sent to `PUT /api/v1/upstreams/{id}`. Only fields
+// explicitly present on `input` are included, so unrelated fields are left
+// unchanged server-side.
+function buildUpdateUpstreamInput(input: ProviderFormUpdate): UpdateUpstream {
+  const out: UpdateUpstream = {};
+  if (input.name !== undefined) out.name = input.name;
+  if (input.provider !== undefined) out.provider = input.provider ?? undefined;
+  if (input.protocol !== undefined) out.protocol = input.protocol;
+  if (input.base_url !== undefined) out.base_url = input.base_url;
+  if (input.credentials !== undefined) {
+    out.credentials = input.credentials;
+  } else if (input.api_key !== undefined) {
+    out.credentials = { api_key: input.api_key };
+  }
+  if (input.proxy_url !== undefined) out.proxy_url = input.proxy_url.trim();
+  if (input.is_enabled !== undefined) out.enabled = input.is_enabled;
+  if (input.models !== undefined) out.models = modelsArrayFromText(input.models ?? undefined) ?? [];
+  if (input.models_url !== undefined) out.models_url = input.models_url ?? "";
+  return out;
+}
+
+// providerPresetFromDTO adapts the Go backend's raw provider preset shape
+// (`ProviderPresetDTO`: snake_case, `protocols: Array<{id, base_url}>`,
+// `credentials.fields[]`) into the UI-facing `ProviderPreset` shape used by
+// the rest of this page (camelCase, `channels: ProviderChannelPreset[]`,
+// `credentialFields`). Presets no longer carry a static model list from the
+// backend — only an optional default discovery URL — so `staticModels` is
+// intentionally left unset on the synthesized channel.
+function providerPresetFromDTO(preset: ProviderPresetDTO): ProviderPreset {
+  const channels: ProviderChannelPreset[] = preset.protocols.map((protocol) => ({
+    id: protocol.id,
+    baseUrls: { [protocol.id]: protocol.base_url ?? "" },
+    modelsSource: preset.models_url,
+    modelsEndpoint: preset.models_url,
+  }));
+  return {
+    id: preset.id,
+    name: preset.name,
+    icon: preset.id,
+    priority: preset.priority,
+    defaultProtocol: preset.default_protocol,
+    channels,
+    credentialFields: preset.credentials?.fields ?? [],
+  };
+}
+
+const emptyCreate: ProviderFormState = {
   name: "",
   provider: "custom",
   protocol: "openai-chat",
@@ -483,14 +626,14 @@ export default function ProvidersPage() {
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [testLogs, setTestLogs] = useState<TestLogEntry[]>([]);
   const [isTestRunning, setIsTestRunning] = useState(false);
-  const [testTarget, setTestTarget] = useState<Provider | null>(null);
+  const [testTarget, setTestTarget] = useState<Upstream | null>(null);
   const [testDialogMode, setTestDialogMode] = useState<"provider" | "create" | "edit" | "route_import">("provider");
-  const [pendingCreateInput, setPendingCreateInput] = useState<CreateProvider | null>(null);
+  const [pendingCreateInput, setPendingCreateInput] = useState<CreateUpstream | null>(null);
   const [createHealthPassed, setCreateHealthPassed] = useState(false);
-  const [pendingUpdateInput, setPendingUpdateInput] = useState<(UpdateProvider & { id: string }) | null>(null);
+  const [pendingUpdateInput, setPendingUpdateInput] = useState<(UpdateUpstream & { id: string }) | null>(null);
   const [editHealthPassed, setEditHealthPassed] = useState(false);
-  const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
-  const [routeImportPreview, setRouteImportPreview] = useState<{ provider: Provider; preview: RouteImportPreview } | null>(null);
+  const [providerToDelete, setProviderToDelete] = useState<Upstream | null>(null);
+  const [routeImportPreview, setRouteImportPreview] = useState<{ provider: Upstream; preview: RouteImportPreview } | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState("");
   const [modelsMode, setModelsMode] = useState<ModelsMode>("url");
   const [editModelsMode, setEditModelsMode] = useState<ModelsMode>("url");
@@ -501,25 +644,25 @@ export default function ProvidersPage() {
   const modelsTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editModelsTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const { data: providers = [], isLoading } = useQuery<Provider[]>({
+  const { data: providers = [], isLoading } = useQuery<Upstream[]>({
     queryKey: ["providers"],
-    queryFn: () => backend("get_providers"),
+    queryFn: () => backend("list_upstreams"),
   });
-  const { data: providerPresetsRaw = [] } = useQuery<ProviderPreset[]>({
+  const { data: providerPresetsRaw = [] } = useQuery<ProviderPresetDTO[]>({
     queryKey: ["provider-presets"],
     queryFn: () => backend("get_provider_presets"),
   });
   const providerPresets = useMemo(
-    () => withCustomProviderPreset(providerPresetsRaw),
+    () => withCustomProviderPreset(providerPresetsRaw.map(providerPresetFromDTO)),
     [providerPresetsRaw],
   );
-  const [form, setForm] = useState<CreateProvider>(emptyCreate);
+  const [form, setForm] = useState<ProviderFormState>(emptyCreate);
   const selectedPreset = useMemo(
     () => providerPresets.find((preset) => preset.id === selectedPresetId) ?? null,
     [providerPresets, selectedPresetId],
   );
 
-  const [editForm, setEditForm] = useState<UpdateProvider & { id: string }>({
+  const [editForm, setEditForm] = useState<ProviderFormUpdate & { id: string }>({
     id: "",
     name: "",
     provider: "custom",
@@ -532,7 +675,7 @@ export default function ProvidersPage() {
     credentials: {},
   });
   const createMut = useMutation({
-    mutationFn: (input: CreateProvider) => backend<Provider>("create_provider", { input }),
+    mutationFn: (input: CreateUpstream) => backend<Upstream>("create_upstream", { input }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["providers"] });
       setPendingCreateInput(null);
@@ -548,8 +691,8 @@ export default function ProvidersPage() {
   const [editError, setEditError] = useState<string | null>(null);
 
   const updateMut = useMutation({
-    mutationFn: ({ id, ...input }: UpdateProvider & { id: string }) =>
-      backend("update_provider", { id, input }),
+    mutationFn: ({ id, ...input }: UpdateUpstream & { id: string }) =>
+      backend("update_upstream", { id, input }),
     onSuccess: () => {
       setEditError(null);
       qc.invalidateQueries({ queryKey: ["providers"] });
@@ -565,18 +708,18 @@ export default function ProvidersPage() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: string) => backend("delete_provider", { id }),
+    mutationFn: (id: string) => backend("delete_upstream", { id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["providers"] }),
     onError: (error: unknown) => {
       showErrorDialog("删除提供商失败", "Failed to delete provider", error);
     },
   });
 
-  const [providerToDisable, setProviderToDisable] = useState<Provider | null>(null);
+  const [providerToDisable, setProviderToDisable] = useState<Upstream | null>(null);
 
   const toggleEnabledMut = useMutation({
     mutationFn: ({ id, is_enabled }: { id: string; is_enabled: boolean }) =>
-      backend("update_provider", { id, input: { is_enabled } }),
+      backend("update_upstream", { id, input: { enabled: is_enabled } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["providers"] }),
     onError: (error: unknown) => {
       showErrorDialog("操作失败", "Operation failed", error);
@@ -612,7 +755,7 @@ export default function ProvidersPage() {
     setEditHealthPassed(false);
   }
 
-  async function handleTest(provider: Provider) {
+  async function handleTest(provider: Upstream) {
     const runId = activeTestRunRef.current + 1;
     activeTestRunRef.current = runId;
     const abortController = new AbortController();
@@ -772,7 +915,7 @@ export default function ProvidersPage() {
     }
   }
 
-  async function handleImportRoutes(provider: Provider) {
+  async function handleImportRoutes(provider: Upstream) {
     const runId = activeTestRunRef.current + 1;
     activeTestRunRef.current = runId;
     const abortController = new AbortController();
@@ -815,7 +958,7 @@ export default function ProvidersPage() {
     }
   }
 
-  async function handlePreviewRouteImport(provider: Provider) {
+  async function handlePreviewRouteImport(provider: Upstream) {
     setRouteImportingId(provider.id);
     try {
       const preview = await backend<RouteImportPreview>("preview_provider_route_import", { id: provider.id });
@@ -827,7 +970,7 @@ export default function ProvidersPage() {
     }
   }
 
-  async function handleCreateHealthCheck(input: CreateProvider) {
+  async function handleCreateHealthCheck(input: CreateUpstream) {
     const runId = activeTestRunRef.current + 1;
     activeTestRunRef.current = runId;
     const abortController = new AbortController();
@@ -868,7 +1011,7 @@ export default function ProvidersPage() {
     }
   }
 
-  async function handleUpdateHealthCheck(draft: CreateProvider, update: UpdateProvider & { id: string }) {
+  async function handleUpdateHealthCheck(draft: CreateUpstream, update: UpdateUpstream & { id: string }) {
     const runId = activeTestRunRef.current + 1;
     activeTestRunRef.current = runId;
     const abortController = new AbortController();
@@ -909,25 +1052,26 @@ export default function ProvidersPage() {
     }
   }
 
-  function startEdit(p: Provider) {
+  function startEdit(p: Upstream) {
     setEditingId(p.id);
     setEditError(null);
     const protocol = (resolveProtocol(p.protocol) ?? "openai-chat") as ProviderProtocol;
     const presetForEdit = p.provider
       ? providerPresets.find((item) => item.id === p.provider) ?? null
       : null;
-    setEditModelsMode(pickModelsMode("url", p.models_url ?? undefined, p.models ?? undefined));
+    const modelsText = joinStaticModels(p.models ?? undefined);
+    setEditModelsMode(pickModelsMode("url", p.models_url ?? undefined, modelsText || undefined));
     setEditForm({
       id: p.id,
       name: p.name,
       provider: presetForEdit ? presetForEdit.id : (p.provider ?? "custom"),
       protocol,
-      base_url: p.base_url,
+      base_url: p.base_url ?? "",
       proxy_url: p.proxy_url ?? "",
       models_url: p.models_url ?? "",
-      models: p.models ?? "",
-      api_key: p.api_key ?? "",
-      credentials: p.credentials ?? {},
+      models: modelsText,
+      api_key: apiKeyFromCredentials(p.credentials),
+      credentials: credentialsRecord(p.credentials),
     });
   }
 
@@ -1279,11 +1423,11 @@ export default function ProvidersPage() {
                       });
                       return;
                     }
-                    const input: CreateProvider = {
+                    const input: CreateUpstream = buildCreateUpstreamInput({
                       ...form,
                       protocol,
                       base_url: baseUrl,
-                    };
+                    });
                     void handleCreateHealthCheck(input);
                   }}
                   disabled={
@@ -1533,7 +1677,7 @@ export default function ProvidersPage() {
                           setEditError(validation);
                           return;
                         }
-                        const update: UpdateProvider = {
+                        const update: UpdateUpstream = buildUpdateUpstreamInput({
                           name: editForm.name || undefined,
                           provider: editForm.provider || undefined,
                           protocol,
@@ -1544,8 +1688,8 @@ export default function ProvidersPage() {
                           credentials: editForm.credentials && Object.keys(editForm.credentials).length
                             ? editForm.credentials
                             : undefined,
-                        };
-                        const draft: CreateProvider = {
+                        });
+                        const draft: CreateUpstream = buildCreateUpstreamInput({
                           name: editForm.name ?? "",
                           provider: editForm.provider || "custom",
                           protocol,
@@ -1555,7 +1699,7 @@ export default function ProvidersPage() {
                           models: editForm.models ?? "",
                           api_key: editForm.api_key ?? "",
                           credentials: editForm.credentials ?? {},
-                        };
+                        });
                         void handleUpdateHealthCheck(draft, { id: editForm.id, ...update });
                       }}
                       disabled={
@@ -1632,7 +1776,7 @@ export default function ProvidersPage() {
                             {isZh ? "代理" : "Proxy"}
                           </Badge>
                         )}
-                        {!p.is_enabled && (
+                        {!p.enabled && (
                           <Badge variant="danger" className="connect-label-badge">
                             {isZh ? "已禁用" : "Disabled"}
                           </Badge>
@@ -1654,16 +1798,16 @@ export default function ProvidersPage() {
                   <div className="flex items-center gap-0.5">
                     <button
                       onClick={() => {
-                        if (p.is_enabled) {
+                        if (p.enabled) {
                           setProviderToDisable(p);
                         } else {
                           toggleEnabledMut.mutate({ id: p.id, is_enabled: true });
                         }
                       }}
-                      title={p.is_enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
+                      title={p.enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
                       className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
                     >
-                      {p.is_enabled ? (
+                      {p.enabled ? (
                         <ToggleRight className="h-4 w-4 text-green-500" />
                       ) : (
                         <ToggleLeft className="h-4 w-4 text-slate-400" />
