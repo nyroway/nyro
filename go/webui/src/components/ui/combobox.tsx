@@ -26,6 +26,9 @@ type ComboboxProps = {
   emptyText?: string;
   onValueChange: (value: string) => void;
   className?: string;
+  /** When true, the current search text can be submitted as a custom value
+   *  even if it doesn't match any option. */
+  allowCustom?: boolean;
 };
 
 export function Combobox({
@@ -36,15 +39,35 @@ export function Combobox({
   emptyText = "No options",
   onValueChange,
   className,
+  allowCustom = false,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const selected = useMemo(
     () => options.find((option) => option.value === value),
     [options, value],
   );
 
+  const trimmedSearch = search.trim();
+  const matchesExistingOption = useMemo(
+    () =>
+      options.some(
+        (option) => option.value === trimmedSearch || option.label === trimmedSearch,
+      ),
+    [options, trimmedSearch],
+  );
+  const showCustomOption = allowCustom && trimmedSearch !== "" && !matchesExistingOption;
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) {
+          setSearch("");
+        }
+      }}
+    >
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -58,9 +81,13 @@ export function Combobox({
       </PopoverTrigger>
       <PopoverContent className="nyro-shadcn-select-content w-[var(--radix-popover-trigger-width)] p-0">
         <Command>
-          <CommandInput placeholder={searchPlaceholder} />
+          <CommandInput
+            placeholder={searchPlaceholder}
+            value={search}
+            onValueChange={setSearch}
+          />
           <CommandList>
-            <CommandEmpty>{emptyText}</CommandEmpty>
+            {!showCustomOption && <CommandEmpty>{emptyText}</CommandEmpty>}
             <CommandGroup>
               {options.map((option) => (
                 <CommandItem
@@ -80,6 +107,19 @@ export function Combobox({
                   <span className="truncate">{option.label}</span>
                 </CommandItem>
               ))}
+              {showCustomOption && (
+                <CommandItem
+                  key="__combobox_custom_value__"
+                  value={`__combobox_custom_value__${trimmedSearch}`}
+                  onSelect={() => {
+                    onValueChange(trimmedSearch);
+                    setOpen(false);
+                  }}
+                >
+                  <Check className="h-4 w-4 opacity-0" />
+                  <span className="truncate">Use "{trimmedSearch}"</span>
+                </CommandItem>
+              )}
             </CommandGroup>
           </CommandList>
         </Command>
