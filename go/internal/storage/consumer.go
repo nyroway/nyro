@@ -76,6 +76,14 @@ type CreateConsumerQuota struct {
 	Window     string `json:"window,omitempty"`
 }
 
+// UpdateConsumerKey is the partial-update DTO for a single consumer key;
+// nil fields mean unchanged. ExpiresAt: nil = unchanged, "" = clear to never-expires.
+type UpdateConsumerKey struct {
+	Name      *string `json:"name,omitempty"`
+	Enabled   *bool   `json:"enabled,omitempty"`
+	ExpiresAt *string `json:"expires_at,omitempty"`
+}
+
 // UpdateConsumer is the partial-update DTO; nil fields mean "unchanged". A
 // non-nil Quotas or Routes slice replaces that dimension wholesale (matching
 // UpdateRoute.Upstreams semantics). Key mutations go through a dedicated
@@ -138,6 +146,17 @@ type ConsumerStore interface {
 	Create(in CreateConsumer) (Consumer, error)
 	Update(id string, in UpdateConsumer) (Consumer, error)
 	Delete(id string) error
+
+	// AddKey creates a new key for consumerID, returning it with the
+	// one-time raw Token populated (mirroring Create's key-creation
+	// semantics). Rotation is a caller-side AddKey + DeleteKey composition;
+	// this store does not implement rotation itself.
+	AddKey(consumerID string, in CreateConsumerKey) (ConsumerKey, error)
+	// UpdateKey partially updates a single key by its own ID (not the owning
+	// consumer's ID). The returned ConsumerKey never carries a Token.
+	UpdateKey(keyID string, in UpdateConsumerKey) (ConsumerKey, error)
+	// DeleteKey deletes a single key by its own ID.
+	DeleteKey(keyID string) error
 }
 
 // KeyAuthStore is the inbound-auth read path used by the proxy: resolve a raw

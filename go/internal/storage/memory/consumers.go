@@ -285,3 +285,51 @@ func (s consumerStore) Delete(id string) error {
 	}
 	return nil
 }
+
+// AddKey creates a new key for consumerID, returning it with the one-time
+// raw Token populated. Mirrors the database backend's not-found check on the
+// owning consumer before delegating to the shared key-creation helper.
+func (s consumerStore) AddKey(consumerID string, in storage.CreateConsumerKey) (storage.ConsumerKey, error) {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	if _, ok := s.b.consumers[consumerID]; !ok {
+		return storage.ConsumerKey{}, ErrNotFound
+	}
+	return s.b.createConsumerKey(consumerID, in)
+}
+
+// UpdateKey partially updates a single key by its own ID. The returned
+// ConsumerKey never carries a Token (raw tokens are only exposed at creation).
+func (s consumerStore) UpdateKey(keyID string, in storage.UpdateConsumerKey) (storage.ConsumerKey, error) {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	k, ok := s.b.consumerKeys[keyID]
+	if !ok {
+		return storage.ConsumerKey{}, ErrNotFound
+	}
+	if in.Name != nil {
+		k.Name = *in.Name
+	}
+	if in.Enabled != nil {
+		k.Enabled = *in.Enabled
+	}
+	if in.ExpiresAt != nil {
+		k.ExpiresAt = *in.ExpiresAt
+	}
+	k.UpdatedAt = nowISO()
+	k.Token = ""
+	s.b.consumerKeys[keyID] = k
+	return k, nil
+}
+
+// DeleteKey deletes a single key by its own ID, returning ErrNotFound if no
+// such key exists.
+func (s consumerStore) DeleteKey(keyID string) error {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	if _, ok := s.b.consumerKeys[keyID]; !ok {
+		return ErrNotFound
+	}
+	delete(s.b.consumerKeys, keyID)
+	return nil
+}

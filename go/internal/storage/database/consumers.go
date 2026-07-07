@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"gorm.io/gen/field"
+
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/model"
 	"github.com/nyroway/nyro/go/internal/storage/query"
@@ -332,6 +334,76 @@ func (s consumerStore) Delete(id string) error {
 			return err
 		}
 		_, err := tx.Consumer.WithContext(ctx).Where(tx.Consumer.ID.Eq(id)).Delete()
+		return err
+	})
+}
+
+// AddKey creates a new key for consumerID, wrapping the existing
+// createConsumerKey helper (also used inline by Create) with a not-found
+// check on the owning consumer and a transaction.
+func (s consumerStore) AddKey(consumerID string, in storage.CreateConsumerKey) (storage.ConsumerKey, error) {
+	ctx := context.Background()
+	var out storage.ConsumerKey
+	err := s.q.Transaction(func(tx *query.Query) error {
+		if _, err := tx.Consumer.WithContext(ctx).Where(tx.Consumer.ID.Eq(consumerID)).First(); err != nil {
+			return err
+		}
+		ck, err := createConsumerKey(ctx, tx, consumerID, in)
+		if err != nil {
+			return err
+		}
+		out = ck
+		return nil
+	})
+	return out, err
+}
+
+// UpdateKey partially updates a single key by its own ID. The returned
+// ConsumerKey never carries a Token (raw tokens are only exposed at creation).
+//
+// This uses UpdateSimple with explicit column assignments rather than
+// Save(model) on a mutated struct: Enabled's `default:true` gorm tag makes
+// Save skip writing the column when it holds its Go zero value (false), so a
+// struct-level Save can silently fail to persist a disable.
+func (s consumerStore) UpdateKey(keyID string, in storage.UpdateConsumerKey) (storage.ConsumerKey, error) {
+	ctx := context.Background()
+	var out storage.ConsumerKey
+	err := s.q.Transaction(func(tx *query.Query) error {
+		if _, err := tx.ConsumerKey.WithContext(ctx).Where(tx.ConsumerKey.ID.Eq(keyID)).First(); err != nil {
+			return err
+		}
+		assigns := []field.AssignExpr{tx.ConsumerKey.UpdatedAt.Value(nowISO())}
+		if in.Name != nil {
+			assigns = append(assigns, tx.ConsumerKey.Name.Value(*in.Name))
+		}
+		if in.Enabled != nil {
+			assigns = append(assigns, tx.ConsumerKey.Enabled.Value(*in.Enabled))
+		}
+		if in.ExpiresAt != nil {
+			assigns = append(assigns, tx.ConsumerKey.ExpiresAt.Value(*in.ExpiresAt))
+		}
+		if _, err := tx.ConsumerKey.WithContext(ctx).Where(tx.ConsumerKey.ID.Eq(keyID)).UpdateSimple(assigns...); err != nil {
+			return err
+		}
+		k, err := tx.ConsumerKey.WithContext(ctx).Where(tx.ConsumerKey.ID.Eq(keyID)).First()
+		if err != nil {
+			return err
+		}
+		out = consumerKeyFromModel(k)
+		return nil
+	})
+	return out, err
+}
+
+// DeleteKey deletes a single key by its own ID, returning a not-found error
+// (via the row-lookup below) if no such key exists.
+func (s consumerStore) DeleteKey(keyID string) error {
+	ctx := context.Background()
+	return s.q.Transaction(func(tx *query.Query) error {
+		if _, err := tx.ConsumerKey.WithContext(ctx).Where(tx.ConsumerKey.ID.Eq(keyID)).First(); err != nil {
+			return err
+		}
+		_, err := tx.ConsumerKey.WithContext(ctx).Where(tx.ConsumerKey.ID.Eq(keyID)).Delete()
 		return err
 	})
 }

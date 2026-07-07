@@ -292,6 +292,118 @@ func TestConsumerUpdateReplacesRoutesByModelName(t *testing.T) {
 	}
 }
 
+func TestConsumerAddKey(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{Name: "acme"})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+
+	key, err := s.Consumers().AddKey(consumer.ID, storage.CreateConsumerKey{Name: "second"})
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	if key.Token == "" {
+		t.Fatal("AddKey: Token (raw) should be populated once at creation")
+	}
+	if key.ConsumerID != consumer.ID {
+		t.Fatalf("key.ConsumerID = %q, want %q", key.ConsumerID, consumer.ID)
+	}
+
+	got, err := s.Consumers().Get(consumer.ID)
+	if err != nil || got == nil || len(got.Keys) != 1 {
+		t.Fatalf("Get = %+v, %v; want 1 key", got, err)
+	}
+
+	if _, err := s.Consumers().AddKey("does-not-exist", storage.CreateConsumerKey{Name: "x"}); err == nil {
+		t.Fatal("AddKey with unknown consumerID: want error, got nil")
+	}
+}
+
+func TestConsumerUpdateKey(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{
+		Name: "acme",
+		Keys: []storage.CreateConsumerKey{{Name: "primary", ExpiresAt: "2030-01-01 00:00:00"}},
+	})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+	keyID := consumer.Keys[0].ID
+
+	newName := "renamed"
+	disabled := false
+	updated, err := s.Consumers().UpdateKey(keyID, storage.UpdateConsumerKey{Name: &newName, Enabled: &disabled})
+	if err != nil {
+		t.Fatalf("UpdateKey: %v", err)
+	}
+	if updated.Name != "renamed" || updated.Enabled != false {
+		t.Fatalf("updated = %+v; want Name=renamed Enabled=false", updated)
+	}
+	if updated.Token != "" {
+		t.Fatalf("updated.Token = %q; want empty (Update never re-exposes the raw token)", updated.Token)
+	}
+	// ExpiresAt untouched (nil) must remain unchanged.
+	if updated.ExpiresAt != "2030-01-01 00:00:00" {
+		t.Fatalf("updated.ExpiresAt = %q; want unchanged", updated.ExpiresAt)
+	}
+
+	// Empty string clears ExpiresAt to never-expires.
+	cleared := ""
+	updated2, err := s.Consumers().UpdateKey(keyID, storage.UpdateConsumerKey{ExpiresAt: &cleared})
+	if err != nil {
+		t.Fatalf("UpdateKey (clear ExpiresAt): %v", err)
+	}
+	if updated2.ExpiresAt != "" {
+		t.Fatalf("updated2.ExpiresAt = %q; want cleared to empty", updated2.ExpiresAt)
+	}
+	// Name/Enabled must remain as previously set (nil = unchanged).
+	if updated2.Name != "renamed" || updated2.Enabled != false {
+		t.Fatalf("updated2 = %+v; want Name/Enabled unchanged from prior update", updated2)
+	}
+
+	if _, err := s.Consumers().UpdateKey("does-not-exist", storage.UpdateConsumerKey{Name: &newName}); err == nil {
+		t.Fatal("UpdateKey with unknown keyID: want error, got nil")
+	}
+}
+
+func TestConsumerDeleteKey(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{
+		Name: "acme",
+		Keys: []storage.CreateConsumerKey{{Name: "primary"}},
+	})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+	keyID := consumer.Keys[0].ID
+
+	if err := s.Consumers().DeleteKey(keyID); err != nil {
+		t.Fatalf("DeleteKey: %v", err)
+	}
+
+	got, err := s.Consumers().Get(consumer.ID)
+	if err != nil || got == nil {
+		t.Fatalf("Get after DeleteKey = %+v, %v", got, err)
+	}
+	if len(got.Keys) != 0 {
+		t.Fatalf("got.Keys = %+v; want empty after DeleteKey", got.Keys)
+	}
+
+	if err := s.Consumers().DeleteKey(keyID); err == nil {
+		t.Fatal("DeleteKey on already-deleted keyID: want error, got nil")
+	}
+	if err := s.Consumers().DeleteKey("does-not-exist"); err == nil {
+		t.Fatal("DeleteKey with unknown keyID: want error, got nil")
+	}
+}
+
 func strPtr(s string) *string { return &s }
 
 func TestCoreSettingsUpsert(t *testing.T) {
