@@ -2,6 +2,8 @@ package database
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/model"
@@ -128,29 +130,23 @@ func (s consumerStore) Create(in storage.CreateConsumer) (storage.Consumer, erro
 			createdKeys = append(createdKeys, ck)
 		}
 
-		for _, routeModel := range in.Routes {
-			route, err := tx.Route.WithContext(ctx).Where(tx.Route.Model.Eq(routeModel)).First()
-			if err != nil {
-				return err
-			}
-			if err := tx.ConsumerRoute.WithContext(ctx).Create(&model.ConsumerRoute{ConsumerID: c.ID, RouteID: route.ID}); err != nil {
+		routeIDs, err := resolveRouteIDsByModel(ctx, tx, in.Routes)
+		if err != nil {
+			return err
+		}
+		for _, routeID := range routeIDs {
+			if err := tx.ConsumerRoute.WithContext(ctx).Create(&model.ConsumerRoute{ConsumerID: c.ID, RouteID: routeID}); err != nil {
 				return err
 			}
 		}
 
 		for _, qin := range in.Quotas {
-			cq := &model.ConsumerQuota{
-				ID:         newID(),
-				ConsumerID: c.ID,
-				QuotaType:  qin.QuotaType,
-				QuotaLimit: qin.QuotaLimit,
-				Window:     qin.Window,
-				CreatedAt:  now,
-				UpdatedAt:  now,
-			}
-			if err := tx.ConsumerQuota.WithContext(ctx).Create(cq); err != nil {
+			if err := storage.ValidateConsumerQuota(qin); err != nil {
 				return err
 			}
+		}
+		if err := insertConsumerQuotas(ctx, tx, c.ID, in.Quotas); err != nil {
+			return err
 		}
 
 		details, err := s.loadDetails(ctx, tx, c)
@@ -204,6 +200,85 @@ func createConsumerKey(ctx context.Context, tx *query.Query, consumerID string, 
 	return out, nil
 }
 
+// resolveRouteIDsByModel looks up route IDs for a set of route model names,
+// mirroring the by-model matching Create already performs. It returns a single
+// error listing every unknown model name, rather than failing on the first
+// miss, so callers get a complete picture in one round trip.
+func resolveRouteIDsByModel(ctx context.Context, tx *query.Query, models []string) ([]string, error) {
+	ids := make([]string, 0, len(models))
+	var unknown []string
+	for _, m := range models {
+		route, err := tx.Route.WithContext(ctx).Where(tx.Route.Model.Eq(m)).First()
+		if err != nil {
+			if isNotFound(err) {
+				unknown = append(unknown, m)
+				continue
+			}
+			return nil, err
+		}
+		ids = append(ids, route.ID)
+	}
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("unknown route model(s): %s", strings.Join(unknown, ", "))
+	}
+	return ids, nil
+}
+
+// insertConsumerQuotas creates the consumer_quotas rows for consumerID inside
+// an existing transaction. Callers are responsible for validating quotas
+// beforehand.
+func insertConsumerQuotas(ctx context.Context, tx *query.Query, consumerID string, quotas []storage.CreateConsumerQuota) error {
+	now := nowISO()
+	for _, qin := range quotas {
+		cq := &model.ConsumerQuota{
+			ID:         newID(),
+			ConsumerID: consumerID,
+			QuotaType:  qin.QuotaType,
+			QuotaLimit: qin.QuotaLimit,
+			Window:     qin.Window,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		if err := tx.ConsumerQuota.WithContext(ctx).Create(cq); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// replaceConsumerQuotas validates, then wholesale-replaces consumerID's
+// quotas: it deletes the existing rows and recreates them from quotas.
+func replaceConsumerQuotas(ctx context.Context, tx *query.Query, consumerID string, quotas []storage.CreateConsumerQuota) error {
+	for _, q := range quotas {
+		if err := storage.ValidateConsumerQuota(q); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ConsumerQuota.WithContext(ctx).Where(tx.ConsumerQuota.ConsumerID.Eq(consumerID)).Delete(); err != nil {
+		return err
+	}
+	return insertConsumerQuotas(ctx, tx, consumerID, quotas)
+}
+
+// replaceConsumerRoutes resolves routeModels to route IDs, then wholesale-
+// replaces consumerID's route grants: it deletes the existing rows and
+// recreates them from the resolved IDs.
+func replaceConsumerRoutes(ctx context.Context, tx *query.Query, consumerID string, routeModels []string) error {
+	ids, err := resolveRouteIDsByModel(ctx, tx, routeModels)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ConsumerRoute.WithContext(ctx).Where(tx.ConsumerRoute.ConsumerID.Eq(consumerID)).Delete(); err != nil {
+		return err
+	}
+	for _, routeID := range ids {
+		if err := tx.ConsumerRoute.WithContext(ctx).Create(&model.ConsumerRoute{ConsumerID: consumerID, RouteID: routeID}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s consumerStore) Update(id string, in storage.UpdateConsumer) (storage.Consumer, error) {
 	ctx := context.Background()
 	var out storage.Consumer
@@ -222,6 +297,18 @@ func (s consumerStore) Update(id string, in storage.UpdateConsumer) (storage.Con
 		if err := tx.Consumer.WithContext(ctx).Save(c); err != nil {
 			return err
 		}
+
+		if in.Quotas != nil {
+			if err := replaceConsumerQuotas(ctx, tx, id, *in.Quotas); err != nil {
+				return err
+			}
+		}
+		if in.Routes != nil {
+			if err := replaceConsumerRoutes(ctx, tx, id, *in.Routes); err != nil {
+				return err
+			}
+		}
+
 		details, err := s.loadDetails(ctx, tx, c)
 		if err != nil {
 			return err

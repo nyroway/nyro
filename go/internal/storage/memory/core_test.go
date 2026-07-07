@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -135,6 +136,115 @@ func TestCoreConsumerCreateWithKeysRoutesQuotas(t *testing.T) {
 
 	if rec, err := s.Auth().FindKey("nyro_wrong"); err != nil || rec != nil {
 		t.Fatalf("FindKey(wrong) = %+v, %v; want nil,nil", rec, err)
+	}
+}
+
+func TestCoreConsumerUpdateReplacesQuotasWholesale(t *testing.T) {
+	s := New().Storage()
+
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{
+		Name:   "acme",
+		Quotas: []storage.CreateConsumerQuota{{QuotaType: "requests", QuotaLimit: 60, Window: "1m"}},
+	})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+
+	newQuotas := []storage.CreateConsumerQuota{
+		{QuotaType: "tokens", QuotaLimit: 1000, Window: "1h"},
+		{QuotaType: "concurrency", QuotaLimit: 5},
+	}
+	updated, err := s.Consumers().Update(consumer.ID, storage.UpdateConsumer{Quotas: &newQuotas})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(updated.Quotas) != 2 {
+		t.Fatalf("updated.Quotas = %+v; want 2 (wholesale replace)", updated.Quotas)
+	}
+
+	name := "acme2"
+	updated2, err := s.Consumers().Update(consumer.ID, storage.UpdateConsumer{Name: &name})
+	if err != nil {
+		t.Fatalf("Update (nil Quotas): %v", err)
+	}
+	if len(updated2.Quotas) != 2 {
+		t.Fatalf("updated2.Quotas = %+v; want unchanged (2)", updated2.Quotas)
+	}
+
+	empty := []storage.CreateConsumerQuota{}
+	updated3, err := s.Consumers().Update(consumer.ID, storage.UpdateConsumer{Quotas: &empty})
+	if err != nil {
+		t.Fatalf("Update (empty Quotas): %v", err)
+	}
+	if len(updated3.Quotas) != 0 {
+		t.Fatalf("updated3.Quotas = %+v; want empty", updated3.Quotas)
+	}
+}
+
+func TestCoreConsumerUpdateRejectsInvalidQuota(t *testing.T) {
+	s := New().Storage()
+
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{Name: "acme"})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+
+	cases := []struct {
+		name  string
+		quota storage.CreateConsumerQuota
+	}{
+		{"bad quota_type", storage.CreateConsumerQuota{QuotaType: "bogus", QuotaLimit: 1}},
+		{"non-positive limit", storage.CreateConsumerQuota{QuotaType: "requests", QuotaLimit: 0}},
+		{"concurrency with window", storage.CreateConsumerQuota{QuotaType: "concurrency", QuotaLimit: 5, Window: "1m"}},
+		{"bad window format", storage.CreateConsumerQuota{QuotaType: "requests", QuotaLimit: 1, Window: "bogus"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			quotas := []storage.CreateConsumerQuota{tc.quota}
+			if _, err := s.Consumers().Update(consumer.ID, storage.UpdateConsumer{Quotas: &quotas}); err == nil {
+				t.Fatalf("Update with %+v: want error, got nil", tc.quota)
+			}
+		})
+	}
+}
+
+func TestCoreConsumerUpdateReplacesRoutesByModelName(t *testing.T) {
+	s := New().Storage()
+
+	if _, err := s.Routes().Create(storage.CreateRoute{Model: "gpt-4o"}); err != nil {
+		t.Fatalf("create route gpt-4o: %v", err)
+	}
+	if _, err := s.Routes().Create(storage.CreateRoute{Model: "gpt-4o-mini"}); err != nil {
+		t.Fatalf("create route gpt-4o-mini: %v", err)
+	}
+
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{
+		Name:   "acme",
+		Routes: []string{"gpt-4o"},
+	})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+
+	newRoutes := []string{"gpt-4o-mini"}
+	updated, err := s.Consumers().Update(consumer.ID, storage.UpdateConsumer{Routes: &newRoutes})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(updated.Routes) != 1 || updated.Routes[0] != "gpt-4o-mini" {
+		t.Fatalf("updated.Routes = %+v; want [gpt-4o-mini]", updated.Routes)
+	}
+
+	badRoutes := []string{"does-not-exist"}
+	if _, err := s.Consumers().Update(consumer.ID, storage.UpdateConsumer{Routes: &badRoutes}); err == nil {
+		t.Fatal("Update with unknown route model: want error, got nil")
+	} else if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("error = %v; want it to mention the unknown model name", err)
+	}
+
+	got, err := s.Consumers().Get(consumer.ID)
+	if err != nil || got == nil || len(got.Routes) != 1 || got.Routes[0] != "gpt-4o-mini" {
+		t.Fatalf("Get after failed update = %+v, %v; want unchanged [gpt-4o-mini]", got, err)
 	}
 }
 

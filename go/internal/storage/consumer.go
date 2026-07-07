@@ -1,5 +1,11 @@
 package storage
 
+import (
+	"fmt"
+
+	"github.com/nyroway/nyro/go/internal/proxy/quota"
+)
+
 // Consumer is an API consumer that owns keys, route grants, and quotas
 // (tables: consumers / consumer_keys / consumer_routes / consumer_quotas). It
 // replaces the legacy ApiKey: a single consumer can hold multiple keys and
@@ -70,11 +76,45 @@ type CreateConsumerQuota struct {
 	Window     string `json:"window,omitempty"`
 }
 
-// UpdateConsumer is the partial-update DTO; nil fields mean "unchanged".
-// (Key/Route/Quota mutations go through dedicated sub-stores in a later step.)
+// UpdateConsumer is the partial-update DTO; nil fields mean "unchanged". A
+// non-nil Quotas or Routes slice replaces that dimension wholesale (matching
+// UpdateRoute.Upstreams semantics). Key mutations go through a dedicated
+// sub-store in a later step.
 type UpdateConsumer struct {
-	Name    *string `json:"name,omitempty"`
-	Enabled *bool   `json:"enabled,omitempty"`
+	Name    *string                `json:"name,omitempty"`
+	Enabled *bool                  `json:"enabled,omitempty"`
+	Quotas  *[]CreateConsumerQuota `json:"quotas,omitempty"`
+	Routes  *[]string              `json:"routes,omitempty"`
+}
+
+// validQuotaTypes enumerates the allowed ConsumerQuota.QuotaType values.
+var validQuotaTypes = map[string]bool{"requests": true, "tokens": true, "concurrency": true}
+
+// ValidateConsumerQuota checks a single quota DTO's invariants:
+//   - QuotaType must be one of requests, tokens, concurrency.
+//   - QuotaLimit must be positive.
+//   - concurrency quotas must not set a window (they aren't time-windowed).
+//   - any window must parse via quota.ParseWindow (the same parser the proxy's
+//     quota counter uses at enforcement time).
+func ValidateConsumerQuota(q CreateConsumerQuota) error {
+	if !validQuotaTypes[q.QuotaType] {
+		return fmt.Errorf("invalid quota_type %q: must be one of requests, tokens, concurrency", q.QuotaType)
+	}
+	if q.QuotaLimit <= 0 {
+		return fmt.Errorf("quota_limit must be > 0, got %d", q.QuotaLimit)
+	}
+	if q.QuotaType == "concurrency" {
+		if q.Window != "" {
+			return fmt.Errorf("concurrency quotas must not set a window")
+		}
+		return nil
+	}
+	if q.Window != "" {
+		if _, err := quota.ParseWindow(q.Window); err != nil {
+			return fmt.Errorf("invalid window %q: %w", q.Window, err)
+		}
+	}
+	return nil
 }
 
 // ConsumerKeyAccessRecord is the inbound-auth read model: the result of looking

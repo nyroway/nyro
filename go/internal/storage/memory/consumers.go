@@ -1,7 +1,9 @@
 package memory
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/nyroway/nyro/go/internal/storage"
 )
@@ -122,26 +124,99 @@ func (s consumerStore) Create(in storage.CreateConsumer) (storage.Consumer, erro
 		}
 		createdKeys = append(createdKeys, ck)
 	}
-	for _, routeModel := range in.Routes {
-		for _, r := range s.b.routes {
-			if r.Model == routeModel {
-				gid := newID()
-				s.b.consumerRoutes[gid] = consumerRouteGrant{ConsumerID: c.ID, RouteID: r.ID}
-				break
-			}
-		}
+	routeIDs, err := s.b.resolveRouteIDsByModel(in.Routes)
+	if err != nil {
+		return storage.Consumer{}, err
 	}
+	for _, rid := range routeIDs {
+		gid := newID()
+		s.b.consumerRoutes[gid] = consumerRouteGrant{ConsumerID: c.ID, RouteID: rid}
+	}
+
 	for _, qin := range in.Quotas {
-		cq := storage.ConsumerQuota{
-			ID: newID(), ConsumerID: c.ID, QuotaType: qin.QuotaType,
-			QuotaLimit: qin.QuotaLimit, Window: qin.Window,
+		if err := storage.ValidateConsumerQuota(qin); err != nil {
+			return storage.Consumer{}, err
 		}
-		s.b.consumerQuotas[cq.ID] = cq
 	}
+	s.b.insertConsumerQuotas(c.ID, in.Quotas)
 
 	out := s.b.consumerWithDetails(c)
 	out.Keys = createdKeys
 	return out, nil
+}
+
+// resolveRouteIDsByModel looks up route IDs for a set of route model names,
+// mirroring the by-model matching the database backend performs. It returns a
+// single error listing every unknown model name rather than silently skipping
+// them, so behavior matches the database backend.
+func (b *Backend) resolveRouteIDsByModel(models []string) ([]string, error) {
+	ids := make([]string, 0, len(models))
+	var unknown []string
+	for _, m := range models {
+		found := false
+		for _, r := range b.routes {
+			if r.Model == m {
+				ids = append(ids, r.ID)
+				found = true
+				break
+			}
+		}
+		if !found {
+			unknown = append(unknown, m)
+		}
+	}
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("unknown route model(s): %s", strings.Join(unknown, ", "))
+	}
+	return ids, nil
+}
+
+// insertConsumerQuotas creates the in-memory quota rows for consumerID.
+// Callers are responsible for validating quotas beforehand.
+func (b *Backend) insertConsumerQuotas(consumerID string, quotas []storage.CreateConsumerQuota) {
+	for _, qin := range quotas {
+		cq := storage.ConsumerQuota{
+			ID: newID(), ConsumerID: consumerID, QuotaType: qin.QuotaType,
+			QuotaLimit: qin.QuotaLimit, Window: qin.Window,
+		}
+		b.consumerQuotas[cq.ID] = cq
+	}
+}
+
+// replaceConsumerQuotas validates, then wholesale-replaces consumerID's
+// quotas.
+func (b *Backend) replaceConsumerQuotas(consumerID string, quotas []storage.CreateConsumerQuota) error {
+	for _, q := range quotas {
+		if err := storage.ValidateConsumerQuota(q); err != nil {
+			return err
+		}
+	}
+	for qid, q := range b.consumerQuotas {
+		if q.ConsumerID == consumerID {
+			delete(b.consumerQuotas, qid)
+		}
+	}
+	b.insertConsumerQuotas(consumerID, quotas)
+	return nil
+}
+
+// replaceConsumerRoutes resolves routeModels to route IDs, then
+// wholesale-replaces consumerID's route grants.
+func (b *Backend) replaceConsumerRoutes(consumerID string, routeModels []string) error {
+	ids, err := b.resolveRouteIDsByModel(routeModels)
+	if err != nil {
+		return err
+	}
+	for gid, g := range b.consumerRoutes {
+		if g.ConsumerID == consumerID {
+			delete(b.consumerRoutes, gid)
+		}
+	}
+	for _, rid := range ids {
+		gid := newID()
+		b.consumerRoutes[gid] = consumerRouteGrant{ConsumerID: consumerID, RouteID: rid}
+	}
+	return nil
 }
 
 func (s consumerStore) Update(id string, in storage.UpdateConsumer) (storage.Consumer, error) {
@@ -159,6 +234,18 @@ func (s consumerStore) Update(id string, in storage.UpdateConsumer) (storage.Con
 	}
 	c.UpdatedAt = nowISO()
 	s.b.consumers[id] = c
+
+	if in.Quotas != nil {
+		if err := s.b.replaceConsumerQuotas(id, *in.Quotas); err != nil {
+			return storage.Consumer{}, err
+		}
+	}
+	if in.Routes != nil {
+		if err := s.b.replaceConsumerRoutes(id, *in.Routes); err != nil {
+			return storage.Consumer{}, err
+		}
+	}
+
 	return s.b.consumerWithDetails(c), nil
 }
 
