@@ -53,12 +53,12 @@ export default function DashboardPage() {
 
   const { data: providers = [] } = useQuery<Upstream[]>({
     queryKey: ["providers"],
-    queryFn: () => backend("get_providers"),
+    queryFn: () => backend("list_upstreams"),
   });
 
   const { data: routes = [] } = useQuery<Route[]>({
     queryKey: ["routes"],
-    queryFn: () => backend("list_models"),
+    queryFn: () => backend("list_routes"),
   });
 
   const errorRate = overview && overview.total_requests > 0

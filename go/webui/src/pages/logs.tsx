@@ -52,7 +52,7 @@ export default function LogsPage() {
   });
   const { data: providers = [] } = useQuery<Upstream[]>({
     queryKey: ["providers"],
-    queryFn: () => backend("get_providers"),
+    queryFn: () => backend("list_upstreams"),
   });
   const { data: modelStats = [] } = useQuery<ModelStats[]>({
     queryKey: ["stats", "models", "log-filter"],
@@ -60,7 +60,7 @@ export default function LogsPage() {
   });
   const { data: apiKeys = [] } = useQuery<Consumer[]>({
     queryKey: ["api-keys", "log-filter"],
-    queryFn: () => backend("list_api_keys"),
+    queryFn: () => backend("list_consumers"),
   });
 
   const items = data?.items ?? [];
