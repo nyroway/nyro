@@ -745,10 +745,9 @@ func TestUpdateUpstreamRejectsModelsMutualExclusion(t *testing.T) {
 
 // TestUpdateUpstreamClearsModelsWhenSwitchingToDiscovery verifies that
 // sending an empty `models` array (as the WebUI does when switching a
-// static-list upstream to URL discovery — see go-adapter.ts's
-// updateUpstreamFromProvider) actually clears models_json, rather than
-// persisting the literal empty-array string "[]" (which would read back as
-// "a static list is still present" and shadow the new models_url both in
+// static-list upstream to URL discovery) actually clears models_json, rather
+// than persisting the literal empty-array string "[]" (which would read back
+// as "a static list is still present" and shadow the new models_url both in
 // modelsForUpstream and in the mutual-exclusion check on the next update).
 func TestUpdateUpstreamClearsModelsWhenSwitchingToDiscovery(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

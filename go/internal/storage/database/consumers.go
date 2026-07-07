@@ -281,22 +281,33 @@ func replaceConsumerRoutes(ctx context.Context, tx *query.Query, consumerID stri
 	return nil
 }
 
+// Update partially updates a consumer's own row (Name/Enabled), plus any
+// wholesale-replaced Quotas/Routes.
+//
+// The row-level write uses UpdateSimple with explicit column assignments
+// rather than Save(model) on a mutated struct: Enabled's `default:true` gorm
+// tag makes Save skip writing the column when it holds its Go zero value
+// (false), so a struct-level Save can silently fail to persist a disable
+// (see UpdateKey below, which hit the identical issue for ConsumerKey).
 func (s consumerStore) Update(id string, in storage.UpdateConsumer) (storage.Consumer, error) {
 	ctx := context.Background()
 	var out storage.Consumer
 	err := s.q.Transaction(func(tx *query.Query) error {
-		c, err := tx.Consumer.WithContext(ctx).Where(tx.Consumer.ID.Eq(id)).First()
-		if err != nil {
+		if _, err := tx.Consumer.WithContext(ctx).Where(tx.Consumer.ID.Eq(id)).First(); err != nil {
 			return err
 		}
+		assigns := []field.AssignExpr{tx.Consumer.UpdatedAt.Value(nowISO())}
 		if in.Name != nil {
-			c.Name = *in.Name
+			assigns = append(assigns, tx.Consumer.Name.Value(*in.Name))
 		}
 		if in.Enabled != nil {
-			c.Enabled = *in.Enabled
+			assigns = append(assigns, tx.Consumer.Enabled.Value(*in.Enabled))
 		}
-		c.UpdatedAt = nowISO()
-		if err := tx.Consumer.WithContext(ctx).Save(c); err != nil {
+		if _, err := tx.Consumer.WithContext(ctx).Where(tx.Consumer.ID.Eq(id)).UpdateSimple(assigns...); err != nil {
+			return err
+		}
+		c, err := tx.Consumer.WithContext(ctx).Where(tx.Consumer.ID.Eq(id)).First()
+		if err != nil {
 			return err
 		}
 

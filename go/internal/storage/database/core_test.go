@@ -292,6 +292,46 @@ func TestConsumerUpdateReplacesRoutesByModelName(t *testing.T) {
 	}
 }
 
+func TestConsumerUpdateDisablesConsumer(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{Name: "acme"})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+	if !consumer.Enabled {
+		t.Fatalf("consumer.Enabled = %v; want true by default", consumer.Enabled)
+	}
+
+	disabled := false
+	updated, err := s.Consumers().Update(consumer.ID, storage.UpdateConsumer{Enabled: &disabled})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Enabled != false {
+		t.Fatalf("updated.Enabled = %v; want false", updated.Enabled)
+	}
+
+	got, err := s.Consumers().Get(consumer.ID)
+	if err != nil || got == nil {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	if got.Enabled != false {
+		t.Fatalf("got.Enabled = %v; want false to persist across re-read", got.Enabled)
+	}
+
+	// Re-enabling (true isn't the Go zero value) must still work.
+	enabled := true
+	reEnabled, err := s.Consumers().Update(consumer.ID, storage.UpdateConsumer{Enabled: &enabled})
+	if err != nil {
+		t.Fatalf("Update (re-enable): %v", err)
+	}
+	if reEnabled.Enabled != true {
+		t.Fatalf("reEnabled.Enabled = %v; want true", reEnabled.Enabled)
+	}
+}
+
 func TestConsumerAddKey(t *testing.T) {
 	b := newTestBackend(t)
 	var s storage.Storage = b
