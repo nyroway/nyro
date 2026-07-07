@@ -1,18 +1,17 @@
 import { getAdminToken, clearAdminToken } from "./auth";
-import {
-  apiKeyFromConsumer,
-  createConsumerFromApiKey,
-  createRouteFromModel,
-  createUpstreamFromProvider,
-  modelFromRoute,
-  providerFromUpstream,
-  providerPresetFromGoPreset,
-  updateConsumerFromApiKey,
-  updateRouteFromModel,
-  updateUpstreamFromProvider,
-} from "./go-adapter";
-import type { GoConsumer, GoProviderPreset, GoRoute, GoUpstream } from "./go-schema";
-import type { CreateApiKey, CreateModel, CreateProvider, ProviderHealthEvent, RouteImportEvent, RouteImportPreview, UpdateApiKey, UpdateModel, UpdateProvider } from "./types";
+import type {
+  CreateConsumer,
+  CreateConsumerKey,
+  CreateRoute,
+  CreateUpstream,
+  ProviderHealthEvent,
+  RouteImportEvent,
+  RouteImportPreview,
+  UpdateConsumer,
+  UpdateConsumerKey,
+  UpdateRoute,
+  UpdateUpstream,
+} from "./types";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -196,7 +195,7 @@ async function streamRouteImportEvents(
 }
 
 export async function streamProviderDraftHealth(
-  input: CreateProvider,
+  input: CreateUpstream,
   onEvent: (event: ProviderHealthEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -204,7 +203,7 @@ export async function streamProviderDraftHealth(
     "/api/v1/upstreams/test-draft/stream",
     {
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(createUpstreamFromProvider(input)),
+      body: JSON.stringify(input),
     },
     onEvent,
     signal,
@@ -213,7 +212,7 @@ export async function streamProviderDraftHealth(
 
 export async function streamProviderEditDraftHealth(
   id: string,
-  input: CreateProvider,
+  input: CreateUpstream,
   onEvent: (event: ProviderHealthEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -221,7 +220,7 @@ export async function streamProviderEditDraftHealth(
     `/api/v1/upstreams/${id}/test-draft/stream`,
     {
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(createUpstreamFromProvider(input)),
+      body: JSON.stringify(input),
     },
     onEvent,
     signal,
@@ -263,31 +262,23 @@ interface HTTPMapping {
 function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
   const base = "/api/v1";
   switch (cmd) {
-    case "get_providers":
-      return { method: "GET", url: `${base}/upstreams`, transform: (value) => (value as GoUpstream[]).map(providerFromUpstream) };
+    case "list_upstreams":
+      return { method: "GET", url: `${base}/upstreams` };
     case "get_provider_presets":
-      return {
-        method: "GET",
-        url: `${base}/provider-presets`,
-        transform: (value) => (value as GoProviderPreset[]).map(providerPresetFromGoPreset),
-      };
-    case "get_loaded_extensions":
-      return { method: "GET", url: `${base}/extensions` };
-    case "create_provider":
+      return { method: "GET", url: `${base}/provider-presets` };
+    case "create_upstream":
       return {
         method: "POST",
         url: `${base}/upstreams`,
-        body: createUpstreamFromProvider(args?.input as CreateProvider),
-        transform: (value) => providerFromUpstream(value as GoUpstream),
+        body: args?.input as CreateUpstream,
       };
-    case "update_provider":
+    case "update_upstream":
       return {
         method: "PUT",
         url: `${base}/upstreams/${args?.id}`,
-        body: updateUpstreamFromProvider(args?.input as UpdateProvider),
-        transform: (value) => providerFromUpstream(value as GoUpstream),
+        body: args?.input as UpdateUpstream,
       };
-    case "delete_provider":
+    case "delete_upstream":
       return { method: "DELETE", url: `${base}/upstreams/${args?.id}` };
     case "test_provider_models":
     case "get_model_capabilities":
@@ -313,43 +304,53 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
     case "complete_oauth_session":
     case "create_oauth_provider":
       throw new Error("OAuth workflows are not available in the Go WebUI yet.");
-    case "list_models":
-      return { method: "GET", url: `${base}/routes`, transform: (value) => (value as GoRoute[]).map(modelFromRoute) };
-    case "create_model":
+    case "list_routes":
+      return { method: "GET", url: `${base}/routes` };
+    case "create_route":
       return {
         method: "POST",
         url: `${base}/routes`,
-        body: createRouteFromModel(args?.input as CreateModel),
-        transform: (value) => modelFromRoute(value as GoRoute),
+        body: args?.input as CreateRoute,
       };
-    case "update_model":
+    case "update_route":
       return {
         method: "PUT",
         url: `${base}/routes/${args?.id}`,
-        body: updateRouteFromModel(args?.input as UpdateModel),
-        transform: (value) => modelFromRoute(value as GoRoute),
+        body: args?.input as UpdateRoute,
       };
-    case "delete_model":
+    case "delete_route":
       return { method: "DELETE", url: `${base}/routes/${args?.id}` };
 
-    case "list_api_keys":
-      return { method: "GET", url: `${base}/consumers`, transform: (value) => (value as GoConsumer[]).map(apiKeyFromConsumer) };
-    case "create_api_key":
+    case "list_consumers":
+      return { method: "GET", url: `${base}/consumers` };
+    case "create_consumer":
       return {
         method: "POST",
         url: `${base}/consumers`,
-        body: createConsumerFromApiKey(args?.input as CreateApiKey),
-        transform: (value) => apiKeyFromConsumer(value as GoConsumer),
+        body: args?.input as CreateConsumer,
       };
-    case "update_api_key":
+    case "update_consumer":
       return {
         method: "PUT",
         url: `${base}/consumers/${args?.id}`,
-        body: updateConsumerFromApiKey(args?.input as UpdateApiKey),
-        transform: (value) => apiKeyFromConsumer(value as GoConsumer),
+        body: args?.input as UpdateConsumer,
       };
-    case "delete_api_key":
+    case "delete_consumer":
       return { method: "DELETE", url: `${base}/consumers/${args?.id}` };
+    case "add_consumer_key":
+      return {
+        method: "POST",
+        url: `${base}/consumers/${args?.id}/keys`,
+        body: args?.input as CreateConsumerKey,
+      };
+    case "update_consumer_key":
+      return {
+        method: "PUT",
+        url: `${base}/consumers/${args?.id}/keys/${args?.keyId}`,
+        body: args?.input as UpdateConsumerKey,
+      };
+    case "delete_consumer_key":
+      return { method: "DELETE", url: `${base}/consumers/${args?.id}/keys/${args?.keyId}` };
 
     case "query_logs": {
       const q = (args?.query ?? {}) as Record<string, unknown>;

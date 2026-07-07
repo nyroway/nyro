@@ -126,6 +126,13 @@ export interface CreateConsumerKey {
   enabled?: boolean;
 }
 
+/** Partial-update DTO for a single consumer key (`PUT /consumers/{id}/keys/{keyId}`); omitted fields mean unchanged. */
+export interface UpdateConsumerKey {
+  name?: string;
+  enabled?: boolean;
+  expires_at?: string;
+}
+
 export interface CreateConsumerQuota {
   quota_type: "requests" | "tokens" | "concurrency" | string;
   quota_limit: number;
