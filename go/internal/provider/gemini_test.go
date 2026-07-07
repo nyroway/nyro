@@ -17,11 +17,11 @@ func TestGeminiDefinition(t *testing.T) {
 	if d.DefaultModel != "gemini-2.0-flash" {
 		t.Errorf("DefaultModel = %q, want gemini-2.0-flash", d.DefaultModel)
 	}
-	if d.DefaultProtocol != "gemini-generatecontent" {
-		t.Errorf("DefaultProtocol = %q, want gemini-generatecontent", d.DefaultProtocol)
+	if d.DefaultProtocol != "google-gemini" {
+		t.Errorf("DefaultProtocol = %q, want google-gemini", d.DefaultProtocol)
 	}
-	if !provider.SupportsProtocol(d, "gemini-generatecontent") || !provider.SupportsProtocol(d, "openai-chatcompletions") {
-		t.Error("should support gemini-generatecontent and openai-chatcompletions")
+	if !provider.SupportsProtocol(d, "google-gemini") || !provider.SupportsProtocol(d, "openai-chat") {
+		t.Error("should support google-gemini and openai-chat")
 	}
 	if !hasCredentialField(d, "api_key") {
 		t.Error("should expose api_key credential")
@@ -31,14 +31,14 @@ func TestGeminiDefinition(t *testing.T) {
 // TestGeminiAuthenticatorFixedRegardlessOfProtocol asserts that a
 // gemini-provider upstream's outbound auth is fixed to x-goog-api-key by its
 // Definition.Auth == "gemini" scheme, regardless of which protocol the
-// upstream is configured with (gemini-generatecontent or the
-// openai-chatcompletions-compatible endpoint) — dispatch is provider-scheme
+// upstream is configured with (google-gemini or the
+// openai-chat-compatible endpoint) — dispatch is provider-scheme
 // first, not protocol-first.
 func TestGeminiAuthenticatorFixedRegardlessOfProtocol(t *testing.T) {
 	creds := json.RawMessage(`{"api_key":"AIza-test"}`)
 
-	auth, err := provider.AuthenticatorFor("gemini", "gemini-generatecontent", provider.UpstreamRuntime{
-		Protocol:        "gemini-generatecontent",
+	auth, err := provider.AuthenticatorFor("gemini", "google-gemini", provider.UpstreamRuntime{
+		Protocol:        "google-gemini",
 		CredentialsJSON: creds,
 	})
 	if err != nil {
@@ -49,11 +49,11 @@ func TestGeminiAuthenticatorFixedRegardlessOfProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := req.Header.Get("x-goog-api-key"); got != "AIza-test" {
-		t.Fatalf("gemini-generatecontent: x-goog-api-key = %q, want AIza-test", got)
+		t.Fatalf("google-gemini: x-goog-api-key = %q, want AIza-test", got)
 	}
 
-	auth2, err := provider.AuthenticatorFor("gemini", "openai-chatcompletions", provider.UpstreamRuntime{
-		Protocol:        "openai-chatcompletions",
+	auth2, err := provider.AuthenticatorFor("gemini", "openai-chat", provider.UpstreamRuntime{
+		Protocol:        "openai-chat",
 		CredentialsJSON: creds,
 	})
 	if err != nil {
@@ -64,9 +64,9 @@ func TestGeminiAuthenticatorFixedRegardlessOfProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := req2.Header.Get("x-goog-api-key"); got != "AIza-test" {
-		t.Fatalf("gemini + openai-chatcompletions: x-goog-api-key = %q, want AIza-test (fixed scheme, not protocol-driven)", got)
+		t.Fatalf("gemini + openai-chat: x-goog-api-key = %q, want AIza-test (fixed scheme, not protocol-driven)", got)
 	}
 	if got := req2.Header.Get("Authorization"); got != "" {
-		t.Fatalf("gemini + openai-chatcompletions: Authorization = %q, want empty", got)
+		t.Fatalf("gemini + openai-chat: Authorization = %q, want empty", got)
 	}
 }

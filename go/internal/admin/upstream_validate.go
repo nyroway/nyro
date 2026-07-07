@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nyroway/nyro/go/internal/protocol/ids"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
@@ -26,6 +27,36 @@ func normalizeEmptyModelsJSON(in *storage.UpdateUpstream) {
 		var empty json.RawMessage
 		in.ModelsJSON = &empty
 	}
+}
+
+func normalizeCreateUpstreamProtocol(in *storage.CreateUpstream) error {
+	protocol := strings.TrimSpace(in.Protocol)
+	if protocol == "" {
+		return nil
+	}
+	parsed, err := ids.ParseProtocol(protocol)
+	if err != nil {
+		return err
+	}
+	in.Protocol = parsed.String()
+	return nil
+}
+
+func normalizeUpdateUpstreamProtocol(in *storage.UpdateUpstream) error {
+	if in.Protocol == nil {
+		return nil
+	}
+	protocol := strings.TrimSpace(*in.Protocol)
+	if protocol == "" {
+		return nil
+	}
+	parsed, err := ids.ParseProtocol(protocol)
+	if err != nil {
+		return err
+	}
+	normalized := parsed.String()
+	in.Protocol = &normalized
+	return nil
 }
 
 // validateModelsMutualExclusion enforces the one invariant that must hold

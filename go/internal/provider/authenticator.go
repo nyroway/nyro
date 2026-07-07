@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/nyroway/nyro/go/internal/protocol/ids"
 )
 
 // DefaultAnthropicVersion is the anthropic-version header value applied by
@@ -71,6 +73,9 @@ func AuthenticatorFor(providerID, protocol string, up UpstreamRuntime) (Authenti
 func authSchemeFor(providerID, protocol string) string {
 	if def, ok := Lookup(providerID); ok && def.Auth != "" {
 		return def.Auth
+	}
+	if parsed, err := ids.ParseProtocol(protocol); err == nil {
+		protocol = parsed.String()
 	}
 	switch protocol {
 	case ProtocolOpenAIChatCompletions, ProtocolOpenAIResponses:

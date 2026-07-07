@@ -29,11 +29,11 @@ func TestCrossProtocolAnthropicToOpenAI(t *testing.T) {
 	}))
 	defer up.Close()
 
-	// Upstream speaks openai-chatcompletions; client will POST /v1/messages (Anthropic).
+	// Upstream speaks openai-chat; client will POST /v1/messages (Anthropic).
 	st := memory.New()
 	core := st.Storage()
 	upstream, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "openai-upstream", Protocol: "openai-chatcompletions", BaseURL: up.URL,
+		Name: "openai-upstream", Protocol: "openai-chat", BaseURL: up.URL,
 		CredentialsJSON: []byte(`{"api_key":"sk-test"}`),
 	})
 	_, _ = core.Routes().Create(storage.CreateRoute{

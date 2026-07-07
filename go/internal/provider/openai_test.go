@@ -17,11 +17,11 @@ func TestOpenAIDefinition(t *testing.T) {
 	if d.DefaultModel != "gpt-4o-mini" {
 		t.Errorf("DefaultModel = %q, want gpt-4o-mini", d.DefaultModel)
 	}
-	if d.DefaultProtocol != "openai-chatcompletions" {
-		t.Errorf("DefaultProtocol = %q, want openai-chatcompletions", d.DefaultProtocol)
+	if d.DefaultProtocol != "openai-chat" {
+		t.Errorf("DefaultProtocol = %q, want openai-chat", d.DefaultProtocol)
 	}
-	if !provider.SupportsProtocol(d, "openai-chatcompletions") {
-		t.Error("should support openai-chatcompletions")
+	if !provider.SupportsProtocol(d, "openai-chat") {
+		t.Error("should support openai-chat")
 	}
 	if !provider.SupportsProtocol(d, "openai-responses") {
 		t.Error("should support openai-responses")
@@ -32,7 +32,7 @@ func TestOpenAIDefinition(t *testing.T) {
 }
 
 func TestOpenAIAuthenticator(t *testing.T) {
-	auth, err := provider.AuthenticatorFor("openai", "openai-chatcompletions", provider.UpstreamRuntime{
+	auth, err := provider.AuthenticatorFor("openai", "openai-chat", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{"api_key":"sk-test"}`),
 	})
 	if err != nil {

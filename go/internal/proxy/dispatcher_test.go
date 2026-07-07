@@ -32,7 +32,7 @@ func TestRejectsOversizedBody(t *testing.T) {
 }
 
 func newTestGateway(t *testing.T, upstreamURL string) *Gateway {
-	return newTestGatewayProto(t, upstreamURL, "openai-chatcompletions")
+	return newTestGatewayProto(t, upstreamURL, "openai-chat")
 }
 
 // newTestGatewayFromStorage builds a storage-less Gateway and populates its

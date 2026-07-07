@@ -11,7 +11,4 @@ const (
 	ProtocolOpenAIResponses       = string(ids.ProtocolOpenAIResponses)
 	ProtocolAnthropicMessages     = string(ids.ProtocolAnthropicMessages)
 	ProtocolGeminiGenerateContent = string(ids.ProtocolGeminiGenerateContent)
-	ProtocolGeminiInteractions    = string(ids.ProtocolGeminiInteractions)
-	ProtocolBedrockConverse       = string(ids.ProtocolBedrockConverse)
-	ProtocolAzureModelInference   = string(ids.ProtocolAzureModelInference)
 )

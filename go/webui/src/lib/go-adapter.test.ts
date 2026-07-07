@@ -104,7 +104,7 @@ describe("provider <-> upstream credentials/models round-trip", () => {
       id: "up_1",
       name: "OpenAI",
       provider: "openai",
-      protocol: "openai-chatcompletions",
+      protocol: "openai-chat",
       base_url: "https://api.openai.com/v1",
       credentials: JSON.stringify({ api_key: "sk-test" }),
       models: ["gpt-4o"],
@@ -158,7 +158,7 @@ describe("provider <-> upstream credentials/models round-trip", () => {
     const input: CreateProvider = {
       name: "OpenAI",
       provider: "openai",
-      protocol: "openai-chatcompletions",
+      protocol: "openai-chat",
       base_url: "https://api.openai.com/v1",
       api_key: "sk-should-be-ignored",
       credentials: { api_key: "sk-real", org_id: "org-1" },
@@ -174,7 +174,7 @@ describe("provider <-> upstream credentials/models round-trip", () => {
     const input: CreateProvider = {
       name: "OpenAI",
       provider: "custom",
-      protocol: "openai-chatcompletions",
+      protocol: "openai-chat",
       base_url: "https://api.openai.com/v1",
       api_key: "sk-plain",
     };
@@ -189,8 +189,8 @@ describe("providerPresetFromGoPreset model discovery mapping", () => {
       id: "openai",
       name: "OpenAI",
       priority: 2,
-      default_protocol: "openai-chatcompletions",
-      protocols: [{ id: "openai-chatcompletions", base_url: "https://api.openai.com/v1" }],
+      default_protocol: "openai-chat",
+      protocols: [{ id: "openai-chat", base_url: "https://api.openai.com/v1" }],
       credentials: { fields: [] },
       models_url: "https://api.openai.com/v1/models",
     };
@@ -207,8 +207,8 @@ describe("providerPresetFromGoPreset model discovery mapping", () => {
       id: "custom-static",
       name: "Custom Static",
       priority: 9,
-      default_protocol: "openai-chatcompletions",
-      protocols: [{ id: "openai-chatcompletions", base_url: "https://example.com/v1" }],
+      default_protocol: "openai-chat",
+      protocols: [{ id: "openai-chat", base_url: "https://example.com/v1" }],
       credentials: { fields: [] },
     };
     const out = providerPresetFromGoPreset(preset);

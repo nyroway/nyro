@@ -4,83 +4,52 @@
  *
  * A Protocol identifies one concrete wire-format API surface (an
  * "interface"), vendor-prefixed but vendor-orthogonal in use. The canonical
- * endpoint form is `{protocol}/{version}` (e.g. "openai-chatcompletions/v1")
+ * endpoint form is `{protocol}/{version}` (e.g. "openai-chat/v1")
  * — there is no separate "endpoint name" layer.
  *
  * UI only surfaces the Protocol display name; the version is an internal
  * implementation detail not shown to users.
  *
- * Each protocol has exactly one short alias — keep this table in sync with
- * go/internal/protocol/ids/ids.go's ParseProtocol. There is no legacy/
- * back-compat alias set: this schema has no released consumers yet.
+ * Keep this table in sync with go/internal/protocol/ids/ids.go's
+ * ParseProtocol and DisplayName.
  */
 
 // ── Protocol enum (canonical identifiers) ──────────────────────────────────
 
 export type Protocol =
   | "anthropic-messages"
-  | "openai-chatcompletions"
+  | "openai-chat"
   | "openai-responses"
-  | "gemini-generatecontent"
-  | "gemini-interactions"
-  | "bedrock-converse"
-  | "azure-modelinference";
+  | "google-gemini";
 
 export interface ProtocolMeta {
   id: Protocol;
-  /** Short, vendor-agnostic label (e.g. "Messages API") — mirrors Go's Protocol.Name(). */
-  name: string;
-  /** Vendor-qualified label (e.g. "Anthropic Messages API") — mirrors Go's Protocol.FullName(). */
-  fullName: string;
+  /** Display label (e.g. "Anthropic Messages API") — mirrors Go's Protocol.DisplayName(). */
+  displayName: string;
   /** Default base URL shown as placeholder in the provider form. */
   defaultBaseUrl: string;
 }
 
-// gemini-interactions, bedrock-converse, and azure-modelinference are
-// declared only — no codec is registered for them on the backend yet
-// (go/internal/protocol/ids/ids.go), so defaultBaseUrl is left empty.
 export const PROTOCOL_TABLE: ProtocolMeta[] = [
   {
     id: "anthropic-messages",
-    name: "Messages API",
-    fullName: "Anthropic Messages API",
+    displayName: "Anthropic Messages API",
     defaultBaseUrl: "https://api.anthropic.com",
   },
   {
-    id: "openai-chatcompletions",
-    name: "ChatCompletions API",
-    fullName: "OpenAI Chat Completions API",
+    id: "openai-chat",
+    displayName: "OpenAI Compatible API",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
     id: "openai-responses",
-    name: "Responses API",
-    fullName: "OpenAI Responses API",
+    displayName: "OpenAI Responses API",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
-    id: "gemini-generatecontent",
-    name: "GenerateContent API",
-    fullName: "Gemini GenerateContent API",
+    id: "google-gemini",
+    displayName: "Google Gemini API",
     defaultBaseUrl: "https://generativelanguage.googleapis.com",
-  },
-  {
-    id: "gemini-interactions",
-    name: "Interactions API",
-    fullName: "Gemini Interactions API",
-    defaultBaseUrl: "",
-  },
-  {
-    id: "bedrock-converse",
-    name: "Converse API",
-    fullName: "Bedrock Converse API",
-    defaultBaseUrl: "",
-  },
-  {
-    id: "azure-modelinference",
-    name: "ModelInference API",
-    fullName: "Azure AI Model Inference API",
-    defaultBaseUrl: "",
   },
 ];
 
@@ -91,29 +60,21 @@ const PROTOCOL_ALIASES: Record<string, Protocol> = {
   "anthropic-messages": "anthropic-messages",
   claude: "anthropic-messages",
 
-  "openai-chatcompletions": "openai-chatcompletions",
-  openai: "openai-chatcompletions",
+  "openai-chat": "openai-chat",
+  openai: "openai-chat",
 
   "openai-responses": "openai-responses",
-  responses: "openai-responses",
+  codex: "openai-responses",
+  "openai-resp": "openai-responses",
 
-  "gemini-generatecontent": "gemini-generatecontent",
-  gemini: "gemini-generatecontent",
-
-  "gemini-interactions": "gemini-interactions",
-  interactions: "gemini-interactions",
-
-  "bedrock-converse": "bedrock-converse",
-  bedrock: "bedrock-converse",
-
-  "azure-modelinference": "azure-modelinference",
-  azure: "azure-modelinference",
+  "google-gemini": "google-gemini",
+  gemini: "google-gemini",
 };
 
 /**
  * Resolve any raw protocol string to a canonical `Protocol`, or `null` if unknown.
  *
- * Accepts the canonical identifier (`"openai-chatcompletions"`) or its single
+ * Accepts the canonical identifier (`"openai-chat"`) or its single
  * short alias (`"openai"`).
  */
 export function resolveProtocol(raw: string | null | undefined): Protocol | null {
@@ -122,18 +83,11 @@ export function resolveProtocol(raw: string | null | undefined): Protocol | null
   return PROTOCOL_ALIASES[key] ?? null;
 }
 
-/** Return the vendor-qualified display name for a protocol string (mirrors Go's FullName()), or `null` if unknown. */
+/** Return the display name for a protocol string (mirrors Go's DisplayName()), or `null` if unknown. */
 export function protocolDisplayName(raw: string | null | undefined): string | null {
   const protocol = resolveProtocol(raw);
   if (!protocol) return null;
-  return PROTOCOL_TABLE.find((p) => p.id === protocol)?.fullName ?? null;
-}
-
-/** Return the short, vendor-agnostic display name for a protocol string (mirrors Go's Name()), or `null` if unknown. */
-export function protocolShortName(raw: string | null | undefined): string | null {
-  const protocol = resolveProtocol(raw);
-  if (!protocol) return null;
-  return PROTOCOL_TABLE.find((p) => p.id === protocol)?.name ?? null;
+  return PROTOCOL_TABLE.find((p) => p.id === protocol)?.displayName ?? null;
 }
 
 /**
@@ -171,7 +125,7 @@ export function parseProtocolEndpoint(raw: string | null | undefined): ProtocolE
 /** Returns true when the raw string resolves to an OpenAI-family protocol. */
 export function isOpenAiProtocol(raw: string | null | undefined): boolean {
   const p = resolveProtocol(raw);
-  return p === "openai-chatcompletions" || p === "openai-responses";
+  return p === "openai-chat" || p === "openai-responses";
 }
 
 /**

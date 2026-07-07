@@ -29,7 +29,7 @@ func TestReadyz(t *testing.T) {
 	st := memory.New()
 	core := st.Storage()
 	up, _ := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "p", Protocol: "openai-chatcompletions", BaseURL: "http://up",
+		Name: "p", Protocol: "openai-chat", BaseURL: "http://up",
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 	_, _ = core.Routes().Create(storage.CreateRoute{

@@ -7,7 +7,7 @@ export function customProviderPreset(): ProviderPreset {
     id: CUSTOM_PROVIDER_PRESET_ID,
     name: "Custom",
     icon: CUSTOM_PROVIDER_PRESET_ID,
-    defaultProtocol: "openai-chatcompletions",
+    defaultProtocol: "openai-chat",
     channels: [],
   };
 }

@@ -71,6 +71,10 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				badRequest(w, err)
 				return
 			}
+			if err := normalizeCreateUpstreamProtocol(&in); err != nil {
+				badRequest(w, err)
+				return
+			}
 			if err := validateNewUpstreamFields(in.Provider, in.BaseURL, in.ModelsJSON, in.ModelsURL); err != nil {
 				badRequest(w, err)
 				return
@@ -96,6 +100,10 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		g.Put("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.UpdateUpstream
 			if err := webutil.Decode(r, &in); err != nil {
+				badRequest(w, err)
+				return
+			}
+			if err := normalizeUpdateUpstreamProtocol(&in); err != nil {
 				badRequest(w, err)
 				return
 			}

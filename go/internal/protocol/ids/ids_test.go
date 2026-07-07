@@ -8,10 +8,10 @@ func TestProtocolEndpointString(t *testing.T) {
 		ep   ProtocolEndpoint
 		want string
 	}{
-		{OpenAIChatCompletionsV1, "openai-chatcompletions/v1"},
+		{OpenAIChatCompletionsV1, "openai-chat/v1"},
 		{OpenAIResponsesV1, "openai-responses/v1"},
 		{AnthropicMessages20230601, "anthropic-messages/2023-06-01"},
-		{GeminiGenerateContentV1Beta, "gemini-generatecontent/v1beta"},
+		{GeminiGenerateContentV1Beta, "google-gemini/v1beta"},
 		{OpenAIEmbeddingsV1, "openai-embeddings/v1"},
 	}
 	for _, c := range cases {
@@ -24,22 +24,18 @@ func TestProtocolEndpointString(t *testing.T) {
 func TestParseProtocolAliases(t *testing.T) {
 	t.Parallel()
 	cases := map[string]Protocol{
-		"anthropic-messages":     ProtocolAnthropicMessages,
-		"claude":                 ProtocolAnthropicMessages,
-		"openai-chatcompletions": ProtocolOpenAIChatCompletions,
-		"openai":                 ProtocolOpenAIChatCompletions,
-		"openai-embeddings":      ProtocolOpenAIEmbeddings,
-		"embeddings":             ProtocolOpenAIEmbeddings,
-		"openai-responses":       ProtocolOpenAIResponses,
-		"responses":              ProtocolOpenAIResponses,
-		"gemini-generatecontent": ProtocolGeminiGenerateContent,
-		"gemini":                 ProtocolGeminiGenerateContent,
-		"gemini-interactions":    ProtocolGeminiInteractions,
-		"interactions":           ProtocolGeminiInteractions,
-		"bedrock-converse":       ProtocolBedrockConverse,
-		"bedrock":                ProtocolBedrockConverse,
-		"azure-modelinference":   ProtocolAzureModelInference,
-		"azure":                  ProtocolAzureModelInference,
+		"anthropic-messages": ProtocolAnthropicMessages,
+		"claude":             ProtocolAnthropicMessages,
+		"openai-chat":        ProtocolOpenAIChatCompletions,
+		"openai":             ProtocolOpenAIChatCompletions,
+		"openai-embeddings":  ProtocolOpenAIEmbeddings,
+		"embed":              ProtocolOpenAIEmbeddings,
+		"openai-embed":       ProtocolOpenAIEmbeddings,
+		"openai-responses":   ProtocolOpenAIResponses,
+		"codex":              ProtocolOpenAIResponses,
+		"openai-resp":        ProtocolOpenAIResponses,
+		"google-gemini":      ProtocolGeminiGenerateContent,
+		"gemini":             ProtocolGeminiGenerateContent,
 	}
 	for in, want := range cases {
 		got, err := ParseProtocol(in)
@@ -47,9 +43,14 @@ func TestParseProtocolAliases(t *testing.T) {
 			t.Errorf("ParseProtocol(%q) = %v, %v; want %v", in, got, err, want)
 		}
 	}
-	// Old, now-dropped aliases must not silently resolve — this schema has no
-	// back-compat alias set.
-	for _, dropped := range []string{"openai-compatible", "openai-compat", "openai-resps", "openaix", "geminix", "gemini-content", "azure-inference", "anthropic-msgs", "anthropic", "google-genai", "google-generative-ai", "google"} {
+	// This is an unreleased schema with no consumers yet, so there is no
+	// back-compat alias set — old/dropped identifiers must not resolve.
+	for _, dropped := range []string{
+		"openai-chatcompletions", "responses", "gemini-generatecontent", "embeddings",
+		"openai-compatible", "openai-compat", "openai-resps", "openaix", "geminix",
+		"gemini-content", "azure-inference", "anthropic-msgs", "anthropic",
+		"google-genai", "google-generative-ai", "google",
+	} {
 		if _, err := ParseProtocol(dropped); err == nil {
 			t.Errorf("ParseProtocol(%q) = nil error, want unknown-protocol error (alias was dropped)", dropped)
 		}
@@ -59,17 +60,20 @@ func TestParseProtocolAliases(t *testing.T) {
 	}
 }
 
-func TestNameAndFullNameCoverAllProtocols(t *testing.T) {
+func TestDisplayNameCoversAllProtocols(t *testing.T) {
 	t.Parallel()
-	for _, p := range []Protocol{
-		ProtocolAnthropicMessages, ProtocolOpenAIChatCompletions, ProtocolOpenAIEmbeddings, ProtocolOpenAIResponses,
-		ProtocolGeminiGenerateContent, ProtocolGeminiInteractions, ProtocolBedrockConverse, ProtocolAzureModelInference,
-	} {
-		if got := p.Name(); got == "Unknown" || got == "" {
-			t.Errorf("%q.Name() = %q, want a real short name", p, got)
-		}
-		if got := p.FullName(); got == "Unknown" || got == "" {
-			t.Errorf("%q.FullName() = %q, want a real full name", p, got)
+	cases := map[Protocol]string{
+		ProtocolAnthropicMessages:     "Anthropic Messages API",
+		ProtocolOpenAIChatCompletions: "OpenAI Compatible API",
+		ProtocolOpenAIEmbeddings:      "OpenAI Embeddings API",
+		ProtocolOpenAIResponses:       "OpenAI Responses API",
+		ProtocolGeminiGenerateContent: "Google Gemini API",
+	}
+	for p, want := range cases {
+		if got := p.DisplayName(); got == "Unknown" || got == "" {
+			t.Errorf("%q.DisplayName() = %q, want a real display name", p, got)
+		} else if got != want {
+			t.Errorf("%q.DisplayName() = %q, want %q", p, got, want)
 		}
 	}
 }

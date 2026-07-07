@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/nyroway/nyro/go/internal/protocol/ids"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
@@ -210,7 +211,14 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 		if err != nil {
 			return fmt.Errorf("encode credentials for upstream %q: %w", u.Name, err)
 		}
-		protocolVal, baseURL := u.Protocol, u.BaseURL
+		protocolVal, baseURL := strings.TrimSpace(u.Protocol), u.BaseURL
+		if protocolVal != "" {
+			proto, err := ids.ParseProtocol(protocolVal)
+			if err != nil {
+				return fmt.Errorf("upstream %q: %w", u.Name, err)
+			}
+			protocolVal = proto.String()
+		}
 		if def, ok := provider.Lookup(u.Provider); ok {
 			if protocolVal == "" {
 				protocolVal = def.DefaultProtocol

@@ -28,7 +28,7 @@ func TestSnapshotFromProto_NilSafe(t *testing.T) {
 func TestSnapshotFromProto_Upstreams(t *testing.T) {
 	in := &pb.ConfigSnapshot{
 		Upstreams: []*pb.Upstream{{
-			Id: "up-1", Name: "openai-main", Protocol: "openai-chatcompletions",
+			Id: "up-1", Name: "openai-main", Protocol: "openai-chat",
 			BaseUrl: "https://api.openai.com", CredentialsJson: `{"api_key":"sk-x"}`,
 			ProxyUrl: "http://proxy.local", Enabled: true,
 		}},

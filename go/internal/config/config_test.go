@@ -23,7 +23,7 @@ settings:
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chatcompletions
+    protocol: openai-chat
     base_url: https://api.openai.com
     credentials:
       api_key: sk-***
@@ -141,8 +141,8 @@ func TestApplyTo_ProviderTemplateExpansion(t *testing.T) {
 	if u.Provider != "openai" {
 		t.Errorf("Provider = %q, want openai to be persisted", u.Provider)
 	}
-	if u.Protocol != "openai-chatcompletions" {
-		t.Errorf("Protocol = %q, want openai-chatcompletions (from provider default)", u.Protocol)
+	if u.Protocol != "openai-chat" {
+		t.Errorf("Protocol = %q, want openai-chat (from provider default)", u.Protocol)
 	}
 	if u.BaseURL != "https://api.openai.com/v1" {
 		t.Errorf("BaseURL = %q, want https://api.openai.com/v1 (from provider default)", u.BaseURL)
@@ -175,6 +175,31 @@ func TestApplyTo_ProviderTemplateExplicitProtocolWins(t *testing.T) {
 	// base_url still filled in from the provider def for the explicit protocol.
 	if u.BaseURL != "https://api.openai.com/v1" {
 		t.Errorf("BaseURL = %q, want https://api.openai.com/v1 (from provider default for openai-responses)", u.BaseURL)
+	}
+}
+
+func TestApplyTo_NormalizesProtocolAlias(t *testing.T) {
+	cfg := &Config{
+		Upstreams: []UpstreamSpec{{
+			Name: "openai", Provider: "openai", Protocol: "openai-resp",
+			Credentials: map[string]string{"api_key": "sk-x"},
+		}},
+	}
+	st := memory.New()
+	core := st.Storage()
+	if err := cfg.ApplyTo(core); err != nil {
+		t.Fatalf("ApplyTo: %v", err)
+	}
+	ups, _ := core.Upstreams().List()
+	if len(ups) != 1 {
+		t.Fatalf("upstream not seeded: %+v", ups)
+	}
+	u := ups[0]
+	if u.Protocol != "openai-responses" {
+		t.Errorf("Protocol = %q, want alias normalized to openai-responses", u.Protocol)
+	}
+	if u.BaseURL != "https://api.openai.com/v1" {
+		t.Errorf("BaseURL = %q, want provider default for normalized protocol", u.BaseURL)
 	}
 }
 
@@ -273,7 +298,7 @@ func TestApplyToUnknownRoute(t *testing.T) {
 func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
 	cfg := &Config{
 		Upstreams: []UpstreamSpec{{
-			Name: "openai", Provider: "openai", Protocol: "openai-chatcompletions",
+			Name: "openai", Provider: "openai", Protocol: "openai-chat",
 			BaseURL: "https://api.openai.com", Credentials: map[string]string{"api_key": "sk-x"},
 		}},
 		Routes: []RouteSpec{{
@@ -397,7 +422,7 @@ version: 1
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chatcompletions
+    protocol: openai-chat
     base_url: https://api.openai.com
     credentials:
       api_key: "${NYRO_TEST_API_KEY}"
@@ -428,7 +453,7 @@ version: 1
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chatcompletions
+    protocol: openai-chat
     base_url: https://api.openai.com
     credentials:
       api_key: "${NYRO_TEST_DEFINITELY_UNSET_VAR}"

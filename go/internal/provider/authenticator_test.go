@@ -10,7 +10,7 @@ import (
 )
 
 func TestAuthenticatorForOpenAICompatibleAndResponsesUseBearer(t *testing.T) {
-	for _, protocol := range []string{"openai-chatcompletions", "openai-responses"} {
+	for _, protocol := range []string{"openai-chat", "openai-responses"} {
 		auth, err := provider.AuthenticatorFor("openai", protocol, provider.UpstreamRuntime{
 			CredentialsJSON: json.RawMessage(`{"api_key":"sk-test"}`),
 		})
@@ -28,7 +28,7 @@ func TestAuthenticatorForOpenAICompatibleAndResponsesUseBearer(t *testing.T) {
 }
 
 func TestAuthenticatorForOpenAICompatibleMissingAPIKeyErrors(t *testing.T) {
-	_, err := provider.AuthenticatorFor("openai", "openai-chatcompletions", provider.UpstreamRuntime{
+	_, err := provider.AuthenticatorFor("openai", "openai-chat", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{}`),
 	})
 	if err == nil {
@@ -65,7 +65,7 @@ func TestAuthenticatorForAnthropicMessagesMissingAPIKeyErrors(t *testing.T) {
 }
 
 func TestAuthenticatorForGeminiContentSetsFixedHeader(t *testing.T) {
-	auth, err := provider.AuthenticatorFor("gemini", "gemini-generatecontent", provider.UpstreamRuntime{
+	auth, err := provider.AuthenticatorFor("gemini", "google-gemini", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{"api_key":"gemini-key"}`),
 	})
 	if err != nil {
@@ -79,12 +79,12 @@ func TestAuthenticatorForGeminiContentSetsFixedHeader(t *testing.T) {
 		t.Errorf("x-goog-api-key = %q, want gemini-key", got)
 	}
 	if got := req.Header.Get("Authorization"); got != "" {
-		t.Errorf("Authorization should be unset for gemini-generatecontent, got %q", got)
+		t.Errorf("Authorization should be unset for google-gemini, got %q", got)
 	}
 }
 
 func TestAuthenticatorForGeminiContentMissingAPIKeyErrors(t *testing.T) {
-	_, err := provider.AuthenticatorFor("gemini", "gemini-generatecontent", provider.UpstreamRuntime{
+	_, err := provider.AuthenticatorFor("gemini", "google-gemini", provider.UpstreamRuntime{
 		CredentialsJSON: json.RawMessage(`{}`),
 	})
 	if err == nil {
@@ -154,5 +154,24 @@ func TestAuthenticatorForUnknownProviderKnownProtocolUsesProtocolFallback(t *tes
 	}
 	if got := req.Header.Get("anthropic-version"); got != provider.DefaultAnthropicVersion {
 		t.Errorf("anthropic-version = %q, want %q", got, provider.DefaultAnthropicVersion)
+	}
+}
+
+func TestAuthenticatorForUnknownProviderUsesProtocolFallback(t *testing.T) {
+	auth, err := provider.AuthenticatorFor("some-unknown-provider", "google-gemini", provider.UpstreamRuntime{
+		CredentialsJSON: json.RawMessage(`{"api_key":"legacy-gemini-key"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, "https://generativelanguage.googleapis.com/v1beta/models", nil)
+	if err := auth.Apply(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := req.Header.Get("x-goog-api-key"); got != "legacy-gemini-key" {
+		t.Errorf("x-goog-api-key = %q, want legacy-gemini-key", got)
+	}
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Errorf("Authorization should be unset for Gemini protocol fallback, got %q", got)
 	}
 }
