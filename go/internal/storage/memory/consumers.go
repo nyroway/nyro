@@ -183,40 +183,41 @@ func (b *Backend) insertConsumerQuotas(consumerID string, quotas []storage.Creat
 	}
 }
 
-// replaceConsumerQuotas validates, then wholesale-replaces consumerID's
-// quotas.
-func (b *Backend) replaceConsumerQuotas(consumerID string, quotas []storage.CreateConsumerQuota) error {
+// validateConsumerQuotas validates each quota without mutating any state.
+func validateConsumerQuotas(quotas []storage.CreateConsumerQuota) error {
 	for _, q := range quotas {
 		if err := storage.ValidateConsumerQuota(q); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+// applyConsumerQuotas wholesale-replaces consumerID's quotas. Callers must
+// validate quotas beforehand (see validateConsumerQuotas); this method never
+// fails.
+func (b *Backend) applyConsumerQuotas(consumerID string, quotas []storage.CreateConsumerQuota) {
 	for qid, q := range b.consumerQuotas {
 		if q.ConsumerID == consumerID {
 			delete(b.consumerQuotas, qid)
 		}
 	}
 	b.insertConsumerQuotas(consumerID, quotas)
-	return nil
 }
 
-// replaceConsumerRoutes resolves routeModels to route IDs, then
-// wholesale-replaces consumerID's route grants.
-func (b *Backend) replaceConsumerRoutes(consumerID string, routeModels []string) error {
-	ids, err := b.resolveRouteIDsByModel(routeModels)
-	if err != nil {
-		return err
-	}
+// applyConsumerRoutes wholesale-replaces consumerID's route grants with the
+// given (already-resolved) route IDs. Callers must resolve routeModels
+// beforehand (see resolveRouteIDsByModel); this method never fails.
+func (b *Backend) applyConsumerRoutes(consumerID string, routeIDs []string) {
 	for gid, g := range b.consumerRoutes {
 		if g.ConsumerID == consumerID {
 			delete(b.consumerRoutes, gid)
 		}
 	}
-	for _, rid := range ids {
+	for _, rid := range routeIDs {
 		gid := newID()
 		b.consumerRoutes[gid] = consumerRouteGrant{ConsumerID: consumerID, RouteID: rid}
 	}
-	return nil
 }
 
 func (s consumerStore) Update(id string, in storage.UpdateConsumer) (storage.Consumer, error) {
@@ -226,6 +227,24 @@ func (s consumerStore) Update(id string, in storage.UpdateConsumer) (storage.Con
 	if !ok {
 		return storage.Consumer{}, ErrNotFound
 	}
+
+	// Validate/resolve both dimensions before mutating anything, so a
+	// failure in one (e.g. an unknown route model) can never leave the
+	// other partially replaced.
+	if in.Quotas != nil {
+		if err := validateConsumerQuotas(*in.Quotas); err != nil {
+			return storage.Consumer{}, err
+		}
+	}
+	var routeIDs []string
+	if in.Routes != nil {
+		ids, err := s.b.resolveRouteIDsByModel(*in.Routes)
+		if err != nil {
+			return storage.Consumer{}, err
+		}
+		routeIDs = ids
+	}
+
 	if in.Name != nil {
 		c.Name = *in.Name
 	}
@@ -236,14 +255,10 @@ func (s consumerStore) Update(id string, in storage.UpdateConsumer) (storage.Con
 	s.b.consumers[id] = c
 
 	if in.Quotas != nil {
-		if err := s.b.replaceConsumerQuotas(id, *in.Quotas); err != nil {
-			return storage.Consumer{}, err
-		}
+		s.b.applyConsumerQuotas(id, *in.Quotas)
 	}
 	if in.Routes != nil {
-		if err := s.b.replaceConsumerRoutes(id, *in.Routes); err != nil {
-			return storage.Consumer{}, err
-		}
+		s.b.applyConsumerRoutes(id, routeIDs)
 	}
 
 	return s.b.consumerWithDetails(c), nil

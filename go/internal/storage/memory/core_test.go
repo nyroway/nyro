@@ -248,6 +248,45 @@ func TestCoreConsumerUpdateReplacesRoutesByModelName(t *testing.T) {
 	}
 }
 
+func TestCoreConsumerUpdateQuotasUnchangedWhenRoutesFail(t *testing.T) {
+	s := New().Storage()
+
+	if _, err := s.Routes().Create(storage.CreateRoute{Model: "gpt-4o"}); err != nil {
+		t.Fatalf("create route gpt-4o: %v", err)
+	}
+
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{
+		Name:   "acme",
+		Routes: []string{"gpt-4o"},
+		Quotas: []storage.CreateConsumerQuota{{QuotaType: "requests", QuotaLimit: 60, Window: "1m"}},
+	})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+
+	newQuotas := []storage.CreateConsumerQuota{
+		{QuotaType: "tokens", QuotaLimit: 1000, Window: "1h"},
+	}
+	badRoutes := []string{"does-not-exist"}
+	if _, err := s.Consumers().Update(consumer.ID, storage.UpdateConsumer{
+		Quotas: &newQuotas,
+		Routes: &badRoutes,
+	}); err == nil {
+		t.Fatal("Update with valid Quotas but unknown route model: want error, got nil")
+	}
+
+	got, err := s.Consumers().Get(consumer.ID)
+	if err != nil || got == nil {
+		t.Fatalf("Get after failed update = %+v, %v", got, err)
+	}
+	if len(got.Quotas) != 1 || got.Quotas[0].QuotaType != "requests" || got.Quotas[0].QuotaLimit != 60 {
+		t.Fatalf("got.Quotas = %+v; want unchanged original quota (requests, 60) — quotas must not be partially replaced when route resolution fails", got.Quotas)
+	}
+	if len(got.Routes) != 1 || got.Routes[0] != "gpt-4o" {
+		t.Fatalf("got.Routes = %+v; want unchanged [gpt-4o]", got.Routes)
+	}
+}
+
 func TestCoreSettingsUpsert(t *testing.T) {
 	s := New().Storage()
 
