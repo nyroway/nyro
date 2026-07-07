@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Line, LineChart } from "recharts";
 import { backend } from "@/lib/backend";
-import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, GatewayStatus, Provider, Model as ModelType } from "@/lib/types";
+import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, GatewayStatus, Upstream, Route } from "@/lib/types";
 import { Activity, Zap, Clock, AlertTriangle, Server, Route as RouteIcon } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 
@@ -51,12 +51,12 @@ export default function DashboardPage() {
     queryFn: () => backend("get_gateway_status"),
   });
 
-  const { data: providers = [] } = useQuery<Provider[]>({
+  const { data: providers = [] } = useQuery<Upstream[]>({
     queryKey: ["providers"],
     queryFn: () => backend("get_providers"),
   });
 
-  const { data: routes = [] } = useQuery<ModelType[]>({
+  const { data: routes = [] } = useQuery<Route[]>({
     queryKey: ["routes"],
     queryFn: () => backend("list_models"),
   });

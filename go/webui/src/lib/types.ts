@@ -1,70 +1,172 @@
-export interface Provider {
+export interface Upstream {
   id: string;
   name: string;
-  /** Preset id (e.g. "openai"/"anthropic") or "custom"; selects the credential/protocol preset. */
-  provider?: string | null;
-  protocol: string;
-  base_url: string;
-  api_key?: string;
-  /** Full multi-field credential object (e.g. AWS/Azure/GCP fields), keyed by field name. */
-  credentials?: Record<string, string>;
-  /** The real per-upstream proxy address (empty/absent = no proxy). */
-  proxy_url?: string | null;
-  /** Derived display-only flag: `Boolean(proxy_url)`. Not a separate stored field. */
-  use_proxy: boolean;
-  oauth_status?: ProviderOAuthStatus;
-  oauth_expires_at?: string | null;
-  oauth_last_error?: string | null;
-  oauth_updated_at?: string | null;
-  /** Discovery endpoint URL; mutually exclusive with `models`. */
-  models_url?: string | null;
-  /** Newline-joined static model list (textarea UX); mutually exclusive with `models_url`. */
-  models?: string | null;
-  is_enabled: boolean;
-  created_at: string;
-  updated_at: string;
+  provider?: string;
+  protocol?: string;
+  base_url?: string;
+  credentials?: Record<string, unknown> | string | null;
+  models?: string[] | null;
+  models_url?: string;
+  proxy_url?: string;
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
-export interface Model {
-  id: string;
+export interface CreateUpstream {
   name: string;
-  balance: ModelBalance;
-  target_provider: string;
-  target_model: string;
-  enable_auth: boolean;
-  enable_payload?: boolean | null;
-  is_enabled: boolean;
-  created_at: string;
-  targets: ModelBackend[];
+  provider: string;
+  protocol?: string;
+  base_url?: string;
+  credentials?: Record<string, unknown>;
+  models?: string[];
+  models_url?: string;
+  proxy_url?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateUpstream {
+  name?: string;
+  provider?: string;
+  protocol?: string;
+  base_url?: string;
+  credentials?: Record<string, unknown>;
+  models?: string[];
+  models_url?: string;
+  proxy_url?: string;
+  enabled?: boolean;
+}
+
+export interface RouteUpstream {
+  id: string;
+  route_id: string;
+  upstream_id: string;
+  model: string;
+  weight: number;
+  priority: number;
+  enabled: boolean;
+  created_at?: string;
 }
 
 export type ModelBalance = "weighted" | "priority";
 
-export interface ModelBackend {
+export interface Route {
   id: string;
-  model_id: string;
-  provider_id: string;
   model: string;
-  weight: number;
-  priority: number;
-  created_at: string;
+  balance: ModelBalance;
+  enable_auth: boolean;
+  enable_payload?: boolean | null;
+  enabled: boolean;
+  upstreams?: RouteUpstream[];
+  created_at?: string;
+  updated_at?: string;
 }
 
-export interface ApiKey {
+export interface CreateRouteUpstream {
+  upstream_id: string;
+  model: string;
+  weight?: number;
+  priority?: number;
+  enabled?: boolean;
+}
+
+export interface CreateRoute {
+  model: string;
+  balance?: ModelBalance;
+  enable_auth?: boolean;
+  enable_payload?: boolean | null;
+  upstreams: CreateRouteUpstream[];
+}
+
+export interface UpdateRoute {
+  model?: string;
+  balance?: ModelBalance;
+  enable_auth?: boolean;
+  enable_payload?: boolean | null;
+  enabled?: boolean;
+  upstreams?: CreateRouteUpstream[];
+}
+
+export interface ConsumerKey {
   id: string;
-  key: string;
+  consumer_id: string;
   name: string;
-  rpm?: number | null;
-  rpd?: number | null;
-  tpm?: number | null;
-  tpd?: number | null;
-  /** `quotas.concurrency.max_requests` — the max number of in-flight requests. */
-  max_requests?: number | null;
-  is_enabled: boolean;
-  expires_at?: string | null;
-  created_at: string;
-  updated_at: string;
-  model_ids: string[];
+  key_prefix: string;
+  token?: string;
+  enabled: boolean;
+  expires_at?: string;
+  last_used_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ConsumerQuota {
+  id?: string;
+  consumer_id?: string;
+  quota_type: "requests" | "tokens" | "concurrency" | string;
+  quota_limit: number;
+  window?: string;
+}
+
+export interface Consumer {
+  id: string;
+  name: string;
+  enabled: boolean;
+  keys?: ConsumerKey[];
+  routes?: string[];
+  quotas?: ConsumerQuota[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreateConsumerKey {
+  name: string;
+  token?: string;
+  expires_at?: string;
+  enabled?: boolean;
+}
+
+export interface CreateConsumerQuota {
+  quota_type: "requests" | "tokens" | "concurrency" | string;
+  quota_limit: number;
+  window?: string;
+}
+
+export interface CreateConsumer {
+  name: string;
+  enabled?: boolean;
+  keys?: CreateConsumerKey[];
+  routes?: string[];
+  quotas?: CreateConsumerQuota[];
+}
+
+export interface UpdateConsumer {
+  name?: string;
+  enabled?: boolean;
+  quotas?: CreateConsumerQuota[];
+  routes?: string[];
+}
+
+/** Raw Go backend response shape for a provider preset (`GET /api/v1/provider-presets`), snake_case fields. */
+export interface ProviderPresetDTO {
+  id: string;
+  name: string;
+  priority: number;
+  default_protocol: string;
+  default_model?: string;
+  protocols: Array<{ id: string; base_url?: string }>;
+  credentials: {
+    fields: Array<{
+      name: string;
+      type: string;
+      required: boolean;
+      default?: string;
+      values?: string[];
+      env?: string;
+      required_when?: Record<string, unknown>;
+    }>;
+  };
+  models_url?: string;
 }
 
 export interface RequestLog {
@@ -266,99 +368,6 @@ export interface ProviderPreset {
   channels?: ProviderChannelPreset[];
   /** The preset's full credential schema (`credentials.fields[]` from the Go backend). */
   credentialFields?: ProviderCredentialField[];
-}
-
-export interface CreateProvider {
-  name: string;
-  /** Preset id (e.g. "openai"/"anthropic") or "custom"; required on create. */
-  provider: string;
-  protocol: string;
-  base_url: string;
-  /** Real per-upstream proxy address; empty/absent = no proxy. */
-  proxy_url?: string;
-  /** Discovery endpoint URL; mutually exclusive with `models`. */
-  models_url?: string;
-  /** Newline-joined static model list (textarea UX); mutually exclusive with `models_url`. */
-  models?: string;
-  api_key: string;
-  /** Full credential field values keyed by field name; takes priority over `api_key` when non-empty. */
-  credentials?: Record<string, string>;
-}
-
-export interface UpdateProvider {
-  name?: string;
-  provider?: string;
-  protocol?: string;
-  base_url?: string;
-  /** Real per-upstream proxy address; empty/absent = no proxy. */
-  proxy_url?: string;
-  /** Discovery endpoint URL; mutually exclusive with `models`. */
-  models_url?: string;
-  /** Newline-joined static model list (textarea UX); mutually exclusive with `models_url`. */
-  models?: string;
-  api_key?: string;
-  /** Full credential field values keyed by field name; takes priority over `api_key` when set. */
-  credentials?: Record<string, string>;
-  is_enabled?: boolean;
-}
-
-export interface CreateModel {
-  name: string;
-  balance?: ModelBalance;
-  target_provider: string;
-  target_model: string;
-  targets?: CreateModelBackend[];
-  enable_auth?: boolean;
-  enable_payload?: boolean | null;
-}
-
-export interface UpdateModel {
-  name?: string;
-  balance?: ModelBalance;
-  target_provider?: string;
-  target_model?: string;
-  targets?: UpsertModelBackend[];
-  enable_auth?: boolean;
-  enable_payload?: boolean | null;
-  is_enabled?: boolean;
-}
-
-export interface CreateModelBackend {
-  provider_id: string;
-  model: string;
-  weight?: number;
-  priority?: number;
-}
-
-export interface UpsertModelBackend {
-  id?: string;
-  provider_id: string;
-  model: string;
-  weight?: number;
-  priority?: number;
-}
-
-export interface CreateApiKey {
-  name: string;
-  rpm?: number;
-  rpd?: number;
-  tpm?: number;
-  tpd?: number;
-  max_requests?: number;
-  expires_at?: string;
-  model_ids: string[];
-}
-
-export interface UpdateApiKey {
-  name?: string;
-  rpm?: number;
-  rpd?: number;
-  tpm?: number;
-  tpd?: number;
-  max_requests?: number;
-  is_enabled?: boolean;
-  expires_at?: string;
-  model_ids?: string[];
 }
 
 export interface LogQuery {

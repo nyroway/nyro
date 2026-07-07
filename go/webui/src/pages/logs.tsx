@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, ScrollText, Trash2 } from "lucide-react";
 
 import { backend } from "@/lib/backend";
-import type { ApiKey, LogPage, LogQuery, ModelStats, Provider, RequestLog } from "@/lib/types";
+import type { Consumer, LogPage, LogQuery, ModelStats, Upstream, RequestLog } from "@/lib/types";
 import { getRouteType } from "@/lib/types";
 import { computeTps, formatDuration, formatLogTime, formatTokenCount, formatTps } from "@/lib/format";
 import { prettyName } from "@/lib/protocol";
@@ -50,7 +50,7 @@ export default function LogsPage() {
     queryFn: () => backend("query_logs", { query }),
     refetchInterval: 5_000,
   });
-  const { data: providers = [] } = useQuery<Provider[]>({
+  const { data: providers = [] } = useQuery<Upstream[]>({
     queryKey: ["providers"],
     queryFn: () => backend("get_providers"),
   });
@@ -58,7 +58,7 @@ export default function LogsPage() {
     queryKey: ["stats", "models", "log-filter"],
     queryFn: () => backend("get_stats_by_model"),
   });
-  const { data: apiKeys = [] } = useQuery<ApiKey[]>({
+  const { data: apiKeys = [] } = useQuery<Consumer[]>({
     queryKey: ["api-keys", "log-filter"],
     queryFn: () => backend("list_api_keys"),
   });
