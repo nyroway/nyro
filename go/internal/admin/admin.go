@@ -97,6 +97,14 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			}
 			streamDraftUpstreamHealth(w, r, s, in)
 		})
+		g.Post("/upstreams/{id}/test-draft/stream", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.CreateUpstream
+			if err := webutil.Decode(r, &in); err != nil {
+				badRequest(w, err)
+				return
+			}
+			streamEditDraftUpstreamHealth(w, r, s, in, chi.URLParam(r, "id"))
+		})
 		g.Put("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.UpdateUpstream
 			if err := webutil.Decode(r, &in); err != nil {

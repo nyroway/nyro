@@ -40,6 +40,7 @@ type healthEventWriter struct {
 
 type upstreamHealthOptions struct {
 	checkNameConflict bool
+	excludeID         string
 }
 
 func newHealthEventWriter(w http.ResponseWriter) *healthEventWriter {
@@ -60,6 +61,14 @@ func (e *healthEventWriter) send(ev upstreamHealthEvent) {
 
 func streamDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, in storage.CreateUpstream) {
 	streamUpstreamHealth(w, r, s, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true})
+}
+
+// streamEditDraftUpstreamHealth runs the same pre-save validation pipeline as
+// streamDraftUpstreamHealth, but excludes excludeID from the name-uniqueness
+// check — an edit form resubmits the provider's own (unchanged) name, which
+// would otherwise always collide with itself.
+func streamEditDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, in storage.CreateUpstream, excludeID string) {
+	streamUpstreamHealth(w, r, s, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true, excludeID: excludeID})
 }
 
 func streamSavedUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, u storage.Upstream) {
@@ -90,7 +99,7 @@ func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Stor
 		return
 	}
 	if opts.checkNameConflict {
-		if exists, _ := s.Upstreams().ExistsByName(u.Name, ""); exists {
+		if exists, _ := s.Upstreams().ExistsByName(u.Name, opts.excludeID); exists {
 			msg := "upstream name already exists"
 			events.send(upstreamHealthEvent{Type: "check", Check: "config", Status: "failed", Error: msg})
 			complete(false, msg)

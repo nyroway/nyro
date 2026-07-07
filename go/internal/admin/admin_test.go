@@ -831,6 +831,56 @@ func TestUpstreamHealthStreamRunsModelTestForSavedProvider(t *testing.T) {
 	}
 }
 
+func TestUpstreamEditDraftHealthStreamExcludesOwnName(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_edit","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}]}`))
+	}))
+	defer ts.Close()
+
+	r, _ := newEngine(t, "")
+	rec := do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"saved","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
+	}
+	var u storage.Upstream
+	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-submitting the provider's own unchanged name through the edit-draft
+	// endpoint must not be treated as a name conflict with itself.
+	rec = do(r, "POST", "/api/v1/upstreams/"+u.ID+"/test-draft/stream", "",
+		[]byte(`{"name":"saved","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit draft health stream → %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "upstream name already exists") {
+		t.Fatalf("edit draft health stream falsely flagged own name as a conflict:\n%s", body)
+	}
+	if !strings.Contains(body, `"success":true`) {
+		t.Fatalf("edit draft health stream did not succeed:\n%s", body)
+	}
+
+	// A name that collides with a different existing upstream must still fail.
+	rec = do(r, "POST", "/api/v1/upstreams", "",
+		[]byte(`{"name":"other","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create other → %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(r, "POST", "/api/v1/upstreams/"+u.ID+"/test-draft/stream", "",
+		[]byte(`{"name":"other","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit draft health stream → %d %s", rec.Code, rec.Body.String())
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, "upstream name already exists") {
+		t.Fatalf("edit draft health stream did not flag conflicting name:\n%s", body)
+	}
+}
+
 func TestUpstreamDraftHealthStreamRequiresModelSource(t *testing.T) {
 	r, _ := newEngine(t, "")
 	rec := do(r, "POST", "/api/v1/upstreams/test-draft/stream", "",

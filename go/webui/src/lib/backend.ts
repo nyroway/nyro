@@ -211,6 +211,23 @@ export async function streamProviderDraftHealth(
   );
 }
 
+export async function streamProviderEditDraftHealth(
+  id: string,
+  input: CreateProvider,
+  onEvent: (event: ProviderHealthEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  await streamProviderHealthEvents(
+    `/api/v1/upstreams/${id}/test-draft/stream`,
+    {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(createUpstreamFromProvider(input)),
+    },
+    onEvent,
+    signal,
+  );
+}
+
 export async function streamProviderHealth(
   id: string,
   onEvent: (event: ProviderHealthEvent) => void,

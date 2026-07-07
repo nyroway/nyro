@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, streamProviderDraftHealth, streamProviderHealth, streamProviderRouteImport } from "@/lib/backend";
+import { backend, streamProviderDraftHealth, streamProviderEditDraftHealth, streamProviderHealth, streamProviderRouteImport } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
   Provider,
@@ -484,9 +484,11 @@ export default function ProvidersPage() {
   const [testLogs, setTestLogs] = useState<TestLogEntry[]>([]);
   const [isTestRunning, setIsTestRunning] = useState(false);
   const [testTarget, setTestTarget] = useState<Provider | null>(null);
-  const [testDialogMode, setTestDialogMode] = useState<"provider" | "create" | "route_import">("provider");
+  const [testDialogMode, setTestDialogMode] = useState<"provider" | "create" | "edit" | "route_import">("provider");
   const [pendingCreateInput, setPendingCreateInput] = useState<CreateProvider | null>(null);
   const [createHealthPassed, setCreateHealthPassed] = useState(false);
+  const [pendingUpdateInput, setPendingUpdateInput] = useState<(UpdateProvider & { id: string }) | null>(null);
+  const [editHealthPassed, setEditHealthPassed] = useState(false);
   const [providerToDelete, setProviderToDelete] = useState<Provider | null>(null);
   const [routeImportPreview, setRouteImportPreview] = useState<{ provider: Provider; preview: RouteImportPreview } | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState("");
@@ -552,6 +554,9 @@ export default function ProvidersPage() {
       setEditError(null);
       qc.invalidateQueries({ queryKey: ["providers"] });
       setEditingId(null);
+      setPendingUpdateInput(null);
+      setEditHealthPassed(false);
+      setTestDialogOpen(false);
     },
     onError: (err: Error) => {
       setEditError(String(err));
@@ -603,6 +608,8 @@ export default function ProvidersPage() {
     setTestDialogOpen(false);
     setPendingCreateInput(null);
     setCreateHealthPassed(false);
+    setPendingUpdateInput(null);
+    setEditHealthPassed(false);
   }
 
   async function handleTest(provider: Provider) {
@@ -701,14 +708,16 @@ export default function ProvidersPage() {
     }
   }
 
-  function appendHealthEvent(event: ProviderHealthEvent, mode: "provider" | "create" = "provider") {
+  function appendHealthEvent(event: ProviderHealthEvent, mode: "provider" | "create" | "edit" = "provider") {
     if (event.type === "complete") {
       appendTestLog(
         event.success ? "success" : "error",
         event.success
           ? (mode === "create"
             ? (isZh ? "✓ 测试全部通过，点击完成创建" : "✓ All checks passed. Click Create Provider to finish.")
-            : (isZh ? "✓ 测试全部通过" : "✓ All checks passed."))
+            : mode === "edit"
+              ? (isZh ? "✓ 测试全部通过，点击完成保存" : "✓ All checks passed. Click Save Provider to finish.")
+              : (isZh ? "✓ 测试全部通过" : "✓ All checks passed."))
           : `${isZh ? "✗ 测试未通过" : "✗ Checks failed"}${event.error ? `: ${event.error}` : ""}`,
       );
       return;
@@ -851,6 +860,47 @@ export default function ProvidersPage() {
       const message = normalizeErrorMessage(error);
       appendTestLog("error", `${isZh ? "✗ 流式测试失败" : "✗ Streaming health check failed"}: ${message}`);
       setCreateHealthPassed(false);
+      setIsTestRunning(false);
+    } finally {
+      if (!isCanceled()) {
+        activeTestAbortRef.current = null;
+      }
+    }
+  }
+
+  async function handleUpdateHealthCheck(draft: CreateProvider, update: UpdateProvider & { id: string }) {
+    const runId = activeTestRunRef.current + 1;
+    activeTestRunRef.current = runId;
+    const abortController = new AbortController();
+    activeTestAbortRef.current = abortController;
+    const isCanceled = () => activeTestRunRef.current !== runId;
+
+    setTestingId(null);
+    setTestTarget(null);
+    setTestDialogMode("edit");
+    setPendingUpdateInput(update);
+    setEditHealthPassed(false);
+    setTestLogs([]);
+    setTestDialogOpen(true);
+    setIsTestRunning(true);
+
+    appendTestLog("info", isZh ? `开始保存前测试 ${draft.name}...` : `Start pre-save checks for ${draft.name}...`);
+    appendTestLog("info", isZh ? "会向上游发送一次最小模型请求用于验证模型可用性" : "A minimal upstream model request will be sent to verify model availability.");
+
+    try {
+      await streamProviderEditDraftHealth(update.id, draft, (event) => {
+        if (isCanceled()) return;
+        appendHealthEvent(event, "edit");
+        if (event.type === "complete") {
+          setEditHealthPassed(event.success === true);
+          setIsTestRunning(false);
+        }
+      }, abortController.signal);
+    } catch (error: unknown) {
+      if (isCanceled() || abortController.signal.aborted) return;
+      const message = normalizeErrorMessage(error);
+      appendTestLog("error", `${isZh ? "✗ 流式测试失败" : "✗ Streaming health check failed"}: ${message}`);
+      setEditHealthPassed(false);
       setIsTestRunning(false);
     } finally {
       if (!isCanceled()) {
@@ -1483,7 +1533,7 @@ export default function ProvidersPage() {
                           setEditError(validation);
                           return;
                         }
-                        const input: UpdateProvider = {
+                        const update: UpdateProvider = {
                           name: editForm.name || undefined,
                           provider: editForm.provider || undefined,
                           protocol,
@@ -1495,15 +1545,29 @@ export default function ProvidersPage() {
                             ? editForm.credentials
                             : undefined,
                         };
-                        updateMut.mutate({ id: editForm.id, ...input });
+                        const draft: CreateProvider = {
+                          name: editForm.name ?? "",
+                          provider: editForm.provider || "custom",
+                          protocol,
+                          base_url: baseUrl,
+                          proxy_url: editForm.proxy_url ?? "",
+                          models_url: editForm.models_url ?? "",
+                          models: editForm.models ?? "",
+                          api_key: editForm.api_key ?? "",
+                          credentials: editForm.credentials ?? {},
+                        };
+                        void handleUpdateHealthCheck(draft, { id: editForm.id, ...update });
                       }}
                       disabled={
                         updateMut.isPending
+                        || isTestRunning
                         || missingRequiredCredentials(editCredentialFields, editForm.credentials ?? {})
                         || editBaseUrlMissing
                       }
                     >
-                      {updateMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
+                      {isTestRunning
+                        ? (isZh ? "测试中..." : "Testing...")
+                        : (isZh ? "测试并保存" : "Test & Save")}
                     </Button>
                     <Button
                       onClick={() => { setEditingId(null); setEditError(null); }}
@@ -1692,16 +1756,20 @@ export default function ProvidersPage() {
             <DialogTitle>
               {testDialogMode === "create"
                 ? (isZh ? `创建前测试 ${pendingCreateInput?.name ?? ""}` : `Pre-create test ${pendingCreateInput?.name ?? ""}`)
-                : testDialogMode === "route_import"
-                  ? (isZh ? `导入模型路由 ${testTarget?.name ?? ""}` : `Import routes for ${testTarget?.name ?? ""}`)
-                  : (isZh ? `测试 ${testTarget?.name ?? ""}` : `Test ${testTarget?.name ?? ""}`)}
+                : testDialogMode === "edit"
+                  ? (isZh ? `保存前测试 ${editForm.name ?? ""}` : `Pre-save test ${editForm.name ?? ""}`)
+                  : testDialogMode === "route_import"
+                    ? (isZh ? `导入模型路由 ${testTarget?.name ?? ""}` : `Import routes for ${testTarget?.name ?? ""}`)
+                    : (isZh ? `测试 ${testTarget?.name ?? ""}` : `Test ${testTarget?.name ?? ""}`)}
             </DialogTitle>
             <DialogDescription>
               {testDialogMode === "create"
                 ? (isZh ? "实时展示创建前验证流水线" : "Real-time pre-create validation pipeline")
-                : testDialogMode === "route_import"
-                  ? (isZh ? "实时展示模型路由导入进度" : "Real-time progress for route import")
-                  : (isZh ? "实时展示 Provider 测试日志" : "Real-time logs for provider testing")}
+                : testDialogMode === "edit"
+                  ? (isZh ? "实时展示保存前验证流水线" : "Real-time pre-save validation pipeline")
+                  : testDialogMode === "route_import"
+                    ? (isZh ? "实时展示模型路由导入进度" : "Real-time progress for route import")
+                    : (isZh ? "实时展示 Provider 测试日志" : "Real-time logs for provider testing")}
             </DialogDescription>
           </DialogHeader>
           <div
@@ -1733,6 +1801,12 @@ export default function ProvidersPage() {
                 {createMut.isPending
                   ? (isZh ? "创建中..." : "Creating...")
                   : (isZh ? "完成创建" : "Create Provider")}
+              </Button>
+            ) : testDialogMode === "edit" && editHealthPassed && pendingUpdateInput ? (
+              <Button onClick={() => updateMut.mutate(pendingUpdateInput)} disabled={updateMut.isPending}>
+                {updateMut.isPending
+                  ? (isZh ? "保存中..." : "Saving...")
+                  : (isZh ? "完成保存" : "Save Provider")}
               </Button>
             ) : (
               <Button variant="secondary" onClick={closeTestDialog}>
