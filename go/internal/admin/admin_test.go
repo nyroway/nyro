@@ -275,6 +275,91 @@ func TestAdminConsumerCreateExposesRawToken(t *testing.T) {
 	}
 }
 
+// TestAdminConsumerKeyCRUD covers the three key sub-resource endpoints added
+// on top of the ConsumerStore key methods: create exposes the one-time raw
+// token, update never does, delete returns 204, and each success bumps
+// config_epoch. Not-found key/consumer IDs surface as non-2xx errors.
+func TestAdminConsumerKeyCRUD(t *testing.T) {
+	r, st := newEngine(t, "")
+	core := st.Storage()
+
+	c, err := core.Consumers().Create(storage.CreateConsumer{Name: "acme"})
+	if err != nil {
+		t.Fatalf("seed consumer: %v", err)
+	}
+
+	epoch := func() string {
+		v, _ := core.Settings().Get("config_epoch")
+		return v
+	}
+
+	// POST /consumers/{id}/keys — success exposes raw token and bumps epoch.
+	before := epoch()
+	rec := do(r, "POST", "/api/v1/consumers/"+c.ID+"/keys", "", []byte(`{"name":"primary"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create key → %d %s", rec.Code, rec.Body.String())
+	}
+	var key storage.ConsumerKey
+	if err := json.Unmarshal(rec.Body.Bytes(), &key); err != nil {
+		t.Fatal(err)
+	}
+	if key.ID == "" || key.Token == "" {
+		t.Fatalf("created key missing id/token: %+v", key)
+	}
+	if after := epoch(); after == before {
+		t.Errorf("create key: config_epoch unchanged (%q)", after)
+	}
+
+	// POST with an unknown consumer ID must fail (not treated as success).
+	rec = do(r, "POST", "/api/v1/consumers/does-not-exist/keys", "", []byte(`{"name":"x"}`))
+	if rec.Code < 400 {
+		t.Fatalf("create key on missing consumer → %d, want error", rec.Code)
+	}
+
+	// PUT /consumers/{id}/keys/{keyId} — success omits the token and bumps epoch.
+	before = epoch()
+	rec = do(r, "PUT", "/api/v1/consumers/"+c.ID+"/keys/"+key.ID, "",
+		[]byte(`{"name":"renamed","enabled":false,"expires_at":"2030-01-01T00:00:00Z"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update key → %d %s", rec.Code, rec.Body.String())
+	}
+	var updated storage.ConsumerKey
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "renamed" || updated.Enabled || updated.ExpiresAt != "2030-01-01T00:00:00Z" {
+		t.Fatalf("updated key = %+v, want renamed/disabled/expires_at set", updated)
+	}
+	if updated.Token != "" {
+		t.Errorf("updated key must not carry a token: %+v", updated)
+	}
+	if after := epoch(); after == before {
+		t.Errorf("update key: config_epoch unchanged (%q)", after)
+	}
+
+	// PUT with an unknown keyId must fail.
+	rec = do(r, "PUT", "/api/v1/consumers/"+c.ID+"/keys/does-not-exist", "", []byte(`{"name":"x"}`))
+	if rec.Code < 400 {
+		t.Fatalf("update missing key → %d, want error", rec.Code)
+	}
+
+	// DELETE /consumers/{id}/keys/{keyId} — success is 204 and bumps epoch.
+	before = epoch()
+	rec = do(r, "DELETE", "/api/v1/consumers/"+c.ID+"/keys/"+key.ID, "", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete key → %d %s", rec.Code, rec.Body.String())
+	}
+	if after := epoch(); after == before {
+		t.Errorf("delete key: config_epoch unchanged (%q)", after)
+	}
+
+	// DELETE with an unknown keyId must fail (already deleted above).
+	rec = do(r, "DELETE", "/api/v1/consumers/"+c.ID+"/keys/"+key.ID, "", nil)
+	if rec.Code < 400 {
+		t.Fatalf("delete missing key → %d, want error", rec.Code)
+	}
+}
+
 // TestProtocolCredentials verifies the /protocol-credentials endpoint exposes
 // exactly the four codec-backed protocols, each with the api_key field
 // AuthenticatorFor requires.

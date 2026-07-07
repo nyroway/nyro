@@ -262,6 +262,40 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			bumpEpoch(s)
 			w.WriteHeader(http.StatusNoContent)
 		})
+		g.Post("/consumers/{id}/keys", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.CreateConsumerKey
+			if err := webutil.Decode(r, &in); err != nil {
+				badRequest(w, err)
+				return
+			}
+			key, err := s.Consumers().AddKey(chi.URLParam(r, "id"), in)
+			if err == nil {
+				bumpEpoch(s)
+			}
+			// The response's Token carries the new key's raw value — the
+			// one-time plaintext exposure; only prefix+hash are persisted.
+			created(w, key, err)
+		})
+		g.Put("/consumers/{id}/keys/{keyId}", func(w http.ResponseWriter, r *http.Request) {
+			var in storage.UpdateConsumerKey
+			if err := webutil.Decode(r, &in); err != nil {
+				badRequest(w, err)
+				return
+			}
+			key, err := s.Consumers().UpdateKey(chi.URLParam(r, "keyId"), in)
+			if err == nil {
+				bumpEpoch(s)
+			}
+			ok(w, key, err)
+		})
+		g.Delete("/consumers/{id}/keys/{keyId}", func(w http.ResponseWriter, r *http.Request) {
+			if err := s.Consumers().DeleteKey(chi.URLParam(r, "keyId")); err != nil {
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+			bumpEpoch(s)
+			w.WriteHeader(http.StatusNoContent)
+		})
 
 		// ── settings ──
 		g.Get("/settings", func(w http.ResponseWriter, r *http.Request) {
