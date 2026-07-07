@@ -7,7 +7,6 @@ import {
   ScrollText,
   BarChart3,
   KeyRound,
-  Puzzle,
   ChevronLeft,
   Settings,
   MessageSquarePlus,
@@ -25,7 +24,6 @@ const NAV_ITEMS = [
   { type: "divider" as const },
   { label: "Logs", path: "/logs", icon: ScrollText },
   { label: "Stats", path: "/stats", icon: BarChart3 },
-  { label: "Extensions", path: "/extensions", icon: Puzzle },
   { type: "divider" as const },
   { label: "Settings", path: "/settings", icon: Settings },
   {
@@ -132,9 +130,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                             ? "日志"
                             : label === "Stats"
                               ? "统计"
-                              : label === "Extensions"
-                                ? "扩展"
-                                : "系统设置"
+                              : "系统设置"
                     : label}
                 </span>
               )}

@@ -17,7 +17,6 @@ const ApiKeysPage = lazy(() => import("@/pages/api-keys"));
 const LogsPage = lazy(() => import("@/pages/logs"));
 const StatsPage = lazy(() => import("@/pages/stats"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
-const ExtensionsPage = lazy(() => import("@/pages/extensions"));
 const LoginPage = lazy(() => import("@/pages/login"));
 
 const queryClient = new QueryClient({
@@ -48,7 +47,6 @@ createRoot(document.getElementById("root")!).render(
                   <Route path="api-keys" element={<ApiKeysPage />} />
                   <Route path="logs" element={<LogsPage />} />
                   <Route path="stats" element={<StatsPage />} />
-                  <Route path="extensions" element={<ExtensionsPage />} />
                   <Route path="settings" element={<SettingsPage />} />
                 </Route>
               </Routes>
