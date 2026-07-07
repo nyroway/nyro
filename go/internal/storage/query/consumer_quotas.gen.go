@@ -32,6 +32,7 @@ func newConsumerQuota(db *gorm.DB, opts ...gen.DOOption) consumerQuota {
 	_consumerQuota.QuotaType = field.NewString(tableName, "quota_type")
 	_consumerQuota.QuotaLimit = field.NewInt64(tableName, "quota_limit")
 	_consumerQuota.Window = field.NewString(tableName, "window")
+	_consumerQuota.Currency = field.NewString(tableName, "currency")
 	_consumerQuota.CreatedAt = field.NewString(tableName, "created_at")
 	_consumerQuota.UpdatedAt = field.NewString(tableName, "updated_at")
 
@@ -49,6 +50,7 @@ type consumerQuota struct {
 	QuotaType  field.String
 	QuotaLimit field.Int64
 	Window     field.String
+	Currency   field.String
 	CreatedAt  field.String
 	UpdatedAt  field.String
 
@@ -72,6 +74,7 @@ func (c *consumerQuota) updateTableName(table string) *consumerQuota {
 	c.QuotaType = field.NewString(table, "quota_type")
 	c.QuotaLimit = field.NewInt64(table, "quota_limit")
 	c.Window = field.NewString(table, "window")
+	c.Currency = field.NewString(table, "currency")
 	c.CreatedAt = field.NewString(table, "created_at")
 	c.UpdatedAt = field.NewString(table, "updated_at")
 
@@ -102,12 +105,13 @@ func (c *consumerQuota) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (c *consumerQuota) fillFieldMap() {
-	c.fieldMap = make(map[string]field.Expr, 7)
+	c.fieldMap = make(map[string]field.Expr, 8)
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["consumer_id"] = c.ConsumerID
 	c.fieldMap["quota_type"] = c.QuotaType
 	c.fieldMap["quota_limit"] = c.QuotaLimit
 	c.fieldMap["window"] = c.Window
+	c.fieldMap["currency"] = c.Currency
 	c.fieldMap["created_at"] = c.CreatedAt
 	c.fieldMap["updated_at"] = c.UpdatedAt
 }

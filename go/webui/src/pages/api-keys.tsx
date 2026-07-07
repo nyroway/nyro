@@ -290,7 +290,6 @@ type CreateForm = {
   name: string;
   routes: string[];
   quotas: QuotaFormState;
-  keyName: string;
   keyExpiresPreset: ExpirePreset;
 };
 
@@ -298,7 +297,6 @@ const emptyCreate: CreateForm = {
   name: "",
   routes: [],
   quotas: emptyQuotaForm,
-  keyName: "",
   keyExpiresPreset: "never",
 };
 
@@ -343,12 +341,6 @@ export default function ApiKeysPage() {
 
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
 
-  const [addKeyOpenFor, setAddKeyOpenFor] = useState<string | null>(null);
-  const [addKeyForm, setAddKeyForm] = useState<{ name: string; expiresPreset: ExpirePreset }>({
-    name: "",
-    expiresPreset: "never",
-  });
-
   const [keyExpiryEdit, setKeyExpiryEdit] = useState<{
     consumerId: string;
     keyId: string;
@@ -356,8 +348,7 @@ export default function ApiKeysPage() {
   } | null>(null);
 
   const [consumerToDelete, setConsumerToDelete] = useState<Consumer | null>(null);
-  const [keyToDelete, setKeyToDelete] = useState<{ consumer: Consumer; key: ConsumerKey } | null>(null);
-  const [keyToRotate, setKeyToRotate] = useState<{ consumer: Consumer; key: ConsumerKey } | null>(null);
+  const [keyToRegenerate, setKeyToRegenerate] = useState<{ consumer: Consumer; key: ConsumerKey } | null>(null);
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
 
   function formatErrorMessage(error: unknown) {
@@ -436,19 +427,17 @@ export default function ApiKeysPage() {
     },
   });
 
-  const addKeyMut = useMutation({
-    mutationFn: ({ consumerId, input }: { consumerId: string; input: CreateConsumerKey }) =>
-      backend<ConsumerKey>("add_consumer_key", { id: consumerId, input }),
+  const generateKeyMut = useMutation({
+    mutationFn: ({ consumerId }: { consumerId: string }) =>
+      backend<ConsumerKey>("add_consumer_key", { id: consumerId, input: { name: "default" } as CreateConsumerKey }),
     onSuccess: (created) => {
       invalidateConsumers();
-      setAddKeyOpenFor(null);
-      setAddKeyForm({ name: "", expiresPreset: "never" });
       if (created.token) {
         openRevealDialog({ name: created.name, token: created.token });
       }
     },
     onError: (error: unknown) => {
-      showErrorDialog("新增 Key 失败", "Failed to add key", error);
+      showErrorDialog("生成 Key 失败", "Failed to generate key", error);
     },
   });
 
@@ -468,16 +457,7 @@ export default function ApiKeysPage() {
     },
   });
 
-  const deleteKeyMut = useMutation({
-    mutationFn: ({ consumerId, keyId }: { consumerId: string; keyId: string }) =>
-      backend("delete_consumer_key", { id: consumerId, keyId }),
-    onSuccess: () => invalidateConsumers(),
-    onError: (error: unknown) => {
-      showErrorDialog("删除 Key 失败", "Failed to delete key", error);
-    },
-  });
-
-  const rotateKeyMut = useMutation({
+  const regenerateKeyMut = useMutation({
     mutationFn: async ({ consumerId, key }: { consumerId: string; key: ConsumerKey }) => {
       const created = await backend<ConsumerKey>("add_consumer_key", {
         id: consumerId,
@@ -493,7 +473,7 @@ export default function ApiKeysPage() {
       }
     },
     onError: (error: unknown) => {
-      showErrorDialog("轮换 Key 失败", "Failed to rotate key", error);
+      showErrorDialog("重新生成 Key 失败", "Failed to regenerate key", error);
     },
   });
 
@@ -550,21 +530,40 @@ export default function ApiKeysPage() {
     });
   }
 
-  function renderKeyRow(consumer: Consumer, key: ConsumerKey) {
+  // Single-key simplification: the backend keeps keys[] as 1:N, but the UI
+  // always operates on the consumer's primary key (keys[0]) and never exposes
+  // per-key add/delete.
+  function renderPrimaryKeySection(consumer: Consumer) {
+    const key = consumer.keys?.[0];
+    if (!key) {
+      return (
+        <div className="flex items-center justify-between rounded-xl bg-slate-50/60 p-3">
+          <p className="text-xs text-slate-400">
+            {isZh ? "该 consumer 暂无可用密钥，无法鉴权。" : "No key yet — this consumer cannot authenticate."}
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={generateKeyMut.isPending}
+            onClick={() => generateKeyMut.mutate({ consumerId: consumer.id })}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {generateKeyMut.isPending ? (isZh ? "生成中..." : "Generating...") : (isZh ? "生成 Key" : "Generate key")}
+          </Button>
+        </div>
+      );
+    }
+
     const keyExpired = isApiKeyExpired(key.expires_at);
     const isEditingExpiry = keyExpiryEdit?.consumerId === consumer.id && keyExpiryEdit.keyId === key.id;
     return (
-      <div key={key.id} className="flex items-center justify-between rounded-xl border border-slate-200/70 bg-white/60 px-3 py-2">
+      <div className="flex items-center justify-between rounded-xl bg-slate-50/60 p-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="inline-flex h-5 items-center font-medium text-slate-800">{key.name}</span>
+          <span className="text-xs font-semibold text-slate-600">{isZh ? "API Key" : "API Key"}</span>
           <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600">
             {formatKeyPrefix(key.key_prefix)}
           </code>
-          {!key.enabled && (
-            <Badge variant="danger" className="connect-label-badge">
-              {isZh ? "已禁用" : "Disabled"}
-            </Badge>
-          )}
           <Badge variant={keyExpired ? "danger" : "success"} className="connect-label-badge">
             {formatValidityLabel(keyExpired, isZh)}
           </Badge>
@@ -619,24 +618,13 @@ export default function ApiKeysPage() {
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
           <button
-            onClick={() => updateKeyMut.mutate({ consumerId: consumer.id, keyId: key.id, input: { enabled: !key.enabled } })}
-            title={key.enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
-            className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
-          >
-            {key.enabled ? (
-              <ToggleRight className="h-4 w-4 text-green-500" />
-            ) : (
-              <ToggleLeft className="h-4 w-4 text-slate-400" />
-            )}
-          </button>
-          <button
             onClick={() => copyKeyPrefix(key)}
             title={
               copiedKeyId === key.id
                 ? (isZh ? "已复制前缀" : "Prefix copied")
                 : (isZh
-                  ? "复制前缀（完整 Key 仅在创建/轮换时展示一次，此处无法复制完整 Key）"
-                  : "Copy prefix only (full key is shown once on create/rotate, not copyable here)")
+                  ? "复制前缀（完整 Key 仅在创建/重新生成时展示一次，此处无法复制完整 Key）"
+                  : "Copy prefix only (full key is shown once on create/regenerate, not copyable here)")
             }
             className={`cursor-pointer rounded-lg p-1.5 transition-colors ${
               copiedKeyId === key.id
@@ -647,97 +635,13 @@ export default function ApiKeysPage() {
             {copiedKeyId === key.id ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
           </button>
           <button
-            onClick={() => setKeyToRotate({ consumer, key })}
-            title={isZh ? "轮换 Key（旧 Key 将立即失效）" : "Rotate key (old key is invalidated immediately)"}
+            onClick={() => setKeyToRegenerate({ consumer, key })}
+            title={isZh ? "重新生成 Key（旧 Key 将立即失效）" : "Regenerate key (old key is invalidated immediately)"}
             className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
           >
             <RotateCw className="h-4 w-4" />
           </button>
-          <button
-            onClick={() => setKeyToDelete({ consumer, key })}
-            className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
         </div>
-      </div>
-    );
-  }
-
-  function renderKeysSection(consumer: Consumer) {
-    const keys = consumer.keys ?? [];
-    const isAddingKey = addKeyOpenFor === consumer.id;
-    return (
-      <div className="space-y-2 rounded-xl bg-slate-50/60 p-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-slate-600">
-            {isZh ? `密钥（共 ${keys.length} 把）` : `Keys (${keys.length})`}
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              setAddKeyOpenFor(isAddingKey ? null : consumer.id);
-              setAddKeyForm({ name: "", expiresPreset: "never" });
-            }}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {isZh ? "新增 Key" : "Add key"}
-          </Button>
-        </div>
-
-        {keys.length === 0 && !isAddingKey && (
-          <p className="text-xs text-slate-400">
-            {isZh ? "该 consumer 暂无可用密钥，无法鉴权。" : "No keys yet — this consumer cannot authenticate."}
-          </p>
-        )}
-
-        <div className="space-y-1.5">{keys.map((key) => renderKeyRow(consumer, key))}</div>
-
-        {isAddingKey && (
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-slate-300 p-2">
-            <Input
-              value={addKeyForm.name}
-              onChange={(e) => setAddKeyForm((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder={isZh ? "Key 名称" : "Key name"}
-              className="h-8 w-40 text-xs"
-            />
-            <Select
-              value={addKeyForm.expiresPreset}
-              onValueChange={(value: ExpirePreset) => setAddKeyForm((prev) => ({ ...prev, expiresPreset: value }))}
-            >
-              <SelectTrigger className="h-8 w-28 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {expirePresetOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {isZh ? option.zh : option.en}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              size="sm"
-              disabled={addKeyMut.isPending || !addKeyForm.name.trim()}
-              onClick={() =>
-                addKeyMut.mutate({
-                  consumerId: consumer.id,
-                  input: {
-                    name: addKeyForm.name.trim(),
-                    expires_at: resolveExpiresAt(addKeyForm.expiresPreset),
-                  },
-                })
-              }
-            >
-              {addKeyMut.isPending ? (isZh ? "添加中..." : "Adding...") : (isZh ? "添加" : "Add")}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => setAddKeyOpenFor(null)}>
-              {isZh ? "取消" : "Cancel"}
-            </Button>
-          </div>
-        )}
       </div>
     );
   }
@@ -780,15 +684,7 @@ export default function ApiKeysPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <FieldLabel>{isZh ? "首个 Key 名称" : "First key name"}</FieldLabel>
-                  <Input
-                    value={createForm.keyName}
-                    onChange={(e) => setCreateForm((prev) => ({ ...prev, keyName: e.target.value }))}
-                    placeholder={isZh ? "例如 default" : "e.g. default"}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel>{isZh ? "首个 Key 有效期" : "First key validity"}</FieldLabel>
+                  <FieldLabel>{isZh ? "Key 有效期" : "Key validity"}</FieldLabel>
                   <Select
                     value={createForm.keyExpiresPreset}
                     onValueChange={(value: ExpirePreset) =>
@@ -859,7 +755,7 @@ export default function ApiKeysPage() {
                   quotas: buildQuotasPayload(createForm.quotas),
                   keys: [
                     {
-                      name: createForm.keyName.trim() || (isZh ? "默认 Key" : "Default key"),
+                      name: "default",
                       expires_at: resolveExpiresAt(createForm.keyExpiresPreset),
                     },
                   ],
@@ -1002,7 +898,7 @@ export default function ApiKeysPage() {
                   </div>
 
                   <div className="h-px bg-slate-200/70" />
-                  {renderKeysSection(item)}
+                  {renderPrimaryKeySection(item)}
                 </div>
               );
             }
@@ -1060,7 +956,7 @@ export default function ApiKeysPage() {
                   </div>
                 </div>
 
-                {renderKeysSection(item)}
+                {renderPrimaryKeySection(item)}
               </div>
             );
           })}
@@ -1144,8 +1040,8 @@ export default function ApiKeysPage() {
         description={
           consumerToDelete
             ? (isZh
-              ? `此操作不可撤销，将同时删除其名下所有 Key。确认删除「${consumerToDelete.name}」吗？`
-              : `This action cannot be undone and will delete all of its keys. Delete "${consumerToDelete.name}"?`)
+              ? `此操作不可撤销，将同时删除其 Key。确认删除「${consumerToDelete.name}」吗？`
+              : `This action cannot be undone and will delete its key. Delete "${consumerToDelete.name}"?`)
             : undefined
         }
         cancelText={isZh ? "取消" : "Cancel"}
@@ -1158,50 +1054,24 @@ export default function ApiKeysPage() {
       />
 
       <ConfirmDialog
-        open={Boolean(keyToRotate)}
+        open={Boolean(keyToRegenerate)}
         onOpenChange={(open) => {
-          if (!open) setKeyToRotate(null);
+          if (!open) setKeyToRegenerate(null);
         }}
-        title={isZh ? "确认轮换 Key" : "Confirm key rotation"}
+        title={isZh ? "确认重新生成 Key" : "Confirm key regeneration"}
         description={
-          keyToRotate
+          keyToRegenerate
             ? (isZh
-              ? `轮换后旧 Key「${keyToRotate.key.name}」将立即失效，新 Key 会以相同名称生成，完整值仅显示一次。确认继续吗？`
-              : `Rotating will immediately invalidate the old key "${keyToRotate.key.name}". A new key with the same name will be generated and its full value shown once. Continue?`)
+              ? `重新生成后旧 Key 将立即失效，新 Key 会以相同名称生成，完整值仅显示一次。确认继续吗？`
+              : `Regenerating will immediately invalidate the old key. A new key with the same name will be generated and its full value shown once. Continue?`)
             : undefined
         }
         cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={isZh ? "轮换" : "Rotate"}
+        confirmText={isZh ? "重新生成" : "Regenerate"}
         onConfirm={() => {
-          if (!keyToRotate) return;
-          rotateKeyMut.mutate({ consumerId: keyToRotate.consumer.id, key: keyToRotate.key });
-          setKeyToRotate(null);
-        }}
-      />
-
-      <ConfirmDialog
-        open={Boolean(keyToDelete)}
-        onOpenChange={(open) => {
-          if (!open) setKeyToDelete(null);
-        }}
-        title={isZh ? "确认删除 Key" : "Confirm key deletion"}
-        description={
-          keyToDelete
-            ? ((keyToDelete.consumer.keys?.length ?? 0) <= 1
-              ? (isZh
-                ? `「${keyToDelete.key.name}」是「${keyToDelete.consumer.name}」目前唯一的 Key，删除后该 consumer 将没有可用凭证，无法鉴权。确认删除吗？`
-                : `"${keyToDelete.key.name}" is the only key for "${keyToDelete.consumer.name}". Deleting it leaves this consumer with no usable credential. Delete anyway?`)
-              : (isZh
-                ? `此操作不可撤销。确认删除「${keyToDelete.key.name}」吗？`
-                : `This action cannot be undone. Delete "${keyToDelete.key.name}"?`))
-            : undefined
-        }
-        cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={isZh ? "删除" : "Delete"}
-        onConfirm={() => {
-          if (!keyToDelete) return;
-          deleteKeyMut.mutate({ consumerId: keyToDelete.consumer.id, keyId: keyToDelete.key.id });
-          setKeyToDelete(null);
+          if (!keyToRegenerate) return;
+          regenerateKeyMut.mutate({ consumerId: keyToRegenerate.consumer.id, key: keyToRegenerate.key });
+          setKeyToRegenerate(null);
         }}
       />
 

@@ -85,13 +85,76 @@ func routeUpstreamFromModel(m *model.RouteUpstream) storage.RouteUpstream {
 }
 
 func consumerFromModel(m *model.Consumer) storage.Consumer {
-	return storage.Consumer{
-		ID:        m.ID,
-		Name:      m.Name,
-		Enabled:   m.Enabled,
-		CreatedAt: m.CreatedAt,
-		UpdatedAt: m.UpdatedAt,
+	out := storage.Consumer{
+		ID:          m.ID,
+		Name:        m.Name,
+		Enabled:     m.Enabled,
+		Metadata:    stringMapFromJSON(m.MetadataJSON),
+		Protocols:   stringSliceFromJSON(m.ProtocolsJSON),
+		IPAllowlist: stringSliceFromJSON(m.IPAllowlistJSON),
+		CreatedAt:   m.CreatedAt,
+		UpdatedAt:   m.UpdatedAt,
 	}
+	if m.MaxInputTokens != 0 || m.MaxOutputTokens != 0 || m.MaxRequestBodyBytes != 0 {
+		out.Limits = &storage.ConsumerLimits{
+			MaxInputTokens:      m.MaxInputTokens,
+			MaxOutputTokens:     m.MaxOutputTokens,
+			MaxRequestBodyBytes: m.MaxRequestBodyBytes,
+		}
+	}
+	return out
+}
+
+// stringMapFromJSON decodes a DB-stored JSON object column into a
+// map[string]string (empty string means "not set").
+func stringMapFromJSON(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// stringMapToJSON encodes a map[string]string DTO field to the DB-stored JSON
+// string column.
+func stringMapToJSON(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// stringSliceFromJSON decodes a DB-stored JSON array column into a []string
+// (empty string means "not set").
+func stringSliceFromJSON(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// stringSliceToJSON encodes a []string DTO field to the DB-stored JSON string
+// column.
+func stringSliceToJSON(v []string) string {
+	if len(v) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func consumerKeyFromModel(m *model.ConsumerKey) storage.ConsumerKey {
@@ -116,5 +179,6 @@ func consumerQuotaFromModel(m *model.ConsumerQuota) storage.ConsumerQuota {
 		QuotaType:  m.QuotaType,
 		QuotaLimit: m.QuotaLimit,
 		Window:     m.Window,
+		Currency:   m.Currency,
 	}
 }

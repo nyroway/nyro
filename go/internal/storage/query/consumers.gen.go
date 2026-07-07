@@ -30,6 +30,12 @@ func newConsumer(db *gorm.DB, opts ...gen.DOOption) consumer {
 	_consumer.ID = field.NewString(tableName, "id")
 	_consumer.Name = field.NewString(tableName, "name")
 	_consumer.Enabled = field.NewBool(tableName, "enabled")
+	_consumer.MetadataJSON = field.NewString(tableName, "metadata_json")
+	_consumer.ProtocolsJSON = field.NewString(tableName, "protocols_json")
+	_consumer.IPAllowlistJSON = field.NewString(tableName, "ip_allowlist_json")
+	_consumer.MaxInputTokens = field.NewInt64(tableName, "max_input_tokens")
+	_consumer.MaxOutputTokens = field.NewInt64(tableName, "max_output_tokens")
+	_consumer.MaxRequestBodyBytes = field.NewInt64(tableName, "max_request_body_bytes")
 	_consumer.CreatedAt = field.NewString(tableName, "created_at")
 	_consumer.UpdatedAt = field.NewString(tableName, "updated_at")
 
@@ -41,12 +47,18 @@ func newConsumer(db *gorm.DB, opts ...gen.DOOption) consumer {
 type consumer struct {
 	consumerDo consumerDo
 
-	ALL       field.Asterisk
-	ID        field.String
-	Name      field.String
-	Enabled   field.Bool
-	CreatedAt field.String
-	UpdatedAt field.String
+	ALL                 field.Asterisk
+	ID                  field.String
+	Name                field.String
+	Enabled             field.Bool
+	MetadataJSON        field.String
+	ProtocolsJSON       field.String
+	IPAllowlistJSON     field.String
+	MaxInputTokens      field.Int64
+	MaxOutputTokens     field.Int64
+	MaxRequestBodyBytes field.Int64
+	CreatedAt           field.String
+	UpdatedAt           field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -66,6 +78,12 @@ func (c *consumer) updateTableName(table string) *consumer {
 	c.ID = field.NewString(table, "id")
 	c.Name = field.NewString(table, "name")
 	c.Enabled = field.NewBool(table, "enabled")
+	c.MetadataJSON = field.NewString(table, "metadata_json")
+	c.ProtocolsJSON = field.NewString(table, "protocols_json")
+	c.IPAllowlistJSON = field.NewString(table, "ip_allowlist_json")
+	c.MaxInputTokens = field.NewInt64(table, "max_input_tokens")
+	c.MaxOutputTokens = field.NewInt64(table, "max_output_tokens")
+	c.MaxRequestBodyBytes = field.NewInt64(table, "max_request_body_bytes")
 	c.CreatedAt = field.NewString(table, "created_at")
 	c.UpdatedAt = field.NewString(table, "updated_at")
 
@@ -92,10 +110,16 @@ func (c *consumer) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (c *consumer) fillFieldMap() {
-	c.fieldMap = make(map[string]field.Expr, 5)
+	c.fieldMap = make(map[string]field.Expr, 11)
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["name"] = c.Name
 	c.fieldMap["enabled"] = c.Enabled
+	c.fieldMap["metadata_json"] = c.MetadataJSON
+	c.fieldMap["protocols_json"] = c.ProtocolsJSON
+	c.fieldMap["ip_allowlist_json"] = c.IPAllowlistJSON
+	c.fieldMap["max_input_tokens"] = c.MaxInputTokens
+	c.fieldMap["max_output_tokens"] = c.MaxOutputTokens
+	c.fieldMap["max_request_body_bytes"] = c.MaxRequestBodyBytes
 	c.fieldMap["created_at"] = c.CreatedAt
 	c.fieldMap["updated_at"] = c.UpdatedAt
 }

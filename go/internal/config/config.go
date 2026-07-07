@@ -140,22 +140,46 @@ type QuotaLimitSpec struct {
 	Window string `yaml:"window"`
 }
 
-type ConsumerConcurrencySpec struct {
-	MaxRequests int64 `yaml:"max_requests"`
+// BudgetLimitSpec is one spend-budget rule. It is validated and persisted
+// only; budgets are not enforced by the proxy in this version.
+type BudgetLimitSpec struct {
+	Limit    int64  `yaml:"limit"`
+	Window   string `yaml:"window"` // s/m/h/d, or "mo" for a natural calendar month
+	Currency string `yaml:"currency"`
 }
 
 type ConsumerQuotasSpec struct {
-	Requests    []QuotaLimitSpec         `yaml:"requests,omitempty"`
-	Tokens      []QuotaLimitSpec         `yaml:"tokens,omitempty"`
-	Concurrency *ConsumerConcurrencySpec `yaml:"concurrency,omitempty"`
+	// Inflight caps concurrently in-flight requests; zero/omitted = unlimited.
+	Inflight int64             `yaml:"inflight,omitempty"`
+	Requests []QuotaLimitSpec  `yaml:"requests,omitempty"`
+	Tokens   []QuotaLimitSpec  `yaml:"tokens,omitempty"`
+	Budgets  []BudgetLimitSpec `yaml:"budgets,omitempty"`
+}
+
+// ConsumerAccessSpec grants a consumer access to models/protocols/source IPs.
+// Any empty/omitted field means default-allow for that dimension.
+type ConsumerAccessSpec struct {
+	Models      []string `yaml:"models,omitempty"`
+	Protocols   []string `yaml:"protocols,omitempty"`
+	IPAllowlist []string `yaml:"ip_allowlist,omitempty"`
+}
+
+// ConsumerLimitsSpec caps per-request resource usage; zero/omitted means no
+// limit for that dimension.
+type ConsumerLimitsSpec struct {
+	MaxInputTokens      int64 `yaml:"max_input_tokens,omitempty"`
+	MaxOutputTokens     int64 `yaml:"max_output_tokens,omitempty"`
+	MaxRequestBodyBytes int64 `yaml:"max_request_body_bytes,omitempty"`
 }
 
 type ConsumerSpec struct {
-	Name    string             `yaml:"name"`
-	Enabled *bool              `yaml:"enabled,omitempty"`
-	Keys    []ConsumerKeySpec  `yaml:"keys"`
-	Routes  []string           `yaml:"routes"`
-	Quotas  ConsumerQuotasSpec `yaml:"quotas,omitempty"`
+	Name     string             `yaml:"name"`
+	Enabled  *bool              `yaml:"enabled,omitempty"`
+	Metadata map[string]string  `yaml:"metadata,omitempty"`
+	Keys     []ConsumerKeySpec  `yaml:"keys"`
+	Access   ConsumerAccessSpec `yaml:"access,omitempty"`
+	Quotas   ConsumerQuotasSpec `yaml:"quotas,omitempty"`
+	Limits   ConsumerLimitsSpec `yaml:"limits,omitempty"`
 }
 
 // Config is the standalone YAML configuration.
@@ -273,7 +297,7 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 	}
 
 	for _, cs := range c.Consumers {
-		for _, name := range cs.Routes {
+		for _, name := range cs.Access.Models {
 			if !routeModels[name] {
 				return fmt.Errorf("consumer %q references unknown route %q", cs.Name, name)
 			}
@@ -285,8 +309,18 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 			})
 		}
 		quotas := consumerQuotas(cs.Quotas)
+		var limits *storage.ConsumerLimits
+		if cs.Limits != (ConsumerLimitsSpec{}) {
+			limits = &storage.ConsumerLimits{
+				MaxInputTokens:      cs.Limits.MaxInputTokens,
+				MaxOutputTokens:     cs.Limits.MaxOutputTokens,
+				MaxRequestBodyBytes: cs.Limits.MaxRequestBodyBytes,
+			}
+		}
 		if _, err := st.Consumers().Create(storage.CreateConsumer{
-			Name: cs.Name, Enabled: cs.Enabled, Keys: keys, Routes: cs.Routes, Quotas: quotas,
+			Name: cs.Name, Enabled: cs.Enabled, Keys: keys, Routes: cs.Access.Models, Quotas: quotas,
+			Metadata: cs.Metadata, Protocols: cs.Access.Protocols, IPAllowlist: cs.Access.IPAllowlist,
+			Limits: limits,
 		}); err != nil {
 			return fmt.Errorf("create consumer %q: %w", cs.Name, err)
 		}
@@ -301,9 +335,9 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 	return nil
 }
 
-// consumerQuotas expands the requests/tokens/concurrency quota shape into the
-// flat []CreateConsumerQuota rows the storage layer persists (one row per
-// (quota_type, window) pair; concurrency has no window).
+// consumerQuotas expands the requests/tokens/inflight/budgets quota shape
+// into the flat []CreateConsumerQuota rows the storage layer persists (one
+// row per (quota_type, window) pair; concurrency has no window).
 func consumerQuotas(q ConsumerQuotasSpec) []storage.CreateConsumerQuota {
 	var out []storage.CreateConsumerQuota
 	for _, r := range q.Requests {
@@ -312,8 +346,13 @@ func consumerQuotas(q ConsumerQuotasSpec) []storage.CreateConsumerQuota {
 	for _, t := range q.Tokens {
 		out = append(out, storage.CreateConsumerQuota{QuotaType: "tokens", QuotaLimit: t.Limit, Window: t.Window})
 	}
-	if q.Concurrency != nil {
-		out = append(out, storage.CreateConsumerQuota{QuotaType: "concurrency", QuotaLimit: q.Concurrency.MaxRequests})
+	if q.Inflight != 0 {
+		out = append(out, storage.CreateConsumerQuota{QuotaType: "concurrency", QuotaLimit: q.Inflight})
+	}
+	for _, b := range q.Budgets {
+		out = append(out, storage.CreateConsumerQuota{
+			QuotaType: "budget", QuotaLimit: b.Limit, Window: b.Window, Currency: b.Currency,
+		})
 	}
 	return out
 }

@@ -49,32 +49,32 @@ describe("dynamic quota editor", () => {
   });
 });
 
-describe("multi-key management", () => {
-  it("adds a key via add_consumer_key and reveals the one-time token", () => {
-    const start = source.indexOf("const addKeyMut = useMutation({");
+describe("single-key management", () => {
+  it("generates a key for a keyless consumer via add_consumer_key with a fixed default name", () => {
+    const start = source.indexOf("const generateKeyMut = useMutation({");
     const end = source.indexOf("\n\n  const updateKeyMut", start);
     if (start < 0 || end < 0) {
-      throw new Error("Could not locate addKeyMut");
+      throw new Error("Could not locate generateKeyMut");
     }
     const body = source.slice(start, end);
 
-    expect(body).toContain('backend<ConsumerKey>("add_consumer_key", { id: consumerId, input })');
+    expect(body).toContain('backend<ConsumerKey>("add_consumer_key", { id: consumerId, input: { name: "default" }');
     expect(body).toContain("openRevealDialog({ name: created.name, token: created.token })");
   });
 
-  it("updates a key via update_consumer_key with the {id, keyId, input} shape", () => {
+  it("updates the primary key via update_consumer_key with the {id, keyId, input} shape", () => {
     expect(source).toContain('backend<ConsumerKey>("update_consumer_key", { id: consumerId, keyId, input })');
   });
 
-  it("deletes a key via delete_consumer_key with the {id, keyId} shape", () => {
-    expect(source).toContain('backend("delete_consumer_key", { id: consumerId, keyId })');
+  it("has no standalone per-key deletion mutation (delete_consumer_key is only used internally by regenerate)", () => {
+    expect(source).not.toContain("deleteKeyMut");
   });
 
-  it("rotates a key by adding a new one and deleting the old one, then reveals the new token", () => {
-    const start = source.indexOf("const rotateKeyMut = useMutation({");
+  it("regenerates the primary key by adding a new one and deleting the old one, then reveals the new token", () => {
+    const start = source.indexOf("const regenerateKeyMut = useMutation({");
     const end = source.indexOf("\n\n  const totalPages", start);
     if (start < 0 || end < 0) {
-      throw new Error("Could not locate rotateKeyMut");
+      throw new Error("Could not locate regenerateKeyMut");
     }
     const body = source.slice(start, end);
 
@@ -83,7 +83,7 @@ describe("multi-key management", () => {
     expect(body).toContain("openRevealDialog({ name: created.name, token: created.token })");
   });
 
-  it("only ever copies the key_prefix for existing keys, never a full plaintext key", () => {
+  it("only ever copies the key_prefix for the existing key, never a full plaintext key", () => {
     const start = source.indexOf("async function copyKeyPrefix");
     const end = source.indexOf("\n  function renderQuotaBadges", start);
     if (start < 0 || end < 0) {
@@ -92,5 +92,16 @@ describe("multi-key management", () => {
     const body = source.slice(start, end);
 
     expect(body).toContain("navigator.clipboard.writeText(key.key_prefix)");
+  });
+
+  it("operates on consumer.keys[0] as the primary key, with no per-key add/delete UI", () => {
+    expect(source).toContain("const key = consumer.keys?.[0];");
+    expect(source).not.toContain("addKeyOpenFor");
+    expect(source).not.toContain("addKeyForm");
+  });
+
+  it("creates a consumer with a single fixed-name key, no key-name field", () => {
+    expect(source).toContain('name: "default"');
+    expect(source).not.toContain("createForm.keyName");
   });
 });

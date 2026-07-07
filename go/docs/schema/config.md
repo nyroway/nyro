@@ -76,14 +76,19 @@ routes:
 consumers:
   - name: "default-app"
     enabled: true
+    metadata:
+      team: "growth"
     keys:
       - name: "primary"
         api_key: "${NYRO_API_KEY}"   # empty = auto-generate
         enabled: true
         expires_at: null
-    routes:
-      - "gpt-4o"
+    access:
+      models: ["gpt-4o"]             # empty/omitted = allow all models
+      protocols: ["openai-chat"]     # empty/omitted = allow all protocols
+      ip_allowlist: ["10.0.0.0/8"]   # empty/omitted = allow all source IPs
     quotas:
+      inflight: 10                   # max concurrently in-flight requests
       requests:
         - limit: 60
           window: "1m"
@@ -92,8 +97,14 @@ consumers:
       tokens:
         - limit: 100000
           window: "1m"
-      concurrency:
-        max_requests: 10
+      budgets:                       # persisted only; not enforced yet
+        - limit: 100
+          window: "mo"                # s | m | h | d | mo (natural month)
+          currency: "USD"
+    limits:
+      max_input_tokens: 4000
+      max_output_tokens: 2000
+      max_request_body_bytes: 1048576
 ```
 
 ## Upstream Model Declaration
@@ -138,7 +149,19 @@ uses `routes[].upstreams[].model`.
     `weight`, `priority`, `enabled`.
 - `consumers[]`
   - `name`, `enabled`.
+  - `metadata`: free-form string map, informational only (not used for access
+    decisions).
   - `keys[]`: `name`, `api_key` (empty = auto-generate), `enabled`, `expires_at`.
-  - `routes[]`: granted client-visible route model names.
-  - `quotas`: `requests[]` / `tokens[]` (`limit` + `window`) and
-    `concurrency.max_requests`.
+  - `access`: `models[]` (granted client-visible route model names),
+    `protocols[]`, `ip_allowlist[]`. The whole `access` block, or any one of
+    its sub-fields, being empty/omitted means default-allow for that
+    dimension — `models`, `protocols`, and `ip_allowlist` are each judged
+    independently.
+  - `quotas`: `inflight` (max concurrently in-flight requests, no window),
+    `requests[]` / `tokens[]` (`limit` + `window`), and `budgets[]` (`limit` +
+    `window` + `currency`). Window units are `s`/`m`/`h`/`d`, plus `mo`
+    (natural calendar month) for budgets. Budgets are validated and persisted
+    but not enforced by the proxy in this version (enforcement requires a
+    pricing table, planned for a later version).
+  - `limits`: `max_input_tokens`, `max_output_tokens`,
+    `max_request_body_bytes` — per-request caps; omitted/zero means no limit.

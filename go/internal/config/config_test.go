@@ -35,12 +35,12 @@ consumers:
   - name: local
     keys:
       - {name: primary, api_key: nyro-secret}
-    routes: [gpt-4o]
+    access:
+      models: [gpt-4o]
     quotas:
       requests:
         - {limit: 60, window: "1m"}
-      concurrency:
-        max_requests: 10
+      inflight: 10
 `
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -288,7 +288,7 @@ func TestApplyToUnknownUpstream(t *testing.T) {
 
 func TestApplyToUnknownRoute(t *testing.T) {
 	cfg := &Config{
-		Consumers: []ConsumerSpec{{Name: "c", Routes: []string{"nope"}}},
+		Consumers: []ConsumerSpec{{Name: "c", Access: ConsumerAccessSpec{Models: []string{"nope"}}}},
 	}
 	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
 		t.Error("expected error for unknown route reference")
@@ -305,7 +305,8 @@ func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
 			Model: "gpt-4o", Upstreams: []RouteUpstreamSpec{{Name: "openai", Model: "gpt-4o"}},
 		}},
 		Consumers: []ConsumerSpec{{
-			Name: "local", Keys: []ConsumerKeySpec{{Name: "primary", APIKey: "nyro-secret"}}, Routes: []string{"gpt-4o"},
+			Name: "local", Keys: []ConsumerKeySpec{{Name: "primary", APIKey: "nyro-secret"}},
+			Access: ConsumerAccessSpec{Models: []string{"gpt-4o"}},
 		}},
 	}
 	snap, err := cfg.BuildSnapshot()
@@ -342,17 +343,18 @@ func TestBuildSnapshot_UnknownRefs(t *testing.T) {
 	}
 }
 
-func TestConsumerQuotas_ExpandsThreeCategories(t *testing.T) {
+func TestConsumerQuotas_ExpandsAllCategories(t *testing.T) {
 	q := ConsumerQuotasSpec{
-		Requests:    []QuotaLimitSpec{{Limit: 60, Window: "1m"}, {Limit: 10000, Window: "1d"}},
-		Tokens:      []QuotaLimitSpec{{Limit: 100000, Window: "1m"}},
-		Concurrency: &ConsumerConcurrencySpec{MaxRequests: 10},
+		Requests: []QuotaLimitSpec{{Limit: 60, Window: "1m"}, {Limit: 10000, Window: "1d"}},
+		Tokens:   []QuotaLimitSpec{{Limit: 100000, Window: "1m"}},
+		Inflight: 10,
+		Budgets:  []BudgetLimitSpec{{Limit: 100, Window: "mo", Currency: "USD"}},
 	}
 	got := consumerQuotas(q)
-	if len(got) != 4 {
-		t.Fatalf("consumerQuotas() = %d rows, want 4: %+v", len(got), got)
+	if len(got) != 5 {
+		t.Fatalf("consumerQuotas() = %d rows, want 5: %+v", len(got), got)
 	}
-	var requestsCount, tokensCount, concurrencyCount int
+	var requestsCount, tokensCount, concurrencyCount, budgetCount int
 	for _, row := range got {
 		switch row.QuotaType {
 		case "requests":
@@ -367,6 +369,11 @@ func TestConsumerQuotas_ExpandsThreeCategories(t *testing.T) {
 			if row.QuotaLimit != 10 || row.Window != "" {
 				t.Errorf("concurrency row wrong (window must be empty): %+v", row)
 			}
+		case "budget":
+			budgetCount++
+			if row.QuotaLimit != 100 || row.Window != "mo" || row.Currency != "USD" {
+				t.Errorf("budget row wrong: %+v", row)
+			}
 		}
 	}
 	if requestsCount != 2 {
@@ -377,6 +384,9 @@ func TestConsumerQuotas_ExpandsThreeCategories(t *testing.T) {
 	}
 	if concurrencyCount != 1 {
 		t.Errorf("concurrency rows = %d, want 1", concurrencyCount)
+	}
+	if budgetCount != 1 {
+		t.Errorf("budget rows = %d, want 1", budgetCount)
 	}
 }
 
