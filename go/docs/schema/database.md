@@ -60,7 +60,7 @@ CREATE TABLE consumer_keys (
   id TEXT PRIMARY KEY,
   consumer_id TEXT NOT NULL,
   name TEXT NOT NULL,
-  key_prefix TEXT NOT NULL,
+  key_preview TEXT NOT NULL,
   key_hash TEXT NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   expires_at TEXT,

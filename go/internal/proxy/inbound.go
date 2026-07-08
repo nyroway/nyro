@@ -32,7 +32,7 @@ func checkAccess(snap *xds.ConfigSnapshot, qc *quota.Counter, route storage.Rout
 		return http.StatusUnauthorized, "invalid API key", nil
 	}
 	*consumerID = rec.ConsumerID
-	*keyName = rec.KeyPrefix
+	*keyName = rec.KeyPreview
 	if !rec.Enabled {
 		return http.StatusForbidden, "API key is disabled", nil
 	}

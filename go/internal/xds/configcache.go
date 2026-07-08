@@ -54,7 +54,7 @@ func LoadFromStorage(s storage.Storage) (*ConfigSnapshot, error) {
 		for _, k := range c.Keys {
 			// A key is only usable when both it and its owning consumer are
 			// enabled — disabling a consumer must revoke every key it owns.
-			b.AddConsumerKey(k.ID, c.ID, k.KeyPrefix, k.KeyHash, k.Enabled && c.Enabled, k.ExpiresAt, c.Routes, c.Quotas)
+			b.AddConsumerKey(k.ID, c.ID, k.KeyPreview, k.KeyHash, k.Enabled && c.Enabled, k.ExpiresAt, c.Routes, c.Quotas)
 		}
 	}
 

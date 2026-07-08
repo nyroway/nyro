@@ -30,7 +30,7 @@ func newConsumerKey(db *gorm.DB, opts ...gen.DOOption) consumerKey {
 	_consumerKey.ID = field.NewString(tableName, "id")
 	_consumerKey.ConsumerID = field.NewString(tableName, "consumer_id")
 	_consumerKey.Name = field.NewString(tableName, "name")
-	_consumerKey.KeyPrefix = field.NewString(tableName, "key_prefix")
+	_consumerKey.KeyPreview = field.NewString(tableName, "key_preview")
 	_consumerKey.KeyHash = field.NewString(tableName, "key_hash")
 	_consumerKey.Enabled = field.NewBool(tableName, "enabled")
 	_consumerKey.ExpiresAt = field.NewString(tableName, "expires_at")
@@ -50,7 +50,7 @@ type consumerKey struct {
 	ID         field.String
 	ConsumerID field.String
 	Name       field.String
-	KeyPrefix  field.String
+	KeyPreview field.String
 	KeyHash    field.String
 	Enabled    field.Bool
 	ExpiresAt  field.String
@@ -76,7 +76,7 @@ func (c *consumerKey) updateTableName(table string) *consumerKey {
 	c.ID = field.NewString(table, "id")
 	c.ConsumerID = field.NewString(table, "consumer_id")
 	c.Name = field.NewString(table, "name")
-	c.KeyPrefix = field.NewString(table, "key_prefix")
+	c.KeyPreview = field.NewString(table, "key_preview")
 	c.KeyHash = field.NewString(table, "key_hash")
 	c.Enabled = field.NewBool(table, "enabled")
 	c.ExpiresAt = field.NewString(table, "expires_at")
@@ -113,7 +113,7 @@ func (c *consumerKey) fillFieldMap() {
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["consumer_id"] = c.ConsumerID
 	c.fieldMap["name"] = c.Name
-	c.fieldMap["key_prefix"] = c.KeyPrefix
+	c.fieldMap["key_preview"] = c.KeyPreview
 	c.fieldMap["key_hash"] = c.KeyHash
 	c.fieldMap["enabled"] = c.Enabled
 	c.fieldMap["expires_at"] = c.ExpiresAt

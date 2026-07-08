@@ -67,9 +67,9 @@ func TestSnapshotFromProto_ConsumerKeysAndGrants(t *testing.T) {
 		Consumers: []*pb.Consumer{{
 			Id: "c-1", Name: "alice", Enabled: true,
 			Keys: []*pb.ConsumerKeyRef{{
-				Id: "k-1", ConsumerId: "c-1", KeyPrefix: "nyro_abcd", KeyHash: "deadbeef", Enabled: true,
+				Id: "k-1", ConsumerId: "c-1", KeyPreview: "sk-abcd", KeyHash: "deadbeef", Enabled: true,
 			}, {
-				Id: "k-2", ConsumerId: "c-1", KeyPrefix: "", KeyHash: "x", // empty prefix dropped
+				Id: "k-2", ConsumerId: "c-1", KeyPreview: "", KeyHash: "x", // empty preview dropped
 			}},
 			Routes: []string{"m-1", "m-2"},
 			Quotas: []*pb.ConsumerQuota{{
@@ -79,7 +79,7 @@ func TestSnapshotFromProto_ConsumerKeysAndGrants(t *testing.T) {
 	}
 	snap := protoRoundtrip(t, in)
 
-	entries := snap.keysByPrefix["nyro_abcd"]
+	entries := snap.keysByPreview["sk-abcd"]
 	if len(entries) != 1 || entries[0].ConsumerID != "c-1" || entries[0].KeyHash != "deadbeef" {
 		t.Errorf("consumer key not carried: %+v", entries)
 	}
@@ -89,8 +89,8 @@ func TestSnapshotFromProto_ConsumerKeysAndGrants(t *testing.T) {
 	if len(entries[0].Quotas) != 1 || entries[0].Quotas[0].QuotaLimit != 60 {
 		t.Errorf("quotas not carried: %+v", entries[0].Quotas)
 	}
-	if _, ok := snap.keysByPrefix[""]; ok {
-		t.Error("empty key_prefix should not be stored")
+	if _, ok := snap.keysByPreview[""]; ok {
+		t.Error("empty key_preview should not be stored")
 	}
 }
 

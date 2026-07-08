@@ -88,7 +88,8 @@ consumers:
       protocols: ["openai-chat"]     # empty/omitted = allow all protocols
       ip_allowlist: ["10.0.0.0/8"]   # empty/omitted = allow all source IPs
     quotas:
-      inflight: 10                   # max concurrently in-flight requests
+      concurrency:
+        limit: 10                    # max concurrently in-flight requests
       requests:
         - limit: 60
           window: "1m"
@@ -99,7 +100,7 @@ consumers:
           window: "1m"
       budgets:                       # persisted only; not enforced yet
         - limit: 100
-          window: "mo"                # s | m | h | d | mo (natural month)
+          window: "1mo"               # s | m | h | d | Nmo (N natural months)
           currency: "USD"
     limits:
       max_input_tokens: 4000
@@ -157,11 +158,12 @@ uses `routes[].upstreams[].model`.
     its sub-fields, being empty/omitted means default-allow for that
     dimension — `models`, `protocols`, and `ip_allowlist` are each judged
     independently.
-  - `quotas`: `inflight` (max concurrently in-flight requests, no window),
-    `requests[]` / `tokens[]` (`limit` + `window`), and `budgets[]` (`limit` +
-    `window` + `currency`). Window units are `s`/`m`/`h`/`d`, plus `mo`
-    (natural calendar month) for budgets. Budgets are validated and persisted
-    but not enforced by the proxy in this version (enforcement requires a
-    pricing table, planned for a later version).
+  - `quotas`: `concurrency.limit` (max concurrently in-flight requests, no
+    window), `requests[]` / `tokens[]` (`limit` + `window`), and `budgets[]`
+    (`limit` + `window` + `currency`). Window units are `s`/`m`/`h`/`d`, plus
+    `Nmo` (N natural calendar months, e.g. `1mo`, `3mo`) for budgets. Budgets
+    are validated and persisted but not enforced by the proxy in this version
+    (enforcement requires a pricing table, planned for a later version).
+    `concurrency` maps internally to `consumer_quotas.quota_type = "concurrency"`.
   - `limits`: `max_input_tokens`, `max_output_tokens`,
     `max_request_body_bytes` — per-request caps; omitted/zero means no limit.

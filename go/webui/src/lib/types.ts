@@ -91,7 +91,7 @@ export interface ConsumerKey {
   id: string;
   consumer_id: string;
   name: string;
-  key_prefix: string;
+  key_preview: string;
   token?: string;
   enabled: boolean;
   expires_at?: string;
@@ -103,9 +103,18 @@ export interface ConsumerKey {
 export interface ConsumerQuota {
   id?: string;
   consumer_id?: string;
-  quota_type: "requests" | "tokens" | "concurrency" | string;
+  quota_type: "requests" | "tokens" | "concurrency" | "budget" | string;
   quota_limit: number;
   window?: string;
+  /** Set only for "budget" quotas (ISO 4217 code, e.g. "USD"). */
+  currency?: string;
+}
+
+/** Per-request resource caps; omitted/zero means no limit for that dimension. */
+export interface ConsumerLimits {
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+  max_request_body_bytes?: number;
 }
 
 export interface Consumer {
@@ -115,6 +124,10 @@ export interface Consumer {
   keys?: ConsumerKey[];
   routes?: string[];
   quotas?: ConsumerQuota[];
+  metadata?: Record<string, string>;
+  protocols?: string[];
+  ip_allowlist?: string[];
+  limits?: ConsumerLimits;
   created_at?: string;
   updated_at?: string;
 }
@@ -134,9 +147,10 @@ export interface UpdateConsumerKey {
 }
 
 export interface CreateConsumerQuota {
-  quota_type: "requests" | "tokens" | "concurrency" | string;
+  quota_type: "requests" | "tokens" | "concurrency" | "budget" | string;
   quota_limit: number;
   window?: string;
+  currency?: string;
 }
 
 export interface CreateConsumer {
@@ -145,6 +159,10 @@ export interface CreateConsumer {
   keys?: CreateConsumerKey[];
   routes?: string[];
   quotas?: CreateConsumerQuota[];
+  metadata?: Record<string, string>;
+  protocols?: string[];
+  ip_allowlist?: string[];
+  limits?: ConsumerLimits;
 }
 
 export interface UpdateConsumer {
@@ -152,6 +170,10 @@ export interface UpdateConsumer {
   enabled?: boolean;
   quotas?: CreateConsumerQuota[];
   routes?: string[];
+  metadata?: Record<string, string>;
+  protocols?: string[];
+  ip_allowlist?: string[];
+  limits?: ConsumerLimits;
 }
 
 /** Raw Go backend response shape for a provider preset (`GET /api/v1/provider-presets`), snake_case fields. */

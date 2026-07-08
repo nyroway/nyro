@@ -162,7 +162,7 @@ func consumerKeyFromModel(m *model.ConsumerKey) storage.ConsumerKey {
 		ID:         m.ID,
 		ConsumerID: m.ConsumerID,
 		Name:       m.Name,
-		KeyPrefix:  m.KeyPrefix,
+		KeyPreview: m.KeyPreview,
 		KeyHash:    m.KeyHash,
 		Enabled:    m.Enabled,
 		ExpiresAt:  m.ExpiresAt,

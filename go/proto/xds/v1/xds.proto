@@ -63,12 +63,12 @@ message Route {
 }
 
 // ConsumerKeyRef is the gateway-facing view of a consumer key: enough to
-// authenticate a raw token locally (prefix filter + hash compare) without ever
+// authenticate a raw token locally (preview filter + hash compare) without ever
 // carrying the plaintext token or DB-only bookkeeping fields (name, last_used_at).
 message ConsumerKeyRef {
   string id = 1;
   string consumer_id = 2;
-  string key_prefix = 3;
+  string key_preview = 3;
   string key_hash = 4;
   bool enabled = 5;
   string expires_at = 6;

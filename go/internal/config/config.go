@@ -144,16 +144,21 @@ type QuotaLimitSpec struct {
 // only; budgets are not enforced by the proxy in this version.
 type BudgetLimitSpec struct {
 	Limit    int64  `yaml:"limit"`
-	Window   string `yaml:"window"` // s/m/h/d, or "mo" for a natural calendar month
+	Window   string `yaml:"window"` // s/m/h/d, or "Nmo" for N natural calendar months (e.g. "1mo", "3mo")
 	Currency string `yaml:"currency"`
 }
 
+// ConsumerConcurrencySpec caps concurrently in-flight requests.
+type ConsumerConcurrencySpec struct {
+	Limit int64 `yaml:"limit"`
+}
+
 type ConsumerQuotasSpec struct {
-	// Inflight caps concurrently in-flight requests; zero/omitted = unlimited.
-	Inflight int64             `yaml:"inflight,omitempty"`
-	Requests []QuotaLimitSpec  `yaml:"requests,omitempty"`
-	Tokens   []QuotaLimitSpec  `yaml:"tokens,omitempty"`
-	Budgets  []BudgetLimitSpec `yaml:"budgets,omitempty"`
+	// Concurrency caps concurrently in-flight requests; nil/omitted = unlimited.
+	Concurrency *ConsumerConcurrencySpec `yaml:"concurrency,omitempty"`
+	Requests    []QuotaLimitSpec         `yaml:"requests,omitempty"`
+	Tokens      []QuotaLimitSpec         `yaml:"tokens,omitempty"`
+	Budgets     []BudgetLimitSpec        `yaml:"budgets,omitempty"`
 }
 
 // ConsumerAccessSpec grants a consumer access to models/protocols/source IPs.
@@ -335,7 +340,7 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 	return nil
 }
 
-// consumerQuotas expands the requests/tokens/inflight/budgets quota shape
+// consumerQuotas expands the requests/tokens/concurrency/budgets quota shape
 // into the flat []CreateConsumerQuota rows the storage layer persists (one
 // row per (quota_type, window) pair; concurrency has no window).
 func consumerQuotas(q ConsumerQuotasSpec) []storage.CreateConsumerQuota {
@@ -346,8 +351,8 @@ func consumerQuotas(q ConsumerQuotasSpec) []storage.CreateConsumerQuota {
 	for _, t := range q.Tokens {
 		out = append(out, storage.CreateConsumerQuota{QuotaType: "tokens", QuotaLimit: t.Limit, Window: t.Window})
 	}
-	if q.Inflight != 0 {
-		out = append(out, storage.CreateConsumerQuota{QuotaType: "concurrency", QuotaLimit: q.Inflight})
+	if q.Concurrency != nil {
+		out = append(out, storage.CreateConsumerQuota{QuotaType: "concurrency", QuotaLimit: q.Concurrency.Limit})
 	}
 	for _, b := range q.Budgets {
 		out = append(out, storage.CreateConsumerQuota{

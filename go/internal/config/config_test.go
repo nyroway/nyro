@@ -40,7 +40,7 @@ consumers:
     quotas:
       requests:
         - {limit: 60, window: "1m"}
-      inflight: 10
+      concurrency: {limit: 10}
 `
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -345,10 +345,10 @@ func TestBuildSnapshot_UnknownRefs(t *testing.T) {
 
 func TestConsumerQuotas_ExpandsAllCategories(t *testing.T) {
 	q := ConsumerQuotasSpec{
-		Requests: []QuotaLimitSpec{{Limit: 60, Window: "1m"}, {Limit: 10000, Window: "1d"}},
-		Tokens:   []QuotaLimitSpec{{Limit: 100000, Window: "1m"}},
-		Inflight: 10,
-		Budgets:  []BudgetLimitSpec{{Limit: 100, Window: "mo", Currency: "USD"}},
+		Requests:    []QuotaLimitSpec{{Limit: 60, Window: "1m"}, {Limit: 10000, Window: "1d"}},
+		Tokens:      []QuotaLimitSpec{{Limit: 100000, Window: "1m"}},
+		Concurrency: &ConsumerConcurrencySpec{Limit: 10},
+		Budgets:     []BudgetLimitSpec{{Limit: 100, Window: "1mo", Currency: "USD"}},
 	}
 	got := consumerQuotas(q)
 	if len(got) != 5 {
@@ -371,7 +371,7 @@ func TestConsumerQuotas_ExpandsAllCategories(t *testing.T) {
 			}
 		case "budget":
 			budgetCount++
-			if row.QuotaLimit != 100 || row.Window != "mo" || row.Currency != "USD" {
+			if row.QuotaLimit != 100 || row.Window != "1mo" || row.Currency != "USD" {
 				t.Errorf("budget row wrong: %+v", row)
 			}
 		}

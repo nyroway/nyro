@@ -35,7 +35,7 @@ func TestAutoMigrateCreatesConfigSchemaTables(t *testing.T) {
 		"upstreams":       {"provider", "credentials_json", "models_json", "models_url", "proxy_url"},
 		"routes":          {"model", "balance", "enable_auth", "enable_payload"},
 		"route_upstreams": {"route_id", "upstream_id", "model", "weight", "priority"},
-		"consumer_keys":   {"consumer_id", "key_prefix", "key_hash", "last_used_at"},
+		"consumer_keys":   {"consumer_id", "key_preview", "key_hash", "last_used_at"},
 		"consumer_quotas": {"consumer_id", "quota_type", "quota_limit", "window"},
 		"settings":        {"key", "value", "updated_at"},
 	} {

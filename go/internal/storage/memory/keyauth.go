@@ -4,18 +4,18 @@ import "github.com/nyroway/nyro/go/internal/storage"
 
 type keyAuthStore struct{ b *Backend }
 
-// FindKey narrows candidates by KeyPrefix, then compares SHA-256 hashes — raw
+// FindKey narrows candidates by KeyPreview, then compares SHA-256 hashes — raw
 // tokens are never persisted.
 func (s keyAuthStore) FindKey(rawKey string) (*storage.ConsumerKeyAccessRecord, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()
 
-	prefix := storage.PrefixOf(rawKey)
+	preview := storage.PreviewOf(rawKey)
 	hash := storage.HashKey(rawKey)
 
 	var matched *storage.ConsumerKey
 	for _, k := range s.b.consumerKeys {
-		if k.KeyPrefix == prefix && k.KeyHash == hash {
+		if k.KeyPreview == preview && k.KeyHash == hash {
 			m := k
 			matched = &m
 			break
@@ -36,7 +36,7 @@ func (s keyAuthStore) FindKey(rawKey string) (*storage.ConsumerKeyAccessRecord, 
 	rec := &storage.ConsumerKeyAccessRecord{
 		KeyID:      matched.ID,
 		ConsumerID: matched.ConsumerID,
-		KeyPrefix:  matched.KeyPrefix,
+		KeyPreview: matched.KeyPreview,
 		Enabled:    matched.Enabled && consumerEnabled,
 		ExpiresAt:  matched.ExpiresAt,
 	}

@@ -75,10 +75,10 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
 		}
 		routes := append([]string(nil), c.GetRoutes()...)
 		for _, k := range c.GetKeys() {
-			if k == nil || k.GetKeyPrefix() == "" {
+			if k == nil || k.GetKeyPreview() == "" {
 				continue
 			}
-			b.AddConsumerKey(k.GetId(), k.GetConsumerId(), k.GetKeyPrefix(), k.GetKeyHash(), k.GetEnabled(), k.GetExpiresAt(), routes, quotas)
+			b.AddConsumerKey(k.GetId(), k.GetConsumerId(), k.GetKeyPreview(), k.GetKeyHash(), k.GetEnabled(), k.GetExpiresAt(), routes, quotas)
 		}
 	}
 
@@ -138,7 +138,7 @@ func SnapshotFromStorage(s storage.Storage, version int64) (*pb.ConfigSnapshot, 
 			// A key is only usable when both it and its owning consumer are
 			// enabled — disabling a consumer must revoke every key it owns.
 			pc.Keys = append(pc.Keys, &pb.ConsumerKeyRef{
-				Id: k.ID, ConsumerId: k.ConsumerID, KeyPrefix: k.KeyPrefix, KeyHash: k.KeyHash,
+				Id: k.ID, ConsumerId: k.ConsumerID, KeyPreview: k.KeyPreview, KeyHash: k.KeyHash,
 				Enabled: k.Enabled && c.Enabled, ExpiresAt: k.ExpiresAt,
 			})
 		}

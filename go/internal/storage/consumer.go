@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/nyroway/nyro/go/internal/proxy/quota"
 )
@@ -37,13 +38,13 @@ type ConsumerLimits struct {
 }
 
 // ConsumerKey is one credential owned by a consumer (table: consumer_keys).
-// Only KeyPrefix + KeyHash are persisted; the raw token is held only at
+// Only KeyPreview + KeyHash are persisted; the raw token is held only at
 // creation/import time and never stored.
 type ConsumerKey struct {
 	ID         string `json:"id"`
 	ConsumerID string `json:"consumer_id"`
 	Name       string `json:"name"`
-	KeyPrefix  string `json:"key_prefix"`
+	KeyPreview string `json:"key_preview"`
 	KeyHash    string `json:"-"` // never serialized
 	// Token carries the raw key exactly once, in the response to the create
 	// call that generated it. It is never populated on read paths (List/Get)
@@ -83,7 +84,7 @@ type CreateConsumer struct {
 }
 
 // CreateConsumerKey carries the raw token at creation time; the store derives
-// KeyPrefix + KeyHash from it and discards the plaintext.
+// KeyPreview + KeyHash from it and discards the plaintext.
 type CreateConsumerKey struct {
 	Name      string `json:"name"`
 	Token     string `json:"token,omitempty"` // raw; empty = auto-generate
@@ -126,16 +127,22 @@ type UpdateConsumer struct {
 // validQuotaTypes enumerates the allowed ConsumerQuota.QuotaType values.
 var validQuotaTypes = map[string]bool{"requests": true, "tokens": true, "concurrency": true, "budget": true}
 
+// naturalMonthWindow matches an "Nmo" budget window (e.g. "1mo", "3mo"): N
+// natural calendar months, which have no fixed time.Duration.
+var naturalMonthWindow = regexp.MustCompile(`^[0-9]+mo$`)
+
 // ValidateConsumerQuota checks a single quota DTO's invariants:
 //   - QuotaType must be one of requests, tokens, concurrency, budget.
 //   - QuotaLimit must be positive.
-//   - concurrency quotas must not set a window (they aren't time-windowed).
+//   - concurrency quotas must not set a window (they aren't time-windowed;
+//     they cap concurrently in-flight requests).
 //   - budget quotas must set Currency, and their window may additionally be
-//     "mo" (natural calendar month) on top of the s/m/h/d units accepted
-//     elsewhere; "mo" has no fixed time.Duration, so it is accepted as a
-//     literal here and left for the (not-yet-built) budget-enforcement path
-//     to interpret against calendar boundaries. Budgets are validated and
-//     persisted only; they are not enforced by the proxy in this version.
+//     "Nmo" (N natural calendar months, e.g. "1mo", "3mo") on top of the
+//     s/m/h/d units accepted elsewhere; "Nmo" has no fixed time.Duration, so
+//     it is accepted as a literal here and left for the (not-yet-built)
+//     budget-enforcement path to interpret against calendar boundaries.
+//     Budgets are validated and persisted only; they are not enforced by the
+//     proxy in this version.
 //   - any other window must parse via quota.ParseWindow (the same parser the
 //     proxy's quota counter uses at enforcement time).
 func ValidateConsumerQuota(q CreateConsumerQuota) error {
@@ -155,7 +162,7 @@ func ValidateConsumerQuota(q CreateConsumerQuota) error {
 		if q.Currency == "" {
 			return fmt.Errorf("budget quotas require a currency")
 		}
-		if q.Window != "" && q.Window != "mo" {
+		if q.Window != "" && !naturalMonthWindow.MatchString(q.Window) {
 			if _, err := quota.ParseWindow(q.Window); err != nil {
 				return fmt.Errorf("invalid window %q: %w", q.Window, err)
 			}
@@ -176,7 +183,7 @@ func ValidateConsumerQuota(q CreateConsumerQuota) error {
 type ConsumerKeyAccessRecord struct {
 	KeyID      string          `json:"key_id"`
 	ConsumerID string          `json:"consumer_id"`
-	KeyPrefix  string          `json:"key_prefix"`
+	KeyPreview string          `json:"key_preview"`
 	Enabled    bool            `json:"enabled"`
 	ExpiresAt  string          `json:"expires_at,omitempty"`
 	Routes     []string        `json:"routes,omitempty"`
@@ -205,7 +212,7 @@ type ConsumerStore interface {
 }
 
 // KeyAuthStore is the inbound-auth read path used by the proxy: resolve a raw
-// token to its consumer key + grants. Implementations use KeyPrefix filtering
+// token to its consumer key + grants. Implementations use KeyPreview filtering
 // plus a hash compare (raw tokens are not persisted); the contract is defined
 // here, the implementation is added in a later step.
 type KeyAuthStore interface {

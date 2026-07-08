@@ -431,13 +431,13 @@ func (x *Route) GetTargets() []*RouteUpstream {
 }
 
 // ConsumerKeyRef is the gateway-facing view of a consumer key: enough to
-// authenticate a raw token locally (prefix filter + hash compare) without ever
+// authenticate a raw token locally (preview filter + hash compare) without ever
 // carrying the plaintext token or DB-only bookkeeping fields (name, last_used_at).
 type ConsumerKeyRef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	ConsumerId    string                 `protobuf:"bytes,2,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"`
-	KeyPrefix     string                 `protobuf:"bytes,3,opt,name=key_prefix,json=keyPrefix,proto3" json:"key_prefix,omitempty"`
+	KeyPreview    string                 `protobuf:"bytes,3,opt,name=key_preview,json=keyPreview,proto3" json:"key_preview,omitempty"`
 	KeyHash       string                 `protobuf:"bytes,4,opt,name=key_hash,json=keyHash,proto3" json:"key_hash,omitempty"`
 	Enabled       bool                   `protobuf:"varint,5,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	ExpiresAt     string                 `protobuf:"bytes,6,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
@@ -489,9 +489,9 @@ func (x *ConsumerKeyRef) GetConsumerId() string {
 	return ""
 }
 
-func (x *ConsumerKeyRef) GetKeyPrefix() string {
+func (x *ConsumerKeyRef) GetKeyPreview() string {
 	if x != nil {
-		return x.KeyPrefix
+		return x.KeyPreview
 	}
 	return ""
 }
@@ -720,13 +720,13 @@ const file_xds_v1_xds_proto_rawDesc = "" +
 	"enableAuth\x12%\n" +
 	"\x0eenable_payload\x18\x05 \x01(\bR\renablePayload\x12\x18\n" +
 	"\aenabled\x18\x06 \x01(\bR\aenabled\x124\n" +
-	"\atargets\x18\a \x03(\v2\x1a.nyro.xds.v1.RouteUpstreamR\atargets\"\xb4\x01\n" +
+	"\atargets\x18\a \x03(\v2\x1a.nyro.xds.v1.RouteUpstreamR\atargets\"\xb6\x01\n" +
 	"\x0eConsumerKeyRef\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vconsumer_id\x18\x02 \x01(\tR\n" +
-	"consumerId\x12\x1d\n" +
-	"\n" +
-	"key_prefix\x18\x03 \x01(\tR\tkeyPrefix\x12\x19\n" +
+	"consumerId\x12\x1f\n" +
+	"\vkey_preview\x18\x03 \x01(\tR\n" +
+	"keyPreview\x12\x19\n" +
 	"\bkey_hash\x18\x04 \x01(\tR\akeyHash\x12\x18\n" +
 	"\aenabled\x18\x05 \x01(\bR\aenabled\x12\x1d\n" +
 	"\n" +

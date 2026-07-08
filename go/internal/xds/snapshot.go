@@ -3,13 +3,13 @@ package xds
 import "github.com/nyroway/nyro/go/internal/storage"
 
 // consumerKeyEntry is the gateway-facing view of a consumer key: enough to
-// authenticate a raw token locally (prefix filter + hash compare) plus the
+// authenticate a raw token locally (preview filter + hash compare) plus the
 // grants needed to answer FindKey in one shot. It never carries the plaintext
 // token.
 type consumerKeyEntry struct {
 	KeyID      string
 	ConsumerID string
-	KeyPrefix  string
+	KeyPreview string
 	KeyHash    string
 	Enabled    bool
 	ExpiresAt  string
@@ -25,10 +25,10 @@ type ConfigSnapshot struct {
 	upstreams map[string]storage.Upstream
 	// routes maps client-facing Route.Model → Route (Upstreams targets attached).
 	routes map[string]storage.Route
-	// keysByPrefix indexes consumer keys by KeyPrefix for FindKey's candidate
+	// keysByPreview indexes consumer keys by KeyPreview for FindKey's candidate
 	// narrowing (raw tokens are never persisted, so this is the closest to an
 	// O(1) lookup available without a per-request DB round trip).
-	keysByPrefix map[string][]consumerKeyEntry
+	keysByPreview map[string][]consumerKeyEntry
 	// settings holds the gateway-relevant key/value settings (proxy_*).
 	settings map[string]string
 }
@@ -70,19 +70,19 @@ func (s *ConfigSnapshot) RoutesList() []storage.Route {
 }
 
 // FindKey resolves a raw consumer-key token to its access record: filter
-// candidates by prefix, then compare hashes (raw tokens are never persisted,
+// candidates by preview, then compare hashes (raw tokens are never persisted,
 // so an exact-match map lookup like the legacy FindAPIKey isn't possible).
 func (s *ConfigSnapshot) FindKey(rawKey string) *storage.ConsumerKeyAccessRecord {
-	prefix := storage.PrefixOf(rawKey)
+	preview := storage.PreviewOf(rawKey)
 	hash := storage.HashKey(rawKey)
-	for _, entry := range s.keysByPrefix[prefix] {
+	for _, entry := range s.keysByPreview[preview] {
 		if entry.KeyHash != hash {
 			continue
 		}
 		return &storage.ConsumerKeyAccessRecord{
 			KeyID:      entry.KeyID,
 			ConsumerID: entry.ConsumerID,
-			KeyPrefix:  entry.KeyPrefix,
+			KeyPreview: entry.KeyPreview,
 			Enabled:    entry.Enabled,
 			ExpiresAt:  entry.ExpiresAt,
 			Routes:     entry.Routes,
@@ -124,11 +124,11 @@ func (b *Snapshot) SetRoute(r storage.Route) {
 	b.routes[r.Model] = r
 }
 
-// AddConsumerKey registers one consumer key's gateway-facing view (prefix,
+// AddConsumerKey registers one consumer key's gateway-facing view (preview,
 // hash, grants). Called once per key across all consumers.
-func (b *Snapshot) AddConsumerKey(keyID, consumerID, keyPrefix, keyHash string, enabled bool, expiresAt string, routes []string, quotas []storage.ConsumerQuota) {
+func (b *Snapshot) AddConsumerKey(keyID, consumerID, keyPreview, keyHash string, enabled bool, expiresAt string, routes []string, quotas []storage.ConsumerQuota) {
 	b.keys = append(b.keys, consumerKeyEntry{
-		KeyID: keyID, ConsumerID: consumerID, KeyPrefix: keyPrefix, KeyHash: keyHash,
+		KeyID: keyID, ConsumerID: consumerID, KeyPreview: keyPreview, KeyHash: keyHash,
 		Enabled: enabled, ExpiresAt: expiresAt, Routes: routes, Quotas: quotas,
 	})
 }
@@ -152,14 +152,14 @@ func (b *Snapshot) Done() *ConfigSnapshot {
 	if b.settings == nil {
 		b.settings = map[string]string{}
 	}
-	byPrefix := make(map[string][]consumerKeyEntry, len(b.keys))
+	byPreview := make(map[string][]consumerKeyEntry, len(b.keys))
 	for _, k := range b.keys {
-		byPrefix[k.KeyPrefix] = append(byPrefix[k.KeyPrefix], k)
+		byPreview[k.KeyPreview] = append(byPreview[k.KeyPreview], k)
 	}
 	return &ConfigSnapshot{
-		upstreams:    b.upstreams,
-		routes:       b.routes,
-		keysByPrefix: byPrefix,
-		settings:     b.settings,
+		upstreams:     b.upstreams,
+		routes:        b.routes,
+		keysByPreview: byPreview,
+		settings:      b.settings,
 	}
 }

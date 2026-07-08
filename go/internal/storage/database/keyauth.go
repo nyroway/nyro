@@ -9,14 +9,14 @@ import (
 
 type keyAuthStore struct{ q *query.Query }
 
-// FindKey narrows candidates by KeyPrefix (indexed), then compares SHA-256
+// FindKey narrows candidates by KeyPreview (indexed), then compares SHA-256
 // hashes to find the exact match — raw tokens are never persisted.
 func (s keyAuthStore) FindKey(rawKey string) (*storage.ConsumerKeyAccessRecord, error) {
 	ctx := context.Background()
-	prefix := storage.PrefixOf(rawKey)
+	preview := storage.PreviewOf(rawKey)
 	hash := storage.HashKey(rawKey)
 
-	candidates, err := s.q.ConsumerKey.WithContext(ctx).Where(s.q.ConsumerKey.KeyPrefix.Eq(prefix)).Find()
+	candidates, err := s.q.ConsumerKey.WithContext(ctx).Where(s.q.ConsumerKey.KeyPreview.Eq(preview)).Find()
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +45,7 @@ func (s keyAuthStore) FindKey(rawKey string) (*storage.ConsumerKeyAccessRecord, 
 	rec := &storage.ConsumerKeyAccessRecord{
 		KeyID:      matched.ID,
 		ConsumerID: matched.ConsumerID,
-		KeyPrefix:  matched.KeyPrefix,
+		KeyPreview: matched.KeyPreview,
 		Enabled:    matched.Enabled && consumerEnabled,
 		ExpiresAt:  matched.ExpiresAt,
 	}

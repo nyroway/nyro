@@ -176,15 +176,15 @@ func (s consumerStore) Create(in storage.CreateConsumer) (storage.Consumer, erro
 func createConsumerKey(ctx context.Context, tx *query.Query, consumerID string, in storage.CreateConsumerKey) (storage.ConsumerKey, error) {
 	now := nowISO()
 	raw := in.Token
-	var prefix, hash string
+	var preview, hash string
 	if raw == "" {
 		var err error
-		raw, prefix, hash, err = storage.GenerateKey()
+		raw, preview, hash, err = storage.GenerateKey()
 		if err != nil {
 			return storage.ConsumerKey{}, err
 		}
 	} else {
-		prefix = storage.PrefixOf(raw)
+		preview = storage.PreviewOf(raw)
 		hash = storage.HashKey(raw)
 	}
 	enabled := true
@@ -195,7 +195,7 @@ func createConsumerKey(ctx context.Context, tx *query.Query, consumerID string, 
 		ID:         newID(),
 		ConsumerID: consumerID,
 		Name:       in.Name,
-		KeyPrefix:  prefix,
+		KeyPreview: preview,
 		KeyHash:    hash,
 		Enabled:    enabled,
 		ExpiresAt:  in.ExpiresAt,
