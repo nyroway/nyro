@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +24,19 @@ import (
 	"github.com/nyroway/nyro/go/internal/webui"
 )
 
+// nyroHomeDir returns ~/.nyro, the default home for admin-local state
+// (sqlite DB, observability parquet data) when the user hasn't pointed
+// --db-dsn/--obs-data-dir elsewhere. Falls back to "./.nyro" (relative to
+// the working directory) if the OS user home directory can't be resolved —
+// best-effort, never fatal, so admin still starts.
+func nyroHomeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".nyro"
+	}
+	return filepath.Join(home, ".nyro")
+}
+
 // NewCmd builds the admin (control-plane) subcommand.
 //
 // In addition to the REST API + WebUI, the admin optionally runs a gRPC
@@ -34,12 +49,18 @@ func NewCmd() *cobra.Command {
 		Short: "Run the control plane (management API + WebUI)",
 	}
 	cmd.Flags().String("addr", "127.0.0.1:19531", "listen address for the control plane")
-	cmd.Flags().String("grpc-addr", "", "listen address for the config-sync gRPC server (disabled if empty)")
+	// Bound to loopback by default: this stream carries every upstream's
+	// credentials_json in the clear (no TLS, no auth — see internal/configsync)
+	// to any client that connects and subscribes. Defaulting it on (rather than
+	// disabled) makes admin+gateway on the same host work with zero flags;
+	// exposing it beyond loopback is a deliberate opt-in via an explicit
+	// --grpc-addr, not something a default should do for you.
+	cmd.Flags().String("grpc-addr", "127.0.0.1:19532", "listen address for the config-sync gRPC server (empty disables it)")
 	cmd.Flags().String("admin-token", "", "Bearer token protecting /api/v1 admin routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.Flags().String("storage", "sqlite", "storage backend: sqlite|postgres|mysql")
-	cmd.Flags().String("db-dsn", "", "database path/DSN (sqlite: file path, default ./data/nyro.db; postgres/mysql: full DSN, required)")
-	cmd.Flags().String("obs-data-dir", "./data/obs", "directory for admin-local observability parquet data (logs/metrics/traces)")
+	cmd.Flags().String("db-dsn", "", fmt.Sprintf("database path/DSN (sqlite: file path, default %s; postgres/mysql: full DSN, required)", filepath.Join(nyroHomeDir(), "nyro.db")))
+	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for admin-local observability parquet data (logs/metrics/traces)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("addr")
 		grpcAddr, _ := cmd.Flags().GetString("grpc-addr")
@@ -52,7 +73,17 @@ func NewCmd() *cobra.Command {
 		switch storageBackend {
 		case "sqlite":
 			if dbDSN == "" {
-				dbDSN = "./data/nyro.db"
+				dbDSN = filepath.Join(nyroHomeDir(), "nyro.db")
+			}
+			// The sqlite driver opens/creates the DB file itself but never its
+			// parent directory — unlike parquet.NewSink (obs-data-dir), which
+			// MkdirAll's on demand. Do it here so a first run against the
+			// ~/.nyro default (or any other not-yet-existing directory) doesn't
+			// fail outright.
+			if dir := filepath.Dir(dbDSN); dir != "" && dir != "." {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return fmt.Errorf("create db-dsn directory %q: %w", dir, err)
+				}
 			}
 		case "postgres", "mysql":
 			if dbDSN == "" {

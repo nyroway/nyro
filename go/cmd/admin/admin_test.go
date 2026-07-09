@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/url"
+	"path/filepath"
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -52,8 +53,16 @@ func TestRunE_RejectsUnknownStorage(t *testing.T) {
 
 func TestNewCmdObsDataDirFlagDefault(t *testing.T) {
 	cmd := NewCmd()
-	if v, _ := cmd.Flags().GetString("obs-data-dir"); v != "./data/obs" {
-		t.Errorf("default obs-data-dir = %q, want ./data/obs", v)
+	want := filepath.Join(nyroHomeDir(), "obs")
+	if v, _ := cmd.Flags().GetString("obs-data-dir"); v != want {
+		t.Errorf("default obs-data-dir = %q, want %q", v, want)
+	}
+}
+
+func TestNewCmdGRPCAddrFlagDefault(t *testing.T) {
+	cmd := NewCmd()
+	if v, _ := cmd.Flags().GetString("grpc-addr"); v != "127.0.0.1:19532" {
+		t.Errorf("default grpc-addr = %q, want 127.0.0.1:19532", v)
 	}
 }
 

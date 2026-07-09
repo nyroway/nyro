@@ -5,13 +5,15 @@ import type { GatewayNode } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 
 // Locale-specific formatting: zh-CN reads as 24-hour "YYYY/MM/DD HH:mm:ss",
-// en-US as 12-hour "MM/DD/YYYY, hh:mm:ss AM/PM" — Intl.DateTimeFormat with
+// en-US as 12-hour "MM/DD/YYYY hh:mm:ss AM/PM" — Intl.DateTimeFormat with
 // explicit "2-digit" parts (rather than the bare toLocaleString default)
-// guarantees single-digit month/day/hour are always zero-padded.
+// guarantees single-digit month/day/hour are always zero-padded. Formats via
+// formatToParts (not .format) so the en-US locale's date/time separator
+// comma can be dropped in favor of a plain space.
 function formatConnectedAt(iso: string, isZh: boolean) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return new Intl.DateTimeFormat(isZh ? "zh-CN" : "en-US", {
+  const parts = new Intl.DateTimeFormat(isZh ? "zh-CN" : "en-US", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -19,7 +21,8 @@ function formatConnectedAt(iso: string, isZh: boolean) {
     minute: "2-digit",
     second: "2-digit",
     hour12: !isZh,
-  }).format(d);
+  }).formatToParts(d);
+  return parts.map((p) => (p.type === "literal" ? p.value.replace(",", "") : p.value)).join("");
 }
 
 // remote_addr is the config-sync gRPC connection's peer address (host +
