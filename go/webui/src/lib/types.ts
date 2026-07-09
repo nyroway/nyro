@@ -269,6 +269,7 @@ export interface GatewayNode {
   node_id: string;
   hostname: string;
   app_version: string;
+  service_port: string;
   remote_addr: string;
   connected_at: string;
   applied_version: number;

@@ -4,10 +4,22 @@ import { backend } from "@/lib/backend";
 import type { GatewayNode } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 
+// Locale-specific formatting: zh-CN reads as 24-hour "YYYY/MM/DD HH:mm:ss",
+// en-US as 12-hour "MM/DD/YYYY, hh:mm:ss AM/PM" — Intl.DateTimeFormat with
+// explicit "2-digit" parts (rather than the bare toLocaleString default)
+// guarantees single-digit month/day/hour are always zero-padded.
 function formatConnectedAt(iso: string, isZh: boolean) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(isZh ? "zh-CN" : "en-US");
+  return new Intl.DateTimeFormat(isZh ? "zh-CN" : "en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: !isZh,
+  }).format(d);
 }
 
 // remote_addr is the config-sync gRPC connection's peer address (host +
@@ -24,6 +36,8 @@ function formatAddressHost(addr: string) {
   if (lastColon <= 0) return addr;
   return addr.slice(0, lastColon);
 }
+
+const COLUMN_COUNT = 8;
 
 export default function NodesPage() {
   const { locale } = useLocale();
@@ -58,23 +72,25 @@ export default function NodesPage() {
               <tr>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "节点" : "Node"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "主机名" : "Hostname"}</th>
+                <th className="px-3 py-2 text-left font-medium">{isZh ? "主机地址" : "Host Address"}</th>
+                <th className="px-3 py-2 text-left font-medium">{isZh ? "服务端口" : "Service Port"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "网关版本" : "Gateway Version"}</th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "地址" : "Address"}</th>
+                <th className="px-3 py-2 text-left font-medium">{isZh ? "配置版本" : "Config Version"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "连接时间" : "Connected At"}</th>
-                <th className="px-3 py-2 text-right font-medium">{isZh ? "配置版本" : "Config Version"}</th>
+                <th className="px-3 py-2 text-left font-medium">{isZh ? "状态" : "Status"}</th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
                 <tr>
-                  <td className="px-3 py-6 text-center text-slate-400" colSpan={6}>
+                  <td className="px-3 py-6 text-center text-slate-400" colSpan={COLUMN_COUNT}>
                     {isZh ? "加载中…" : "Loading…"}
                   </td>
                 </tr>
               )}
               {!isLoading && nodes.length === 0 && (
                 <tr>
-                  <td className="px-3 py-6 text-center text-slate-400" colSpan={6}>
+                  <td className="px-3 py-6 text-center text-slate-400" colSpan={COLUMN_COUNT}>
                     {isZh
                       ? "暂无已连接的网关节点"
                       : "No gateway nodes connected yet"}
@@ -90,10 +106,17 @@ export default function NodesPage() {
                     </span>
                   </td>
                   <td className="px-3 py-2">{n.hostname || "-"}</td>
-                  <td className="px-3 py-2">{n.app_version || "-"}</td>
                   <td className="px-3 py-2 font-mono text-xs">{formatAddressHost(n.remote_addr) || "-"}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{n.service_port || "-"}</td>
+                  <td className="px-3 py-2">{n.app_version || "-"}</td>
+                  <td className="px-3 py-2">{n.applied_version}</td>
                   <td className="px-3 py-2">{formatConnectedAt(n.connected_at, isZh)}</td>
-                  <td className="px-3 py-2 text-right">{n.applied_version}</td>
+                  <td className="px-3 py-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                      {isZh ? "已连接" : "Connected"}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>
