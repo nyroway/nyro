@@ -5,6 +5,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +16,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
+	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/webui"
 	"github.com/nyroway/nyro/go/internal/xds"
 )
@@ -36,6 +38,7 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.Flags().String("storage", "sqlite", "storage backend: sqlite|postgres|mysql")
 	cmd.Flags().String("db-dsn", "", "database path/DSN (sqlite: file path, default ./data/nyro.db; postgres/mysql: full DSN, required)")
+	cmd.Flags().String("obs-data-dir", "./data/obs", "directory for admin-local observability parquet data (logs/metrics/traces)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("addr")
 		grpcAddr, _ := cmd.Flags().GetString("grpc-addr")
@@ -43,6 +46,7 @@ func NewCmd() *cobra.Command {
 		webuiDir, _ := cmd.Flags().GetString("webui-dir")
 		storageBackend, _ := cmd.Flags().GetString("storage")
 		dbDSN, _ := cmd.Flags().GetString("db-dsn")
+		obsDataDir, _ := cmd.Flags().GetString("obs-data-dir")
 
 		switch storageBackend {
 		case "sqlite":
@@ -65,11 +69,23 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
+		// ── One-time settings migration + first-boot seed (best-effort) ──
+		// Order matters: migration may populate the new obs_<signal>_exporter /
+		// obs_<signal>_otlp_endpoint keys from deprecated ones, and seeding must
+		// only fire when those new keys are still empty afterwards.
+		migrateLegacyObsSettings(st.Settings())
+		seedDefaultObsEndpoint(st.Settings(), addr)
+
 		// ── Observability sinks (admin side) ──
 		// Three parquet sinks (logs/metrics/traces) feed the OTLP/HTTP receiver.
 		// The receiver decodes the official OTLP protobuf and buffers rows; each
 		// sink rotates its parquet file on its own (maxRows) and on Flush below.
-		obsCfg := observability.LoadConfig(st.Settings().Get)
+		obsCfg, err := observability.LoadConfig(st.Settings().Get)
+		if err != nil {
+			return fmt.Errorf("load observability config: %w", err)
+		}
+		// obs_data_dir is no longer a setting; DataDir comes from --obs-data-dir.
+		obsCfg.DataDir = obsDataDir
 		logSink, err := parquet.NewSink[observability.LogRecord](obsCfg.DataDir, "logs", 50000)
 		if err != nil {
 			return err
@@ -128,4 +144,129 @@ func NewCmd() *cobra.Command {
 		return bootstrap.RunServer(engine, addr)
 	}
 	return cmd
+}
+
+// legacyObsSignalSinkKeys are the deprecated per-signal sink keys, superseded
+// by obs_<signal>_exporter. See global-constraints.md "设置 key 迁移策略".
+var legacyObsSignalSinkKeys = map[string]string{
+	"logs":    "obs_logs_sink",
+	"metrics": "obs_metrics_sink",
+	"traces":  "obs_traces_sink",
+}
+
+// legacyObsDeadKeys are deprecated keys that never map to any new key and are
+// simply dropped once migration is done (obs_metrics_path/obs_traces_protocol
+// are handled specially below; the rest — obs_sink/obs_export_interval/
+// obs_otlp_endpoint — have no new-key destination other than the per-signal
+// copy already performed).
+var legacyObsDeadKeys = []string{
+	"obs_logs_sink",
+	"obs_metrics_sink",
+	"obs_traces_sink",
+	"obs_otlp_endpoint",
+	"obs_metrics_path",
+	"obs_traces_protocol",
+	"obs_sink",
+	"obs_export_interval",
+}
+
+// migrateLegacyObsSettings performs a one-time, best-effort migration of the
+// deprecated global/shared observability settings keys into the new
+// per-signal obs_<signal>_exporter / obs_<signal>_<kind>_<field> keys, then
+// deletes the old keys. This is a destructive, pre-release migration (no
+// runtime fallback compatibility — see global-constraints.md).
+//
+// It is idempotent: once the old keys are gone (e.g. migrated on a prior
+// boot), every Get below returns "" and no writes happen.
+//
+// The storage.SettingsStore interface has no Delete method, so "deleting" a
+// legacy key means Set(key, "") — functionally identical to absence for
+// every reader in this codebase (Get returns "" for both a missing key and
+// one explicitly set to "").
+//
+// Failures are logged and never block startup.
+func migrateLegacyObsSettings(s storage.SettingsStore) {
+	get := func(key string) string {
+		v, err := s.Get(key)
+		if err != nil {
+			slog.Warn("obs settings migration: read failed", "key", key, "error", err)
+			return ""
+		}
+		return v
+	}
+	set := func(key, value string) {
+		if err := s.Set(key, value); err != nil {
+			slog.Error("obs settings migration: write failed", "key", key, "error", err)
+		}
+	}
+
+	legacyEndpoint := get("obs_otlp_endpoint")
+	legacyTracesProtocol := get("obs_traces_protocol")
+
+	for signal, sinkKey := range legacyObsSignalSinkKeys {
+		sink := get(sinkKey)
+		if sink == "" || sink == "none" {
+			continue
+		}
+		set(fmt.Sprintf("obs_%s_exporter", signal), sink)
+		if sink == "otlp" && legacyEndpoint != "" {
+			set(fmt.Sprintf("obs_%s_otlp_endpoint", signal), legacyEndpoint)
+		}
+		if signal == "traces" && sink == "otlp" && legacyTracesProtocol != "" {
+			set("obs_traces_otlp_protocol", legacyTracesProtocol)
+		}
+	}
+
+	// obs_metrics_path has no destination (prometheus, the only engine that
+	// would use it, never existed as a legacy sink value) — it is dropped
+	// below along with the rest of the dead keys.
+	for _, key := range legacyObsDeadKeys {
+		existing, err := s.Get(key)
+		if err != nil || existing == "" {
+			continue // not set (or unreadable) — nothing to delete.
+		}
+		set(key, "")
+	}
+}
+
+// obsSeedSignals lists the three independent signals seeding operates over.
+var obsSeedSignals = []string{"logs", "metrics", "traces"}
+
+// seedDefaultObsEndpoint runs after migration and, only if all three signals'
+// obs_<signal>_otlp_endpoint keys are still empty (fresh install, or a
+// migration that found nothing to copy), seeds every signal's OTLP endpoint
+// to point at this admin instance's own --addr, and defaults any still-empty
+// obs_<signal>_exporter to "otlp". This is a real, editable setting written
+// to storage — not an in-memory/runtime override of ObsConfig — so the user
+// can change it later via the WebUI.
+//
+// Idempotent: if any endpoint is already set (user-configured or seeded on a
+// prior boot), this is a no-op.
+func seedDefaultObsEndpoint(s storage.SettingsStore, addr string) {
+	get := func(key string) string {
+		v, err := s.Get(key)
+		if err != nil {
+			slog.Warn("obs default-endpoint seed: read failed", "key", key, "error", err)
+			return ""
+		}
+		return v
+	}
+
+	for _, signal := range obsSeedSignals {
+		if get(fmt.Sprintf("obs_%s_otlp_endpoint", signal)) != "" {
+			return // at least one signal already configured — leave everything alone.
+		}
+	}
+
+	for _, signal := range obsSeedSignals {
+		if err := s.Set(fmt.Sprintf("obs_%s_otlp_endpoint", signal), addr); err != nil {
+			slog.Error("obs default-endpoint seed: write failed", "signal", signal, "error", err)
+			continue
+		}
+		if get(fmt.Sprintf("obs_%s_exporter", signal)) == "" {
+			if err := s.Set(fmt.Sprintf("obs_%s_exporter", signal), "otlp"); err != nil {
+				slog.Error("obs default-endpoint seed: write failed", "signal", signal, "error", err)
+			}
+		}
+	}
 }
