@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"net/url"
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -159,7 +160,7 @@ func TestSeedDefaultObsEndpoint_FullyEmpty_SeedsAllThree(t *testing.T) {
 	seedDefaultObsEndpoint(st.Settings(), "127.0.0.1:19531")
 
 	for _, signal := range []string{"logs", "metrics", "traces"} {
-		assertGet(t, st, "obs_"+signal+"_otlp_endpoint", "127.0.0.1:19531")
+		assertGet(t, st, "obs_"+signal+"_otlp_endpoint", "http://127.0.0.1:19531")
 		assertGet(t, st, "obs_"+signal+"_exporter", "otlp")
 	}
 }
@@ -177,7 +178,7 @@ func TestSeedDefaultObsEndpoint_PartialConfig_NotOverwritten(t *testing.T) {
 	// logs exporter must be left alone (already configured).
 	assertGet(t, st, "obs_logs_exporter", "stdout")
 	// but its endpoint is still seeded (only exporter is exempted from overwrite).
-	assertGet(t, st, "obs_logs_otlp_endpoint", "127.0.0.1:19531")
+	assertGet(t, st, "obs_logs_otlp_endpoint", "http://127.0.0.1:19531")
 	assertGet(t, st, "obs_metrics_exporter", "otlp")
 	assertGet(t, st, "obs_traces_exporter", "otlp")
 }
@@ -202,8 +203,64 @@ func TestSeedDefaultObsEndpoint_Idempotent(t *testing.T) {
 	seedDefaultObsEndpoint(st.Settings(), "127.0.0.1:19531")
 
 	for _, signal := range []string{"logs", "metrics", "traces"} {
-		assertGet(t, st, "obs_"+signal+"_otlp_endpoint", "127.0.0.1:19531")
+		assertGet(t, st, "obs_"+signal+"_otlp_endpoint", "http://127.0.0.1:19531")
 		assertGet(t, st, "obs_"+signal+"_exporter", "otlp")
+	}
+}
+
+// TestSeedDefaultObsEndpoint_SeededValueIsAValidAbsoluteURL is a regression
+// test for the bug where the raw --addr value (a schemeless "host:port") was
+// written directly to obs_<signal>_otlp_endpoint. provider.go's OTLP builders
+// pass this value to otlploghttp/otlpmetrichttp/otlptracehttp's
+// WithEndpointURL, which url.Parses it and requires an absolute URL — a
+// schemeless value like "127.0.0.1:19531" fails that parse (its first path
+// segment looks like a URL scheme, "cannot contain colon") and the OTel SDK
+// silently falls back to its own built-in default (localhost:4318) instead of
+// this admin's real address. This test exercises the same url.Parse path the
+// SDK relies on and asserts the seeded value survives it with a real host.
+func TestSeedDefaultObsEndpoint_SeededValueIsAValidAbsoluteURL(t *testing.T) {
+	st := newMemStore(t)
+	seedDefaultObsEndpoint(st.Settings(), "127.0.0.1:19531")
+
+	for _, signal := range []string{"logs", "metrics", "traces"} {
+		key := "obs_" + signal + "_otlp_endpoint"
+		raw, err := st.Settings().Get(key)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", key, err)
+		}
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("url.Parse(%q) for %s failed (this is the exact failure mode otlp*http.WithEndpointURL hits, which makes the OTel SDK silently fall back to its own default instead of this admin's address): %v", raw, key, err)
+		}
+		if u.Scheme == "" {
+			t.Errorf("%s = %q: url.Parse succeeded but has no scheme; WithEndpointURL requires an absolute URL", key, raw)
+		}
+		if u.Host == "" {
+			t.Errorf("%s = %q: url.Parse succeeded but has no host", key, raw)
+		}
+		if u.Host != "127.0.0.1:19531" {
+			t.Errorf("%s: url.Parse(%q).Host = %q, want %q", key, raw, u.Host, "127.0.0.1:19531")
+		}
+	}
+}
+
+func TestAddrToOTLPURL(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		want string
+	}{
+		{"bare host:port", "127.0.0.1:19531", "http://127.0.0.1:19531"},
+		{"bare port only", ":8080", "http://:8080"},
+		{"already http scheme", "http://127.0.0.1:19531", "http://127.0.0.1:19531"},
+		{"already https scheme", "https://collector.example.com:4318", "https://collector.example.com:4318"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := addrToOTLPURL(tt.addr); got != tt.want {
+				t.Errorf("addrToOTLPURL(%q) = %q, want %q", tt.addr, got, tt.want)
+			}
+		})
 	}
 }
 

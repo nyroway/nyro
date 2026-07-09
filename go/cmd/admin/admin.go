@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -240,6 +241,15 @@ var obsSeedSignals = []string{"logs", "metrics", "traces"}
 // to storage — not an in-memory/runtime override of ObsConfig — so the user
 // can change it later via the WebUI.
 //
+// The seeded value must be a valid absolute URL: provider.go's OTLP builders
+// (otlploghttp/otlpmetrichttp/otlptracehttp) call WithEndpointURL, which
+// url.Parses the string — a schemeless "host:port" value (e.g. what --addr
+// takes, "127.0.0.1:19531") fails to parse as an absolute URL and causes the
+// OTel SDK to silently fall back to its own built-in default
+// ("localhost:4318") instead of this admin's real address. addrToOTLPURL
+// below normalizes --addr into "http://host:port" (leaving an
+// already-schemed value untouched).
+//
 // Idempotent: if any endpoint is already set (user-configured or seeded on a
 // prior boot), this is a no-op.
 func seedDefaultObsEndpoint(s storage.SettingsStore, addr string) {
@@ -258,8 +268,9 @@ func seedDefaultObsEndpoint(s storage.SettingsStore, addr string) {
 		}
 	}
 
+	endpoint := addrToOTLPURL(addr)
 	for _, signal := range obsSeedSignals {
-		if err := s.Set(fmt.Sprintf("obs_%s_otlp_endpoint", signal), addr); err != nil {
+		if err := s.Set(fmt.Sprintf("obs_%s_otlp_endpoint", signal), endpoint); err != nil {
 			slog.Error("obs default-endpoint seed: write failed", "signal", signal, "error", err)
 			continue
 		}
@@ -269,4 +280,19 @@ func seedDefaultObsEndpoint(s storage.SettingsStore, addr string) {
 			}
 		}
 	}
+}
+
+// addrToOTLPURL normalizes a --addr-style value into an absolute URL suitable
+// for otlploghttp/otlpmetrichttp/otlptracehttp's WithEndpointURL, which
+// url.Parses its argument and requires a scheme. --addr is documented and
+// used elsewhere (bootstrap.RunServer) as a bare "host:port" listen address
+// (e.g. "127.0.0.1:19531", or ":8080"), so the common case just gets
+// "http://" prepended. If addr already carries an "http://" or "https://"
+// scheme (e.g. a user hand-editing the seeded value, or a future --addr that
+// accepts a full URL), it is returned unchanged rather than double-prefixed.
+func addrToOTLPURL(addr string) string {
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+	return "http://" + addr
 }
