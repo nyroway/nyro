@@ -81,6 +81,24 @@ func requireOTLPEndpoint(signal Signal, params map[string]string) (string, error
 	return endpoint, nil
 }
 
+// exporterKindValid reports whether kind is registered for signal per the
+// exporter registry (exporter.go's ExportersFor) — the actual source of
+// truth for which kinds are valid per signal. Each buildXProvider consults
+// this before looking up its local BuilderFunc map, so the registry is
+// genuinely checked at construction time, not just trusted implicitly.
+// LoadConfig (Task 2) already validates Kind against the same registry when
+// config comes from disk, but NewProvider is also callable directly (e.g.
+// from tests or future callers) with a hand-built ObsConfig that never went
+// through LoadConfig, so this guard is not merely redundant belt-and-braces.
+func exporterKindValid(signal Signal, kind ExporterKind) bool {
+	for _, def := range ExportersFor(signal) {
+		if def.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // logsBuilders returns the registry of BuilderFunc values for the "logs"
 // signal, keyed by exporter kind. Builders close over ctx (BuilderFunc's
 // signature, defined in exporter.go, does not carry one) so exporter
@@ -185,8 +203,10 @@ func NewProvider(ctx context.Context, cfg ObsConfig) (*ObsProvider, error) {
 		{SignalTraces, cfg.Traces},
 	}
 	for _, s := range signals {
-		if s.cfg.Kind == ExporterKindOTLP && s.cfg.Params["endpoint"] == "" {
-			return nil, fmt.Errorf("observability: otlp exporter for signal %q requires an endpoint", s.signal)
+		if s.cfg.Kind == ExporterKindOTLP {
+			if _, err := requireOTLPEndpoint(s.signal, s.cfg.Params); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -230,6 +250,9 @@ func buildLoggerProvider(ctx context.Context, res *resource.Resource, sc SignalC
 		return sdklog.NewLoggerProvider(sdklog.WithResource(res)), nil
 	}
 
+	if !exporterKindValid(SignalLogs, sc.Kind) {
+		return nil, fmt.Errorf("observability: exporter kind %q is not registered for signal %q", sc.Kind, SignalLogs)
+	}
 	builder, ok := logsBuilders(ctx)[sc.Kind]
 	if !ok {
 		return nil, fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, SignalLogs)
@@ -258,6 +281,9 @@ func buildMeterProvider(ctx context.Context, res *resource.Resource, sc SignalCo
 		return sdkmetric.NewMeterProvider(sdkmetric.WithResource(res)), nil, "", nil
 	}
 
+	if !exporterKindValid(SignalMetrics, sc.Kind) {
+		return nil, nil, "", fmt.Errorf("observability: exporter kind %q is not registered for signal %q", sc.Kind, SignalMetrics)
+	}
 	builder, ok := metricsBuilders(ctx)[sc.Kind]
 	if !ok {
 		return nil, nil, "", fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, SignalMetrics)
@@ -289,6 +315,9 @@ func buildTracerProvider(ctx context.Context, res *resource.Resource, sc SignalC
 		return sdktrace.NewTracerProvider(sdktrace.WithResource(res)), nil
 	}
 
+	if !exporterKindValid(SignalTraces, sc.Kind) {
+		return nil, fmt.Errorf("observability: exporter kind %q is not registered for signal %q", sc.Kind, SignalTraces)
+	}
 	builder, ok := tracesBuilders(ctx)[sc.Kind]
 	if !ok {
 		return nil, fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, SignalTraces)
