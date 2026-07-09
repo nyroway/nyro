@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/proxy/quota"
 	"github.com/nyroway/nyro/go/internal/router"
-	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // Gateway holds the runtime dependencies for dispatching requests. Config reads

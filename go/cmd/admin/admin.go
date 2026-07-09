@@ -15,11 +15,11 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/admin"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/webui"
-	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // NewCmd builds the admin (control-plane) subcommand.

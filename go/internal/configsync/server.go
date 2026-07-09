@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/nyroway/nyro/go/internal/storage"
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
+	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 // ConfigServer implements pb.ConfigServiceServer. It serves the current

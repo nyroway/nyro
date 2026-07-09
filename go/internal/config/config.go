@@ -8,12 +8,12 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/protocol/ids"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
-	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // ── settings ──

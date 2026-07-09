@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/storage/memory"
 	"github.com/nyroway/nyro/go/internal/configsync"
+	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
 // TestGatewayHTTPClientForProxy verifies per-upstream proxy routing: an empty

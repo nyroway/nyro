@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strconv"
 
-	"github.com/nyroway/nyro/go/internal/storage"
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
+	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 // SnapshotFromProto converts a wire ConfigSnapshot into the gateway's internal

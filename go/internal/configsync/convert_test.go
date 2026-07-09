@@ -3,8 +3,8 @@ package configsync
 import (
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/storage/memory"
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
+	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
 // protoRoundtrip builds a pb snapshot, converts it to the internal model, and

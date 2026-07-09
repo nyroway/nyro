@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
-	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // TestReadyz verifies the readiness probe is gated on config-cache fill (P3c:

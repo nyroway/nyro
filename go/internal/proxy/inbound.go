@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/proxy/quota"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // checkAccess is the inbound access check. For open routes (EnableAuth=false)

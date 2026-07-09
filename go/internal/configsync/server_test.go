@@ -10,9 +10,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
+	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
-	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
 )
 
 // bufconnEnv wires a ConfigServer behind a bufconn listener and returns a
