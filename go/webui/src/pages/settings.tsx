@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { backend, IS_TAURI } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type { ExportData, GatewayStatus, ImportResult } from "@/lib/types";
@@ -21,15 +21,26 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  exportersFor,
+  exporterKindLabel,
+  exporterSettingKey,
+  retentionSettingKey,
+  settingKey,
+  SIGNALS,
+  type ExporterDef,
+  type FieldDef,
+  type Signal,
+} from "@/lib/observability-schema";
 
 // The real, backend-read settings keys this page exposes. This list is the
 // source of truth cross-checked against the Go backend (not the plan doc's
 // example YAML, not the retired Rust WebUI's field names):
 //   - proxy.request_timeout/.connect_timeout/.max_retries/.retry_on_status/
 //     .max_body_bytes                     -> go/internal/proxy/gateway.go (resolveProxySettings)
-//   - obs_logs_sink/obs_metrics_sink/obs_traces_sink/obs_otlp_endpoint/
-//     obs_logs_retention_days/obs_metrics_retention_days/obs_traces_retention_days
-//                                          -> go/internal/observability/config.go (LoadConfig)
+//   - obs_<signal>_exporter, obs_<signal>_<engine>_<field>,
+//     obs_<signal>_retention_days        -> go/internal/observability/exporter.go
+//                                            (registry) + config.go (LoadConfig)
 // Legacy `log_retention_days` (never read; the real key is
 // `obs_logs_retention_days`), `enable_payload` (a per-route column, not a
 // global setting — see models.tsx), and `proxy_bypass` (no backend consumer
@@ -37,19 +48,16 @@ import {
 // were removed too: the proxy address is a connection destination, not a
 // forwarding-behavior parameter, so it belongs per-upstream (Providers page)
 // — see go/internal/proxy/gateway.go's httpClientFor(proxyURL string).
+// The old shared `obs_<signal>_sink`/`obs_otlp_endpoint` keys are gone too:
+// each signal now has its own independent exporter + fields (see
+// src/lib/observability-schema.ts, a manual mirror of exporter.go's
+// registry) — this was a breaking, pre-release key migration (see
+// .superpowers/sdd/global-constraints.md), not a compat shim.
 const PROXY_REQUEST_TIMEOUT_KEY = "proxy.request_timeout";
 const PROXY_CONNECT_TIMEOUT_KEY = "proxy.connect_timeout";
 const PROXY_MAX_RETRIES_KEY = "proxy.max_retries";
 const PROXY_RETRY_ON_STATUS_KEY = "proxy.retry_on_status";
 const PROXY_MAX_BODY_BYTES_KEY = "proxy.max_body_bytes";
-
-const OBS_LOGS_SINK_KEY = "obs_logs_sink";
-const OBS_METRICS_SINK_KEY = "obs_metrics_sink";
-const OBS_TRACES_SINK_KEY = "obs_traces_sink";
-const OBS_OTLP_ENDPOINT_KEY = "obs_otlp_endpoint";
-const OBS_LOGS_RETENTION_KEY = "obs_logs_retention_days";
-const OBS_METRICS_RETENTION_KEY = "obs_metrics_retention_days";
-const OBS_TRACES_RETENTION_KEY = "obs_traces_retention_days";
 
 // Defaults mirror the Go backend's own fallback defaults (see
 // resolveProxySettings/LoadConfig) so the WebUI shows what's actually in
@@ -59,32 +67,32 @@ const PROXY_CONNECT_TIMEOUT_DEFAULT = "30s";
 const PROXY_MAX_RETRIES_DEFAULT = "2";
 const PROXY_RETRY_ON_STATUS_DEFAULT = [429, 500, 502, 503, 504];
 const PROXY_MAX_BODY_BYTES_DEFAULT = "33554432"; // 32 MiB
-const OBS_LOGS_RETENTION_DEFAULT = "7";
-const OBS_METRICS_RETENTION_DEFAULT = "30";
-const OBS_TRACES_RETENTION_DEFAULT = "3";
 
-const SINK_OPTIONS = ["", "none", "stdout", "otlp"] as const;
+const OBS_RETENTION_DEFAULT: Record<Signal, string> = {
+  logs: "7",
+  metrics: "30",
+  traces: "3",
+};
+
+const OBS_SIGNAL_LABEL: Record<Signal, { zh: string; en: string }> = {
+  logs: { zh: "日志", en: "Logs" },
+  metrics: { zh: "指标", en: "Metrics" },
+  traces: { zh: "链路追踪", en: "Traces" },
+};
 
 // Radix's <Select.Item> forbids value="" (it reserves the empty string to mean
-// "clear selection / show placeholder"), but "" is this page's real inherit-default
-// state everywhere else (settings payload, baseline diffing). Only the rendered
-// <SelectItem> uses this sentinel; translate at the Select boundary via
-// sinkSelectValue/sinkStateValue so "" keeps flowing through the rest of the page.
-const SINK_INHERIT_SENTINEL = "__inherit__";
+// "clear selection / show placeholder"), but "" is this page's real
+// disabled/empty state everywhere else (settings payload, baseline diffing).
+// Only the rendered <SelectItem> uses this sentinel; translate at the Select
+// boundary so "" keeps flowing through the rest of the page.
+const EMPTY_SELECT_SENTINEL = "__empty__";
 
-function sinkSelectValue(value: string): string {
-  return value === "" ? SINK_INHERIT_SENTINEL : value;
+function emptySelectValue(value: string): string {
+  return value === "" ? EMPTY_SELECT_SENTINEL : value;
 }
 
-function sinkStateValue(value: string): string {
-  return value === SINK_INHERIT_SENTINEL ? "" : value;
-}
-
-function sinkOptionLabel(value: string, isZh: boolean) {
-  if (value === "") return isZh ? "（默认继承）" : "(inherit default)";
-  if (value === "none") return isZh ? "关闭" : "None";
-  if (value === "stdout") return "stdout";
-  return "OTLP";
+function emptySelectState(value: string): string {
+  return value === EMPTY_SELECT_SENTINEL ? "" : value;
 }
 
 function parseRetryOnStatus(raw: string | null | undefined): string {
@@ -179,44 +187,11 @@ export default function SettingsPage() {
     queryFn: () => backend("get_setting", { key: PROXY_MAX_BODY_BYTES_KEY }),
   });
 
-  // --- Observability settings ---
-  const obsQueries = useQueries({
-    queries: [
-      OBS_LOGS_SINK_KEY,
-      OBS_METRICS_SINK_KEY,
-      OBS_TRACES_SINK_KEY,
-      OBS_OTLP_ENDPOINT_KEY,
-      OBS_LOGS_RETENTION_KEY,
-      OBS_METRICS_RETENTION_KEY,
-      OBS_TRACES_RETENTION_KEY,
-    ].map((key) => ({
-      queryKey: ["setting", key],
-      queryFn: () => backend<string | null>("get_setting", { key }),
-    })),
-  });
-  const [
-    obsLogsSinkSetting,
-    obsMetricsSinkSetting,
-    obsTracesSinkSetting,
-    obsOtlpEndpointSetting,
-    obsLogsRetentionSetting,
-    obsMetricsRetentionSetting,
-    obsTracesRetentionSetting,
-  ] = obsQueries.map((q) => q.data ?? null);
-
   const [proxyRequestTimeout, setProxyRequestTimeout] = useState("");
   const [proxyConnectTimeout, setProxyConnectTimeout] = useState("");
   const [proxyMaxRetries, setProxyMaxRetries] = useState("");
   const [proxyRetryOnStatus, setProxyRetryOnStatus] = useState("");
   const [proxyMaxBodyBytes, setProxyMaxBodyBytes] = useState("");
-
-  const [obsLogsSink, setObsLogsSink] = useState("");
-  const [obsMetricsSink, setObsMetricsSink] = useState("");
-  const [obsTracesSink, setObsTracesSink] = useState("");
-  const [obsOtlpEndpoint, setObsOtlpEndpoint] = useState("");
-  const [obsLogsRetention, setObsLogsRetention] = useState("");
-  const [obsMetricsRetention, setObsMetricsRetention] = useState("");
-  const [obsTracesRetention, setObsTracesRetention] = useState("");
 
   const proxyBaseline = {
     requestTimeout: (proxyRequestTimeoutSetting ?? PROXY_REQUEST_TIMEOUT_DEFAULT).trim(),
@@ -235,24 +210,6 @@ export default function SettingsPage() {
     || proxyRetryOnStatus.trim() !== proxyBaseline.retryOnStatus
     || proxyMaxBodyBytes.trim() !== proxyBaseline.maxBodyBytes;
 
-  const obsBaseline = {
-    logsSink: obsLogsSinkSetting ?? "",
-    metricsSink: obsMetricsSinkSetting ?? "",
-    tracesSink: obsTracesSinkSetting ?? "",
-    otlpEndpoint: obsOtlpEndpointSetting ?? "",
-    logsRetention: (obsLogsRetentionSetting ?? OBS_LOGS_RETENTION_DEFAULT).trim(),
-    metricsRetention: (obsMetricsRetentionSetting ?? OBS_METRICS_RETENTION_DEFAULT).trim(),
-    tracesRetention: (obsTracesRetentionSetting ?? OBS_TRACES_RETENTION_DEFAULT).trim(),
-  };
-  const obsDirty =
-    obsLogsSink !== obsBaseline.logsSink
-    || obsMetricsSink !== obsBaseline.metricsSink
-    || obsTracesSink !== obsBaseline.tracesSink
-    || obsOtlpEndpoint.trim() !== obsBaseline.otlpEndpoint
-    || obsLogsRetention.trim() !== obsBaseline.logsRetention
-    || obsMetricsRetention.trim() !== obsBaseline.metricsRetention
-    || obsTracesRetention.trim() !== obsBaseline.tracesRetention;
-
   useEffect(() => {
     setProxyRequestTimeout(proxyBaseline.requestTimeout);
     setProxyConnectTimeout(proxyBaseline.connectTimeout);
@@ -266,25 +223,6 @@ export default function SettingsPage() {
     proxyMaxRetriesSetting,
     proxyRetryOnStatusSetting,
     proxyMaxBodyBytesSetting,
-  ]);
-
-  useEffect(() => {
-    setObsLogsSink(obsBaseline.logsSink);
-    setObsMetricsSink(obsBaseline.metricsSink);
-    setObsTracesSink(obsBaseline.tracesSink);
-    setObsOtlpEndpoint(obsBaseline.otlpEndpoint);
-    setObsLogsRetention(obsBaseline.logsRetention);
-    setObsMetricsRetention(obsBaseline.metricsRetention);
-    setObsTracesRetention(obsBaseline.tracesRetention);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    obsLogsSinkSetting,
-    obsMetricsSinkSetting,
-    obsTracesSinkSetting,
-    obsOtlpEndpointSetting,
-    obsLogsRetentionSetting,
-    obsMetricsRetentionSetting,
-    obsTracesRetentionSetting,
   ]);
 
   function formatErrorMessage(error: unknown) {
@@ -335,44 +273,6 @@ export default function SettingsPage() {
     },
     onError: (error: unknown) => {
       showErrorDialog("保存转发参数失败", "Failed to save forwarding settings", error);
-    },
-  });
-
-  const saveObsMut = useMutation({
-    mutationFn: async (input: {
-      logsSink: string;
-      metricsSink: string;
-      tracesSink: string;
-      otlpEndpoint: string;
-      logsRetention: string;
-      metricsRetention: string;
-      tracesRetention: string;
-    }) => {
-      await Promise.all([
-        backend("set_setting", { key: OBS_LOGS_SINK_KEY, value: input.logsSink }),
-        backend("set_setting", { key: OBS_METRICS_SINK_KEY, value: input.metricsSink }),
-        backend("set_setting", { key: OBS_TRACES_SINK_KEY, value: input.tracesSink }),
-        backend("set_setting", { key: OBS_OTLP_ENDPOINT_KEY, value: input.otlpEndpoint }),
-        backend("set_setting", { key: OBS_LOGS_RETENTION_KEY, value: input.logsRetention }),
-        backend("set_setting", { key: OBS_METRICS_RETENTION_KEY, value: input.metricsRetention }),
-        backend("set_setting", { key: OBS_TRACES_RETENTION_KEY, value: input.tracesRetention }),
-      ]);
-    },
-    onSuccess: () => {
-      for (const key of [
-        OBS_LOGS_SINK_KEY,
-        OBS_METRICS_SINK_KEY,
-        OBS_TRACES_SINK_KEY,
-        OBS_OTLP_ENDPOINT_KEY,
-        OBS_LOGS_RETENTION_KEY,
-        OBS_METRICS_RETENTION_KEY,
-        OBS_TRACES_RETENTION_KEY,
-      ]) {
-        qc.invalidateQueries({ queryKey: ["setting", key] });
-      }
-    },
-    onError: (error: unknown) => {
-      showErrorDialog("保存可观测性设置失败", "Failed to save observability settings", error);
     },
   });
 
@@ -442,17 +342,16 @@ export default function SettingsPage() {
     });
   }
 
-  function handleSaveObs() {
-    saveObsMut.mutate({
-      logsSink: obsLogsSink,
-      metricsSink: obsMetricsSink,
-      tracesSink: obsTracesSink,
-      otlpEndpoint: obsOtlpEndpoint.trim(),
-      logsRetention: obsLogsRetention.trim() || OBS_LOGS_RETENTION_DEFAULT,
-      metricsRetention: obsMetricsRetention.trim() || OBS_METRICS_RETENTION_DEFAULT,
-      tracesRetention: obsTracesRetention.trim() || OBS_TRACES_RETENTION_DEFAULT,
-    });
-  }
+  // Server mode: WebUI is served by the same admin process it talks to, so
+  // the built-in receiver address is just this origin (admin's OTLP receiver
+  // shares the REST API's router/addr — see admin.go). Tauri desktop mode has
+  // no such same-origin relationship and no existing "admin address" constant
+  // to reuse (the Tauri shell here belongs to a different, untouched Rust
+  // webui project — see go/webui/src/lib/backend.ts's IS_TAURI check), so we
+  // cannot reliably determine the built-in address there; the "use built-in
+  // address" button is disabled in that case (see ObsSignalCard below).
+  const builtInOtlpEndpoint =
+    !IS_TAURI && typeof window !== "undefined" ? window.location.origin : null;
 
   return (
     <div className="space-y-6">
@@ -486,7 +385,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5">
         {/* Forwarding Settings */}
         <div className="glass rounded-2xl p-6 space-y-5">
           <h2 className="text-lg font-semibold text-slate-900">{isZh ? "转发参数" : "Forwarding Settings"}</h2>
@@ -599,136 +498,19 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Observability Configuration */}
-        <div className="glass rounded-2xl p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "可观测性配置" : "Observability Configuration"}</h2>
-          <div className="rounded-xl bg-slate-50 p-4 space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="ml-1 text-xs text-slate-700">{isZh ? "日志导出" : "Logs Sink"}</label>
-                <Select value={sinkSelectValue(obsLogsSink)} onValueChange={(v) => setObsLogsSink(sinkStateValue(v))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SINK_OPTIONS.map((option) => (
-                      <SelectItem key={option || "inherit"} value={sinkSelectValue(option)}>
-                        {sinkOptionLabel(option, isZh)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="ml-1 text-xs text-slate-700">{isZh ? "指标导出" : "Metrics Sink"}</label>
-                <Select value={sinkSelectValue(obsMetricsSink)} onValueChange={(v) => setObsMetricsSink(sinkStateValue(v))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SINK_OPTIONS.map((option) => (
-                      <SelectItem key={option || "inherit"} value={sinkSelectValue(option)}>
-                        {sinkOptionLabel(option, isZh)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="ml-1 text-xs text-slate-700">{isZh ? "链路追踪导出" : "Traces Sink"}</label>
-                <Select value={sinkSelectValue(obsTracesSink)} onValueChange={(v) => setObsTracesSink(sinkStateValue(v))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SINK_OPTIONS.map((option) => (
-                      <SelectItem key={option || "inherit"} value={sinkSelectValue(option)}>
-                        {sinkOptionLabel(option, isZh)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
-                  OTLP Endpoint
-                  <HelpHint
-                    text={
-                      isZh
-                        ? "例如 http://127.0.0.1:19531，对应 obs_otlp_endpoint"
-                        : "e.g. http://127.0.0.1:19531. Maps to obs_otlp_endpoint"
-                    }
-                  />
-                </label>
-                <Input
-                  placeholder="http://127.0.0.1:19531"
-                  value={obsOtlpEndpoint}
-                  onChange={(e) => setObsOtlpEndpoint(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-1.5">
-                <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
-                  {isZh ? "日志保留（天）" : "Logs Retention (days)"}
-                  <HelpHint
-                    text={isZh ? "自动删除超过设置时长的日志" : "Auto-delete logs older than the configured period"}
-                  />
-                </label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={365}
-                  placeholder={OBS_LOGS_RETENTION_DEFAULT}
-                  value={obsLogsRetention}
-                  onChange={(e) => setObsLogsRetention(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="ml-1 text-xs text-slate-700">{isZh ? "指标保留（天）" : "Metrics Retention (days)"}</label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={365}
-                  placeholder={OBS_METRICS_RETENTION_DEFAULT}
-                  value={obsMetricsRetention}
-                  onChange={(e) => setObsMetricsRetention(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="ml-1 text-xs text-slate-700">{isZh ? "链路保留（天）" : "Traces Retention (days)"}</label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={365}
-                  placeholder={OBS_TRACES_RETENTION_DEFAULT}
-                  value={obsTracesRetention}
-                  onChange={(e) => setObsTracesRetention(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={handleSaveObs}
-                disabled={saveObsMut.isPending || !obsDirty}
-                size="sm"
-                className="flex items-center gap-1.5"
-              >
-                {saveObsMut.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Save className="h-3.5 w-3.5" />
-                )}
-                {isZh ? "保存" : "Save"}
-              </Button>
-              {obsDirty && (
-                <p className="text-xs text-amber-600">
-                  {isZh ? "配置已修改，保存后生效" : "Unsaved changes, save to apply"}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
+      </div>
+
+      {/* Observability Configuration: three fully independent per-signal cards */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        {SIGNALS.map((signal) => (
+          <ObsSignalCard
+            key={signal}
+            signal={signal}
+            isZh={isZh}
+            builtInOtlpEndpoint={builtInOtlpEndpoint}
+            showErrorDialog={showErrorDialog}
+          />
+        ))}
       </div>
 
       {/* Config Backup */}
@@ -795,6 +577,261 @@ export default function SettingsPage() {
         confirmText={isZh ? "我知道了" : "OK"}
         onConfirm={() => setErrorDialog(null)}
       />
+    </div>
+  );
+}
+
+// ObsSignalCard renders one fully independent Logs/Metrics/Traces
+// observability card: its own exporter dropdown, its own per-engine field
+// inputs (driven by the static exporter-schema mirror), its own retention
+// input, and its own save button/mutation. Saving one card never touches the
+// other two signals' settings keys.
+interface ObsSignalCardProps {
+  signal: Signal;
+  isZh: boolean;
+  // Server mode: window.location.origin (WebUI and admin are same-origin).
+  // Tauri mode: null — there is no known built-in admin address to offer
+  // (see the comment above builtInOtlpEndpoint in SettingsPage), so the
+  // "use built-in address" button is disabled below.
+  builtInOtlpEndpoint: string | null;
+  showErrorDialog: (titleZh: string, titleEn: string, error: unknown) => void;
+}
+
+function ObsSignalCard({ signal, isZh, builtInOtlpEndpoint, showErrorDialog }: ObsSignalCardProps) {
+  const qc = useQueryClient();
+  const defs = useMemo(() => exportersFor(signal), [signal]);
+  const expKey = exporterSettingKey(signal);
+  const retKey = retentionSettingKey(signal);
+  const retentionDefault = OBS_RETENTION_DEFAULT[signal];
+
+  // Every (engine, field) storage key for this signal, flattened. Field names
+  // never collide across engines within a signal (endpoint/protocol/interval
+  // are otlp-only, listen/path are prometheus-only), so form state below can
+  // key values by field name alone.
+  const fieldSlots = useMemo(() => {
+    const slots: { kind: ExporterDef["kind"]; field: FieldDef; storageKey: string }[] = [];
+    for (const def of defs) {
+      for (const field of def.fields) {
+        slots.push({ kind: def.kind, field, storageKey: settingKey(signal, def.kind, field.name) });
+      }
+    }
+    return slots;
+  }, [defs, signal]);
+
+  const allKeys = useMemo(
+    () => [expKey, retKey, ...fieldSlots.map((s) => s.storageKey)],
+    [expKey, retKey, fieldSlots],
+  );
+
+  const queries = useQueries({
+    queries: allKeys.map((key) => ({
+      queryKey: ["setting", key],
+      queryFn: () => backend<string | null>("get_setting", { key }),
+    })),
+  });
+
+  const exporterSetting = queries[0]?.data ?? null;
+  const retentionSetting = queries[1]?.data ?? null;
+  const fieldSettings = fieldSlots.map((_, i) => queries[2 + i]?.data ?? null);
+
+  const baselineExporter = exporterSetting ?? "";
+  const baselineRetention = (retentionSetting ?? retentionDefault).trim();
+  const baselineFields = useMemo(() => {
+    const obj: Record<string, string> = {};
+    fieldSlots.forEach((slot, i) => {
+      obj[slot.field.name] = fieldSettings[i] ?? "";
+    });
+    return obj;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldSlots, JSON.stringify(fieldSettings)]);
+
+  const [exporter, setExporter] = useState("");
+  const [retention, setRetention] = useState("");
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setExporter(baselineExporter);
+    setRetention(baselineRetention);
+    setFieldValues(baselineFields);
+  }, [baselineExporter, baselineRetention, baselineFields]);
+
+  const activeDef = defs.find((d) => d.kind === exporter) ?? null;
+  const activeFields = activeDef?.fields ?? [];
+
+  const missingRequired = activeFields.some((f) => f.required && !(fieldValues[f.name] ?? "").trim());
+
+  const dirty =
+    exporter !== baselineExporter
+    || retention.trim() !== baselineRetention
+    || activeFields.some((f) => (fieldValues[f.name] ?? "").trim() !== (baselineFields[f.name] ?? "").trim());
+
+  const currentEndpoint = (fieldValues["endpoint"] ?? "").trim();
+  const notBuiltIn =
+    exporter !== "otlp" || currentEndpoint !== (builtInOtlpEndpoint ?? "").trim() || !builtInOtlpEndpoint;
+
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      const payload: Record<string, string> = {
+        [expKey]: exporter,
+        [retKey]: retention.trim() || retentionDefault,
+      };
+      for (const f of activeFields) {
+        payload[settingKey(signal, exporter as ExporterDef["kind"], f.name)] = (fieldValues[f.name] ?? "").trim();
+      }
+      await Promise.all(
+        Object.entries(payload).map(([key, value]) => backend("set_setting", { key, value })),
+      );
+      return payload;
+    },
+    onSuccess: (payload) => {
+      for (const key of Object.keys(payload)) {
+        qc.invalidateQueries({ queryKey: ["setting", key] });
+      }
+    },
+    onError: (error: unknown) => {
+      const title = OBS_SIGNAL_LABEL[signal];
+      showErrorDialog(
+        `保存${title.zh}导出设置失败`,
+        `Failed to save ${title.en} export settings`,
+        error,
+      );
+    },
+  });
+
+  const title = OBS_SIGNAL_LABEL[signal];
+
+  return (
+    <div className="glass rounded-2xl p-6 space-y-4">
+      <h2 className="text-lg font-semibold text-slate-900">{isZh ? title.zh : title.en}</h2>
+      <div className="rounded-xl bg-slate-50 p-4 space-y-3">
+        <div className="space-y-1.5">
+          <label className="ml-1 text-xs text-slate-700">{isZh ? "导出引擎" : "Exporter"}</label>
+          <Select value={emptySelectValue(exporter)} onValueChange={(v) => setExporter(emptySelectState(v))}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={EMPTY_SELECT_SENTINEL}>{isZh ? "关闭" : "Disabled"}</SelectItem>
+              {defs.map((def) => (
+                <SelectItem key={def.kind} value={def.kind}>
+                  {exporterKindLabel(def.kind)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {activeFields.length > 0 && (
+          <div className="space-y-3">
+            {activeFields.map((f) => {
+              const value = fieldValues[f.name] ?? "";
+              const invalid = Boolean(f.required) && !value.trim();
+              return (
+                <div key={f.name} className="space-y-1.5">
+                  <label className="ml-1 text-xs text-slate-700">
+                    {f.label}
+                    {f.required ? " *" : ""}
+                  </label>
+                  {f.type === "select" ? (
+                    <Select
+                      value={value || f.default || f.options?.[0] || ""}
+                      onValueChange={(v) => setFieldValues((prev) => ({ ...prev, [f.name]: v }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(f.options ?? []).map((opt) => (
+                          <SelectItem key={opt} value={opt}>
+                            {opt}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        placeholder={f.default || undefined}
+                        value={value}
+                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
+                        className={invalid ? "border-red-400 focus-visible:ring-red-400" : undefined}
+                      />
+                      {activeDef?.kind === "otlp" && f.name === "endpoint" && (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={!builtInOtlpEndpoint}
+                          onClick={() =>
+                            setFieldValues((prev) => ({ ...prev, endpoint: builtInOtlpEndpoint ?? "" }))
+                          }
+                          className="whitespace-nowrap"
+                        >
+                          {isZh ? "填入内置地址" : "Use built-in"}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  {invalid && (
+                    <p className="text-xs text-red-600">
+                      {isZh ? "必填字段不能为空" : "This field is required"}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {!builtInOtlpEndpoint && activeDef?.kind === "otlp" && (
+          <p className="text-xs text-slate-500">
+            {isZh
+              ? "桌面模式下暂无法自动识别内置地址，请手动填写。"
+              : "The built-in address can't be auto-detected in desktop mode; enter it manually."}
+          </p>
+        )}
+
+        {notBuiltIn && (
+          <p className="text-xs text-amber-600">
+            {isZh
+              ? "该信号不写入内置存储，Stats/Logs 面板无数据，请到外部引擎自带 UI 查看。"
+              : "This signal isn't writing to built-in storage — the Stats/Logs panel will show no data; check the external engine's own UI instead."}
+          </p>
+        )}
+
+        <div className="space-y-1.5">
+          <label className="ml-1 text-xs text-slate-700">{isZh ? "保留天数" : "Retention (days)"}</label>
+          <Input
+            type="number"
+            min={1}
+            max={365}
+            placeholder={retentionDefault}
+            value={retention}
+            onChange={(e) => setRetention(e.target.value)}
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={() => saveMut.mutate()}
+            disabled={saveMut.isPending || !dirty || missingRequired}
+            size="sm"
+            className="flex items-center gap-1.5"
+          >
+            {saveMut.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
+            {isZh ? "保存" : "Save"}
+          </Button>
+          {dirty && (
+            <p className="text-xs text-amber-600">
+              {isZh ? "配置已修改，重启网关后生效" : "Unsaved changes — restart the gateway to apply"}
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
