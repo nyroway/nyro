@@ -73,6 +73,60 @@ type ObservabilitySpec struct {
 	Traces  *ObservabilityTracesSpec  `yaml:"traces,omitempty"`
 }
 
+// UnmarshalYAML implements custom decoding so that "key present in the YAML
+// document" can be distinguished from "key absent" independently of the
+// value's YAML kind. Standard struct-tag decoding maps both a fully absent
+// `logs:` key and a present-but-null one (bare `logs:`, or `logs:\n  #
+// comment`) to the same nil *ObservabilityLogsSpec, which loses the
+// distinction flattenSettings relies on ("present but empty" must error,
+// "absent" must silently disable). Here each of logs/metrics/traces is only
+// left nil when its key does not appear in node.Content at all; if the key
+// is present, the pointer is always allocated (decoding its value when the
+// value is not the YAML null scalar, leaving a zero-value struct — i.e. no
+// exporter set — otherwise), matching `logs: {}` behavior.
+func (o *ObservabilitySpec) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == 0 || node.Tag == "!!null" {
+		// observability key absent, or present but null (bare `observability:`)
+		// — treat as no signal blocks present, same as omitting the key.
+		*o = ObservabilitySpec{}
+		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("observability: expected a mapping, got %v", node.Kind)
+	}
+	*o = ObservabilitySpec{}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		keyNode, valNode := node.Content[i], node.Content[i+1]
+		switch keyNode.Value {
+		case "logs":
+			spec := &ObservabilityLogsSpec{}
+			if valNode.Tag != "!!null" {
+				if err := valNode.Decode(spec); err != nil {
+					return fmt.Errorf("observability.logs: %w", err)
+				}
+			}
+			o.Logs = spec
+		case "metrics":
+			spec := &ObservabilityMetricsSpec{}
+			if valNode.Tag != "!!null" {
+				if err := valNode.Decode(spec); err != nil {
+					return fmt.Errorf("observability.metrics: %w", err)
+				}
+			}
+			o.Metrics = spec
+		case "traces":
+			spec := &ObservabilityTracesSpec{}
+			if valNode.Tag != "!!null" {
+				if err := valNode.Decode(spec); err != nil {
+					return fmt.Errorf("observability.traces: %w", err)
+				}
+			}
+			o.Traces = spec
+		}
+	}
+	return nil
+}
+
 type SettingsSpec struct {
 	Server        ServerSpec        `yaml:"server,omitempty"`
 	Proxy         ProxySpec         `yaml:"proxy,omitempty"`

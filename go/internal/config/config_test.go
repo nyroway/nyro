@@ -505,6 +505,73 @@ func TestFlattenSettings_UnknownExporter_Errors(t *testing.T) {
 	}
 }
 
+// writeAndLoadYAML writes body to a temp nyro.yaml and loads it through the
+// real LoadYAML path (env-var expansion + yaml.v3 unmarshal), returning the
+// flattened settings map. Used by the observability presence/absence tests
+// below so the presence-vs-null distinction is exercised through actual YAML
+// parsing rather than constructed Go struct literals.
+func writeAndLoadYAML(t *testing.T, body string) (map[string]string, error) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nyro.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadYAML(path)
+	if err != nil {
+		t.Fatalf("LoadYAML: %v", err)
+	}
+	return flattenSettings(cfg.Settings)
+}
+
+func TestLoadYAML_ObservabilityBlockAbsent_SilentlyClosed(t *testing.T) {
+	got, err := writeAndLoadYAML(t, "version: 1\n")
+	if err != nil {
+		t.Fatalf("flattenSettings: %v", err)
+	}
+	for k := range got {
+		if strings.HasPrefix(k, "obs_") {
+			t.Errorf("observability block absent from YAML, but got obs key %q", k)
+		}
+	}
+}
+
+func TestLoadYAML_ObservabilityLogsEmptyMapping_Errors(t *testing.T) {
+	_, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    logs: {}\n")
+	if err == nil {
+		t.Fatal("expected error for `logs: {}` (present, no exporter), got nil")
+	}
+}
+
+func TestLoadYAML_ObservabilityLogsBareNullKey_Errors(t *testing.T) {
+	// Bare `logs:` with no value decodes as a YAML null scalar. It must be
+	// treated as "block present but empty" (same as `logs: {}`), not "block
+	// absent" — this is the regression the reviewer flagged.
+	_, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    logs:\n")
+	if err == nil {
+		t.Fatal("expected error for bare `logs:` (null, present) missing exporter, got nil")
+	}
+}
+
+func TestLoadYAML_ObservabilityLogsNullWithComment_Errors(t *testing.T) {
+	// `logs:\n  # nothing here\n` also decodes as a null scalar for the logs
+	// key (the comment carries no YAML content) — must error the same way.
+	_, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    logs:\n      # nothing here\n")
+	if err == nil {
+		t.Fatal("expected error for `logs:` with only a comment (null, present) missing exporter, got nil")
+	}
+}
+
+func TestLoadYAML_ObservabilityLogsWithExporter_Succeeds(t *testing.T) {
+	got, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    logs:\n      exporter: stdout\n")
+	if err != nil {
+		t.Fatalf("flattenSettings: %v", err)
+	}
+	if got["obs_logs_exporter"] != "stdout" {
+		t.Errorf("obs_logs_exporter = %q, want %q", got["obs_logs_exporter"], "stdout")
+	}
+}
+
 func TestLoadYAMLExpandsEnvVars(t *testing.T) {
 	t.Setenv("NYRO_TEST_API_KEY", "sk-from-env")
 
