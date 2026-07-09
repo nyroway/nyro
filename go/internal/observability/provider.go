@@ -2,8 +2,10 @@ package observability
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"net/http"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
@@ -23,9 +25,9 @@ import (
 )
 
 // ObsProvider assembles the OTel LoggerProvider / MeterProvider / TracerProvider
-// from an ObsConfig, selecting exporters per signal (none / stdout / otlp). It
-// is the entry point for gateway-side observability: callers use Logger, Meter
-// and Tracer directly, and call Shutdown on graceful exit.
+// from an ObsConfig, selecting exporters per signal via the exporter registry
+// (exporter.go). It is the entry point for gateway-side observability: callers
+// use Logger, Meter and Tracer directly, and call Shutdown on graceful exit.
 type ObsProvider struct {
 	loggerProvider *sdklog.LoggerProvider
 	meterProvider  *sdkmetric.MeterProvider
@@ -35,47 +37,156 @@ type ObsProvider struct {
 	Meter  metric.Meter
 	Tracer trace.Tracer
 
+	// PromHandler and PromListen are populated when Metrics.Kind ==
+	// ExporterKindPrometheus by the prometheus builder (Task 5 — not
+	// registered by this package yet). Nil/empty otherwise; the gateway
+	// (Task 6) uses PromHandler!=nil to decide whether to start a second
+	// HTTP server on PromListen.
+	PromHandler http.Handler
+	PromListen  string
+
 	shutdownMu sync.Mutex
 	shutdown   bool
 }
 
-// strOr returns def when v is empty, else v. It is the per-signal override rule:
-// an empty LogsSink/MetricsSink/TracesSink inherits the global Sink.
-func strOr(v, def string) string {
-	if v == "" {
-		return def
+// defaultMetricInterval is used for the metric PeriodicReader export interval
+// (and, for otlp traces, the batch timeout) when the signal's Params carries
+// no "interval" field — e.g. the stdout exporter, whose field schema
+// (exporter.go's stdoutFields) is empty. It matches the otlp exporter's own
+// FieldDef default ("5s"), keeping stdout and otlp on the same cadence by
+// default as before this task's per-signal split.
+const defaultMetricInterval = 5 * time.Second
+
+// parseDuration parses a duration string, returning ok=false for an empty or
+// unparsable value so callers can fall back to a default.
+func parseDuration(s string) (time.Duration, bool) {
+	if s == "" {
+		return 0, false
 	}
-	return v
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, false
+	}
+	return d, true
 }
 
-// resolve expands each per-signal sink against the global default.
-func resolve(cfg ObsConfig, logs, metrics, traces string) (string, string, string) {
-	return strOr(cfg.Sink, logs), strOr(cfg.Sink, metrics), strOr(cfg.Sink, traces)
+// requireOTLPEndpoint returns params["endpoint"], failing if it is empty.
+// Fail-fast: an otlp exporter without an endpoint would silently drop
+// exported signals, so construction must refuse rather than proceed with "".
+func requireOTLPEndpoint(signal Signal, params map[string]string) (string, error) {
+	endpoint := params["endpoint"]
+	if endpoint == "" {
+		return "", fmt.Errorf("observability: otlp exporter for signal %q requires an endpoint", signal)
+	}
+	return endpoint, nil
 }
 
-// NewProvider builds the three OTel providers from cfg.
+// logsBuilders returns the registry of BuilderFunc values for the "logs"
+// signal, keyed by exporter kind. Builders close over ctx (BuilderFunc's
+// signature, defined in exporter.go, does not carry one) so exporter
+// construction still observes the caller's context, matching the pre-registry
+// behavior. Only otlp and stdout are registered; prometheus is not a valid
+// logs exporter (see exporter.go's signalExporters).
+func logsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
+	return map[ExporterKind]BuilderFunc{
+		ExporterKindOTLP: func(params map[string]string) (any, error) {
+			endpoint, err := requireOTLPEndpoint(SignalLogs, params)
+			if err != nil {
+				return nil, err
+			}
+			return otlploghttp.New(ctx, otlploghttp.WithEndpointURL(endpoint))
+		},
+		ExporterKindStdout: func(params map[string]string) (any, error) {
+			return stdoutlog.New()
+		},
+	}
+}
+
+// metricsBuilders returns the registry of BuilderFunc values for the
+// "metrics" signal. Both registered builders use DELTA temporality (see the
+// package-level metric-temporality note below) — this is a fixed property of
+// the otlp/stdout engines, not something callers select. prometheus is
+// intentionally NOT registered here: it is metrics-valid per
+// exporter.ExportersFor, but its builder ships in Task 5 (it uses a pull
+// Reader with CUMULATIVE temporality instead of a PeriodicReader — a
+// different construction path this task deliberately leaves unbuilt). Until
+// then, a metrics config with Kind == "prometheus" fails with a clear "no
+// builder registered" error rather than silently doing nothing.
+func metricsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
+	return map[ExporterKind]BuilderFunc{
+		ExporterKindOTLP: func(params map[string]string) (any, error) {
+			endpoint, err := requireOTLPEndpoint(SignalMetrics, params)
+			if err != nil {
+				return nil, err
+			}
+			return otlpmetrichttp.New(ctx,
+				otlpmetrichttp.WithEndpointURL(endpoint),
+				otlpmetrichttp.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector),
+			)
+		},
+		ExporterKindStdout: func(params map[string]string) (any, error) {
+			return stdoutmetric.New(stdoutmetric.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector))
+		},
+	}
+}
+
+// tracesBuilders returns the registry of BuilderFunc values for the "traces"
+// signal.
+func tracesBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
+	return map[ExporterKind]BuilderFunc{
+		ExporterKindOTLP: func(params map[string]string) (any, error) {
+			endpoint, err := requireOTLPEndpoint(SignalTraces, params)
+			if err != nil {
+				return nil, err
+			}
+			return otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(endpoint))
+		},
+		ExporterKindStdout: func(params map[string]string) (any, error) {
+			return stdouttrace.New()
+		},
+	}
+}
+
+// NewProvider builds the three OTel providers from cfg, one signal at a time,
+// by looking up the registered builder for each signal's configured exporter
+// Kind and invoking it. Kind == "" (SignalConfig zero value) means the signal
+// is disabled: a no-op provider is constructed, matching the previous
+// "none"/default switch branch.
 //
-// Fail-fast: if any resolved sink is "otlp" but OTLPEndpoint is empty, an error
-// is returned — the gateway must not start in a configuration that would drop
-// exported signals silently.
+// Fail-fast: this is checked up front, before any provider is constructed —
+// if any signal's Kind is "otlp" but its Params["endpoint"] is empty, an
+// error is returned immediately. The gateway must not start in a
+// configuration that would drop exported signals silently, and checking
+// up front (rather than per-signal during construction) avoids leaving a
+// partially-constructed provider (with a live background flush goroutine)
+// on the way to returning that error.
 //
-// Metric temporality: the metric PeriodicReaders use DELTA temporality (not the
-// OTel-default Cumulative). Each ~5s export therefore contains only the
-// increments since the last export. The admin receiver persists every export as
-// a fresh parquet row and AggregateStats/AggregateHourly SUM the Value/hist_sum
-// fields — correct for deltas. (Cumulative would double-count: R×(N+1)/2.) See
-// also stats_aggregate.go.
+// Metric temporality: the metric PeriodicReaders use DELTA temporality (not
+// the OTel-default Cumulative). Each ~5s export therefore contains only the
+// increments since the last export. The admin receiver persists every export
+// as a fresh parquet row and AggregateStats/AggregateHourly SUM the
+// Value/hist_sum fields — correct for deltas. (Cumulative would double-count:
+// R×(N+1)/2.) See also stats_aggregate.go. This is fixed per-engine: otlp and
+// stdout are DELTA; prometheus (Task 5) uses its own pull Reader, which is
+// CUMULATIVE by construction — the two temporalities coexist because they
+// never share a MeterProvider (metrics has exactly one configured exporter).
 //
 // Global registration: the trace and meter providers are registered globally
-// via otel.Set*Provider so libraries instrumented against the OTel API (rather
-// than against this struct's fields) also report. Tests construct their own
-// providers and do not depend on the global.
+// via otel.Set*Provider so libraries instrumented against the OTel API
+// (rather than against this struct's fields) also report. Tests construct
+// their own providers and do not depend on the global.
 func NewProvider(ctx context.Context, cfg ObsConfig) (*ObsProvider, error) {
-	logSink, metricSink, traceSink := resolve(cfg, cfg.LogsSink, cfg.MetricsSink, cfg.TracesSink)
-	if cfg.OTLPEndpoint == "" {
-		// otlp sink without an endpoint would silently drop exported signals — refuse.
-		if logSink == "otlp" || metricSink == "otlp" || traceSink == "otlp" {
-			return nil, errors.New("observability: obs_otlp_endpoint required when a sink is 'otlp'")
+	signals := []struct {
+		signal Signal
+		cfg    SignalConfig
+	}{
+		{SignalLogs, cfg.Logs},
+		{SignalMetrics, cfg.Metrics},
+		{SignalTraces, cfg.Traces},
+	}
+	for _, s := range signals {
+		if s.cfg.Kind == ExporterKindOTLP && s.cfg.Params["endpoint"] == "" {
+			return nil, fmt.Errorf("observability: otlp exporter for signal %q requires an endpoint", s.signal)
 		}
 	}
 
@@ -84,88 +195,17 @@ func NewProvider(ctx context.Context, cfg ObsConfig) (*ObsProvider, error) {
 		return nil, err
 	}
 
-	// --- logs ---
-	var lp *sdklog.LoggerProvider
-	switch logSink {
-	case "otlp":
-		exp, err := otlploghttp.New(ctx, otlploghttp.WithEndpointURL(cfg.OTLPEndpoint))
-		if err != nil {
-			return nil, err
-		}
-		lp = sdklog.NewLoggerProvider(
-			sdklog.WithResource(res),
-			sdklog.WithProcessor(sdklog.NewBatchProcessor(exp)),
-		)
-	case "stdout":
-		exp, err := stdoutlog.New()
-		if err != nil {
-			return nil, err
-		}
-		lp = sdklog.NewLoggerProvider(
-			sdklog.WithResource(res),
-			sdklog.WithProcessor(sdklog.NewBatchProcessor(exp)),
-		)
-	default: // "none" (or empty)
-		lp = sdklog.NewLoggerProvider(sdklog.WithResource(res))
+	lp, err := buildLoggerProvider(ctx, res, cfg.Logs)
+	if err != nil {
+		return nil, err
 	}
-
-	// --- metrics ---
-	// Delta temporality: each export carries only the increments recorded since
-	// the previous export, so AggregateStats' plain sum is correct. In this SDK
-	// version the PeriodicReader derives its temporality from the EXPORTER's
-	// Temporality method (not a reader option), so we configure it on the
-	// exporter via WithTemporalitySelector. See the metric-temporality note on
-	// NewProvider above.
-	var mp *sdkmetric.MeterProvider
-	switch metricSink {
-	case "otlp":
-		exp, err := otlpmetrichttp.New(ctx,
-			otlpmetrichttp.WithEndpointURL(cfg.OTLPEndpoint),
-			otlpmetrichttp.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector),
-		)
-		if err != nil {
-			return nil, err
-		}
-		mp = sdkmetric.NewMeterProvider(
-			sdkmetric.WithResource(res),
-			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp, sdkmetric.WithInterval(cfg.ExportInterval))),
-		)
-	case "stdout":
-		exp, err := stdoutmetric.New(stdoutmetric.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector))
-		if err != nil {
-			return nil, err
-		}
-		mp = sdkmetric.NewMeterProvider(
-			sdkmetric.WithResource(res),
-			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp, sdkmetric.WithInterval(cfg.ExportInterval))),
-		)
-	default:
-		mp = sdkmetric.NewMeterProvider(sdkmetric.WithResource(res))
+	mp, promHandler, promListen, err := buildMeterProvider(ctx, res, cfg.Metrics)
+	if err != nil {
+		return nil, err
 	}
-
-	// --- traces ---
-	var tp *sdktrace.TracerProvider
-	switch traceSink {
-	case "otlp":
-		exp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(cfg.OTLPEndpoint))
-		if err != nil {
-			return nil, err
-		}
-		tp = sdktrace.NewTracerProvider(
-			sdktrace.WithResource(res),
-			sdktrace.WithBatcher(exp, sdktrace.WithBatchTimeout(cfg.ExportInterval)),
-		)
-	case "stdout":
-		exp, err := stdouttrace.New()
-		if err != nil {
-			return nil, err
-		}
-		tp = sdktrace.NewTracerProvider(
-			sdktrace.WithResource(res),
-			sdktrace.WithBatcher(exp),
-		)
-	default:
-		tp = sdktrace.NewTracerProvider(sdktrace.WithResource(res))
+	tp, err := buildTracerProvider(ctx, res, cfg.Traces)
+	if err != nil {
+		return nil, err
 	}
 
 	otel.SetTracerProvider(tp)
@@ -178,7 +218,102 @@ func NewProvider(ctx context.Context, cfg ObsConfig) (*ObsProvider, error) {
 		Logger:         lp.Logger("nyro"),
 		Meter:          mp.Meter("nyro"),
 		Tracer:         tp.Tracer("nyro"),
+		PromHandler:    promHandler,
+		PromListen:     promListen,
 	}, nil
+}
+
+// buildLoggerProvider constructs the LoggerProvider for sc, via the logs
+// exporter registry, or a no-op provider when the signal is disabled.
+func buildLoggerProvider(ctx context.Context, res *resource.Resource, sc SignalConfig) (*sdklog.LoggerProvider, error) {
+	if sc.Kind == "" {
+		return sdklog.NewLoggerProvider(sdklog.WithResource(res)), nil
+	}
+
+	builder, ok := logsBuilders(ctx)[sc.Kind]
+	if !ok {
+		return nil, fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, SignalLogs)
+	}
+	raw, err := builder(sc.Params)
+	if err != nil {
+		return nil, err
+	}
+	exp, ok := raw.(sdklog.Exporter)
+	if !ok {
+		return nil, fmt.Errorf("observability: logs builder for %q returned unexpected type %T", sc.Kind, raw)
+	}
+
+	return sdklog.NewLoggerProvider(
+		sdklog.WithResource(res),
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(exp)),
+	), nil
+}
+
+// buildMeterProvider constructs the MeterProvider for sc, via the metrics
+// exporter registry, or a no-op provider when the signal is disabled. It also
+// returns the (currently always nil/empty) PromHandler/PromListen values —
+// populated once Task 5 registers a prometheus builder.
+func buildMeterProvider(ctx context.Context, res *resource.Resource, sc SignalConfig) (*sdkmetric.MeterProvider, http.Handler, string, error) {
+	if sc.Kind == "" {
+		return sdkmetric.NewMeterProvider(sdkmetric.WithResource(res)), nil, "", nil
+	}
+
+	builder, ok := metricsBuilders(ctx)[sc.Kind]
+	if !ok {
+		return nil, nil, "", fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, SignalMetrics)
+	}
+	raw, err := builder(sc.Params)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	exp, ok := raw.(sdkmetric.Exporter)
+	if !ok {
+		return nil, nil, "", fmt.Errorf("observability: metrics builder for %q returned unexpected type %T", sc.Kind, raw)
+	}
+
+	interval := defaultMetricInterval
+	if d, ok := parseDuration(sc.Params["interval"]); ok {
+		interval = d
+	}
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithResource(res),
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp, sdkmetric.WithInterval(interval))),
+	)
+	return mp, nil, "", nil
+}
+
+// buildTracerProvider constructs the TracerProvider for sc, via the traces
+// exporter registry, or a no-op provider when the signal is disabled.
+func buildTracerProvider(ctx context.Context, res *resource.Resource, sc SignalConfig) (*sdktrace.TracerProvider, error) {
+	if sc.Kind == "" {
+		return sdktrace.NewTracerProvider(sdktrace.WithResource(res)), nil
+	}
+
+	builder, ok := tracesBuilders(ctx)[sc.Kind]
+	if !ok {
+		return nil, fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, SignalTraces)
+	}
+	raw, err := builder(sc.Params)
+	if err != nil {
+		return nil, err
+	}
+	exp, ok := raw.(sdktrace.SpanExporter)
+	if !ok {
+		return nil, fmt.Errorf("observability: traces builder for %q returned unexpected type %T", sc.Kind, raw)
+	}
+
+	// Only apply an explicit batch timeout when the signal's Params actually
+	// carry one (i.e. the otlp exporter, whose field schema includes
+	// "interval"). stdout has no such field and keeps the SDK's own default,
+	// exactly as before this task's per-signal split.
+	var batcherOpts []sdktrace.BatchSpanProcessorOption
+	if d, ok := parseDuration(sc.Params["interval"]); ok {
+		batcherOpts = append(batcherOpts, sdktrace.WithBatchTimeout(d))
+	}
+	return sdktrace.NewTracerProvider(
+		sdktrace.WithResource(res),
+		sdktrace.WithBatcher(exp, batcherOpts...),
+	), nil
 }
 
 // Flush is a placeholder for an explicit push of buffered telemetry. The OTel

@@ -8,88 +8,118 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-// TestNewProvider_NoneSink constructs a provider with sink "none": no exporters
-// are wired, no error is returned, and the Logger/Meter/Tracer fields are usable.
-func TestNewProvider_NoneSink(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{Sink: "none"})
+// TestNewProvider_AllDisabled constructs a provider with every signal
+// disabled (Kind == "", the SignalConfig zero value): no exporters are
+// wired, no error is returned, and the Logger/Meter/Tracer fields are usable.
+func TestNewProvider_AllDisabled(t *testing.T) {
+	p, err := NewProvider(context.Background(), ObsConfig{})
 	if err != nil {
-		t.Fatalf("none sink: unexpected error: %v", err)
+		t.Fatalf("all disabled: unexpected error: %v", err)
 	}
 	defer func() { _ = p.Shutdown(context.Background()) }()
 
 	if p.Logger == nil {
-		t.Fatal("none sink: Logger is nil")
+		t.Fatal("all disabled: Logger is nil")
 	}
 	if p.Meter == nil {
-		t.Fatal("none sink: Meter is nil")
+		t.Fatal("all disabled: Meter is nil")
 	}
 	if p.Tracer == nil {
-		t.Fatal("none sink: Tracer is nil")
+		t.Fatal("all disabled: Tracer is nil")
+	}
+	if p.PromHandler != nil {
+		t.Fatal("all disabled: PromHandler should be nil")
 	}
 }
 
-// TestNewProvider_StdoutSink constructs a provider with sink "stdout": the stdout
-// exporters are wired without error.
-func TestNewProvider_StdoutSink(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{Sink: "stdout"})
+// TestNewProvider_StdoutAllSignals constructs a provider with all three
+// signals set to the stdout exporter: the stdout exporters are wired without
+// error.
+func TestNewProvider_StdoutAllSignals(t *testing.T) {
+	p, err := NewProvider(context.Background(), ObsConfig{
+		Logs:    SignalConfig{Kind: ExporterKindStdout},
+		Metrics: SignalConfig{Kind: ExporterKindStdout},
+		Traces:  SignalConfig{Kind: ExporterKindStdout},
+	})
 	if err != nil {
-		t.Fatalf("stdout sink: unexpected error: %v", err)
+		t.Fatalf("stdout all signals: unexpected error: %v", err)
 	}
 	defer func() { _ = p.Shutdown(context.Background()) }()
 
 	if p.Logger == nil {
-		t.Fatal("stdout sink: Logger is nil")
+		t.Fatal("stdout all signals: Logger is nil")
+	}
+	if p.Meter == nil {
+		t.Fatal("stdout all signals: Meter is nil")
+	}
+	if p.Tracer == nil {
+		t.Fatal("stdout all signals: Tracer is nil")
 	}
 }
 
-// TestNewProvider_OTLPSinkMissingEndpoint ensures fail-fast: a sink of "otlp"
-// with an empty OTLPEndpoint returns an error rather than silently dropping data.
-func TestNewProvider_OTLPSinkMissingEndpoint(t *testing.T) {
-	_, err := NewProvider(context.Background(), ObsConfig{Sink: "otlp"})
+// TestNewProvider_OTLPMissingEndpoint ensures fail-fast: an otlp Kind with no
+// "endpoint" Param returns an error rather than silently dropping data.
+func TestNewProvider_OTLPMissingEndpoint(t *testing.T) {
+	_, err := NewProvider(context.Background(), ObsConfig{
+		Logs: SignalConfig{Kind: ExporterKindOTLP},
+	})
 	if err == nil {
-		t.Fatal("otlp sink with empty endpoint: want error, got nil")
+		t.Fatal("otlp logs with empty endpoint: want error, got nil")
 	}
 }
 
-// TestNewProvider_OTLPPerSignalMissingEndpoint ensures the fail-fast rule also
-// applies when only a single per-signal override is "otlp" without an endpoint.
+// TestNewProvider_OTLPPerSignalMissingEndpoint ensures the fail-fast rule
+// applies independently to each of the three signals, with the other two
+// disabled.
 func TestNewProvider_OTLPPerSignalMissingEndpoint(t *testing.T) {
-	cases := []string{"logs", "metrics", "traces"}
-	for _, sig := range cases {
-		cfg := ObsConfig{MetricsSink: "none"} // neutralize the others
-		cfg.LogsSink = "none"
-		cfg.TracesSink = "none"
-		switch sig {
-		case "logs":
-			cfg.LogsSink = "otlp"
-		case "metrics":
-			cfg.MetricsSink = "otlp"
-		case "traces":
-			cfg.TracesSink = "otlp"
-		}
-		if _, err := NewProvider(context.Background(), cfg); err == nil {
-			t.Errorf("%s sink=otlp with empty endpoint: want error, got nil", sig)
+	cases := []struct {
+		name string
+		cfg  func() ObsConfig
+	}{
+		{"logs", func() ObsConfig { return ObsConfig{Logs: SignalConfig{Kind: ExporterKindOTLP}} }},
+		{"metrics", func() ObsConfig { return ObsConfig{Metrics: SignalConfig{Kind: ExporterKindOTLP}} }},
+		{"traces", func() ObsConfig { return ObsConfig{Traces: SignalConfig{Kind: ExporterKindOTLP}} }},
+	}
+	for _, tc := range cases {
+		if _, err := NewProvider(context.Background(), tc.cfg()); err == nil {
+			t.Errorf("%s Kind=otlp with empty endpoint: want error, got nil", tc.name)
 		}
 	}
 }
 
 // TestNewProvider_OTLPWithEndpoint constructs an OTLP provider pointed at a
-// dummy endpoint. The OTLP HTTP exporter is created lazily; construction against
-// an unreachable host must not error at build time (export happens async).
+// dummy endpoint for all three signals. The OTLP HTTP exporter is created
+// lazily; construction against an unreachable host must not error at build
+// time (export happens async).
 func TestNewProvider_OTLPWithEndpoint(t *testing.T) {
+	endpoint := "http://127.0.0.1:65535" // unreachable, but exporter builds fine
 	p, err := NewProvider(context.Background(), ObsConfig{
-		Sink:         "otlp",
-		OTLPEndpoint: "http://127.0.0.1:65535", // unreachable, but exporter builds fine
+		Logs:    SignalConfig{Kind: ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint}},
+		Metrics: SignalConfig{Kind: ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint, "interval": "5s"}},
+		Traces:  SignalConfig{Kind: ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint, "interval": "5s"}},
 	})
 	if err != nil {
-		t.Fatalf("otlp sink with endpoint: unexpected error: %v", err)
+		t.Fatalf("otlp with endpoint: unexpected error: %v", err)
 	}
 	defer func() { _ = p.Shutdown(context.Background()) }()
 }
 
+// TestNewProvider_MetricsPrometheusNoBuilder ensures that selecting the
+// prometheus exporter for metrics — a signal/kind combination valid per
+// exporter.ExportersFor(SignalMetrics) — fails clearly rather than silently
+// doing nothing, since no builder is registered for it yet (Task 5).
+func TestNewProvider_MetricsPrometheusNoBuilder(t *testing.T) {
+	_, err := NewProvider(context.Background(), ObsConfig{
+		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":9464", "path": "/metrics"}},
+	})
+	if err == nil {
+		t.Fatal("metrics Kind=prometheus: want error (no builder registered), got nil")
+	}
+}
+
 // TestShutdownIsIdempotent verifies Shutdown can be called twice without error.
 func TestShutdownIsIdempotent(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{Sink: "none"})
+	p, err := NewProvider(context.Background(), ObsConfig{})
 	if err != nil {
 		t.Fatalf("shutdown idempotency: setup error: %v", err)
 	}
@@ -104,10 +134,11 @@ func TestShutdownIsIdempotent(t *testing.T) {
 
 // TestDeltaTemporality locks the metric-export temporal assumption that
 // AggregateStats/AggregateHourly depend on: with a Delta temporality selector
-// (the one provider.go configures on every metric PeriodicReader), each
-// collect emits ONLY the increments recorded since the previous collect — not
-// the lifetime running total (which is what the OTel-default Cumulative
-// temporality would produce).
+// (the one provider.go configures on every otlp/stdout metric
+// PeriodicReader), each collect emits ONLY the increments recorded since the
+// previous collect — not the lifetime running total (which is what the
+// OTel-default Cumulative temporality, and the future prometheus Reader,
+// would produce).
 //
 // The contract being asserted: Add(5) → collect shows 5; Add(3) → the SECOND
 // collect shows 3 (a cumulative reader would instead show 8, and AggregateStats
