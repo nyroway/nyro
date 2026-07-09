@@ -873,6 +873,13 @@ export default function ProvidersPage() {
     }
     if (event.status === "passed") {
       const latency = event.latency_ms != null ? ` ${event.latency_ms}ms` : "";
+      if (event.check === "models" && event.models && event.models.length > 0) {
+        appendTestLog("success", `✓ ${name} (${isZh ? `共 ${event.models.length} 个` : `${event.models.length} found`})`);
+        for (const model of event.models) {
+          appendTestLog("info", `    - ${model}`);
+        }
+        return;
+      }
       appendTestLog(
         "success",
         `✓ ${name}${event.model ? ` (${event.model})` : ""}${latency}`,
@@ -1188,13 +1195,18 @@ export default function ProvidersPage() {
   // preset/protocol fill-in) or the segmented control switches into
   // "static"/manual mode (the edit form's textarea isn't in the DOM at all
   // while in "url"/auto mode, so it needs re-measuring the moment it mounts).
+  // showForm/editingId are also deps: closing and reopening the same
+  // provider leaves form.models/editForm.models textually unchanged, so
+  // without them the effect would see no dependency change and skip
+  // re-measuring the freshly (re)mounted textarea, leaving it at its
+  // default unsized height.
   useLayoutEffect(() => {
     autoGrowTextarea(modelsTextareaRef.current);
-  }, [form.models, modelsMode]);
+  }, [form.models, modelsMode, showForm]);
 
   useLayoutEffect(() => {
     autoGrowTextarea(editModelsTextareaRef.current);
-  }, [editForm.models, editModelsMode]);
+  }, [editForm.models, editModelsMode, editingId]);
 
   useEffect(() => {
     saveProviderTestResults(testResult);

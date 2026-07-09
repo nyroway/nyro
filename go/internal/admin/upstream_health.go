@@ -22,15 +22,17 @@ import (
 )
 
 type upstreamHealthEvent struct {
-	Type       string `json:"type"`
-	Check      string `json:"check,omitempty"`
-	Status     string `json:"status,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Model      string `json:"model,omitempty"`
-	LatencyMS  int64  `json:"latency_ms,omitempty"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Error      string `json:"error,omitempty"`
-	Success    *bool  `json:"success,omitempty"`
+	Type       string   `json:"type"`
+	Check      string   `json:"check,omitempty"`
+	Status     string   `json:"status,omitempty"`
+	Message    string   `json:"message,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	Discovered int      `json:"discovered,omitempty"`
+	Models     []string `json:"models,omitempty"`
+	LatencyMS  int64    `json:"latency_ms,omitempty"`
+	StatusCode int      `json:"status_code,omitempty"`
+	Error      string   `json:"error,omitempty"`
+	Success    *bool    `json:"success,omitempty"`
 }
 
 type healthEventWriter struct {
@@ -132,13 +134,13 @@ func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Stor
 	events.send(upstreamHealthEvent{Type: "check", Check: "credentials", Status: "passed", Message: "Credentials can be applied"})
 
 	events.send(upstreamHealthEvent{Type: "check", Check: "models", Status: "running", Message: "Resolving a model to test"})
-	model, err := firstModelForDraft(r.Context(), u)
+	model, models, err := firstModelForDraft(r.Context(), u)
 	if err != nil {
 		events.send(upstreamHealthEvent{Type: "check", Check: "models", Status: "failed", Error: err.Error()})
 		complete(false, err.Error())
 		return
 	}
-	events.send(upstreamHealthEvent{Type: "check", Check: "models", Status: "passed", Model: model, Message: "Model resolved"})
+	events.send(upstreamHealthEvent{Type: "check", Check: "models", Status: "passed", Model: model, Discovered: len(models), Models: models, Message: "Model resolved"})
 
 	events.send(upstreamHealthEvent{Type: "check", Check: "model_request", Status: "running", Model: model, Message: "Sending minimal model request"})
 	latency, statusCode, err := testDraftModelRequest(r, u, model, auth)
@@ -169,29 +171,33 @@ func draftUpstream(in storage.CreateUpstream) storage.Upstream {
 	}
 }
 
-func firstModelForDraft(ctx context.Context, u storage.Upstream) (string, error) {
+// firstModelForDraft resolves the model list for u (static models_json or a
+// live discovery fetch) and returns the first model to run the smoke-test
+// request against, along with the full deduplicated list so the caller can
+// report every model that was found (the health check only exercises one
+// model, but the UI shows the complete discovery result).
+func firstModelForDraft(ctx context.Context, u storage.Upstream) (string, []string, error) {
 	var models []string
 	if len(u.ModelsJSON) > 0 {
 		if err := json.Unmarshal(u.ModelsJSON, &models); err != nil {
-			return "", err
+			return "", nil, err
 		}
 	} else {
 		discoveryURL := modelsDiscoveryURL(u)
 		if discoveryURL == "" {
-			return "", fmt.Errorf("models or models_url is required to verify model availability")
+			return "", nil, fmt.Errorf("models or models_url is required to verify model availability")
 		}
 		var err error
 		models, err = fetchModels(ctx, u, discoveryURL)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
-	for _, model := range models {
-		if trimmed := strings.TrimSpace(model); trimmed != "" {
-			return trimmed, nil
-		}
+	models = normalizeImportModels(models)
+	if len(models) == 0 {
+		return "", nil, fmt.Errorf("no models returned for verification")
 	}
-	return "", fmt.Errorf("no models returned for verification")
+	return models[0], models, nil
 }
 
 func testDraftModelRequest(r *http.Request, u storage.Upstream, model string, auth provider.Authenticator) (int64, int, error) {

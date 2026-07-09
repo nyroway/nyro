@@ -137,7 +137,7 @@ func planUpstreamRouteImport(r *http.Request, s storage.Storage, u storage.Upstr
 		return routeImportPreview{}, err
 	}
 	models = normalizeImportModels(models)
-	plan := routeImportPreview{Discovered: len(models)}
+	plan := routeImportPreview{Discovered: len(models), Create: []string{}, Skip: []string{}}
 	for _, model := range models {
 		exists, err := s.Routes().ExistsByName(model, "")
 		if err != nil {

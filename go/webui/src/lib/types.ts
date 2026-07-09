@@ -329,6 +329,8 @@ export interface ProviderHealthEvent {
   status?: "running" | "passed" | "failed";
   message?: string;
   model?: string;
+  discovered?: number;
+  models?: string[];
   latency_ms?: number;
   status_code?: number;
   error?: string;
