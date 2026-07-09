@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/protocol/ids"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -29,25 +30,47 @@ type ProxySpec struct {
 	RetryOnStatus  []int  `yaml:"retry_on_status,omitempty"`
 }
 
+// ObservabilityLogsSpec is the YAML shape of settings.observability.logs.
+// Exporter selects the engine (stdout/otlp); the remaining fields are the
+// engine-specific fields flattened directly into the spec (no nested
+// per-engine block) — see exporterFieldSetters for the exporter→field
+// mapping enforced against internal/observability's registry.
 type ObservabilityLogsSpec struct {
 	Exporter string `yaml:"exporter,omitempty"`
+	Endpoint string `yaml:"endpoint,omitempty"`
+	Protocol string `yaml:"protocol,omitempty"`
+	Interval string `yaml:"interval,omitempty"`
 }
 
+// ObservabilityMetricsSpec is the YAML shape of settings.observability.metrics.
+// Exporter selects the engine (stdout/otlp/prometheus).
 type ObservabilityMetricsSpec struct {
 	Exporter string `yaml:"exporter,omitempty"`
+	Endpoint string `yaml:"endpoint,omitempty"`
+	Protocol string `yaml:"protocol,omitempty"`
+	Interval string `yaml:"interval,omitempty"`
+	Listen   string `yaml:"listen,omitempty"`
 	Path     string `yaml:"path,omitempty"`
 }
 
+// ObservabilityTracesSpec is the YAML shape of settings.observability.traces.
+// Exporter selects the engine (stdout/otlp).
 type ObservabilityTracesSpec struct {
 	Exporter string `yaml:"exporter,omitempty"`
 	Endpoint string `yaml:"endpoint,omitempty"`
 	Protocol string `yaml:"protocol,omitempty"`
+	Interval string `yaml:"interval,omitempty"`
 }
 
+// ObservabilitySpec holds the three per-signal blocks. Each field is a
+// pointer so unmarshal can distinguish "block absent from YAML" (nil — the
+// signal is silently disabled) from "block present but empty/incomplete"
+// (non-nil with a zero Exporter — a validation error, since a present block
+// must declare which engine to use).
 type ObservabilitySpec struct {
-	Logs    ObservabilityLogsSpec    `yaml:"logs,omitempty"`
-	Metrics ObservabilityMetricsSpec `yaml:"metrics,omitempty"`
-	Traces  ObservabilityTracesSpec  `yaml:"traces,omitempty"`
+	Logs    *ObservabilityLogsSpec    `yaml:"logs,omitempty"`
+	Metrics *ObservabilityMetricsSpec `yaml:"metrics,omitempty"`
+	Traces  *ObservabilityTracesSpec  `yaml:"traces,omitempty"`
 }
 
 type SettingsSpec struct {
@@ -331,7 +354,11 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 		}
 	}
 
-	for k, v := range flattenSettings(c.Settings) {
+	flat, err := flattenSettings(c.Settings)
+	if err != nil {
+		return err
+	}
+	for k, v := range flat {
 		if err := st.Settings().Set(k, v); err != nil {
 			return fmt.Errorf("set setting %q: %w", k, err)
 		}
@@ -363,10 +390,13 @@ func consumerQuotas(q ConsumerQuotasSpec) []storage.CreateConsumerQuota {
 }
 
 // flattenSettings expands the nested settings.server/proxy/observability YAML
-// shape into the dot-key rows SettingsStore persists. observability.* maps
-// onto the existing obs_* keys observability/config.go already consumes;
-// server.*/proxy.* use their own dot-key namespace.
-func flattenSettings(s SettingsSpec) map[string]string {
+// shape into the dot-key rows SettingsStore persists. server.*/proxy.* use
+// their own dot-key namespace. observability.* maps onto the
+// obs_<signal>_exporter / obs_<signal>_<engine>_<field> keys
+// internal/observability's LoadConfig consumes, validated against the
+// exporter registry (internal/observability.ExportersFor) as described on
+// flattenObservabilitySignal.
+func flattenSettings(s SettingsSpec) (map[string]string, error) {
 	out := map[string]string{}
 	setIfNonEmpty := func(key, value string) {
 		if value != "" {
@@ -387,14 +417,90 @@ func flattenSettings(s SettingsSpec) map[string]string {
 		out["proxy.retry_on_status"] = string(codes)
 	}
 
-	setIfNonEmpty("obs_logs_sink", s.Observability.Logs.Exporter)
-	setIfNonEmpty("obs_metrics_sink", s.Observability.Metrics.Exporter)
-	setIfNonEmpty("obs_metrics_path", s.Observability.Metrics.Path)
-	setIfNonEmpty("obs_traces_sink", s.Observability.Traces.Exporter)
-	setIfNonEmpty("obs_otlp_endpoint", s.Observability.Traces.Endpoint)
-	setIfNonEmpty("obs_traces_protocol", s.Observability.Traces.Protocol)
+	// A nil block means the signal's YAML key was absent entirely: silently
+	// closed, no obs_<signal>_* keys produced (LoadConfig treats a missing
+	// obs_<signal>_exporter as disabled). A non-nil block is present in the
+	// YAML — even if written as `logs: {}` — and must declare an exporter;
+	// flattenObservabilitySignal errors otherwise.
+	if l := s.Observability.Logs; l != nil {
+		if err := flattenObservabilitySignal(out, observability.SignalLogs, l.Exporter, map[string]string{
+			"endpoint": l.Endpoint,
+			"protocol": l.Protocol,
+			"interval": l.Interval,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if m := s.Observability.Metrics; m != nil {
+		if err := flattenObservabilitySignal(out, observability.SignalMetrics, m.Exporter, map[string]string{
+			"endpoint": m.Endpoint,
+			"protocol": m.Protocol,
+			"interval": m.Interval,
+			"listen":   m.Listen,
+			"path":     m.Path,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if t := s.Observability.Traces; t != nil {
+		if err := flattenObservabilitySignal(out, observability.SignalTraces, t.Exporter, map[string]string{
+			"endpoint": t.Endpoint,
+			"protocol": t.Protocol,
+			"interval": t.Interval,
+		}); err != nil {
+			return nil, err
+		}
+	}
 
-	return out
+	return out, nil
+}
+
+// flattenObservabilitySignal validates and flattens one present observability
+// signal block into obs_<signal>_exporter plus one obs_<signal>_<exporter>_
+// <field> key per non-empty field. fields is keyed by FieldDef.Name (e.g.
+// "endpoint", "listen") — every key present in fields with a non-empty value
+// must belong to the selected exporter's field schema
+// (internal/observability.ExportersFor), or this returns an error; this is
+// what catches YAML like `logs.exporter: stdout` plus a stray
+// `logs.endpoint: ...` (stdout has no endpoint field).
+//
+// exporterName == "" means the block was present in YAML but never set
+// exporter (e.g. `logs: {}`) — always an error, since a present block must
+// pick an engine.
+func flattenObservabilitySignal(out map[string]string, signal observability.Signal, exporterName string, fields map[string]string) error {
+	name := string(signal)
+	if exporterName == "" {
+		return fmt.Errorf("observability.%s: exporter is required when the block is present", name)
+	}
+
+	defs := observability.ExportersFor(signal)
+	var def *observability.ExporterDef
+	for i := range defs {
+		if string(defs[i].Kind) == exporterName {
+			def = &defs[i]
+			break
+		}
+	}
+	if def == nil {
+		return fmt.Errorf("observability.%s: unknown exporter %q", name, exporterName)
+	}
+
+	allowed := make(map[string]bool, len(def.Fields))
+	for _, f := range def.Fields {
+		allowed[f.Name] = true
+	}
+
+	out[fmt.Sprintf("obs_%s_exporter", name)] = exporterName
+	for field, value := range fields {
+		if value == "" {
+			continue
+		}
+		if !allowed[field] {
+			return fmt.Errorf("observability.%s: field %q is not valid for exporter %q", name, field, exporterName)
+		}
+		out[fmt.Sprintf("obs_%s_%s_%s", name, exporterName, field)] = value
+	}
+	return nil
 }
 
 // BuildSnapshot constructs an xds.ConfigSnapshot directly from the YAML config

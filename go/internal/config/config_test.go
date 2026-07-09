@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/storage/memory"
@@ -112,8 +113,8 @@ consumers:
 	if v, _ := core.Settings().Get("proxy.max_retries"); v != "3" {
 		t.Errorf("proxy.max_retries = %q, want 3", v)
 	}
-	if v, _ := core.Settings().Get("obs_logs_sink"); v != "stdout" {
-		t.Errorf("obs_logs_sink = %q, want stdout", v)
+	if v, _ := core.Settings().Get("obs_logs_exporter"); v != "stdout" {
+		t.Errorf("obs_logs_exporter = %q, want stdout", v)
 	}
 }
 
@@ -395,30 +396,112 @@ func TestFlattenSettings(t *testing.T) {
 		Server: ServerSpec{Listen: "127.0.0.1:19530", BaseURL: "http://127.0.0.1:19530"},
 		Proxy:  ProxySpec{RequestTimeout: "120s", MaxRetries: 2, RetryOnStatus: []int{429, 500}},
 		Observability: ObservabilitySpec{
-			Logs:   ObservabilityLogsSpec{Exporter: "stdout"},
-			Traces: ObservabilityTracesSpec{Exporter: "otlp", Endpoint: "http://127.0.0.1:4317"},
+			Logs:   &ObservabilityLogsSpec{Exporter: "stdout"},
+			Traces: &ObservabilityTracesSpec{Exporter: "otlp", Endpoint: "http://127.0.0.1:4317", Protocol: "grpc"},
 		},
 	}
-	got := flattenSettings(s)
+	got, err := flattenSettings(s)
+	if err != nil {
+		t.Fatalf("flattenSettings: %v", err)
+	}
 
 	want := map[string]string{
-		"server.listen":         "127.0.0.1:19530",
-		"server.base_url":       "http://127.0.0.1:19530",
-		"proxy.request_timeout": "120s",
-		"proxy.max_retries":     "2",
-		"proxy.retry_on_status": "[429,500]",
-		"obs_logs_sink":         "stdout",
-		"obs_traces_sink":       "otlp",
-		"obs_otlp_endpoint":     "http://127.0.0.1:4317",
+		"server.listen":            "127.0.0.1:19530",
+		"server.base_url":          "http://127.0.0.1:19530",
+		"proxy.request_timeout":    "120s",
+		"proxy.max_retries":        "2",
+		"proxy.retry_on_status":    "[429,500]",
+		"obs_logs_exporter":        "stdout",
+		"obs_traces_exporter":      "otlp",
+		"obs_traces_otlp_endpoint": "http://127.0.0.1:4317",
+		"obs_traces_otlp_protocol": "grpc",
 	}
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("flattenSettings()[%q] = %q, want %q", k, got[k], v)
 		}
 	}
-	// Absent values must not produce empty-string rows.
-	if _, ok := got["obs_metrics_sink"]; ok {
-		t.Error("unset observability.metrics.exporter should not appear in flattened settings")
+	// Metrics block absent entirely: no obs_metrics_* key of any kind.
+	for k := range got {
+		if strings.HasPrefix(k, "obs_metrics_") {
+			t.Errorf("unset observability.metrics block should not appear in flattened settings, got key %q", k)
+		}
+	}
+	// Deleted dead keys must never be produced by the new scheme.
+	for _, dead := range []string{"obs_logs_sink", "obs_metrics_sink", "obs_traces_sink", "obs_otlp_endpoint", "obs_metrics_path", "obs_traces_protocol"} {
+		if _, ok := got[dead]; ok {
+			t.Errorf("flattenSettings() produced dead legacy key %q", dead)
+		}
+	}
+}
+
+func TestFlattenSettings_MetricsPrometheusListenAndPath(t *testing.T) {
+	s := SettingsSpec{
+		Observability: ObservabilitySpec{
+			Metrics: &ObservabilityMetricsSpec{Exporter: "prometheus", Listen: ":9464", Path: "/metrics"},
+		},
+	}
+	got, err := flattenSettings(s)
+	if err != nil {
+		t.Fatalf("flattenSettings: %v", err)
+	}
+	want := map[string]string{
+		"obs_metrics_exporter":          "prometheus",
+		"obs_metrics_prometheus_listen": ":9464",
+		"obs_metrics_prometheus_path":   "/metrics",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("flattenSettings()[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestFlattenSettings_BlockAbsent_SilentlyClosed(t *testing.T) {
+	// No observability block at all: zero value ObservabilitySpec has all
+	// three pointers nil.
+	got, err := flattenSettings(SettingsSpec{})
+	if err != nil {
+		t.Fatalf("flattenSettings: %v", err)
+	}
+	for k := range got {
+		if strings.HasPrefix(k, "obs_") {
+			t.Errorf("no observability blocks present, but got obs key %q", k)
+		}
+	}
+}
+
+func TestFlattenSettings_BlockPresentMissingExporter_Errors(t *testing.T) {
+	s := SettingsSpec{
+		Observability: ObservabilitySpec{
+			Logs: &ObservabilityLogsSpec{}, // present (non-nil) but no exporter set
+		},
+	}
+	if _, err := flattenSettings(s); err == nil {
+		t.Fatal("expected error for logs block present without exporter, got nil")
+	}
+}
+
+func TestFlattenSettings_FieldNotBelongingToExporter_Errors(t *testing.T) {
+	s := SettingsSpec{
+		Observability: ObservabilitySpec{
+			// stdout has no endpoint field.
+			Logs: &ObservabilityLogsSpec{Exporter: "stdout", Endpoint: "http://127.0.0.1:4317"},
+		},
+	}
+	if _, err := flattenSettings(s); err == nil {
+		t.Fatal("expected error for stdout exporter with an endpoint field, got nil")
+	}
+}
+
+func TestFlattenSettings_UnknownExporter_Errors(t *testing.T) {
+	s := SettingsSpec{
+		Observability: ObservabilitySpec{
+			Traces: &ObservabilityTracesSpec{Exporter: "graphite"},
+		},
+	}
+	if _, err := flattenSettings(s); err == nil {
+		t.Fatal("expected error for unregistered exporter kind, got nil")
 	}
 }
 
