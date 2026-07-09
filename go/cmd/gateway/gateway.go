@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -89,7 +90,7 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 		// Standalone YAML: build the config snapshot directly (no DB). The
 		// observability config comes from settings.observability in the YAML
 		// file (flattened into the snapshot by internal/config); if the file
-		// declares nothing, defaults are logs→stdout, metrics/traces→none. See
+		// declares nothing, defaults are logs→stdout, metrics/traces→disabled. See
 		// resolveObsConfig — environment variables are never consulted here.
 		cfg, missing, err := config.LoadYAML(cfgPath)
 		if err != nil {
@@ -112,6 +113,7 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 			return nil, nil, nil, fmt.Errorf("observability provider: %w", perr)
 		}
 		attachObservability(gw, prov)
+		startMetricsServer(ctx, prov, obsCfg.Metrics.Params["path"])
 		return gw, nil, prov, nil
 
 	case xdsAddr != "":
@@ -132,6 +134,7 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 			return nil, nil, nil, fmt.Errorf("observability provider: %w", perr)
 		}
 		attachObservability(gw, prov)
+		startMetricsServer(ctx, prov, obsCfg.Metrics.Params["path"])
 		return gw, nil, prov, nil
 
 	default:
@@ -166,28 +169,120 @@ func cacheObsGet(cache *xds.ConfigCache) func(string) (string, error) {
 // control-plane push (xDS); both end up in the same ConfigCache/snapshot
 // shape, so both branches of buildGateway call this identically. If the
 // snapshot has no observability settings at all (absent from the config file,
-// or not yet pushed over xDS), the fixed default in defaultObsGet applies.
-// Process environment variables are never consulted here — a deployment that
-// wants an env var to drive a sink must reference it explicitly inside
+// or not yet pushed over xDS), the fixed default in defaultObsGet applies. If
+// the snapshot's observability settings fail to load (e.g. an unregistered
+// exporter kind or another validation error from observability.LoadConfig),
+// the error is logged and the fixed default is used as well — a malformed
+// obs setting must not prevent the gateway from starting. Process
+// environment variables are never consulted here — a deployment that wants
+// an env var to drive an exporter must reference it explicitly inside
 // config.yaml (e.g. endpoint: "${OTEL_EXPORTER_OTLP_ENDPOINT}"), which
 // config.LoadYAML's ${VAR} expansion already handles.
 func resolveObsConfig(cache *xds.ConfigCache) observability.ObsConfig {
-	obsCfg := observability.LoadConfig(cacheObsGet(cache))
-	if obsCfg.Sink == "" && obsCfg.LogsSink == "" && obsCfg.MetricsSink == "" && obsCfg.TracesSink == "" && obsCfg.OTLPEndpoint == "" {
-		obsCfg = observability.LoadConfig(defaultObsGet)
+	obsCfg, err := observability.LoadConfig(cacheObsGet(cache))
+	if err != nil {
+		slog.Error("observability config from snapshot is invalid; falling back to defaults", "error", err)
+		return defaultObsConfig()
+	}
+	if obsConfigIsEmpty(obsCfg) {
+		return defaultObsConfig()
 	}
 	return obsCfg
 }
 
-// defaultObsGet supplies fixed defaults (logs→stdout, metrics/traces→none)
-// when neither the config file nor a control-plane push declares any
-// observability setting. It never reads the process environment.
+// obsConfigIsEmpty reports whether cfg carries no observability settings at
+// all: every signal's exporter kind is unset AND every signal's otlp
+// endpoint is unset. This is the "nothing was configured" case that
+// resolveObsConfig falls back to defaultObsGet for. In practice
+// observability.LoadConfig never sets Params["endpoint"] without also
+// setting Kind (Kind comes from the separate obs_<signal>_exporter key), so
+// the endpoint checks are currently implied by the Kind checks — they are
+// kept explicit anyway to match the "exporter kind empty AND endpoint empty"
+// contract exactly, defensively, in case that invariant ever changes.
+func obsConfigIsEmpty(cfg observability.ObsConfig) bool {
+	return cfg.Logs.Kind == "" && cfg.Metrics.Kind == "" && cfg.Traces.Kind == "" &&
+		cfg.Logs.Params["endpoint"] == "" && cfg.Metrics.Params["endpoint"] == "" && cfg.Traces.Params["endpoint"] == ""
+}
+
+// defaultObsConfig resolves the fixed default (logs→stdout, metrics/traces
+// disabled) via defaultObsGet. defaultObsGet's values are fixed and known to
+// be valid (stdout is registered for every signal that uses it, and empty
+// disables a signal), so LoadConfig should never fail on them; if it somehow
+// does, that indicates a broken exporter registry rather than a bad runtime
+// config, and the safest fallback is every signal disabled rather than
+// crashing the gateway.
+func defaultObsConfig() observability.ObsConfig {
+	cfg, err := observability.LoadConfig(defaultObsGet)
+	if err != nil {
+		slog.Error("observability default config failed to load (should be unreachable)", "error", err)
+		return observability.ObsConfig{}
+	}
+	return cfg
+}
+
+// defaultObsGet supplies fixed defaults (logs→stdout, metrics/traces
+// disabled) when neither the config file nor a control-plane push declares
+// any observability setting. There is no "none" sentinel — an unset/empty
+// obs_<signal>_exporter means the signal is disabled. It never reads the
+// process environment.
 func defaultObsGet(key string) (string, error) {
 	switch key {
-	case "obs_logs_sink":
+	case "obs_logs_exporter":
 		return "stdout", nil
-	case "obs_metrics_sink", "obs_traces_sink":
-		return "none", nil
+	case "obs_metrics_exporter", "obs_traces_exporter":
+		return "", nil
 	}
 	return "", nil
+}
+
+// startMetricsServer starts a second, independent http.Server exposing
+// Prometheus scrape output on obs.PromListen, but only when obs.PromHandler
+// is non-nil (i.e. the metrics signal is configured with exporter=prometheus
+// — see observability.NewProvider). It is a no-op otherwise: the gateway's
+// primary server (bootstrap.RunServer) never carries a /metrics route, so
+// nothing starts unless prometheus was actually selected.
+//
+// The server is best-effort: a bind/serve failure is logged (slog.Error) but
+// never fatal, since a broken scrape endpoint must not take down request
+// serving. It shuts down (with a bounded timeout, matching shutdownTimeout
+// used elsewhere in this file) once ctx is cancelled.
+func startMetricsServer(ctx context.Context, obs *observability.ObsProvider, path string) {
+	if obs == nil || obs.PromHandler == nil {
+		return
+	}
+	srv := newMetricsServer(obs, path)
+
+	go func() {
+		slog.Info("prometheus metrics server starting", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("prometheus metrics server failed", "error", err)
+		}
+	}()
+
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutCtx); err != nil {
+			slog.Warn("prometheus metrics server shutdown failed", "error", err)
+		}
+	}()
+}
+
+// newMetricsServer builds (without starting) the http.Server that
+// startMetricsServer runs: obs.PromHandler mounted at path on a fresh mux,
+// listening on obs.PromListen. path defaults to "/metrics" when empty —
+// defensive, since observability.LoadConfig always fills the prometheus
+// exporter's "path" field from its registry default when the signal is
+// configured, but NewProvider (and therefore ObsProvider) can also be built
+// directly from a hand-assembled ObsConfig that skipped LoadConfig. Split out
+// from startMetricsServer so tests can inspect routing/Addr without binding a
+// real network port.
+func newMetricsServer(obs *observability.ObsProvider, path string) *http.Server {
+	if path == "" {
+		path = "/metrics"
+	}
+	mux := http.NewServeMux()
+	mux.Handle(path, obs.PromHandler)
+	return &http.Server{Addr: obs.PromListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 }

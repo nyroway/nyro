@@ -2,8 +2,15 @@ package gateway
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/nyroway/nyro/go/internal/observability"
+	"github.com/nyroway/nyro/go/internal/xds"
 )
 
 func TestNewCmdFlags(t *testing.T) {
@@ -131,7 +138,7 @@ consumers: []
 // variables are never consulted: OTEL_TRACES_EXPORTER=otlp is set (with no
 // OTEL_EXPORTER_OTLP_ENDPOINT), which would trip the same fail-fast guard as the
 // test above if the gateway still read it — but the YAML declares nothing, so
-// the fixed default (traces→none) must apply and buildGateway must succeed.
+// the fixed default (traces→disabled) must apply and buildGateway must succeed.
 func TestBuildGateway_StandaloneIgnoresEnvWhenYAMLSilent(t *testing.T) {
 	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
 
@@ -151,4 +158,221 @@ consumers: []
 		t.Fatalf("buildGateway: %v (OTEL_* env vars must not be consulted when the YAML declares nothing)", err)
 	}
 	_ = obs.Shutdown(context.Background())
+}
+
+// cacheWithSettings builds an xds.ConfigCache pre-loaded with the given
+// obs_* settings, mirroring what a control-plane push (or a standalone YAML
+// snapshot) would populate.
+func cacheWithSettings(settings map[string]string) *xds.ConfigCache {
+	var b xds.Snapshot
+	for k, v := range settings {
+		b.SetSetting(k, v)
+	}
+	cache := &xds.ConfigCache{}
+	cache.Swap(b.Done())
+	return cache
+}
+
+func TestDefaultObsGet_NoNoneSentinel(t *testing.T) {
+	// The whole point of this task's key migration: an unset metrics/traces
+	// exporter must resolve to "" (disabled), never the old "none" sentinel.
+	for _, key := range []string{"obs_logs_exporter", "obs_metrics_exporter", "obs_traces_exporter", "obs_logs_otlp_endpoint", "obs_metrics_otlp_endpoint", "nonsense_key"} {
+		v, err := defaultObsGet(key)
+		if err != nil {
+			t.Fatalf("defaultObsGet(%q): unexpected error %v", key, err)
+		}
+		if v == "none" {
+			t.Errorf("defaultObsGet(%q) = %q; the \"none\" sentinel must be fully gone", key, v)
+		}
+	}
+	if v, _ := defaultObsGet("obs_logs_exporter"); v != "stdout" {
+		t.Errorf("defaultObsGet(obs_logs_exporter) = %q; want stdout", v)
+	}
+	if v, _ := defaultObsGet("obs_metrics_exporter"); v != "" {
+		t.Errorf("defaultObsGet(obs_metrics_exporter) = %q; want empty (disabled)", v)
+	}
+	if v, _ := defaultObsGet("obs_traces_exporter"); v != "" {
+		t.Errorf("defaultObsGet(obs_traces_exporter) = %q; want empty (disabled)", v)
+	}
+}
+
+func TestResolveObsConfig_EmptySnapshotFallsBackToDefault(t *testing.T) {
+	cache := cacheWithSettings(nil)
+	cfg := resolveObsConfig(cache)
+	if cfg.Logs.Kind != observability.ExporterKindStdout {
+		t.Errorf("Logs.Kind = %q; want stdout default", cfg.Logs.Kind)
+	}
+	if cfg.Metrics.Kind != "" {
+		t.Errorf("Metrics.Kind = %q; want disabled default", cfg.Metrics.Kind)
+	}
+	if cfg.Traces.Kind != "" {
+		t.Errorf("Traces.Kind = %q; want disabled default", cfg.Traces.Kind)
+	}
+}
+
+func TestResolveObsConfig_PartialSettingDoesNotFallBack(t *testing.T) {
+	// Only traces is configured (as otlp with an endpoint); logs/metrics are
+	// left unset. This must NOT be treated as "all empty" — the explicit
+	// traces=otlp setting must survive, and logs/metrics must resolve to
+	// disabled (NOT the stdout/none defaults), since resolveObsConfig only
+	// falls back to defaultObsGet as an all-or-nothing unit.
+	cache := cacheWithSettings(map[string]string{
+		"obs_traces_exporter":      "otlp",
+		"obs_traces_otlp_endpoint": "http://collector:4318",
+	})
+	cfg := resolveObsConfig(cache)
+	if cfg.Traces.Kind != observability.ExporterKindOTLP {
+		t.Errorf("Traces.Kind = %q; want otlp", cfg.Traces.Kind)
+	}
+	if cfg.Traces.Params["endpoint"] != "http://collector:4318" {
+		t.Errorf("Traces endpoint = %q; want http://collector:4318", cfg.Traces.Params["endpoint"])
+	}
+	if cfg.Logs.Kind != "" {
+		t.Errorf("Logs.Kind = %q; want disabled (partial config must not trigger the stdout default)", cfg.Logs.Kind)
+	}
+	if cfg.Metrics.Kind != "" {
+		t.Errorf("Metrics.Kind = %q; want disabled", cfg.Metrics.Kind)
+	}
+}
+
+func TestResolveObsConfig_EndpointOnlyIsNotEmpty(t *testing.T) {
+	// Exercises the Params["endpoint"] leg of obsConfigIsEmpty directly (not
+	// just the Kind legs): a snapshot that sets only an otlp endpoint, with
+	// its exporter kind also set (LoadConfig always ties the two together —
+	// see loadSignalConfig), must resolve to that config, not the default.
+	cache := cacheWithSettings(map[string]string{
+		"obs_metrics_exporter":      "otlp",
+		"obs_metrics_otlp_endpoint": "http://collector:4318",
+	})
+	cfg := resolveObsConfig(cache)
+	if cfg.Metrics.Kind != observability.ExporterKindOTLP {
+		t.Errorf("Metrics.Kind = %q; want otlp", cfg.Metrics.Kind)
+	}
+	if cfg.Logs.Kind != "" {
+		t.Errorf("Logs.Kind = %q; want disabled", cfg.Logs.Kind)
+	}
+}
+
+func TestResolveObsConfig_InvalidExporterFallsBackToDefault(t *testing.T) {
+	// prometheus is not a registered logs exporter, so LoadConfig errors on
+	// this snapshot; resolveObsConfig must log and fall back to
+	// defaultObsGet rather than propagate the error (or panic/crash).
+	cache := cacheWithSettings(map[string]string{
+		"obs_logs_exporter": "prometheus",
+	})
+	cfg := resolveObsConfig(cache)
+	if cfg.Logs.Kind != observability.ExporterKindStdout {
+		t.Errorf("Logs.Kind = %q; want the fallback default (stdout)", cfg.Logs.Kind)
+	}
+	if cfg.Metrics.Kind != "" || cfg.Traces.Kind != "" {
+		t.Errorf("Metrics/Traces should also resolve to the disabled default: got metrics=%q traces=%q", cfg.Metrics.Kind, cfg.Traces.Kind)
+	}
+}
+
+func TestNewMetricsServer_DefaultsPathAndWiresHandler(t *testing.T) {
+	called := false
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	obs := &observability.ObsProvider{PromHandler: h, PromListen: ":9464"}
+
+	srv := newMetricsServer(obs, "")
+	if srv.Addr != ":9464" {
+		t.Errorf("Addr = %q; want :9464", srv.Addr)
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	srv.Handler.ServeHTTP(rr, req)
+	if !called {
+		t.Error("expected PromHandler to be invoked at the default /metrics path")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d; want 200", rr.Code)
+	}
+}
+
+func TestNewMetricsServer_CustomPath(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	obs := &observability.ObsProvider{PromHandler: h, PromListen: ":9464"}
+
+	srv := newMetricsServer(obs, "/custom-metrics")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/custom-metrics", nil)
+	srv.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("custom path not wired: status = %d; want 200", rr.Code)
+	}
+
+	// The default /metrics path must NOT also be wired when a custom path is set.
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	srv.Handler.ServeHTTP(rr2, req2)
+	if rr2.Code == http.StatusOK {
+		t.Error("default /metrics path should not respond when a custom path was configured")
+	}
+}
+
+func TestStartMetricsServer_NilHandlerIsNoOp(t *testing.T) {
+	// Must not panic and must not start anything when metrics isn't
+	// configured as prometheus (PromHandler == nil).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startMetricsServer(ctx, &observability.ObsProvider{}, "")
+	startMetricsServer(ctx, nil, "")
+}
+
+// TestStartMetricsServer_BindsAndShutsDownOnCtxCancel is the one test in this
+// file that binds a real port — deliberately picking an OS-assigned free port
+// (":0" via net.Listen, then closing immediately) to avoid a fixed-port
+// collision in CI, at the cost of a small, standard TOCTOU race window that
+// is common practice for this kind of test.
+func TestStartMetricsServer_BindsAndShutsDownOnCtxCancel(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("find free port: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close probe listener: %v", err)
+	}
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	obs := &observability.ObsProvider{PromHandler: h, PromListen: addr}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	startMetricsServer(ctx, obs, "")
+
+	var lastErr error
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get("http://" + addr + "/metrics")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				lastErr = nil
+				break
+			}
+		}
+		lastErr = err
+		time.Sleep(20 * time.Millisecond)
+	}
+	if lastErr != nil {
+		t.Fatalf("server never became reachable at %s: %v", addr, lastErr)
+	}
+
+	cancel()
+
+	deadline = time.Now().Add(2 * time.Second)
+	var shutErr error
+	for time.Now().Before(deadline) {
+		_, shutErr = http.Get("http://" + addr + "/metrics")
+		if shutErr != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if shutErr == nil {
+		t.Fatal("expected the metrics server to stop accepting connections after ctx cancellation")
+	}
 }
