@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -52,7 +53,7 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		gw, stopConfigSync, obsProvider, err := buildGateway(ctx, cfgPath, configSyncAddr)
+		gw, stopConfigSync, obsProvider, err := buildGateway(ctx, cfgPath, configSyncAddr, addr)
 		if err != nil {
 			return err
 		}
@@ -78,6 +79,17 @@ func NewCmd() *cobra.Command {
 // shutdownTimeout bounds the OTel provider flush on graceful exit.
 const shutdownTimeout = 5 * time.Second
 
+// servicePort extracts the port from a host:port listen address for
+// node-visibility reporting. Returns "" (best-effort, never fatal) if addr
+// isn't in host:port form.
+func servicePort(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return ""
+	}
+	return port
+}
+
 // buildGateway selects the config source and returns a ready, storage-free
 // Gateway plus an optional config-sync client stop function (nil unless
 // --configsync-addr) and the OTel provider (always non-nil on success —
@@ -85,7 +97,12 @@ const shutdownTimeout = 5 * time.Second
 // and calls RegisterHooks exactly ONCE per process (the plugin registry
 // accumulates appends, so re-registering would double-emit). /readyz reflects
 // cache fill, not storage health.
-func buildGateway(ctx context.Context, cfgPath, configSyncAddr string) (gw *proxy.Gateway, stopConfigSync func(), obs *observability.ObsProvider, err error) {
+//
+// listenAddr is this gateway's own data-plane --addr (host:port); only its
+// port is used, reported over config-sync as Subscribe.service_port so the
+// admin's node list can show where each gateway actually serves traffic
+// (distinct from the config-sync gRPC connection's ephemeral peer port).
+func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr string) (gw *proxy.Gateway, stopConfigSync func(), obs *observability.ObsProvider, err error) {
 	switch {
 	case cfgPath != "":
 		// Standalone YAML: build the config snapshot directly (no DB). The
@@ -122,7 +139,7 @@ func buildGateway(ctx context.Context, cfgPath, configSyncAddr string) (gw *prox
 		// Observability config is read from the cache snapshot (published by
 		// the admin) once it arrives.
 		cache := &configsync.ConfigCache{}
-		client := configsync.NewConfigClient(configSyncAddr, cache)
+		client := configsync.NewConfigClient(configSyncAddr, cache, servicePort(listenAddr))
 		go func() { _ = client.Run(ctx) }()
 		gw = proxy.NewGatewayWithCache(cache)
 

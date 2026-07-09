@@ -21,6 +21,7 @@ message Subscribe {
   string node_id = 2;      // stable per-process identifier (survives reconnects)
   string app_version = 3;  // gateway build version, for node visibility
   string hostname = 4;      // gateway's os.Hostname(), for node visibility
+  string service_port = 5; // port the gateway's data-plane listener is bound to (from --addr), for node visibility
 }
 
 // ConfigSnapshot is a full, immutable configuration snapshot (config-schema:

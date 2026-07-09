@@ -23,10 +23,11 @@ const (
 
 type Subscribe struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`                        // gateway's last-applied version; 0 = full resync
-	NodeId        string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`             // stable per-process identifier (survives reconnects)
-	AppVersion    string                 `protobuf:"bytes,3,opt,name=app_version,json=appVersion,proto3" json:"app_version,omitempty"` // gateway build version, for node visibility
-	Hostname      string                 `protobuf:"bytes,4,opt,name=hostname,proto3" json:"hostname,omitempty"`                       // gateway's os.Hostname(), for node visibility
+	Version       int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`                           // gateway's last-applied version; 0 = full resync
+	NodeId        string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`                // stable per-process identifier (survives reconnects)
+	AppVersion    string                 `protobuf:"bytes,3,opt,name=app_version,json=appVersion,proto3" json:"app_version,omitempty"`    // gateway build version, for node visibility
+	Hostname      string                 `protobuf:"bytes,4,opt,name=hostname,proto3" json:"hostname,omitempty"`                          // gateway's os.Hostname(), for node visibility
+	ServicePort   string                 `protobuf:"bytes,5,opt,name=service_port,json=servicePort,proto3" json:"service_port,omitempty"` // port the gateway's data-plane listener is bound to (from --addr), for node visibility
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -85,6 +86,13 @@ func (x *Subscribe) GetAppVersion() string {
 func (x *Subscribe) GetHostname() string {
 	if x != nil {
 		return x.Hostname
+	}
+	return ""
+}
+
+func (x *Subscribe) GetServicePort() string {
+	if x != nil {
+		return x.ServicePort
 	}
 	return ""
 }
@@ -705,13 +713,14 @@ var File_configsync_v1_configsync_proto protoreflect.FileDescriptor
 
 const file_configsync_v1_configsync_proto_rawDesc = "" +
 	"\n" +
-	"\x1econfigsync/v1/configsync.proto\x12\x12nyro.configsync.v1\"{\n" +
+	"\x1econfigsync/v1/configsync.proto\x12\x12nyro.configsync.v1\"\x9e\x01\n" +
 	"\tSubscribe\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x1f\n" +
 	"\vapp_version\x18\x03 \x01(\tR\n" +
 	"appVersion\x12\x1a\n" +
-	"\bhostname\x18\x04 \x01(\tR\bhostname\"\xe0\x02\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\x12!\n" +
+	"\fservice_port\x18\x05 \x01(\tR\vservicePort\"\xe0\x02\n" +
 	"\x0eConfigSnapshot\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12:\n" +
 	"\tupstreams\x18\x02 \x03(\v2\x1c.nyro.configsync.v1.UpstreamR\tupstreams\x121\n" +

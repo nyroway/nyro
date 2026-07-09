@@ -45,6 +45,7 @@ type streamClient struct {
 	nodeID      string
 	appVersion  string
 	hostname    string
+	servicePort string
 	remoteAddr  string
 	connectedAt time.Time
 
@@ -58,6 +59,7 @@ type NodeInfo struct {
 	NodeID         string    `json:"node_id"`
 	Hostname       string    `json:"hostname"`
 	AppVersion     string    `json:"app_version"`
+	ServicePort    string    `json:"service_port"`
 	RemoteAddr     string    `json:"remote_addr"`
 	ConnectedAt    time.Time `json:"connected_at"`
 	AppliedVersion int64     `json:"applied_version"`
@@ -93,6 +95,7 @@ func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreami
 		nodeID:      req.GetNodeId(),
 		appVersion:  req.GetAppVersion(),
 		hostname:    req.GetHostname(),
+		servicePort: req.GetServicePort(),
 		remoteAddr:  remoteAddr,
 		connectedAt: time.Now(),
 	}
@@ -227,6 +230,7 @@ func (s *ConfigServer) Nodes() []NodeInfo {
 			NodeID:         c.nodeID,
 			Hostname:       c.hostname,
 			AppVersion:     c.appVersion,
+			ServicePort:    c.servicePort,
 			RemoteAddr:     c.remoteAddr,
 			ConnectedAt:    c.connectedAt,
 			AppliedVersion: c.getLastVersion(),
