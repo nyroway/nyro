@@ -66,6 +66,23 @@ func TestNewCmdGRPCAddrFlagDefault(t *testing.T) {
 	}
 }
 
+// An explicit --db-dsn naming a directory that doesn't exist must fail
+// loudly rather than silently create it — unlike the ~/.nyro default,
+// which is our own managed space and safe to auto-create. Silently
+// creating a typo'd explicit path risks masking the mistake with a fresh
+// empty DB instead of the one the operator meant to open.
+func TestRunE_ExplicitDBDSNMissingDirectoryErrors(t *testing.T) {
+	cmd := NewCmd()
+	missing := filepath.Join(t.TempDir(), "does-not-exist", "nyro.db")
+	if err := cmd.ParseFlags([]string{"--db-dsn", missing}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("expected an error for a missing explicit --db-dsn directory, got nil")
+	}
+}
+
 func newMemStore(t *testing.T) storage.Storage {
 	t.Helper()
 	return memory.New().Storage()

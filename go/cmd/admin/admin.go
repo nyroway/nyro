@@ -72,17 +72,25 @@ func NewCmd() *cobra.Command {
 
 		switch storageBackend {
 		case "sqlite":
-			if dbDSN == "" {
+			usingDefaultDBDSN := dbDSN == ""
+			if usingDefaultDBDSN {
 				dbDSN = filepath.Join(nyroHomeDir(), "nyro.db")
 			}
 			// The sqlite driver opens/creates the DB file itself but never its
-			// parent directory — unlike parquet.NewSink (obs-data-dir), which
-			// MkdirAll's on demand. Do it here so a first run against the
-			// ~/.nyro default (or any other not-yet-existing directory) doesn't
-			// fail outright.
+			// parent directory. For the ~/.nyro default that's our own managed
+			// space, so auto-creating it (like ~/.aws, ~/.docker, ~/.kube) is
+			// expected. For an explicit --db-dsn, silently creating a missing
+			// directory risks masking a typo'd path with a fresh empty DB
+			// instead of the one the operator meant to open — fail loudly
+			// instead, matching how `postgres initdb -D <dir>` and friends
+			// treat an explicitly-named data directory.
 			if dir := filepath.Dir(dbDSN); dir != "" && dir != "." {
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return fmt.Errorf("create db-dsn directory %q: %w", dir, err)
+				if usingDefaultDBDSN {
+					if err := os.MkdirAll(dir, 0o755); err != nil {
+						return fmt.Errorf("create db-dsn directory %q: %w", dir, err)
+					}
+				} else if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+					return fmt.Errorf("--db-dsn directory %q does not exist (create it first, or leave --db-dsn unset to use the default under ~/.nyro)", dir)
 				}
 			}
 		case "postgres", "mysql":
