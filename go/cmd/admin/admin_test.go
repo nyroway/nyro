@@ -83,6 +83,22 @@ func TestRunE_ExplicitDBDSNMissingDirectoryErrors(t *testing.T) {
 	}
 }
 
+// Same as above, for --obs-data-dir. db-dsn is pointed at a valid temp
+// directory so the RunE reaches the obs-data-dir check rather than failing
+// there first — and so the test never touches the real ~/.nyro.
+func TestRunE_ExplicitObsDataDirMissingDirectoryErrors(t *testing.T) {
+	cmd := NewCmd()
+	dbDSN := filepath.Join(t.TempDir(), "nyro.db")
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if err := cmd.ParseFlags([]string{"--db-dsn", dbDSN, "--obs-data-dir", missing}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("expected an error for a missing explicit --obs-data-dir directory, got nil")
+	}
+}
+
 func newMemStore(t *testing.T) storage.Storage {
 	t.Helper()
 	return memory.New().Storage()

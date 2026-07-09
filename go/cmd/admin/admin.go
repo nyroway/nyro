@@ -101,6 +101,16 @@ func NewCmd() *cobra.Command {
 			return fmt.Errorf("unknown --storage %q (want sqlite|postgres|mysql)", storageBackend)
 		}
 
+		// Same reasoning as --db-dsn above: the ~/.nyro default is auto-created
+		// (parquet.NewSink MkdirAll's it on demand below), but an explicit
+		// --obs-data-dir naming a missing directory fails loudly instead of
+		// silently starting a fresh, empty observability store there.
+		if cmd.Flags().Changed("obs-data-dir") {
+			if info, err := os.Stat(obsDataDir); err != nil || !info.IsDir() {
+				return fmt.Errorf("--obs-data-dir %q does not exist (create it first, or leave --obs-data-dir unset to use the default under ~/.nyro)", obsDataDir)
+			}
+		}
+
 		st, err := bootstrap.OpenStorage(storageBackend, dbDSN)
 		if err != nil {
 			return err
