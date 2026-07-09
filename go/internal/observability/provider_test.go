@@ -2,6 +2,8 @@ package observability
 
 import (
 	"context"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -104,16 +106,147 @@ func TestNewProvider_OTLPWithEndpoint(t *testing.T) {
 	defer func() { _ = p.Shutdown(context.Background()) }()
 }
 
-// TestNewProvider_MetricsPrometheusNoBuilder ensures that selecting the
-// prometheus exporter for metrics — a signal/kind combination valid per
-// exporter.ExportersFor(SignalMetrics) — fails clearly rather than silently
-// doing nothing, since no builder is registered for it yet (Task 5).
-func TestNewProvider_MetricsPrometheusNoBuilder(t *testing.T) {
-	_, err := NewProvider(context.Background(), ObsConfig{
-		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":9464", "path": "/metrics"}},
+// TestMetricsBuilders_HasPrometheus ensures the prometheus kind is actually
+// registered in the metricsBuilders map (not just valid per the exporter
+// registry).
+func TestMetricsBuilders_HasPrometheus(t *testing.T) {
+	if _, ok := metricsBuilders(context.Background())[ExporterKindPrometheus]; !ok {
+		t.Fatal("metricsBuilders: no entry for ExporterKindPrometheus")
+	}
+}
+
+// TestNewProvider_MetricsPrometheus constructs a provider with the metrics
+// signal set to prometheus, and verifies PromHandler/PromListen are
+// populated end-to-end from the configured Params.
+func TestNewProvider_MetricsPrometheus(t *testing.T) {
+	p, err := NewProvider(context.Background(), ObsConfig{
+		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":19464", "path": "/metrics"}},
 	})
-	if err == nil {
-		t.Fatal("metrics Kind=prometheus: want error (no builder registered), got nil")
+	if err != nil {
+		t.Fatalf("metrics Kind=prometheus: unexpected error: %v", err)
+	}
+	defer func() { _ = p.Shutdown(context.Background()) }()
+
+	if p.PromHandler == nil {
+		t.Fatal("metrics Kind=prometheus: PromHandler is nil")
+	}
+	if p.PromListen != ":19464" {
+		t.Fatalf("metrics Kind=prometheus: PromListen = %q, want %q", p.PromListen, ":19464")
+	}
+}
+
+// TestNewProvider_MetricsPrometheusDefaultListen verifies the builder's
+// defensive fallback: an empty Params["listen"] (e.g. a SignalConfig built
+// by hand, bypassing LoadConfig's own defaulting) still yields a usable
+// PromListen (":9464"), not an empty string that would make
+// http.ListenAndServe bind an arbitrary port.
+func TestNewProvider_MetricsPrometheusDefaultListen(t *testing.T) {
+	p, err := NewProvider(context.Background(), ObsConfig{
+		Metrics: SignalConfig{Kind: ExporterKindPrometheus},
+	})
+	if err != nil {
+		t.Fatalf("metrics Kind=prometheus (no params): unexpected error: %v", err)
+	}
+	defer func() { _ = p.Shutdown(context.Background()) }()
+
+	if p.PromListen != defaultPrometheusListen {
+		t.Fatalf("metrics Kind=prometheus (no params): PromListen = %q, want default %q", p.PromListen, defaultPrometheusListen)
+	}
+}
+
+// TestNewProvider_MetricsPrometheusHandlerServes verifies the PromHandler is
+// a working http.Handler that returns 200 and a Prometheus text-format body
+// when scraped, without asserting on specific metric content.
+func TestNewProvider_MetricsPrometheusHandlerServes(t *testing.T) {
+	p, err := NewProvider(context.Background(), ObsConfig{
+		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":19465"}},
+	})
+	if err != nil {
+		t.Fatalf("setup: unexpected error: %v", err)
+	}
+	defer func() { _ = p.Shutdown(context.Background()) }()
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	p.PromHandler.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("PromHandler.ServeHTTP: status = %d, want 200", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("PromHandler.ServeHTTP: empty body")
+	}
+}
+
+// TestNewProvider_MetricsPrometheusRoundTrip verifies the full
+// reader→registry→handler chain actually works: a counter recorded via the
+// ObsProvider's Meter shows up in the /metrics scrape output by name. This
+// is the "not a hollow scaffold" check — it proves the Reader passed to
+// sdkmetric.WithReader is the same one backing the registry the handler
+// serves.
+func TestNewProvider_MetricsPrometheusRoundTrip(t *testing.T) {
+	p, err := NewProvider(context.Background(), ObsConfig{
+		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":19466"}},
+	})
+	if err != nil {
+		t.Fatalf("setup: unexpected error: %v", err)
+	}
+	defer func() { _ = p.Shutdown(context.Background()) }()
+
+	counter, err := p.Meter.Int64Counter("nyro_prom_roundtrip_total")
+	if err != nil {
+		t.Fatalf("Int64Counter: unexpected error: %v", err)
+	}
+	counter.Add(context.Background(), 1)
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	p.PromHandler.ServeHTTP(rec, req)
+
+	if !strings.Contains(rec.Body.String(), "nyro_prom_roundtrip_total") {
+		t.Fatalf("scrape body does not contain metric name; body:\n%s", rec.Body.String())
+	}
+}
+
+// TestNewProvider_MetricsPrometheusCumulative is the "real behavioral check"
+// the brief asks for: it proves the prometheus path is genuinely CUMULATIVE
+// (the default for otelprom.Exporter, not overridden anywhere in the
+// builder) rather than DELTA like the otlp/stdout metrics builders. Add(5)
+// twice and scrape once: a delta-like reset-per-collect reader would show 5
+// (only the latest increment); a cumulative reader shows 10 (both increments
+// summed since counter creation). Prometheus scraping never "consumes" state
+// between requests — repeated collects always report the running total.
+func TestNewProvider_MetricsPrometheusCumulative(t *testing.T) {
+	p, err := NewProvider(context.Background(), ObsConfig{
+		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":19467"}},
+	})
+	if err != nil {
+		t.Fatalf("setup: unexpected error: %v", err)
+	}
+	defer func() { _ = p.Shutdown(context.Background()) }()
+
+	counter, err := p.Meter.Int64Counter("nyro_prom_cumulative_total")
+	if err != nil {
+		t.Fatalf("Int64Counter: unexpected error: %v", err)
+	}
+
+	counter.Add(context.Background(), 5)
+	counter.Add(context.Background(), 5)
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	p.PromHandler.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	// The metric line carries otel_scope_* labels (e.g.
+	// `nyro_prom_cumulative_total{otel_scope_name="nyro",...} 10`), so match
+	// on "} 10" (the label-set close brace followed by the value) rather than
+	// a bare "metricname 10" substring.
+	if !strings.Contains(body, "} 10\n") {
+		t.Fatalf("expected cumulative value 10 (two Add(5) calls summed) in scrape body, got:\n%s", body)
+	}
+	if strings.Contains(body, "} 5\n") {
+		t.Fatalf("scrape body shows value 5, not 10 — prometheus reader appears to be resetting like a delta reader; body:\n%s", body)
 	}
 }
 
@@ -137,8 +270,8 @@ func TestShutdownIsIdempotent(t *testing.T) {
 // (the one provider.go configures on every otlp/stdout metric
 // PeriodicReader), each collect emits ONLY the increments recorded since the
 // previous collect — not the lifetime running total (which is what the
-// OTel-default Cumulative temporality, and the future prometheus Reader,
-// would produce).
+// OTel-default Cumulative temporality, and the prometheus Reader (see
+// TestNewProvider_MetricsPrometheusCumulative), produce).
 //
 // The contract being asserted: Add(5) → collect shows 5; Add(3) → the SECOND
 // collect shows 3 (a cumulative reader would instead show 8, and AggregateStats

@@ -7,10 +7,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
@@ -38,10 +41,9 @@ type ObsProvider struct {
 	Tracer trace.Tracer
 
 	// PromHandler and PromListen are populated when Metrics.Kind ==
-	// ExporterKindPrometheus by the prometheus builder (Task 5 — not
-	// registered by this package yet). Nil/empty otherwise; the gateway
-	// (Task 6) uses PromHandler!=nil to decide whether to start a second
-	// HTTP server on PromListen.
+	// ExporterKindPrometheus by the prometheus builder in metricsBuilders.
+	// Nil/empty otherwise; the gateway (Task 6) uses PromHandler!=nil to
+	// decide whether to start a second HTTP server on PromListen.
 	PromHandler http.Handler
 	PromListen  string
 
@@ -120,16 +122,41 @@ func logsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 	}
 }
 
+// defaultPrometheusListen is the fallback listen address used by the
+// prometheus builder when Params["listen"] is empty. It matches
+// exporter.go's prometheusFields "listen" FieldDef Default (":9464").
+// LoadConfig already fills this default from the registry when config comes
+// from disk, but NewProvider/the builder are also callable directly with a
+// hand-built SignalConfig that never went through LoadConfig (e.g.
+// SignalConfig{Kind: "prometheus"} with no Params), so the builder defends
+// against an empty listen value itself rather than trusting the caller.
+const defaultPrometheusListen = ":9464"
+
+// promReaderResult is what the prometheus BuilderFunc entry in
+// metricsBuilders returns, instead of an sdkmetric.Exporter like the
+// otlp/stdout entries. Prometheus is a pull-model reader (scraped, not
+// pushed), so it has no PeriodicReader/interval and no separate "exporter"
+// object to wrap — buildMeterProvider type-switches on this to take a
+// different construction path (sdkmetric.WithReader(Reader) directly) and to
+// thread Handler/Listen out to ObsProvider.
+type promReaderResult struct {
+	Reader  sdkmetric.Reader
+	Handler http.Handler
+	Listen  string
+}
+
 // metricsBuilders returns the registry of BuilderFunc values for the
-// "metrics" signal. Both registered builders use DELTA temporality (see the
+// "metrics" signal. The otlp/stdout builders use DELTA temporality (see the
 // package-level metric-temporality note below) — this is a fixed property of
-// the otlp/stdout engines, not something callers select. prometheus is
-// intentionally NOT registered here: it is metrics-valid per
-// exporter.ExportersFor, but its builder ships in Task 5 (it uses a pull
-// Reader with CUMULATIVE temporality instead of a PeriodicReader — a
-// different construction path this task deliberately leaves unbuilt). Until
-// then, a metrics config with Kind == "prometheus" fails with a clear "no
-// builder registered" error rather than silently doing nothing.
+// those engines, not something callers select. The prometheus builder
+// constructs an independent prometheus.Registry (never the global
+// DefaultRegisterer, to avoid colliding with other Prometheus
+// instrumentation in the process) plus an otelprom.Reader wired to it, and
+// returns both the reader and an http.Handler serving that registry via
+// promReaderResult. It is CUMULATIVE by construction (the reader type has no
+// temporality selector to set) — deliberately not wrapped in
+// stdoutmetric/otlpmetrichttp's WithTemporalitySelector(Delta), which does
+// not apply to this reader type anyway.
 func metricsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 	return map[ExporterKind]BuilderFunc{
 		ExporterKindOTLP: func(params map[string]string) (any, error) {
@@ -144,6 +171,22 @@ func metricsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 		},
 		ExporterKindStdout: func(params map[string]string) (any, error) {
 			return stdoutmetric.New(stdoutmetric.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector))
+		},
+		ExporterKindPrometheus: func(params map[string]string) (any, error) {
+			reg := prometheus.NewRegistry()
+			reader, err := otelprom.New(otelprom.WithRegisterer(reg))
+			if err != nil {
+				return nil, err
+			}
+			listen := params["listen"]
+			if listen == "" {
+				listen = defaultPrometheusListen
+			}
+			return promReaderResult{
+				Reader:  reader,
+				Handler: promhttp.HandlerFor(reg, promhttp.HandlerOpts{}),
+				Listen:  listen,
+			}, nil
 		},
 	}
 }
@@ -273,9 +316,10 @@ func buildLoggerProvider(ctx context.Context, res *resource.Resource, sc SignalC
 }
 
 // buildMeterProvider constructs the MeterProvider for sc, via the metrics
-// exporter registry, or a no-op provider when the signal is disabled. It also
-// returns the (currently always nil/empty) PromHandler/PromListen values —
-// populated once Task 5 registers a prometheus builder.
+// exporter registry, or a no-op provider when the signal is disabled. For
+// prometheus (a pull-model reader), it returns the reader's Handler/Listen so
+// NewProvider can populate ObsProvider.PromHandler/PromListen; for otlp/stdout
+// (push-model exporters) it returns nil/"" as before.
 func buildMeterProvider(ctx context.Context, res *resource.Resource, sc SignalConfig) (*sdkmetric.MeterProvider, http.Handler, string, error) {
 	if sc.Kind == "" {
 		return sdkmetric.NewMeterProvider(sdkmetric.WithResource(res)), nil, "", nil
@@ -292,6 +336,18 @@ func buildMeterProvider(ctx context.Context, res *resource.Resource, sc SignalCo
 	if err != nil {
 		return nil, nil, "", err
 	}
+
+	// prometheus is a pull-model Reader, not a push-model Exporter: it takes
+	// a different construction path (WithReader directly, no
+	// PeriodicReader/interval) and threads Handler/Listen out to the caller.
+	if pr, ok := raw.(promReaderResult); ok {
+		mp := sdkmetric.NewMeterProvider(
+			sdkmetric.WithResource(res),
+			sdkmetric.WithReader(pr.Reader),
+		)
+		return mp, pr.Handler, pr.Listen, nil
+	}
+
 	exp, ok := raw.(sdkmetric.Exporter)
 	if !ok {
 		return nil, nil, "", fmt.Errorf("observability: metrics builder for %q returned unexpected type %T", sc.Kind, raw)
