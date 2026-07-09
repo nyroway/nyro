@@ -1,49 +1,71 @@
 package observability
 
 import (
+	"fmt"
 	"strconv"
-	"time"
 )
 
-// ObsConfig is the resolved observability configuration. It spans both sides:
-// the gateway exporter (Sink/OTLP) and the admin persistence (DataDir +
-// retention). It is produced by LoadConfig from settings.
-type ObsConfig struct {
-	// Gateway (exporter) side.
-	Sink           string // global default: none|stdout|otlp
-	LogsSink       string // per-signal override ("" → Sink)
-	MetricsSink    string
-	TracesSink     string
-	OTLPEndpoint   string // e.g. "http://127.0.0.1:19531"
-	ExportInterval time.Duration
+// SignalConfig is the resolved exporter configuration for a single signal
+// (logs, metrics, or traces). Kind == "" means the signal is disabled (no-op
+// provider) — there is no "none" sentinel; the zero value SignalConfig{} is
+// the disabled state.
+type SignalConfig struct {
+	Kind   ExporterKind
+	Params map[string]string
+}
 
-	// Admin (sink) side.
-	DataDir              string
+// ObsConfig is the resolved observability configuration. Each signal is
+// configured entirely independently — there is no shared/global exporter,
+// endpoint, or export interval. DataDir is intentionally NOT populated by
+// LoadConfig (see below); it is set by the caller (cmd/admin) after
+// LoadConfig returns.
+type ObsConfig struct {
+	Logs    SignalConfig
+	Metrics SignalConfig
+	Traces  SignalConfig
+
+	// DataDir is admin-only (the gateway never uses it — it does not persist
+	// telemetry). LoadConfig deliberately leaves this at its zero value
+	// (""); the caller (cmd/admin, via an --obs-data-dir CLI flag) assigns it
+	// after LoadConfig returns.
+	DataDir string
+
 	LogsRetentionDays    int
 	MetricsRetentionDays int
 	TracesRetentionDays  int
 }
 
-// LoadConfig reads observability settings via get (typically s.Settings().Get).
-// Empty / invalid strings resolve to documented defaults.
+// signalKeyNames maps each Signal to the key-name segment used in setting
+// keys (obs_<name>_exporter, obs_<name>_<kind>_<field>). It happens to equal
+// string(signal) for all three signals today, but is kept explicit so a
+// future signal whose Signal value diverges from its key name doesn't
+// silently break key parsing.
+var signalKeyNames = map[Signal]string{
+	SignalLogs:    "logs",
+	SignalMetrics: "metrics",
+	SignalTraces:  "traces",
+}
+
+// LoadConfig reads observability settings via get (typically
+// s.Settings().Get) and resolves them into an ObsConfig. Each signal is
+// resolved independently:
 //
-// Endpoint-following: when obs_otlp_endpoint is set and a per-signal sink is
-// empty (i.e. neither pinned nor defaulted), that signal resolves to "otlp" —
-// the documented xDS default where the admin pushes only obs_otlp_endpoint.
-// This rule is applied HERE (not in each call site) so BOTH the standalone YAML
-// path (env-driven) and the xDS path (cache-driven) follow the endpoint
-// consistently. The per-signal default still wins for an unset endpoint (logs→
-// stdout in standalone; otherwise the global Sink or "none").
-func LoadConfig(get func(string) (string, error)) ObsConfig {
+//   - obs_<signal>_exporter selects the signal's Kind. Empty/absent means the
+//     signal is disabled (SignalConfig{} zero value). A non-empty value that
+//     is not a registered exporter for that signal (per ExportersFor) is a
+//     validation error.
+//   - obs_<signal>_<kind>_<field> supplies each field the selected kind
+//     accepts (per ExportersFor's FieldDef list), written to
+//     SignalConfig.Params[field] (unprefixed field name). A field left unset
+//     falls back to its FieldDef.Default if one exists; if it has neither a
+//     setting value nor a default, it is simply absent from Params (fail-fast
+//     validation, e.g. otlp requiring endpoint, is a downstream concern for
+//     the provider builder, not LoadConfig).
+//
+// obs_data_dir is no longer read here — see ObsConfig.DataDir. Retention
+// settings (obs_<signal>_retention_days) are unchanged.
+func LoadConfig(get func(string) (string, error)) (ObsConfig, error) {
 	g := func(k string) string { v, _ := get(k); return v }
-	itv, _ := time.ParseDuration(g("obs_export_interval"))
-	if itv <= 0 {
-		itv = 5 * time.Second
-	}
-	dataDir := g("obs_data_dir")
-	if dataDir == "" {
-		dataDir = "./data/obs"
-	}
 	ret := func(k string, def int) int {
 		if v := g(k); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -52,47 +74,62 @@ func LoadConfig(get func(string) (string, error)) ObsConfig {
 		}
 		return def
 	}
+
 	cfg := ObsConfig{
-		Sink:                 g("obs_sink"),
-		LogsSink:             g("obs_logs_sink"),
-		MetricsSink:          g("obs_metrics_sink"),
-		TracesSink:           g("obs_traces_sink"),
-		OTLPEndpoint:         g("obs_otlp_endpoint"),
-		ExportInterval:       itv,
-		DataDir:              dataDir,
 		LogsRetentionDays:    ret("obs_logs_retention_days", 7),
 		MetricsRetentionDays: ret("obs_metrics_retention_days", 30),
 		TracesRetentionDays:  ret("obs_traces_retention_days", 3),
 	}
-	applyEndpointFollowing(&cfg)
-	return cfg
+
+	var err error
+	if cfg.Logs, err = loadSignalConfig(g, SignalLogs); err != nil {
+		return ObsConfig{}, err
+	}
+	if cfg.Metrics, err = loadSignalConfig(g, SignalMetrics); err != nil {
+		return ObsConfig{}, err
+	}
+	if cfg.Traces, err = loadSignalConfig(g, SignalTraces); err != nil {
+		return ObsConfig{}, err
+	}
+
+	return cfg, nil
 }
 
-// applyEndpointFollowing resolves every empty per-signal sink to "otlp" when an
-// OTLP endpoint is configured AND there is no global Sink to inherit. It mutates
-// cfg in place.
-//
-// The "no global Sink" guard matters: an empty per-signal sink normally inherits
-// the global Sink via provider.resolve/strOr. When obs_sink is set (e.g. the
-// standalone env sets Sink=otlp, or a snapshot pins obs_sink), the empty
-// per-signal sinks already inherit correctly and must NOT be force-set here
-// (that would break the inherit contract asserted by config tests). The
-// endpoint-following rule is only needed when NOTHING else has configured a
-// sink — exactly the xDS default of "admin pushed obs_otlp_endpoint only".
-//
-// The fail-fast guard in NewProvider still catches an "otlp" sink with an empty
-// endpoint.
-func applyEndpointFollowing(cfg *ObsConfig) {
-	if cfg.OTLPEndpoint == "" || cfg.Sink != "" {
-		return
+// loadSignalConfig resolves one signal's SignalConfig from settings.
+func loadSignalConfig(g func(string) string, signal Signal) (SignalConfig, error) {
+	name := signalKeyNames[signal]
+
+	kind := ExporterKind(g(fmt.Sprintf("obs_%s_exporter", name)))
+	if kind == "" {
+		return SignalConfig{}, nil
 	}
-	if cfg.LogsSink == "" {
-		cfg.LogsSink = "otlp"
+
+	defs := ExportersFor(signal)
+	var def *ExporterDef
+	for i := range defs {
+		if defs[i].Kind == kind {
+			def = &defs[i]
+			break
+		}
 	}
-	if cfg.MetricsSink == "" {
-		cfg.MetricsSink = "otlp"
+	if def == nil {
+		return SignalConfig{}, fmt.Errorf("observability: unregistered exporter %q for signal %q", kind, name)
 	}
-	if cfg.TracesSink == "" {
-		cfg.TracesSink = "otlp"
+
+	var params map[string]string
+	for _, f := range def.Fields {
+		v := g(fmt.Sprintf("obs_%s_%s_%s", name, kind, f.Name))
+		if v == "" {
+			v = f.Default
+		}
+		if v == "" {
+			continue
+		}
+		if params == nil {
+			params = make(map[string]string, len(def.Fields))
+		}
+		params[f.Name] = v
 	}
+
+	return SignalConfig{Kind: kind, Params: params}, nil
 }
