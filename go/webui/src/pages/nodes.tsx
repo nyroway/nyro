@@ -10,6 +10,21 @@ function formatConnectedAt(iso: string, isZh: boolean) {
   return d.toLocaleString(isZh ? "zh-CN" : "en-US");
 }
 
+// remote_addr is the config-sync gRPC connection's peer address (host +
+// ephemeral source port) — the port has no relation to the gateway's own
+// service port, so it's stripped here to avoid misleading readers.
+function formatAddressHost(addr: string) {
+  if (!addr) return "";
+  if (addr.startsWith("[")) {
+    // Bracketed IPv6, e.g. "[::1]:54321" -> "[::1]".
+    const bracketEnd = addr.indexOf("]");
+    return bracketEnd >= 0 ? addr.slice(0, bracketEnd + 1) : addr;
+  }
+  const lastColon = addr.lastIndexOf(":");
+  if (lastColon <= 0) return addr;
+  return addr.slice(0, lastColon);
+}
+
 export default function NodesPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
@@ -23,11 +38,11 @@ export default function NodesPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">{isZh ? "数据面节点" : "Nodes"}</h1>
+        <h1 className="text-2xl font-bold text-slate-900">{isZh ? "节点" : "Nodes"}</h1>
         <p className="mt-1 text-sm text-slate-500">
           {isZh
-            ? "当前通过 config-sync 连接到本控制面的数据面网关（实时连接视图，断开即消失，不做持久化）"
-            : "Gateways currently connected to this control plane over config-sync (a live view of active connections — a node disappears the moment it disconnects; nothing here is persisted)"}
+            ? "当前已连接的网关节点，实时更新；"
+            : "Gateway nodes currently connected here, updated in real time"}
         </p>
       </div>
 
@@ -43,10 +58,10 @@ export default function NodesPage() {
               <tr>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "节点" : "Node"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "主机名" : "Hostname"}</th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "版本" : "Version"}</th>
+                <th className="px-3 py-2 text-left font-medium">{isZh ? "网关版本" : "Gateway Version"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "地址" : "Address"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "连接时间" : "Connected At"}</th>
-                <th className="px-3 py-2 text-right font-medium">{isZh ? "已应用配置版本" : "Applied Version"}</th>
+                <th className="px-3 py-2 text-right font-medium">{isZh ? "配置版本" : "Config Version"}</th>
               </tr>
             </thead>
             <tbody>
@@ -61,8 +76,8 @@ export default function NodesPage() {
                 <tr>
                   <td className="px-3 py-6 text-center text-slate-400" colSpan={6}>
                     {isZh
-                      ? "暂无已连接节点（数据面未连接，或控制面未启用 --grpc-addr）"
-                      : "No nodes connected yet (no gateway connected, or --grpc-addr is not enabled on the control plane)"}
+                      ? "暂无已连接的网关节点"
+                      : "No gateway nodes connected yet"}
                   </td>
                 </tr>
               )}
@@ -76,7 +91,7 @@ export default function NodesPage() {
                   </td>
                   <td className="px-3 py-2">{n.hostname || "-"}</td>
                   <td className="px-3 py-2">{n.app_version || "-"}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{n.remote_addr || "-"}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{formatAddressHost(n.remote_addr) || "-"}</td>
                   <td className="px-3 py-2">{formatConnectedAt(n.connected_at, isZh)}</td>
                   <td className="px-3 py-2 text-right">{n.applied_version}</td>
                 </tr>

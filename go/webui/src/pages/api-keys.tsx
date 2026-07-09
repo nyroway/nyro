@@ -684,7 +684,7 @@ export default function ApiKeysPage() {
       }
     },
     onError: (error: unknown) => {
-      showErrorDialog("创建 Consumer 失败", "Failed to create consumer", error);
+      showErrorDialog("创建秘钥失败", "Failed to create key", error);
     },
   });
 
@@ -697,7 +697,7 @@ export default function ApiKeysPage() {
       setEditForm(null);
     },
     onError: (error: unknown) => {
-      showErrorDialog("保存 Consumer 失败", "Failed to save consumer", error);
+      showErrorDialog("保存秘钥失败", "Failed to save key", error);
     },
   });
 
@@ -705,7 +705,7 @@ export default function ApiKeysPage() {
     mutationFn: (id: string) => backend("delete_consumer", { id }),
     onSuccess: () => invalidateConsumers(),
     onError: (error: unknown) => {
-      showErrorDialog("删除 Consumer 失败", "Failed to delete consumer", error);
+      showErrorDialog("删除秘钥失败", "Failed to delete key", error);
     },
   });
 
@@ -953,7 +953,7 @@ export default function ApiKeysPage() {
       return (
         <div className="flex items-center justify-between rounded-xl bg-slate-50/60 p-3">
           <p className="text-xs text-slate-400">
-            {isZh ? "该 consumer 暂无可用密钥，无法鉴权。" : "No key yet — this consumer cannot authenticate."}
+            {isZh ? "暂无可用秘钥，无法鉴权。" : "No key yet — cannot authenticate."}
           </p>
           <Button type="button" size="sm" variant="secondary" onClick={() => openAddKeyDialog(consumer)}>
             <Plus className="h-3.5 w-3.5" />
@@ -969,9 +969,9 @@ export default function ApiKeysPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "API Key" : "API Keys"}</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "秘钥" : "API Keys"}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {isZh ? "管理鉴权 Key、配额与模型绑定" : "Manage authentication keys, quotas, and model bindings"}
+            {isZh ? "管理鉴权秘钥、配额与模型绑定" : "Manage authentication keys, quotas, and model bindings"}
           </p>
         </div>
         <Button
@@ -983,13 +983,13 @@ export default function ApiKeysPage() {
           className="flex items-center gap-2"
         >
           <Plus className="h-4 w-4" />
-          {isZh ? "新增 Key" : "Add Key"}
+          {isZh ? "新增秘钥" : "Add Key"}
         </Button>
       </div>
 
       {showForm && (
         <div className="glass rounded-2xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "创建 Consumer" : "Create Consumer"}</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "创建秘钥" : "Create Key"}</h2>
           <div className="space-y-5">
             <div className="space-y-3">
               <SectionTitle>{isZh ? "1. 基本信息" : "1. Basic Information"}</SectionTitle>
@@ -1164,7 +1164,7 @@ export default function ApiKeysPage() {
               return (
                 <div key={item.id} className="glass rounded-2xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-900">{isZh ? "编辑 Consumer" : "Edit Consumer"}</h3>
+                    <h3 className="text-sm font-semibold text-slate-900">{isZh ? "编辑秘钥" : "Edit Key"}</h3>
                     <button
                       onClick={() => {
                         setEditingId(null);
@@ -1456,11 +1456,11 @@ export default function ApiKeysPage() {
         onOpenChange={(open) => {
           if (!open) setConsumerToDelete(null);
         }}
-        title={isZh ? "确认删除 Consumer" : "Confirm consumer deletion"}
+        title={isZh ? "确认删除秘钥" : "Confirm key deletion"}
         description={
           consumerToDelete
             ? (isZh
-              ? `此操作不可撤销，将同时删除其 Key。确认删除「${consumerToDelete.name}」吗？`
+              ? `此操作不可撤销，将同时删除其秘钥。确认删除「${consumerToDelete.name}」吗？`
               : `This action cannot be undone and will delete its key. Delete "${consumerToDelete.name}"?`)
             : undefined
         }

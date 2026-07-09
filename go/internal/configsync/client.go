@@ -61,16 +61,19 @@ func NewConfigClient(target string, cache *ConfigCache) *ConfigClient {
 	}
 }
 
-// newNodeID generates a per-process identifier: hostname plus a short random
-// suffix (to disambiguate multiple gateways on the same host/container image).
+// newNodeID generates a per-process random identifier (survives reconnects,
+// disambiguates multiple gateways on the same host/container image). It is
+// deliberately host-agnostic: hostname is reported separately (Subscribe.
+// hostname / NodeInfo.Hostname), so baking it into node_id too would just
+// duplicate that column in the admin's node list.
 func newNodeID() string {
 	suffix := make([]byte, 4)
 	if _, err := rand.Read(suffix); err != nil {
 		// crypto/rand failure is effectively unheard of; fall back to a
 		// constant suffix rather than failing gateway startup over it.
-		return hostnameOrUnknown() + "-0000"
+		return "0000"
 	}
-	return hostnameOrUnknown() + "-" + hex.EncodeToString(suffix)
+	return hex.EncodeToString(suffix)
 }
 
 func hostnameOrUnknown() string {
