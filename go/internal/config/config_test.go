@@ -572,6 +572,28 @@ func TestLoadYAML_ObservabilityLogsWithExporter_Succeeds(t *testing.T) {
 	}
 }
 
+func TestLoadYAML_ObservabilityMetricsPrometheus_Succeeds(t *testing.T) {
+	// Real YAML round-trip for metrics+prometheus (listen+path), matching the
+	// shape documented in docs/schema/config.md. Existing coverage exercised
+	// prometheus fields only via a constructed SettingsSpec literal
+	// (TestFlattenSettings_MetricsPrometheusListenAndPath) and exercised real
+	// YAML parsing only for logs+stdout — this closes that gap.
+	got, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    metrics:\n      exporter: prometheus\n      listen: \":9464\"\n      path: \"/metrics\"\n")
+	if err != nil {
+		t.Fatalf("flattenSettings: %v", err)
+	}
+	want := map[string]string{
+		"obs_metrics_exporter":          "prometheus",
+		"obs_metrics_prometheus_listen": ":9464",
+		"obs_metrics_prometheus_path":   "/metrics",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("flattenSettings()[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
 func TestLoadYAMLExpandsEnvVars(t *testing.T) {
 	t.Setenv("NYRO_TEST_API_KEY", "sk-from-env")
 

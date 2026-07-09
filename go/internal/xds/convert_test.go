@@ -146,6 +146,49 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	}
 }
 
+// TestSnapshotFromStorage_CarriesObservabilitySettings is a targeted
+// end-to-end check for the new per-signal observability setting keys
+// (obs_<signal>_exporter, obs_<signal>_<engine>_<field>) through the full
+// settings-push path: storage.Settings().Set -> LoadFromStorage/ListAll ->
+// SetSetting -> SnapshotFromStorage (proto) -> SnapshotFromProto -> SettingGet.
+// Existing settings coverage (TestLoadFromStorage_BuildsAllMaps,
+// TestSnapshotFromProto_Settings, TestSnapshotFromStorage_RoundtripsThroughProto)
+// only exercises generic keys like proxy_url; this proves the new obs key
+// shapes specifically survive the same pipeline unmodified, with no xDS
+// changes required for them (as the plan calls for).
+func TestSnapshotFromStorage_CarriesObservabilitySettings(t *testing.T) {
+	st := memory.New()
+	core := st.Storage()
+
+	obsSettings := map[string]string{
+		"obs_logs_exporter":             "stdout",
+		"obs_metrics_exporter":          "prometheus",
+		"obs_metrics_prometheus_listen": ":9464",
+		"obs_metrics_prometheus_path":   "/metrics",
+		"obs_traces_exporter":           "otlp",
+		"obs_traces_otlp_endpoint":      "http://127.0.0.1:4317",
+		"obs_traces_otlp_protocol":      "grpc",
+		"obs_traces_otlp_interval":      "5s",
+	}
+	for k, v := range obsSettings {
+		if err := core.Settings().Set(k, v); err != nil {
+			t.Fatalf("Settings().Set(%q): %v", k, err)
+		}
+	}
+
+	pbSnap, err := SnapshotFromStorage(core, 1)
+	if err != nil {
+		t.Fatalf("SnapshotFromStorage: %v", err)
+	}
+	got := SnapshotFromProto(pbSnap)
+
+	for k, want := range obsSettings {
+		if v, ok := got.SettingGet(k); !ok || v != want {
+			t.Errorf("SettingGet(%q) = %q, %v; want %q, true", k, v, ok, want)
+		}
+	}
+}
+
 func TestEpochFromStorage(t *testing.T) {
 	st := memory.New()
 	if got := EpochFromStorage(st.Storage()); got != 0 {

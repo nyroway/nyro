@@ -24,6 +24,7 @@ settings:
       exporter: "stdout"
     metrics:
       exporter: "prometheus"
+      listen: ":9464"
       path: "/metrics"
     traces:
       exporter: "otlp"
@@ -167,3 +168,36 @@ uses `routes[].upstreams[].model`.
     `concurrency` maps internally to `consumer_quotas.quota_type = "concurrency"`.
   - `limits`: `max_input_tokens`, `max_output_tokens`,
     `max_request_body_bytes` — per-request caps; omitted/zero means no limit.
+- `settings.observability`: three independent signal blocks — `logs`,
+  `metrics`, `traces`. Each signal picks its own exporter and owns a flat set
+  of engine-specific fields; there is no shared/global exporter, endpoint, or
+  export interval. The authoritative field schema (per exporter kind, per
+  signal) lives in `go/internal/observability/exporter.go`'s registry
+  (`ExportersFor`); this section summarizes it.
+  - A signal block that is **absent** means that signal is disabled (no-op
+    provider) — this is the normal way to turn a signal off.
+  - A signal block that is **present** (even `logs: {}` or bare `logs:`)
+    **must** set `exporter`, or `LoadConfig` rejects it — an empty block is
+    treated as a mistake, not "disabled".
+  - `exporter` must be one of the kinds registered for that signal (below);
+    an unregistered kind is a validation error. There is no `"none"`
+    sentinel value.
+  - Valid exporters per signal:
+    - `logs`: `stdout` | `otlp`
+    - `metrics`: `stdout` | `otlp` | `prometheus`
+    - `traces`: `stdout` | `otlp`
+  - `stdout`: no fields.
+  - `otlp` (all three signals): `endpoint` (required, no default — e.g.
+    `http://127.0.0.1:4317`, an admin OTLP receiver address or an external
+    collector), `protocol` (`http` | `grpc`, default `http`), `interval`
+    (export batch interval, default `5s`).
+  - `prometheus` (`metrics` only): `listen` (address the gateway's second,
+    independent `/metrics` HTTP server binds, default `:9464`), `path`
+    (default `/metrics`).
+  - Fields not belonging to the selected `exporter` on a block are a
+    validation error (e.g. `logs: {exporter: stdout, endpoint: "..."}` is
+    rejected — `stdout` takes no fields).
+  - `retention` and `data_dir` are **not** part of this gateway YAML layer —
+    they are admin-side control-plane configuration (admin DB `settings`,
+    editable via the WebUI, or the admin process's `--obs-data-dir` flag) and
+    never appear under `settings.observability` here.
