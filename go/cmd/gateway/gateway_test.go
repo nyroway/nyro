@@ -349,8 +349,11 @@ func TestStartMetricsServer_BindsAndShutsDownOnCtxCancel(t *testing.T) {
 	for time.Now().Before(deadline) {
 		resp, err := http.Get("http://" + addr + "/metrics")
 		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			statusCode := resp.StatusCode
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				t.Fatalf("close response body: %v", closeErr)
+			}
+			if statusCode == http.StatusOK {
 				lastErr = nil
 				break
 			}
@@ -367,7 +370,11 @@ func TestStartMetricsServer_BindsAndShutsDownOnCtxCancel(t *testing.T) {
 	deadline = time.Now().Add(2 * time.Second)
 	var shutErr error
 	for time.Now().Before(deadline) {
-		_, shutErr = http.Get("http://" + addr + "/metrics")
+		var resp *http.Response
+		resp, shutErr = http.Get("http://" + addr + "/metrics")
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
 		if shutErr != nil {
 			break
 		}
