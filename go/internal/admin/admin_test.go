@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -115,6 +116,77 @@ func TestAdminRouteAndSettings(t *testing.T) {
 	rec = do(r, "GET", "/api/v1/settings/log_retention_days", "", nil)
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"value":"7"`)) {
 		t.Errorf("get setting → %s", rec.Body.String())
+	}
+}
+
+// fakeNodeLister is a test-local stand-in for configsync.ConfigServer,
+// satisfying the NodeLister interface with fixed data.
+type fakeNodeLister struct {
+	nodes []configsync.NodeInfo
+}
+
+func (f fakeNodeLister) Nodes() []configsync.NodeInfo { return f.nodes }
+
+func TestAdminNodesEmptyWithoutLister(t *testing.T) {
+	// nodeListerVal defaults to nil (config-sync/gRPC disabled, standalone
+	// mode) — /nodes must degrade to an empty array, not 500/panic.
+	SetNodeLister(nil)
+	r, _ := newEngine(t, "")
+
+	rec := do(r, "GET", "/api/v1/nodes", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("nodes without lister → %d %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+		t.Errorf("nodes without lister body = %q, want []", got)
+	}
+}
+
+func TestAdminNodesReturnsWiredListerData(t *testing.T) {
+	connectedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	SetNodeLister(fakeNodeLister{nodes: []configsync.NodeInfo{
+		{
+			NodeID:         "node-1",
+			Hostname:       "gw-1.internal",
+			AppVersion:     "1.2.3",
+			RemoteAddr:     "10.0.0.5:54321",
+			ConnectedAt:    connectedAt,
+			AppliedVersion: 42,
+		},
+	}})
+	t.Cleanup(func() { SetNodeLister(nil) })
+	r, _ := newEngine(t, "")
+
+	rec := do(r, "GET", "/api/v1/nodes", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("nodes with lister → %d %s", rec.Code, rec.Body.String())
+	}
+
+	var nodes []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &nodes); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %v, want 1 entry", nodes)
+	}
+	n := nodes[0]
+	if n["node_id"] != "node-1" {
+		t.Errorf("node_id = %v", n["node_id"])
+	}
+	if n["hostname"] != "gw-1.internal" {
+		t.Errorf("hostname = %v", n["hostname"])
+	}
+	if n["app_version"] != "1.2.3" {
+		t.Errorf("app_version = %v", n["app_version"])
+	}
+	if n["remote_addr"] != "10.0.0.5:54321" {
+		t.Errorf("remote_addr = %v", n["remote_addr"])
+	}
+	if n["connected_at"] != connectedAt.Format(time.RFC3339Nano) {
+		t.Errorf("connected_at = %v, want %v", n["connected_at"], connectedAt.Format(time.RFC3339Nano))
+	}
+	if n["applied_version"] != float64(42) {
+		t.Errorf("applied_version = %v", n["applied_version"])
 	}
 }
 
