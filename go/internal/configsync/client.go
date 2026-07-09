@@ -9,7 +9,6 @@ import (
 	"math"
 	"net"
 	"os"
-	"runtime/debug"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
+	"github.com/nyroway/nyro/go/internal/version"
 )
 
 // ConfigClient connects to the admin's gRPC ConfigService, subscribes to the
@@ -32,9 +32,10 @@ type ConfigClient struct {
 	// reconnects so the admin's node registry sees a stable identity rather
 	// than a new "node" per reconnect. Purely for operational visibility
 	// (/api/v1/nodes); never influences what config is served.
-	nodeID     string
-	appVersion string
-	hostname   string
+	nodeID      string
+	appVersion  string
+	hostname    string
+	servicePort string
 
 	// dialOpts allow tests to inject a bufconn dialer.
 	dialOpts []grpc.DialOption
@@ -45,14 +46,17 @@ type ConfigClient struct {
 }
 
 // NewConfigClient builds a client that connects to target (host:port) and
-// publishes received snapshots to cache.
-func NewConfigClient(target string, cache *ConfigCache) *ConfigClient {
+// publishes received snapshots to cache. servicePort is this gateway's own
+// data-plane listen port (for node-visibility reporting only — pass "" if
+// unknown/not applicable, e.g. in tests).
+func NewConfigClient(target string, cache *ConfigCache, servicePort string) *ConfigClient {
 	return &ConfigClient{
 		target:         target,
 		cache:          cache,
 		nodeID:         newNodeID(),
 		appVersion:     buildVersion(),
 		hostname:       hostnameOrUnknown(),
+		servicePort:    servicePort,
 		initialBackoff: 500 * time.Millisecond,
 		maxBackoff:     30 * time.Second,
 		dialOpts: []grpc.DialOption{
@@ -84,13 +88,12 @@ func hostnameOrUnknown() string {
 	return h
 }
 
-// buildVersion returns the gateway's build version for node-visibility
-// purposes, best-effort from the compiled module's version info.
+// buildVersion returns the gateway's version for node-visibility purposes.
+// version.Version is the project's authoritative version (see that package's
+// doc comment for why this beats debug.ReadBuildInfo — the latter only
+// carries a real semver for `go install pkg@version` builds).
 func buildVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
-		return info.Main.Version
-	}
-	return "dev"
+	return version.Version
 }
 
 // Run blocks until ctx is cancelled, maintaining the stream and republishing
@@ -139,10 +142,11 @@ func (c *ConfigClient) runOnce(ctx context.Context) (connected bool, err error) 
 
 	client := pb.NewConfigServiceClient(conn)
 	stream, err := client.StreamConfig(dialCtx, &pb.Subscribe{
-		Version:    0,
-		NodeId:     c.nodeID,
-		AppVersion: c.appVersion,
-		Hostname:   c.hostname,
+		Version:     0,
+		NodeId:      c.nodeID,
+		AppVersion:  c.appVersion,
+		Hostname:    c.hostname,
+		ServicePort: c.servicePort,
 	})
 	if err != nil {
 		return false, err

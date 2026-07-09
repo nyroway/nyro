@@ -10,6 +10,7 @@ import (
 
 	"github.com/nyroway/nyro/go/cmd/admin"
 	"github.com/nyroway/nyro/go/cmd/gateway"
+	"github.com/nyroway/nyro/go/internal/version"
 )
 
 // newRootCmd builds the root cobra command. Extracted from main so tests can
@@ -25,7 +26,19 @@ func newRootCmd() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(gateway.NewCmd())
 	root.AddCommand(admin.NewCmd())
+	root.AddCommand(newVersionCmd())
 	return root
+}
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the nyro version",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "nyro version %s\n", version.Version)
+			return err
+		},
+	}
 }
 
 func main() {

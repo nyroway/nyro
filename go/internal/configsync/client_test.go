@@ -13,7 +13,7 @@ import (
 
 // newClient builds a ConfigClient pointed at the bufconn env via dialOpts.
 func newClient(cache *ConfigCache, dialOpt grpc.DialOption) *ConfigClient {
-	c := NewConfigClient("passthrough:///bufnet", cache)
+	c := NewConfigClient("passthrough:///bufnet", cache, "19530")
 	c.initialBackoff = 20 * time.Millisecond
 	c.maxBackoff = 100 * time.Millisecond
 	c.dialOpts = []grpc.DialOption{
