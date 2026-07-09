@@ -13,7 +13,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
-	"github.com/nyroway/nyro/go/internal/xds"
+	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // ── settings ──
@@ -557,17 +557,17 @@ func flattenObservabilitySignal(out map[string]string, signal observability.Sign
 	return nil
 }
 
-// BuildSnapshot constructs an xds.ConfigSnapshot directly from the YAML config
-// (no persistent storage). This is the standalone-mode path: `nyro gateway
-// --config` swaps this snapshot into the gateway's cache so config reads work
-// without an admin or DB. It seeds a throwaway in-memory backend via the same
-// ApplyTo used by persistent backends and reads the snapshot back through
-// xds.LoadFromStorage — there is no separate synthetic-ID construction path to
-// keep in sync.
-func (c *Config) BuildSnapshot() (*xds.ConfigSnapshot, error) {
+// BuildSnapshot constructs a configsync.ConfigSnapshot directly from the YAML
+// config (no persistent storage). This is the standalone-mode path: `nyro
+// gateway --config` swaps this snapshot into the gateway's cache so config
+// reads work without an admin or DB. It seeds a throwaway in-memory backend
+// via the same ApplyTo used by persistent backends and reads the snapshot
+// back through configsync.LoadFromStorage — there is no separate
+// synthetic-ID construction path to keep in sync.
+func (c *Config) BuildSnapshot() (*configsync.ConfigSnapshot, error) {
 	tmp := memory.New()
 	if err := c.ApplyTo(tmp.Storage()); err != nil {
 		return nil, err
 	}
-	return xds.LoadFromStorage(tmp.Storage())
+	return configsync.LoadFromStorage(tmp.Storage())
 }

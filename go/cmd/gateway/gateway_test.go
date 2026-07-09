@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/observability"
-	"github.com/nyroway/nyro/go/internal/xds"
 )
 
 func TestNewCmdFlags(t *testing.T) {
@@ -21,15 +21,15 @@ func TestNewCmdFlags(t *testing.T) {
 	if cfg, _ := cmd.Flags().GetString("config"); cfg != "" {
 		t.Errorf("default config = %q; want empty", cfg)
 	}
-	if xds, _ := cmd.Flags().GetString("xds-addr"); xds != "" {
-		t.Errorf("default xds-addr = %q; want empty", xds)
+	if cs, _ := cmd.Flags().GetString("configsync-addr"); cs != "" {
+		t.Errorf("default configsync-addr = %q; want empty", cs)
 	}
 	if cmd.Use != "gateway" {
 		t.Errorf("Use = %q; want gateway", cmd.Use)
 	}
 }
 
-func TestBuildGateway_ConfigAndXdsAreMutuallyExclusive(t *testing.T) {
+func TestBuildGateway_ConfigAndConfigSyncAreMutuallyExclusive(t *testing.T) {
 	// NOTE: buildGateway itself does NOT enforce XOR (it picks --config when both
 	// are set). The XOR is enforced in the cobra RunE. We exercise it via RunE
 	// below. This test documents that buildGateway picks config when both given.
@@ -40,14 +40,15 @@ func TestBuildGateway_ConfigAndXdsAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
-func TestRunE_RejectsBothConfigAndXdsAddr(t *testing.T) {
+func TestRunE_RejectsBothConfigAndConfigSyncAddr(t *testing.T) {
 	cmd := NewCmd()
 	// ParseFlags binds the args to the flag set first. Calling RunE directly
 	// skips cobra's parse step, so without ParseFlags the flags read as
-	// default-empty, the --config/--xds-addr XOR guard would NOT fire, and RunE
-	// would fall through to the default branch and block on RunServer (test
-	// hang). The XOR check still returns before touching storage/listeners.
-	if err := cmd.ParseFlags([]string{"--config", "a.yaml", "--xds-addr", "host:1234"}); err != nil {
+	// default-empty, the --config/--configsync-addr XOR guard would NOT fire,
+	// and RunE would fall through to the default branch and block on
+	// RunServer (test hang). The XOR check still returns before touching
+	// storage/listeners.
+	if err := cmd.ParseFlags([]string{"--config", "a.yaml", "--configsync-addr", "host:1234"}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
 	err := cmd.RunE(cmd, nil)
@@ -81,12 +82,12 @@ consumers:
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gw, stopXDS, obs, err := buildGateway(context.Background(), path, "")
+	gw, stopConfigSync, obs, err := buildGateway(context.Background(), path, "")
 	if err != nil {
 		t.Fatalf("buildGateway: %v", err)
 	}
-	if stopXDS != nil {
-		t.Error("standalone mode should not start an xDS client")
+	if stopConfigSync != nil {
+		t.Error("standalone mode should not start a config-sync client")
 	}
 	if obs == nil {
 		t.Error("standalone mode should construct an observability provider")
@@ -160,15 +161,15 @@ consumers: []
 	_ = obs.Shutdown(context.Background())
 }
 
-// cacheWithSettings builds an xds.ConfigCache pre-loaded with the given
+// cacheWithSettings builds a configsync.ConfigCache pre-loaded with the given
 // obs_* settings, mirroring what a control-plane push (or a standalone YAML
 // snapshot) would populate.
-func cacheWithSettings(settings map[string]string) *xds.ConfigCache {
-	var b xds.Snapshot
+func cacheWithSettings(settings map[string]string) *configsync.ConfigCache {
+	var b configsync.Snapshot
 	for k, v := range settings {
 		b.SetSetting(k, v)
 	}
-	cache := &xds.ConfigCache{}
+	cache := &configsync.ConfigCache{}
 	cache.Swap(b.Done())
 	return cache
 }

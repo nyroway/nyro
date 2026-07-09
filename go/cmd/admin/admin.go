@@ -1,5 +1,5 @@
 // Package admin implements the `nyro admin` subcommand: the control plane
-// (management API + WebUI + OAuth session lifecycle + xDS config push).
+// (management API + WebUI + OAuth session lifecycle + config-sync push).
 package admin
 
 import (
@@ -19,7 +19,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/webui"
-	"github.com/nyroway/nyro/go/internal/xds"
+	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // NewCmd builds the admin (control-plane) subcommand.
@@ -34,7 +34,7 @@ func NewCmd() *cobra.Command {
 		Short: "Run the control plane (management API + WebUI)",
 	}
 	cmd.Flags().String("addr", "127.0.0.1:19531", "listen address for the control plane")
-	cmd.Flags().String("grpc-addr", "", "listen address for the gRPC xDS server (disabled if empty)")
+	cmd.Flags().String("grpc-addr", "", "listen address for the config-sync gRPC server (disabled if empty)")
 	cmd.Flags().String("admin-token", "", "Bearer token protecting /api/v1 admin routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.Flags().String("storage", "sqlite", "storage backend: sqlite|postgres|mysql")
@@ -109,16 +109,18 @@ func NewCmd() *cobra.Command {
 			Traces:  obsCfg.TracesRetentionDays,
 		}, time.Hour)
 
-		// Optionally start the gRPC xDS server and wire it as the config-push
-		// target so every admin config write reaches connected gateways.
+		// Optionally start the config-sync gRPC server and wire it as the
+		// config-push target so every admin config write reaches connected
+		// gateways.
 		if grpcAddr != "" {
-			srv := xds.NewConfigServer(st)
-			shutdown, err := xds.ServeGRPC(ctx, grpcAddr, srv)
+			srv := configsync.NewConfigServer(st)
+			shutdown, err := configsync.ServeGRPC(ctx, grpcAddr, srv)
 			if err != nil {
 				return err
 			}
 			defer shutdown()
 			admin.SetBroadcaster(srv)
+			admin.SetNodeLister(srv)
 		}
 
 		engine := chi.NewRouter()

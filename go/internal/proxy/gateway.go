@@ -13,18 +13,18 @@ import (
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/proxy/quota"
 	"github.com/nyroway/nyro/go/internal/router"
-	"github.com/nyroway/nyro/go/internal/xds"
+	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // Gateway holds the runtime dependencies for dispatching requests. Config reads
 // (upstreams, routes, consumer keys, proxy settings) go through Cache, an
-// in-memory snapshot published by xDS or built once from YAML; Quota is the
+// in-memory snapshot published by config-sync or built once from YAML; Quota is the
 // in-memory consumer-quota sliding window. The gateway holds NO storage handle:
 // per-request telemetry flows through the OTel phase hooks (Obs/Handles,
 // registered once at startup) → configured sink (none/stdout/otlp). Router
 // selects among a route's upstreams and tracks failover.
 type Gateway struct {
-	Cache  *xds.ConfigCache
+	Cache  *configsync.ConfigCache
 	Quota  *quota.Counter
 	Router *router.Router
 
@@ -44,16 +44,16 @@ type Gateway struct {
 // NewGateway builds a Gateway with a fresh, empty ConfigCache. Tests use this
 // and populate the cache directly via Cache.LoadAndSwap / Cache.Swap. Production
 // callers (cmd/gateway) use NewGatewayWithCache with a snapshot built from YAML
-// or filled by the xDS stream.
+// or filled by the config-sync stream.
 func NewGateway() *Gateway {
-	return NewGatewayWithCache(&xds.ConfigCache{})
+	return NewGatewayWithCache(&configsync.ConfigCache{})
 }
 
 // NewGatewayWithCache builds a Gateway using a caller-provided ConfigCache
-// (standalone-YAML and xDS path): the caller builds the snapshot from YAML or
-// from the xDS stream and swaps it in, so the gateway never needs storage for
+// (standalone-YAML and config-sync path): the caller builds the snapshot from YAML or
+// from the config-sync stream and swaps it in, so the gateway never needs storage for
 // config. Obs/Handles are attached by cmd/gateway after construction.
-func NewGatewayWithCache(cache *xds.ConfigCache) *Gateway {
+func NewGatewayWithCache(cache *configsync.ConfigCache) *Gateway {
 	return &Gateway{
 		Cache:  cache,
 		Quota:  quota.New(),
@@ -64,11 +64,11 @@ func NewGatewayWithCache(cache *xds.ConfigCache) *Gateway {
 // snapshot returns the current config snapshot, falling back to an empty one so
 // callers never see a nil pointer (readers on an empty snapshot simply report
 // "not found", matching storage behavior before any config is loaded).
-func (g *Gateway) snapshot() *xds.ConfigSnapshot {
+func (g *Gateway) snapshot() *configsync.ConfigSnapshot {
 	if s := g.Cache.Load(); s != nil {
 		return s
 	}
-	return &xds.ConfigSnapshot{}
+	return &configsync.ConfigSnapshot{}
 }
 
 // proxySettings is the resolved settings.proxy configuration for the current
@@ -89,7 +89,7 @@ var defaultRetryOnStatus = map[int]bool{429: true, 500: true, 502: true, 503: tr
 // internal/config.flattenSettings under the proxy.* dot-key namespace),
 // applying the config-schema plan's example defaults for anything absent or
 // unparseable.
-func resolveProxySettings(snap *xds.ConfigSnapshot) proxySettings {
+func resolveProxySettings(snap *configsync.ConfigSnapshot) proxySettings {
 	ps := proxySettings{
 		RequestTimeout: 120 * time.Second,
 		ConnectTimeout: 30 * time.Second,

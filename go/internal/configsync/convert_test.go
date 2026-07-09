@@ -1,10 +1,10 @@
-package xds
+package configsync
 
 import (
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/storage/memory"
-	pb "github.com/nyroway/nyro/go/internal/xds/pb/xds/v1"
+	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
 )
 
 // protoRoundtrip builds a pb snapshot, converts it to the internal model, and
@@ -154,8 +154,8 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 // Existing settings coverage (TestLoadFromStorage_BuildsAllMaps,
 // TestSnapshotFromProto_Settings, TestSnapshotFromStorage_RoundtripsThroughProto)
 // only exercises generic keys like proxy_url; this proves the new obs key
-// shapes specifically survive the same pipeline unmodified, with no xDS
-// changes required for them (as the plan calls for).
+// shapes specifically survive the same pipeline unmodified, with no
+// config-sync changes required for them (as the plan calls for).
 func TestSnapshotFromStorage_CarriesObservabilitySettings(t *testing.T) {
 	st := memory.New()
 	core := st.Storage()

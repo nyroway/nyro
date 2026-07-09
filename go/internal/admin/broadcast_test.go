@@ -18,7 +18,7 @@ func (f *fakeBroadcaster) callsCount() int32 {
 	return atomic.LoadInt32(&f.calls)
 }
 
-// TestBumpEpochNotifiesBroadcaster proves the admin write path pushes to xDS:
+// TestBumpEpochNotifiesBroadcaster proves the admin write path pushes to config-sync:
 // bumpEpoch (called after every config write) must invoke the registered
 // broadcaster. This is the seam that makes admin config changes reach gateways.
 func TestBumpEpochNotifiesBroadcaster(t *testing.T) {

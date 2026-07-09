@@ -37,7 +37,7 @@ func NewRouter(gw *Gateway) chi.Router {
 	})
 	// GET /readyz — readiness probe gated on config-cache fill. The gateway no
 	// longer holds a storage handle (P3c), so readiness is "has a config
-	// snapshot been published (xDS push / YAML build)?" — nil means not ready.
+	// snapshot been published (config-sync push / YAML build)?" — nil means not ready.
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if gw.Cache.Load() == nil {
 			webutil.JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "unready"})

@@ -260,6 +260,20 @@ export interface GatewayStatus {
   writable?: boolean;
 }
 
+/**
+ * One gateway (data plane) currently connected to this admin over config-sync.
+ * Best-effort, in-memory view (`GET /api/v1/nodes`) — a node disappears the
+ * moment its stream drops; nothing here is persisted.
+ */
+export interface GatewayNode {
+  node_id: string;
+  hostname: string;
+  app_version: string;
+  remote_addr: string;
+  connected_at: string;
+  applied_version: number;
+}
+
 export interface StatsOverview {
   total_requests: number;
   total_input_tokens: number;

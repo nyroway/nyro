@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Line, LineChart } from "recharts";
 import { backend } from "@/lib/backend";
-import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, GatewayStatus, Upstream, Route } from "@/lib/types";
-import { Activity, Zap, Clock, AlertTriangle, Server, Route as RouteIcon } from "lucide-react";
+import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, GatewayStatus, GatewayNode, Upstream, Route } from "@/lib/types";
+import { Activity, Zap, Clock, AlertTriangle, Server, Route as RouteIcon, Network } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 
 function fmt(n: number) {
@@ -61,6 +61,12 @@ export default function DashboardPage() {
     queryFn: () => backend("list_routes"),
   });
 
+  const { data: nodes = [] } = useQuery<GatewayNode[]>({
+    queryKey: ["nodes"],
+    queryFn: () => backend("list_nodes"),
+    refetchInterval: 10_000,
+  });
+
   const errorRate = overview && overview.total_requests > 0
     ? ((overview.error_count / overview.total_requests) * 100).toFixed(1)
     : "0";
@@ -74,6 +80,7 @@ export default function DashboardPage() {
     { label: isZh ? "错误率" : "Error Rate", value: `${errorRate}%`, icon: AlertTriangle, color: "text-red-500" },
     { label: isZh ? "提供商" : "Providers", value: String(status?.upstream_count ?? providers.length), icon: Server, color: "text-purple-600" },
     { label: isZh ? "模型" : "Models", value: String(status?.route_count ?? routes.length), icon: RouteIcon, color: "text-indigo-600" },
+    { label: isZh ? "已连接节点" : "Connected Nodes", value: String(nodes.length), icon: Network, color: "text-teal-600" },
   ];
 
   const chartHourly = hourly.map((h) => ({

@@ -1,21 +1,26 @@
 syntax = "proto3";
 
-package nyro.xds.v1;
+package nyro.configsync.v1;
 
-option go_package = "github.com/nyroway/nyro/go/internal/xds/pb;xds";
+option go_package = "github.com/nyroway/nyro/go/internal/configsync/pb;configsync";
 
-// ConfigService is the xDS-style control-plane API. The admin (control plane,
-// sole DB reader) serves it; the gateway (data plane, no DB) subscribes.
+// ConfigService is nyro's config-distribution control-plane API: the admin
+// (control plane, sole DB reader) serves it; the gateway (data plane, no DB)
+// subscribes to receive full config snapshots.
 service ConfigService {
   // StreamConfig: the gateway sends its last-applied version (0 = full resync,
-  // e.g. on connect/reconnect). The admin streams a full ConfigSnapshot
-  // whenever config changes (each push increments version). Long-lived stream;
-  // on drop the gateway reconnects with version=0 for a full resync.
+  // e.g. on connect/reconnect) plus node identity. The admin streams a full
+  // ConfigSnapshot whenever config changes (each push increments version).
+  // Long-lived stream; on drop the gateway reconnects with version=0 for a
+  // full resync.
   rpc StreamConfig(Subscribe) returns (stream ConfigSnapshot);
 }
 
 message Subscribe {
-  int64 version = 1;  // gateway's last-applied version; 0 = full resync
+  int64 version = 1;      // gateway's last-applied version; 0 = full resync
+  string node_id = 2;      // stable per-process identifier (survives reconnects)
+  string app_version = 3;  // gateway build version, for node visibility
+  string hostname = 4;      // gateway's os.Hostname(), for node visibility
 }
 
 // ConfigSnapshot is a full, immutable configuration snapshot (config-schema:

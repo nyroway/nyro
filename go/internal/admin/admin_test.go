@@ -392,7 +392,7 @@ func TestProtocolCredentials(t *testing.T) {
 }
 
 // TestMutationsBumpEpoch verifies every config-mutating endpoint bumps
-// config_epoch so the xDS broadcaster pushes a fresh snapshot.
+// config_epoch so the config-sync broadcaster pushes a fresh snapshot.
 func TestMutationsBumpEpoch(t *testing.T) {
 	r, st := newEngine(t, "")
 	core := st.Storage()

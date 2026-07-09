@@ -8,7 +8,7 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
-	"github.com/nyroway/nyro/go/internal/xds"
+	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // TestReadyz verifies the readiness probe is gated on config-cache fill (P3c:
@@ -50,9 +50,9 @@ func TestReadyz(t *testing.T) {
 		t.Errorf("/readyz body: %s", rec2.Body.String())
 	}
 
-	// Sanity: a hand-built snapshot via Swap also flips ready (the xDS path).
+	// Sanity: a hand-built snapshot via Swap also flips ready (the config-sync path).
 	gw3 := NewGateway()
-	gw3.Cache.Swap((&xds.Snapshot{}).Done())
+	gw3.Cache.Swap((&configsync.Snapshot{}).Done())
 	r3 := NewRouter(gw3)
 	req3 := httptest.NewRequest("GET", "/readyz", nil)
 	rec3 := httptest.NewRecorder()

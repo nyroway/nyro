@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -60,6 +61,19 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				"backend":        health.Backend,
 				"writable":       health.Writable,
 			})
+		})
+
+		// /nodes lists gateways currently connected over config-sync (best-effort,
+		// in-memory — never persisted). Returns an empty array (not an error) when
+		// config-sync is disabled (no --grpc-addr) or nothing is connected yet, so
+		// the WebUI can render an empty state instead of handling a special error.
+		g.Get("/nodes", func(w http.ResponseWriter, r *http.Request) {
+			lister := nodeListerVal
+			if lister == nil {
+				webutil.JSON(w, http.StatusOK, []configsync.NodeInfo{})
+				return
+			}
+			webutil.JSON(w, http.StatusOK, lister.Nodes())
 		})
 
 		// ── upstreams ──
@@ -519,23 +533,41 @@ func bumpEpoch(s storage.Storage) {
 	v, _ := s.Settings().Get("config_epoch")
 	n, _ := strconv.ParseInt(v, 10, 64)
 	_ = s.Settings().Set("config_epoch", strconv.FormatInt(n+1, 10))
-	// Push the new config to every connected gateway over xDS, if a broadcaster
-	// (the admin's gRPC ConfigServer) has been wired in. No-op in tests/standalone.
+	// Push the new config to every connected gateway over config-sync, if a
+	// broadcaster (the admin's gRPC ConfigServer) has been wired in. No-op in
+	// tests/standalone.
 	if b := configBroadcaster(); b != nil {
 		b.Notify()
 	}
 }
 
-// Broadcaster pushes a fresh config snapshot to connected gateways. The admin's
-// xDS ConfigServer implements it; it is optional (nil when xDS is disabled).
+// Broadcaster pushes a fresh config snapshot to connected gateways. The
+// admin's config-sync ConfigServer implements it; it is optional (nil when
+// config-sync is disabled).
 type Broadcaster interface {
 	Notify()
 }
 
 var configBroadcasterVal Broadcaster
 
-// SetBroadcaster wires the xDS push target. Call once at admin startup (after
-// Mount) if the gRPC ConfigServer is enabled. Safe to pass nil to disable.
+// SetBroadcaster wires the config-sync push target. Call once at admin
+// startup (after Mount) if the gRPC ConfigServer is enabled. Safe to pass nil
+// to disable.
 func SetBroadcaster(b Broadcaster) { configBroadcasterVal = b }
 
 func configBroadcaster() Broadcaster { return configBroadcasterVal }
+
+// NodeLister exposes the set of gateways currently connected over
+// config-sync, for the /api/v1/nodes admin endpoint. The admin's config-sync
+// ConfigServer implements it; it is optional (nil when config-sync is
+// disabled, in which case /nodes reports an empty list rather than erroring).
+type NodeLister interface {
+	Nodes() []configsync.NodeInfo
+}
+
+var nodeListerVal NodeLister
+
+// SetNodeLister wires the config-sync node registry. Call once at admin
+// startup (after Mount) if the gRPC ConfigServer is enabled. Safe to pass nil
+// to disable.
+func SetNodeLister(l NodeLister) { nodeListerVal = l }

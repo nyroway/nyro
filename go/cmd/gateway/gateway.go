@@ -14,9 +14,9 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/config"
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/proxy"
-	"github.com/nyroway/nyro/go/internal/xds"
 )
 
 // NewCmd builds the gateway (data-plane) subcommand.
@@ -24,11 +24,11 @@ import (
 // Config sources (exactly one is required):
 //   - --config: standalone YAML (no admin/DB needed). The snapshot is built once
 //     at startup and never refreshed; edit + restart to change config.
-//   - --xds-addr: admin's gRPC endpoint. The gateway subscribes to a long-lived
-//     config stream and hot-reloads on every admin config change.
+//   - --configsync-addr: admin's gRPC endpoint. The gateway subscribes to a
+//     long-lived config stream and hot-reloads on every admin config change.
 //
 // Phase 3 removed the transitional Phase-1 DB-poll default — exactly one of
-// --config / --xds-addr must now be set.
+// --config / --configsync-addr must now be set.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "gateway",
@@ -36,28 +36,28 @@ func NewCmd() *cobra.Command {
 	}
 	cmd.Flags().String("addr", "127.0.0.1:19530", "listen address for the data plane")
 	cmd.Flags().String("config", "", "standalone YAML config file (no admin/DB needed)")
-	cmd.Flags().String("xds-addr", "", "admin gRPC xDS endpoint (host:port) for config hot-reload")
+	cmd.Flags().String("configsync-addr", "", "admin gRPC config-sync endpoint (host:port) for config hot-reload")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("addr")
 		cfgPath, _ := cmd.Flags().GetString("config")
-		xdsAddr, _ := cmd.Flags().GetString("xds-addr")
+		configSyncAddr, _ := cmd.Flags().GetString("configsync-addr")
 
-		if cfgPath == "" && xdsAddr == "" {
-			return errors.New("exactly one of --config or --xds-addr is required (the legacy DB-poll default was removed in Phase 3)")
+		if cfgPath == "" && configSyncAddr == "" {
+			return errors.New("exactly one of --config or --configsync-addr is required (the legacy DB-poll default was removed in Phase 3)")
 		}
-		if cfgPath != "" && xdsAddr != "" {
-			return errors.New("--config and --xds-addr are mutually exclusive (set exactly one)")
+		if cfgPath != "" && configSyncAddr != "" {
+			return errors.New("--config and --configsync-addr are mutually exclusive (set exactly one)")
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		gw, stopXDS, obsProvider, err := buildGateway(ctx, cfgPath, xdsAddr)
+		gw, stopConfigSync, obsProvider, err := buildGateway(ctx, cfgPath, configSyncAddr)
 		if err != nil {
 			return err
 		}
-		if stopXDS != nil {
-			defer stopXDS()
+		if stopConfigSync != nil {
+			defer stopConfigSync()
 		}
 		if obsProvider != nil {
 			defer func() {
@@ -79,12 +79,13 @@ func NewCmd() *cobra.Command {
 const shutdownTimeout = 5 * time.Second
 
 // buildGateway selects the config source and returns a ready, storage-free
-// Gateway plus an optional xDS-client stop function (nil unless --xds-addr) and
-// the OTel provider (always non-nil on success — telemetry is wired in every
-// mode). It constructs the ObsProvider + Handles and calls RegisterHooks exactly
-// ONCE per process (the plugin registry accumulates appends, so re-registering
-// would double-emit). /readyz reflects cache fill, not storage health.
-func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gateway, stopXDS func(), obs *observability.ObsProvider, err error) {
+// Gateway plus an optional config-sync client stop function (nil unless
+// --configsync-addr) and the OTel provider (always non-nil on success —
+// telemetry is wired in every mode). It constructs the ObsProvider + Handles
+// and calls RegisterHooks exactly ONCE per process (the plugin registry
+// accumulates appends, so re-registering would double-emit). /readyz reflects
+// cache fill, not storage health.
+func buildGateway(ctx context.Context, cfgPath, configSyncAddr string) (gw *proxy.Gateway, stopConfigSync func(), obs *observability.ObsProvider, err error) {
 	switch {
 	case cfgPath != "":
 		// Standalone YAML: build the config snapshot directly (no DB). The
@@ -103,7 +104,7 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("build snapshot: %w", err)
 		}
-		cache := &xds.ConfigCache{}
+		cache := &configsync.ConfigCache{}
 		cache.Swap(snap)
 		gw = proxy.NewGatewayWithCache(cache)
 
@@ -116,12 +117,12 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 		startMetricsServer(ctx, prov, obsCfg.Metrics.Params["path"])
 		return gw, nil, prov, nil
 
-	case xdsAddr != "":
-		// xDS hot-reload: empty cache is filled by the stream. Observability
-		// config is read from the cache snapshot (published by the admin) once
-		// it arrives.
-		cache := &xds.ConfigCache{}
-		client := xds.NewConfigClient(xdsAddr, cache)
+	case configSyncAddr != "":
+		// config-sync hot-reload: empty cache is filled by the stream.
+		// Observability config is read from the cache snapshot (published by
+		// the admin) once it arrives.
+		cache := &configsync.ConfigCache{}
+		client := configsync.NewConfigClient(configSyncAddr, cache)
 		go func() { _ = client.Run(ctx) }()
 		gw = proxy.NewGatewayWithCache(cache)
 
@@ -139,7 +140,7 @@ func buildGateway(ctx context.Context, cfgPath, xdsAddr string) (gw *proxy.Gatew
 
 	default:
 		// Unreachable: RunE enforces the XOR. Guard anyway.
-		return nil, nil, nil, errors.New("exactly one of --config or --xds-addr is required")
+		return nil, nil, nil, errors.New("exactly one of --config or --configsync-addr is required")
 	}
 }
 
@@ -151,9 +152,10 @@ func attachObservability(gw *proxy.Gateway, prov *observability.ObsProvider) {
 	observability.RegisterHooks(prov.Tracer, prov.Logger, gw.Handles)
 }
 
-// cacheObsGet returns a get-func that reads obs_* settings from the xDS-published
-// snapshot, falling back to "" (absent) before the first push lands.
-func cacheObsGet(cache *xds.ConfigCache) func(string) (string, error) {
+// cacheObsGet returns a get-func that reads obs_* settings from the
+// config-sync-published snapshot, falling back to "" (absent) before the
+// first push lands.
+func cacheObsGet(cache *configsync.ConfigCache) func(string) (string, error) {
 	return func(key string) (string, error) {
 		if s := cache.Load(); s != nil {
 			if v, ok := s.SettingGet(key); ok {
@@ -166,19 +168,20 @@ func cacheObsGet(cache *xds.ConfigCache) func(string) (string, error) {
 
 // resolveObsConfig reads observability settings from the config snapshot — the
 // gateway's only two data sources are the config file (standalone) and the
-// control-plane push (xDS); both end up in the same ConfigCache/snapshot
-// shape, so both branches of buildGateway call this identically. If the
-// snapshot has no observability settings at all (absent from the config file,
-// or not yet pushed over xDS), the fixed default in defaultObsGet applies. If
-// the snapshot's observability settings fail to load (e.g. an unregistered
-// exporter kind or another validation error from observability.LoadConfig),
-// the error is logged and the fixed default is used as well — a malformed
-// obs setting must not prevent the gateway from starting. Process
-// environment variables are never consulted here — a deployment that wants
-// an env var to drive an exporter must reference it explicitly inside
-// config.yaml (e.g. endpoint: "${OTEL_EXPORTER_OTLP_ENDPOINT}"), which
-// config.LoadYAML's ${VAR} expansion already handles.
-func resolveObsConfig(cache *xds.ConfigCache) observability.ObsConfig {
+// control-plane push (config-sync); both end up in the same
+// ConfigCache/snapshot shape, so both branches of buildGateway call this
+// identically. If the snapshot has no observability settings at all (absent
+// from the config file, or not yet pushed over config-sync), the fixed
+// default in defaultObsGet applies. If the snapshot's observability settings
+// fail to load (e.g. an unregistered exporter kind or another validation
+// error from observability.LoadConfig), the error is logged and the fixed
+// default is used as well — a malformed obs setting must not prevent the
+// gateway from starting. Process environment variables are never consulted
+// here — a deployment that wants an env var to drive an exporter must
+// reference it explicitly inside config.yaml (e.g. endpoint:
+// "${OTEL_EXPORTER_OTLP_ENDPOINT}"), which config.LoadYAML's ${VAR} expansion
+// already handles.
+func resolveObsConfig(cache *configsync.ConfigCache) observability.ObsConfig {
 	obsCfg, err := observability.LoadConfig(cacheObsGet(cache))
 	if err != nil {
 		slog.Error("observability config from snapshot is invalid; falling back to defaults", "error", err)

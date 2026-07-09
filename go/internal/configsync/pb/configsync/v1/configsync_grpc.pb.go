@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             (unknown)
-// source: xds/v1/xds.proto
+// source: configsync/v1/configsync.proto
 
-package xds
+package configsync
 
 import (
 	context "context"
@@ -19,20 +19,22 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ConfigService_StreamConfig_FullMethodName = "/nyro.xds.v1.ConfigService/StreamConfig"
+	ConfigService_StreamConfig_FullMethodName = "/nyro.configsync.v1.ConfigService/StreamConfig"
 )
 
 // ConfigServiceClient is the client API for ConfigService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// ConfigService is the xDS-style control-plane API. The admin (control plane,
-// sole DB reader) serves it; the gateway (data plane, no DB) subscribes.
+// ConfigService is nyro's config-distribution control-plane API: the admin
+// (control plane, sole DB reader) serves it; the gateway (data plane, no DB)
+// subscribes to receive full config snapshots.
 type ConfigServiceClient interface {
 	// StreamConfig: the gateway sends its last-applied version (0 = full resync,
-	// e.g. on connect/reconnect). The admin streams a full ConfigSnapshot
-	// whenever config changes (each push increments version). Long-lived stream;
-	// on drop the gateway reconnects with version=0 for a full resync.
+	// e.g. on connect/reconnect) plus node identity. The admin streams a full
+	// ConfigSnapshot whenever config changes (each push increments version).
+	// Long-lived stream; on drop the gateway reconnects with version=0 for a
+	// full resync.
 	StreamConfig(ctx context.Context, in *Subscribe, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ConfigSnapshot], error)
 }
 
@@ -67,13 +69,15 @@ type ConfigService_StreamConfigClient = grpc.ServerStreamingClient[ConfigSnapsho
 // All implementations must embed UnimplementedConfigServiceServer
 // for forward compatibility.
 //
-// ConfigService is the xDS-style control-plane API. The admin (control plane,
-// sole DB reader) serves it; the gateway (data plane, no DB) subscribes.
+// ConfigService is nyro's config-distribution control-plane API: the admin
+// (control plane, sole DB reader) serves it; the gateway (data plane, no DB)
+// subscribes to receive full config snapshots.
 type ConfigServiceServer interface {
 	// StreamConfig: the gateway sends its last-applied version (0 = full resync,
-	// e.g. on connect/reconnect). The admin streams a full ConfigSnapshot
-	// whenever config changes (each push increments version). Long-lived stream;
-	// on drop the gateway reconnects with version=0 for a full resync.
+	// e.g. on connect/reconnect) plus node identity. The admin streams a full
+	// ConfigSnapshot whenever config changes (each push increments version).
+	// Long-lived stream; on drop the gateway reconnects with version=0 for a
+	// full resync.
 	StreamConfig(*Subscribe, grpc.ServerStreamingServer[ConfigSnapshot]) error
 	mustEmbedUnimplementedConfigServiceServer()
 }
@@ -124,7 +128,7 @@ type ConfigService_StreamConfigServer = grpc.ServerStreamingServer[ConfigSnapsho
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ConfigService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "nyro.xds.v1.ConfigService",
+	ServiceName: "nyro.configsync.v1.ConfigService",
 	HandlerType: (*ConfigServiceServer)(nil),
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
@@ -134,5 +138,5 @@ var ConfigService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "xds/v1/xds.proto",
+	Metadata: "configsync/v1/configsync.proto",
 }

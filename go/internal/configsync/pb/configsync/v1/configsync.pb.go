@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        (unknown)
-// source: xds/v1/xds.proto
+// source: configsync/v1/configsync.proto
 
-package xds
+package configsync
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -23,14 +23,17 @@ const (
 
 type Subscribe struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"` // gateway's last-applied version; 0 = full resync
+	Version       int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`                        // gateway's last-applied version; 0 = full resync
+	NodeId        string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`             // stable per-process identifier (survives reconnects)
+	AppVersion    string                 `protobuf:"bytes,3,opt,name=app_version,json=appVersion,proto3" json:"app_version,omitempty"` // gateway build version, for node visibility
+	Hostname      string                 `protobuf:"bytes,4,opt,name=hostname,proto3" json:"hostname,omitempty"`                       // gateway's os.Hostname(), for node visibility
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Subscribe) Reset() {
 	*x = Subscribe{}
-	mi := &file_xds_v1_xds_proto_msgTypes[0]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -42,7 +45,7 @@ func (x *Subscribe) String() string {
 func (*Subscribe) ProtoMessage() {}
 
 func (x *Subscribe) ProtoReflect() protoreflect.Message {
-	mi := &file_xds_v1_xds_proto_msgTypes[0]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -55,7 +58,7 @@ func (x *Subscribe) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Subscribe.ProtoReflect.Descriptor instead.
 func (*Subscribe) Descriptor() ([]byte, []int) {
-	return file_xds_v1_xds_proto_rawDescGZIP(), []int{0}
+	return file_configsync_v1_configsync_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Subscribe) GetVersion() int64 {
@@ -63,6 +66,27 @@ func (x *Subscribe) GetVersion() int64 {
 		return x.Version
 	}
 	return 0
+}
+
+func (x *Subscribe) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *Subscribe) GetAppVersion() string {
+	if x != nil {
+		return x.AppVersion
+	}
+	return ""
+}
+
+func (x *Subscribe) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
 }
 
 // ConfigSnapshot is a full, immutable configuration snapshot (config-schema:
@@ -83,7 +107,7 @@ type ConfigSnapshot struct {
 
 func (x *ConfigSnapshot) Reset() {
 	*x = ConfigSnapshot{}
-	mi := &file_xds_v1_xds_proto_msgTypes[1]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -95,7 +119,7 @@ func (x *ConfigSnapshot) String() string {
 func (*ConfigSnapshot) ProtoMessage() {}
 
 func (x *ConfigSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_xds_v1_xds_proto_msgTypes[1]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -108,7 +132,7 @@ func (x *ConfigSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigSnapshot.ProtoReflect.Descriptor instead.
 func (*ConfigSnapshot) Descriptor() ([]byte, []int) {
-	return file_xds_v1_xds_proto_rawDescGZIP(), []int{1}
+	return file_configsync_v1_configsync_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *ConfigSnapshot) GetVersion() int64 {
@@ -162,7 +186,7 @@ type Upstream struct {
 
 func (x *Upstream) Reset() {
 	*x = Upstream{}
-	mi := &file_xds_v1_xds_proto_msgTypes[2]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -174,7 +198,7 @@ func (x *Upstream) String() string {
 func (*Upstream) ProtoMessage() {}
 
 func (x *Upstream) ProtoReflect() protoreflect.Message {
-	mi := &file_xds_v1_xds_proto_msgTypes[2]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -187,7 +211,7 @@ func (x *Upstream) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Upstream.ProtoReflect.Descriptor instead.
 func (*Upstream) Descriptor() ([]byte, []int) {
-	return file_xds_v1_xds_proto_rawDescGZIP(), []int{2}
+	return file_configsync_v1_configsync_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Upstream) GetId() string {
@@ -261,7 +285,7 @@ type RouteUpstream struct {
 
 func (x *RouteUpstream) Reset() {
 	*x = RouteUpstream{}
-	mi := &file_xds_v1_xds_proto_msgTypes[3]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -273,7 +297,7 @@ func (x *RouteUpstream) String() string {
 func (*RouteUpstream) ProtoMessage() {}
 
 func (x *RouteUpstream) ProtoReflect() protoreflect.Message {
-	mi := &file_xds_v1_xds_proto_msgTypes[3]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -286,7 +310,7 @@ func (x *RouteUpstream) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RouteUpstream.ProtoReflect.Descriptor instead.
 func (*RouteUpstream) Descriptor() ([]byte, []int) {
-	return file_xds_v1_xds_proto_rawDescGZIP(), []int{3}
+	return file_configsync_v1_configsync_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RouteUpstream) GetId() string {
@@ -353,7 +377,7 @@ type Route struct {
 
 func (x *Route) Reset() {
 	*x = Route{}
-	mi := &file_xds_v1_xds_proto_msgTypes[4]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -365,7 +389,7 @@ func (x *Route) String() string {
 func (*Route) ProtoMessage() {}
 
 func (x *Route) ProtoReflect() protoreflect.Message {
-	mi := &file_xds_v1_xds_proto_msgTypes[4]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -378,7 +402,7 @@ func (x *Route) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Route.ProtoReflect.Descriptor instead.
 func (*Route) Descriptor() ([]byte, []int) {
-	return file_xds_v1_xds_proto_rawDescGZIP(), []int{4}
+	return file_configsync_v1_configsync_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Route) GetId() string {
@@ -447,7 +471,7 @@ type ConsumerKeyRef struct {
 
 func (x *ConsumerKeyRef) Reset() {
 	*x = ConsumerKeyRef{}
-	mi := &file_xds_v1_xds_proto_msgTypes[5]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -459,7 +483,7 @@ func (x *ConsumerKeyRef) String() string {
 func (*ConsumerKeyRef) ProtoMessage() {}
 
 func (x *ConsumerKeyRef) ProtoReflect() protoreflect.Message {
-	mi := &file_xds_v1_xds_proto_msgTypes[5]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -472,7 +496,7 @@ func (x *ConsumerKeyRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumerKeyRef.ProtoReflect.Descriptor instead.
 func (*ConsumerKeyRef) Descriptor() ([]byte, []int) {
-	return file_xds_v1_xds_proto_rawDescGZIP(), []int{5}
+	return file_configsync_v1_configsync_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ConsumerKeyRef) GetId() string {
@@ -530,7 +554,7 @@ type ConsumerQuota struct {
 
 func (x *ConsumerQuota) Reset() {
 	*x = ConsumerQuota{}
-	mi := &file_xds_v1_xds_proto_msgTypes[6]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -542,7 +566,7 @@ func (x *ConsumerQuota) String() string {
 func (*ConsumerQuota) ProtoMessage() {}
 
 func (x *ConsumerQuota) ProtoReflect() protoreflect.Message {
-	mi := &file_xds_v1_xds_proto_msgTypes[6]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -555,7 +579,7 @@ func (x *ConsumerQuota) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumerQuota.ProtoReflect.Descriptor instead.
 func (*ConsumerQuota) Descriptor() ([]byte, []int) {
-	return file_xds_v1_xds_proto_rawDescGZIP(), []int{6}
+	return file_configsync_v1_configsync_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ConsumerQuota) GetId() string {
@@ -607,7 +631,7 @@ type Consumer struct {
 
 func (x *Consumer) Reset() {
 	*x = Consumer{}
-	mi := &file_xds_v1_xds_proto_msgTypes[7]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -619,7 +643,7 @@ func (x *Consumer) String() string {
 func (*Consumer) ProtoMessage() {}
 
 func (x *Consumer) ProtoReflect() protoreflect.Message {
-	mi := &file_xds_v1_xds_proto_msgTypes[7]
+	mi := &file_configsync_v1_configsync_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -632,7 +656,7 @@ func (x *Consumer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Consumer.ProtoReflect.Descriptor instead.
 func (*Consumer) Descriptor() ([]byte, []int) {
-	return file_xds_v1_xds_proto_rawDescGZIP(), []int{7}
+	return file_configsync_v1_configsync_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Consumer) GetId() string {
@@ -677,19 +701,23 @@ func (x *Consumer) GetQuotas() []*ConsumerQuota {
 	return nil
 }
 
-var File_xds_v1_xds_proto protoreflect.FileDescriptor
+var File_configsync_v1_configsync_proto protoreflect.FileDescriptor
 
-const file_xds_v1_xds_proto_rawDesc = "" +
+const file_configsync_v1_configsync_proto_rawDesc = "" +
 	"\n" +
-	"\x10xds/v1/xds.proto\x12\vnyro.xds.v1\"%\n" +
+	"\x1econfigsync/v1/configsync.proto\x12\x12nyro.configsync.v1\"{\n" +
 	"\tSubscribe\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\x03R\aversion\"\xc4\x02\n" +
+	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x17\n" +
+	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x1f\n" +
+	"\vapp_version\x18\x03 \x01(\tR\n" +
+	"appVersion\x12\x1a\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\"\xe0\x02\n" +
 	"\x0eConfigSnapshot\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\x03R\aversion\x123\n" +
-	"\tupstreams\x18\x02 \x03(\v2\x15.nyro.xds.v1.UpstreamR\tupstreams\x12*\n" +
-	"\x06routes\x18\x03 \x03(\v2\x12.nyro.xds.v1.RouteR\x06routes\x123\n" +
-	"\tconsumers\x18\x04 \x03(\v2\x15.nyro.xds.v1.ConsumerR\tconsumers\x12E\n" +
-	"\bsettings\x18\x05 \x03(\v2).nyro.xds.v1.ConfigSnapshot.SettingsEntryR\bsettings\x1a;\n" +
+	"\aversion\x18\x01 \x01(\x03R\aversion\x12:\n" +
+	"\tupstreams\x18\x02 \x03(\v2\x1c.nyro.configsync.v1.UpstreamR\tupstreams\x121\n" +
+	"\x06routes\x18\x03 \x03(\v2\x19.nyro.configsync.v1.RouteR\x06routes\x12:\n" +
+	"\tconsumers\x18\x04 \x03(\v2\x1c.nyro.configsync.v1.ConsumerR\tconsumers\x12L\n" +
+	"\bsettings\x18\x05 \x03(\v20.nyro.configsync.v1.ConfigSnapshot.SettingsEntryR\bsettings\x1a;\n" +
 	"\rSettingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe8\x01\n" +
@@ -711,7 +739,7 @@ const file_xds_v1_xds_proto_rawDesc = "" +
 	"\x05model\x18\x04 \x01(\tR\x05model\x12\x16\n" +
 	"\x06weight\x18\x05 \x01(\x05R\x06weight\x12\x1a\n" +
 	"\bpriority\x18\x06 \x01(\x05R\bpriority\x12\x18\n" +
-	"\aenabled\x18\a \x01(\bR\aenabled\"\xdf\x01\n" +
+	"\aenabled\x18\a \x01(\bR\aenabled\"\xe6\x01\n" +
 	"\x05Route\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x18\n" +
@@ -719,8 +747,8 @@ const file_xds_v1_xds_proto_rawDesc = "" +
 	"\venable_auth\x18\x04 \x01(\bR\n" +
 	"enableAuth\x12%\n" +
 	"\x0eenable_payload\x18\x05 \x01(\bR\renablePayload\x12\x18\n" +
-	"\aenabled\x18\x06 \x01(\bR\aenabled\x124\n" +
-	"\atargets\x18\a \x03(\v2\x1a.nyro.xds.v1.RouteUpstreamR\atargets\"\xb6\x01\n" +
+	"\aenabled\x18\x06 \x01(\bR\aenabled\x12;\n" +
+	"\atargets\x18\a \x03(\v2!.nyro.configsync.v1.RouteUpstreamR\atargets\"\xb6\x01\n" +
 	"\x0eConsumerKeyRef\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vconsumer_id\x18\x02 \x01(\tR\n" +
@@ -739,51 +767,51 @@ const file_xds_v1_xds_proto_rawDesc = "" +
 	"quota_type\x18\x03 \x01(\tR\tquotaType\x12\x1f\n" +
 	"\vquota_limit\x18\x04 \x01(\x03R\n" +
 	"quotaLimit\x12\x16\n" +
-	"\x06window\x18\x05 \x01(\tR\x06window\"\xc5\x01\n" +
+	"\x06window\x18\x05 \x01(\tR\x06window\"\xd3\x01\n" +
 	"\bConsumer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
-	"\aenabled\x18\x03 \x01(\bR\aenabled\x12/\n" +
-	"\x04keys\x18\x04 \x03(\v2\x1b.nyro.xds.v1.ConsumerKeyRefR\x04keys\x12\x16\n" +
-	"\x06routes\x18\x05 \x03(\tR\x06routes\x122\n" +
-	"\x06quotas\x18\x06 \x03(\v2\x1a.nyro.xds.v1.ConsumerQuotaR\x06quotas2V\n" +
-	"\rConfigService\x12E\n" +
-	"\fStreamConfig\x12\x16.nyro.xds.v1.Subscribe\x1a\x1b.nyro.xds.v1.ConfigSnapshot0\x01B0Z.github.com/nyroway/nyro/go/internal/xds/pb;xdsb\x06proto3"
+	"\aenabled\x18\x03 \x01(\bR\aenabled\x126\n" +
+	"\x04keys\x18\x04 \x03(\v2\".nyro.configsync.v1.ConsumerKeyRefR\x04keys\x12\x16\n" +
+	"\x06routes\x18\x05 \x03(\tR\x06routes\x129\n" +
+	"\x06quotas\x18\x06 \x03(\v2!.nyro.configsync.v1.ConsumerQuotaR\x06quotas2d\n" +
+	"\rConfigService\x12S\n" +
+	"\fStreamConfig\x12\x1d.nyro.configsync.v1.Subscribe\x1a\".nyro.configsync.v1.ConfigSnapshot0\x01B>Z<github.com/nyroway/nyro/go/internal/configsync/pb;configsyncb\x06proto3"
 
 var (
-	file_xds_v1_xds_proto_rawDescOnce sync.Once
-	file_xds_v1_xds_proto_rawDescData []byte
+	file_configsync_v1_configsync_proto_rawDescOnce sync.Once
+	file_configsync_v1_configsync_proto_rawDescData []byte
 )
 
-func file_xds_v1_xds_proto_rawDescGZIP() []byte {
-	file_xds_v1_xds_proto_rawDescOnce.Do(func() {
-		file_xds_v1_xds_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_xds_v1_xds_proto_rawDesc), len(file_xds_v1_xds_proto_rawDesc)))
+func file_configsync_v1_configsync_proto_rawDescGZIP() []byte {
+	file_configsync_v1_configsync_proto_rawDescOnce.Do(func() {
+		file_configsync_v1_configsync_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_configsync_v1_configsync_proto_rawDesc), len(file_configsync_v1_configsync_proto_rawDesc)))
 	})
-	return file_xds_v1_xds_proto_rawDescData
+	return file_configsync_v1_configsync_proto_rawDescData
 }
 
-var file_xds_v1_xds_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
-var file_xds_v1_xds_proto_goTypes = []any{
-	(*Subscribe)(nil),      // 0: nyro.xds.v1.Subscribe
-	(*ConfigSnapshot)(nil), // 1: nyro.xds.v1.ConfigSnapshot
-	(*Upstream)(nil),       // 2: nyro.xds.v1.Upstream
-	(*RouteUpstream)(nil),  // 3: nyro.xds.v1.RouteUpstream
-	(*Route)(nil),          // 4: nyro.xds.v1.Route
-	(*ConsumerKeyRef)(nil), // 5: nyro.xds.v1.ConsumerKeyRef
-	(*ConsumerQuota)(nil),  // 6: nyro.xds.v1.ConsumerQuota
-	(*Consumer)(nil),       // 7: nyro.xds.v1.Consumer
-	nil,                    // 8: nyro.xds.v1.ConfigSnapshot.SettingsEntry
+var file_configsync_v1_configsync_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_configsync_v1_configsync_proto_goTypes = []any{
+	(*Subscribe)(nil),      // 0: nyro.configsync.v1.Subscribe
+	(*ConfigSnapshot)(nil), // 1: nyro.configsync.v1.ConfigSnapshot
+	(*Upstream)(nil),       // 2: nyro.configsync.v1.Upstream
+	(*RouteUpstream)(nil),  // 3: nyro.configsync.v1.RouteUpstream
+	(*Route)(nil),          // 4: nyro.configsync.v1.Route
+	(*ConsumerKeyRef)(nil), // 5: nyro.configsync.v1.ConsumerKeyRef
+	(*ConsumerQuota)(nil),  // 6: nyro.configsync.v1.ConsumerQuota
+	(*Consumer)(nil),       // 7: nyro.configsync.v1.Consumer
+	nil,                    // 8: nyro.configsync.v1.ConfigSnapshot.SettingsEntry
 }
-var file_xds_v1_xds_proto_depIdxs = []int32{
-	2, // 0: nyro.xds.v1.ConfigSnapshot.upstreams:type_name -> nyro.xds.v1.Upstream
-	4, // 1: nyro.xds.v1.ConfigSnapshot.routes:type_name -> nyro.xds.v1.Route
-	7, // 2: nyro.xds.v1.ConfigSnapshot.consumers:type_name -> nyro.xds.v1.Consumer
-	8, // 3: nyro.xds.v1.ConfigSnapshot.settings:type_name -> nyro.xds.v1.ConfigSnapshot.SettingsEntry
-	3, // 4: nyro.xds.v1.Route.targets:type_name -> nyro.xds.v1.RouteUpstream
-	5, // 5: nyro.xds.v1.Consumer.keys:type_name -> nyro.xds.v1.ConsumerKeyRef
-	6, // 6: nyro.xds.v1.Consumer.quotas:type_name -> nyro.xds.v1.ConsumerQuota
-	0, // 7: nyro.xds.v1.ConfigService.StreamConfig:input_type -> nyro.xds.v1.Subscribe
-	1, // 8: nyro.xds.v1.ConfigService.StreamConfig:output_type -> nyro.xds.v1.ConfigSnapshot
+var file_configsync_v1_configsync_proto_depIdxs = []int32{
+	2, // 0: nyro.configsync.v1.ConfigSnapshot.upstreams:type_name -> nyro.configsync.v1.Upstream
+	4, // 1: nyro.configsync.v1.ConfigSnapshot.routes:type_name -> nyro.configsync.v1.Route
+	7, // 2: nyro.configsync.v1.ConfigSnapshot.consumers:type_name -> nyro.configsync.v1.Consumer
+	8, // 3: nyro.configsync.v1.ConfigSnapshot.settings:type_name -> nyro.configsync.v1.ConfigSnapshot.SettingsEntry
+	3, // 4: nyro.configsync.v1.Route.targets:type_name -> nyro.configsync.v1.RouteUpstream
+	5, // 5: nyro.configsync.v1.Consumer.keys:type_name -> nyro.configsync.v1.ConsumerKeyRef
+	6, // 6: nyro.configsync.v1.Consumer.quotas:type_name -> nyro.configsync.v1.ConsumerQuota
+	0, // 7: nyro.configsync.v1.ConfigService.StreamConfig:input_type -> nyro.configsync.v1.Subscribe
+	1, // 8: nyro.configsync.v1.ConfigService.StreamConfig:output_type -> nyro.configsync.v1.ConfigSnapshot
 	8, // [8:9] is the sub-list for method output_type
 	7, // [7:8] is the sub-list for method input_type
 	7, // [7:7] is the sub-list for extension type_name
@@ -791,26 +819,26 @@ var file_xds_v1_xds_proto_depIdxs = []int32{
 	0, // [0:7] is the sub-list for field type_name
 }
 
-func init() { file_xds_v1_xds_proto_init() }
-func file_xds_v1_xds_proto_init() {
-	if File_xds_v1_xds_proto != nil {
+func init() { file_configsync_v1_configsync_proto_init() }
+func file_configsync_v1_configsync_proto_init() {
+	if File_configsync_v1_configsync_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_xds_v1_xds_proto_rawDesc), len(file_xds_v1_xds_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_configsync_v1_configsync_proto_rawDesc), len(file_configsync_v1_configsync_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_xds_v1_xds_proto_goTypes,
-		DependencyIndexes: file_xds_v1_xds_proto_depIdxs,
-		MessageInfos:      file_xds_v1_xds_proto_msgTypes,
+		GoTypes:           file_configsync_v1_configsync_proto_goTypes,
+		DependencyIndexes: file_configsync_v1_configsync_proto_depIdxs,
+		MessageInfos:      file_configsync_v1_configsync_proto_msgTypes,
 	}.Build()
-	File_xds_v1_xds_proto = out.File
-	file_xds_v1_xds_proto_goTypes = nil
-	file_xds_v1_xds_proto_depIdxs = nil
+	File_configsync_v1_configsync_proto = out.File
+	file_configsync_v1_configsync_proto_goTypes = nil
+	file_configsync_v1_configsync_proto_depIdxs = nil
 }

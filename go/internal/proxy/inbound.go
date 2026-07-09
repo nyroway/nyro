@@ -8,7 +8,7 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/proxy/quota"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/internal/xds"
+	"github.com/nyroway/nyro/go/internal/configsync"
 )
 
 // checkAccess is the inbound access check. For open routes (EnableAuth=false)
@@ -19,7 +19,7 @@ import (
 // (0, "", nil) to allow, or (statusCode, message, nil) to deny. When a
 // concurrency quota slot was acquired, the third return is a non-nil release
 // func that MUST be called exactly once when the request finishes.
-func checkAccess(snap *xds.ConfigSnapshot, qc *quota.Counter, route storage.Route, r *http.Request, consumerID *string, keyName *string) (int, string, func()) {
+func checkAccess(snap *configsync.ConfigSnapshot, qc *quota.Counter, route storage.Route, r *http.Request, consumerID *string, keyName *string) (int, string, func()) {
 	if !route.EnableAuth {
 		return 0, "", nil
 	}

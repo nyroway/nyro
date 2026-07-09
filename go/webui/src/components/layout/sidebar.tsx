@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Route,
   Server,
+  Network,
   ScrollText,
   BarChart3,
   KeyRound,
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
   { label: "Providers", path: "/providers", icon: Server },
   { label: "Models", path: "/models", icon: Route },
   { label: "API Keys", path: "/api-keys", icon: KeyRound },
+  { label: "Nodes", path: "/nodes", icon: Network },
   { type: "divider" as const },
   { label: "Logs", path: "/logs", icon: ScrollText },
   { label: "Stats", path: "/stats", icon: BarChart3 },
@@ -126,11 +128,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                           ? "模型"
                           : label === "API Keys"
                             ? "密钥"
-                          : label === "Logs"
-                            ? "日志"
-                            : label === "Stats"
-                              ? "统计"
-                              : "系统设置"
+                            : label === "Nodes"
+                              ? "数据面节点"
+                              : label === "Logs"
+                                ? "日志"
+                                : label === "Stats"
+                                  ? "统计"
+                                  : "系统设置"
                     : label}
                 </span>
               )}

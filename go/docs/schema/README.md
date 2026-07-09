@@ -12,7 +12,7 @@ the storage tables.
 ## Design Principles
 
 - The YAML model is the user-facing configuration shape; the database schema is
-  the normalized relational form used by admin, xDS, and storage.
+  the normalized relational form used by admin, config-sync, and storage.
 - The data plane resolves routing purely from `route_upstreams.model`. Upstream
   model lists and discovery are control-plane concerns only (route dropdowns,
   health checks) and never drive routing.

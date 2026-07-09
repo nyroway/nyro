@@ -1,11 +1,11 @@
-package xds
+package configsync
 
 import (
 	"encoding/json"
 	"strconv"
 
 	"github.com/nyroway/nyro/go/internal/storage"
-	pb "github.com/nyroway/nyro/go/internal/xds/pb/xds/v1"
+	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
 )
 
 // SnapshotFromProto converts a wire ConfigSnapshot into the gateway's internal

@@ -35,6 +35,23 @@ Both read the same upstream config (point the Go gateway at the same providers;
 config is managed via its own `/api/v1` admin API or seeded from flags for the
 shadow phase).
 
+To hot-reload the gateway's config from the admin instead of a static
+`--config` YAML file, enable the admin's config-sync gRPC server and point the
+gateway at it:
+
+```bash
+# control plane, with config-sync enabled:
+/tmp/nyro admin --addr 127.0.0.1:19531 --grpc-addr 127.0.0.1:19532 --admin-token <token>
+# data plane, subscribing to config-sync instead of --config:
+/tmp/nyro gateway --addr 127.0.0.1:19529 --configsync-addr 127.0.0.1:19532
+```
+
+`--config` and `--configsync-addr` are mutually exclusive — exactly one must
+be set. `--grpc-addr` is disabled (no config-sync server started) when left
+empty. Connected gateways are visible on the admin at `GET /api/v1/nodes`
+(and the WebUI's Nodes page) — a best-effort, in-memory view that reflects
+only currently-open connections.
+
 ## 2. Shadow traffic + parity diff
 
 Mirror a sample of real client traffic to the Go gateway and diff the responses

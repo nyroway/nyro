@@ -416,6 +416,9 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
     case "get_gateway_status":
       return { method: "GET", url: `${base}/status` };
 
+    case "list_nodes":
+      return { method: "GET", url: `${base}/nodes` };
+
     case "export_config":
     case "import_config":
       throw new Error("Config import/export is not available in the Go WebUI yet.");

@@ -59,7 +59,7 @@ type UpdateUpstream struct {
 
 // UpstreamStore is the CRUD store for upstreams under the config-schema model.
 // Implementations are added in a later step; this is the contract that
-// admin/xDS/proxy migrate onto.
+// admin/config-sync/proxy migrate onto.
 type UpstreamStore interface {
 	List() ([]Upstream, error)
 	Get(id string) (*Upstream, error)

@@ -1,18 +1,22 @@
-package xds
+package configsync
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log"
 	"math"
 	"net"
+	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	pb "github.com/nyroway/nyro/go/internal/xds/pb/xds/v1"
+	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
 )
 
 // ConfigClient connects to the admin's gRPC ConfigService, subscribes to the
@@ -23,6 +27,14 @@ import (
 type ConfigClient struct {
 	target string
 	cache  *ConfigCache
+
+	// Node identity, generated once at construction and reused across
+	// reconnects so the admin's node registry sees a stable identity rather
+	// than a new "node" per reconnect. Purely for operational visibility
+	// (/api/v1/nodes); never influences what config is served.
+	nodeID     string
+	appVersion string
+	hostname   string
 
 	// dialOpts allow tests to inject a bufconn dialer.
 	dialOpts []grpc.DialOption
@@ -38,12 +50,44 @@ func NewConfigClient(target string, cache *ConfigCache) *ConfigClient {
 	return &ConfigClient{
 		target:         target,
 		cache:          cache,
+		nodeID:         newNodeID(),
+		appVersion:     buildVersion(),
+		hostname:       hostnameOrUnknown(),
 		initialBackoff: 500 * time.Millisecond,
 		maxBackoff:     30 * time.Second,
 		dialOpts: []grpc.DialOption{
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 		},
 	}
+}
+
+// newNodeID generates a per-process identifier: hostname plus a short random
+// suffix (to disambiguate multiple gateways on the same host/container image).
+func newNodeID() string {
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		// crypto/rand failure is effectively unheard of; fall back to a
+		// constant suffix rather than failing gateway startup over it.
+		return hostnameOrUnknown() + "-0000"
+	}
+	return hostnameOrUnknown() + "-" + hex.EncodeToString(suffix)
+}
+
+func hostnameOrUnknown() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "unknown-host"
+	}
+	return h
+}
+
+// buildVersion returns the gateway's build version for node-visibility
+// purposes, best-effort from the compiled module's version info.
+func buildVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "dev"
 }
 
 // Run blocks until ctx is cancelled, maintaining the stream and republishing
@@ -63,9 +107,9 @@ func (c *ConfigClient) Run(ctx context.Context) error {
 			return nil
 		}
 		if err != nil {
-			log.Printf("xds client: stream ended: %v", err)
+			log.Printf("configsync client: stream ended: %v", err)
 		} else {
-			log.Printf("xds client: stream ended")
+			log.Printf("configsync client: stream ended")
 		}
 		attempt++
 		backoff := c.backoff(attempt)
@@ -91,7 +135,12 @@ func (c *ConfigClient) runOnce(ctx context.Context) (connected bool, err error) 
 	defer func() { _ = conn.Close() }()
 
 	client := pb.NewConfigServiceClient(conn)
-	stream, err := client.StreamConfig(dialCtx, &pb.Subscribe{Version: 0})
+	stream, err := client.StreamConfig(dialCtx, &pb.Subscribe{
+		Version:    0,
+		NodeId:     c.nodeID,
+		AppVersion: c.appVersion,
+		Hostname:   c.hostname,
+	})
 	if err != nil {
 		return false, err
 	}
@@ -104,7 +153,7 @@ func (c *ConfigClient) runOnce(ctx context.Context) (connected bool, err error) 
 		connected = true
 		internal := SnapshotFromProto(snap)
 		c.cache.Swap(internal)
-		log.Printf("xds client: applied snapshot v%d (upstreams=%d routes=%d consumers=%d)",
+		log.Printf("configsync client: applied snapshot v%d (upstreams=%d routes=%d consumers=%d)",
 			snap.GetVersion(), len(snap.GetUpstreams()), len(snap.GetRoutes()), len(snap.GetConsumers()))
 	}
 }
@@ -149,7 +198,7 @@ func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer) (sh
 	}()
 	go func() {
 		if err := gs.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			log.Printf("xds grpc server: %v", err)
+			log.Printf("configsync grpc server: %v", err)
 		}
 	}()
 	return gs.GracefulStop, nil

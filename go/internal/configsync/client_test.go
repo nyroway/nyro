@@ -1,4 +1,4 @@
-package xds
+package configsync
 
 import (
 	"context"
