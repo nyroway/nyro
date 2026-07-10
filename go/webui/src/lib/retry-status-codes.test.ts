@@ -15,4 +15,7 @@ describe("retry status codes", () => {
     expect(decodeRetryStatusCodes(null)).toEqual(DEFAULT_RETRY_STATUS_CODES);
     expect(encodeRetryStatusCodes([429, 500])).toBe("[429,500]");
   });
+  it("falls back to the default list for a JSON array with non-integer values", () => {
+    expect(decodeRetryStatusCodes("[500.5]")).toEqual(DEFAULT_RETRY_STATUS_CODES);
+  });
 });

@@ -24,7 +24,10 @@ export function decodeRetryStatusCodes(raw: string | null | undefined): number[]
   // Try to parse as JSON first
   try {
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.every((code) => typeof code === "number" && code >= 400 && code <= 599)) {
+    if (
+      Array.isArray(parsed) &&
+      parsed.every((code) => typeof code === "number" && Number.isInteger(code) && code >= 400 && code <= 599)
+    ) {
       return parsed;
     }
   } catch {
