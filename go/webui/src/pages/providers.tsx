@@ -1381,13 +1381,7 @@ export default function ProvidersPage() {
                   value={modelsMode}
                   onValueChange={(value) => {
                     if (!value) return;
-                    const mode = value as ModelsMode;
-                    setModelsMode(mode);
-                    setForm((prev) => ({
-                      ...prev,
-                      models_url: mode === "url" ? prev.models_url : "",
-                      models: mode === "static" ? prev.models : "",
-                    }));
+                    setModelsMode(value as ModelsMode);
                   }}
                   className="provider-region-group"
                 >
@@ -1439,6 +1433,8 @@ export default function ProvidersPage() {
                       ...form,
                       protocol,
                       base_url: baseUrl,
+                      models_url: modelsMode === "url" ? form.models_url : "",
+                      models: modelsMode === "static" ? form.models : "",
                     });
                     void handleCreateHealthCheck(input);
                   }}
@@ -1637,13 +1633,7 @@ export default function ProvidersPage() {
                         value={editModelsMode}
                         onValueChange={(value) => {
                           if (!value) return;
-                          const mode = value as ModelsMode;
-                          setEditModelsMode(mode);
-                          setEditForm((prev) => ({
-                            ...prev,
-                            models_url: mode === "url" ? prev.models_url : "",
-                            models: mode === "static" ? prev.models : "",
-                          }));
+                          setEditModelsMode(value as ModelsMode);
                         }}
                         className="provider-region-group"
                       >
@@ -1689,14 +1679,16 @@ export default function ProvidersPage() {
                           setEditError(validation);
                           return;
                         }
+                        const editModelsUrl = editModelsMode === "url" ? (editForm.models_url ?? "") : "";
+                        const editModels = editModelsMode === "static" ? (editForm.models ?? "") : "";
                         const update: UpdateUpstream = buildUpdateUpstreamInput({
                           name: editForm.name || undefined,
                           provider: editForm.provider || undefined,
                           protocol,
                           base_url: baseUrl,
                           proxy_url: editForm.proxy_url ?? "",
-                          models_url: editForm.models_url ?? "",
-                          models: editForm.models ?? "",
+                          models_url: editModelsUrl,
+                          models: editModels,
                           credentials: editForm.credentials && Object.keys(editForm.credentials).length
                             ? editForm.credentials
                             : undefined,
@@ -1707,8 +1699,8 @@ export default function ProvidersPage() {
                           protocol,
                           base_url: baseUrl,
                           proxy_url: editForm.proxy_url ?? "",
-                          models_url: editForm.models_url ?? "",
-                          models: editForm.models ?? "",
+                          models_url: editModelsUrl,
+                          models: editModels,
                           api_key: editForm.api_key ?? "",
                           credentials: editForm.credentials ?? {},
                         });
