@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(resolve(__dirname, "dashboard.tsx"), "utf8");
 
 describe("Dashboard control-plane summary", () => {
-  it("shows the Admin version, storage backend, and writable state", () => {
+  it("shows the Admin version, storage backend, and connection state", () => {
     expect(source).toContain("status?.version");
     expect(source).toContain("status?.backend");
     expect(source).toContain("status?.writable");
+    expect(source).toContain("已连接");
+    expect(source).toContain("Connected");
   });
 
   it("does not repeat the fixed status value", () => {

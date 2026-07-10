@@ -72,11 +72,16 @@ export default function DashboardPage() {
     : "0";
 
   const latencyUseSeconds = hourly.some((h) => h.avg_duration_ms >= 1000);
-  const storageState = status?.writable === true
-    ? (isZh ? "可写" : "Writable")
+  const connectionLabel = status?.writable === true
+    ? (isZh ? "已连接" : "Connected")
     : status?.writable === false
-      ? (isZh ? "只读" : "Read-only")
+      ? (isZh ? "连接异常" : "Disconnected")
       : "–";
+  const connectionColor = status?.writable === true
+    ? "text-green-600"
+    : status?.writable === false
+      ? "text-red-500"
+      : "text-slate-400";
 
   const cards = [
     { label: isZh ? "总请求数" : "Total Requests", value: fmt(overview?.total_requests ?? 0), icon: Activity, color: "text-blue-600" },
@@ -102,9 +107,8 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">{isZh ? "概览" : "Dashboard"}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          {isZh
-            ? `Admin v${status?.version ?? "–"} · ${status?.backend ?? "–"} · ${storageState}`
-            : `Admin v${status?.version ?? "–"} · ${status?.backend ?? "unknown"} · ${storageState}`}
+          Admin · {status?.version ?? "–"} · {status?.backend ?? (isZh ? "–" : "unknown")} ·{" "}
+          <span className={connectionColor}>{connectionLabel}</span>
         </p>
       </div>
 
