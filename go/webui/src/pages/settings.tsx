@@ -1,12 +1,20 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import type * as React from "react";
 import { backend, IS_TAURI } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import { normalizePublicGatewayURL } from "@/lib/public-gateway-url";
 import { useLocale } from "@/lib/i18n";
-import { HelpCircle, Loader2, Save } from "lucide-react";
+import {
+  decodeRetryStatusCodes,
+  encodeRetryStatusCodes,
+  parseRetryStatusCodes,
+  sameRetryStatusCodes,
+} from "@/lib/retry-status-codes";
+import { HelpCircle, Loader2, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Select,
@@ -43,7 +51,6 @@ const PUBLIC_GATEWAY_URL_KEY = "gateway.public_url";
 const PROXY_REQUEST_TIMEOUT_DEFAULT = "120s";
 const PROXY_CONNECT_TIMEOUT_DEFAULT = "30s";
 const PROXY_MAX_RETRIES_DEFAULT = "2";
-const PROXY_RETRY_ON_STATUS_DEFAULT = [429, 500, 502, 503, 504];
 const PROXY_MAX_BODY_BYTES_DEFAULT = "33554432";
 
 const OBS_RETENTION_DEFAULT: Record<Signal, string> = {
@@ -69,30 +76,9 @@ function emptySelectState(value: string): string {
   return value === EMPTY_SELECT_SENTINEL ? "" : value;
 }
 
-function parseRetryOnStatus(raw: string | null | undefined): string {
-  if (!raw || !raw.trim()) return PROXY_RETRY_ON_STATUS_DEFAULT.join(",");
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.join(",");
-  } catch {
-    // Keep a malformed existing value visible so it can be corrected.
-  }
-  return raw;
-}
-
 function isValidGoDuration(value: string): boolean {
   const trimmed = value.trim();
   return !trimmed || GO_DURATION_RE.test(trimmed);
-}
-
-function encodeRetryOnStatus(text: string): string | null {
-  const codes = text
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => Number.parseInt(part, 10));
-  if (codes.some((code) => Number.isNaN(code))) return null;
-  return JSON.stringify(codes);
 }
 
 function HelpHint({ text }: { text: string }) {
@@ -111,6 +97,68 @@ function HelpHint({ text }: { text: string }) {
         <TooltipContent side="top" className="max-w-xs">{text}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
+  );
+}
+
+function RetryStatusCodeInput({
+  isZh,
+  codes,
+  draft,
+  error,
+  onDraftChange,
+  onAdd,
+  onRemove,
+}: {
+  isZh: boolean;
+  codes: number[];
+  draft: string;
+  error: string | null;
+  onDraftChange: (value: string) => void;
+  onAdd: (input: string) => void;
+  onRemove: (code: number) => void;
+}) {
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onAdd(draft);
+    }
+  }
+  function handlePaste(event: React.ClipboardEvent<HTMLInputElement>) {
+    event.preventDefault();
+    onAdd(event.clipboardData.getData("text"));
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap gap-1.5">
+        {codes.map((code) => (
+          <Badge key={code} variant="outline" className="gap-1 pr-1">
+            {code}
+            <button
+              type="button"
+              aria-label={`Remove ${code}`}
+              className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-slate-400 hover:text-slate-700"
+              onClick={() => onRemove(code)}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        ))}
+      </div>
+      <Input
+        inputMode="numeric"
+        placeholder={isZh ? "输入状态码（400–599），按 Enter 添加" : "Enter a status code (400–599), then press Enter."}
+        value={draft}
+        onChange={(e) => onDraftChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
+        className={error ? "border-red-400 focus-visible:ring-red-400" : undefined}
+      />
+      {error && (
+        <p className="text-xs text-red-600">
+          {isZh ? `“${error}” 不是有效的状态码，请输入 400–599 之间的整数` : `"${error}" is not a valid status code. Enter an integer between 400–599.`}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -169,14 +217,16 @@ export default function SettingsPage() {
   const [proxyRequestTimeout, setProxyRequestTimeout] = useState("");
   const [proxyConnectTimeout, setProxyConnectTimeout] = useState("");
   const [proxyMaxRetries, setProxyMaxRetries] = useState("");
-  const [proxyRetryOnStatus, setProxyRetryOnStatus] = useState("");
+  const [proxyRetryStatusCodes, setProxyRetryStatusCodes] = useState<number[]>([]);
+  const [retryStatusDraft, setRetryStatusDraft] = useState("");
+  const [retryStatusError, setRetryStatusError] = useState<string | null>(null);
   const [proxyMaxBodyBytes, setProxyMaxBodyBytes] = useState("");
 
   const proxyBaseline = {
     requestTimeout: (proxyRequestTimeoutSetting ?? PROXY_REQUEST_TIMEOUT_DEFAULT).trim(),
     connectTimeout: (proxyConnectTimeoutSetting ?? PROXY_CONNECT_TIMEOUT_DEFAULT).trim(),
     maxRetries: (proxyMaxRetriesSetting ?? PROXY_MAX_RETRIES_DEFAULT).trim(),
-    retryOnStatus: parseRetryOnStatus(proxyRetryOnStatusSetting),
+    retryStatusCodes: decodeRetryStatusCodes(proxyRetryOnStatusSetting),
     maxBodyBytes: (proxyMaxBodyBytesSetting ?? PROXY_MAX_BODY_BYTES_DEFAULT).trim(),
   };
   const requestTimeoutInvalid = !isValidGoDuration(proxyRequestTimeout);
@@ -185,14 +235,34 @@ export default function SettingsPage() {
     proxyRequestTimeout.trim() !== proxyBaseline.requestTimeout
     || proxyConnectTimeout.trim() !== proxyBaseline.connectTimeout
     || proxyMaxRetries.trim() !== proxyBaseline.maxRetries
-    || proxyRetryOnStatus.trim() !== proxyBaseline.retryOnStatus
+    || !sameRetryStatusCodes(proxyRetryStatusCodes, proxyBaseline.retryStatusCodes)
     || proxyMaxBodyBytes.trim() !== proxyBaseline.maxBodyBytes;
+
+  function addRetryStatusCodes(input: string) {
+    const result = parseRetryStatusCodes(input);
+    if (result.invalid) {
+      setRetryStatusError(result.invalid);
+      return;
+    }
+    setProxyRetryStatusCodes((current) => [
+      ...current,
+      ...result.codes.filter((code) => !current.includes(code)),
+    ]);
+    setRetryStatusDraft("");
+    setRetryStatusError(null);
+  }
+
+  function removeRetryStatusCode(code: number) {
+    setProxyRetryStatusCodes((current) => current.filter((existing) => existing !== code));
+  }
 
   useEffect(() => {
     setProxyRequestTimeout(proxyBaseline.requestTimeout);
     setProxyConnectTimeout(proxyBaseline.connectTimeout);
     setProxyMaxRetries(proxyBaseline.maxRetries);
-    setProxyRetryOnStatus(proxyBaseline.retryOnStatus);
+    setProxyRetryStatusCodes(proxyBaseline.retryStatusCodes);
+    setRetryStatusDraft("");
+    setRetryStatusError(null);
     setProxyMaxBodyBytes(proxyBaseline.maxBodyBytes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -212,17 +282,11 @@ export default function SettingsPage() {
 
   const saveProxyMut = useMutation({
     mutationFn: async () => {
-      const encodedRetryOnStatus = encodeRetryOnStatus(proxyRetryOnStatus);
-      if (encodedRetryOnStatus == null) {
-        throw new Error(isZh
-          ? "重试状态码必须是以逗号分隔的数字列表，例如 429,500,502,503,504"
-          : "Retry status codes must be a comma-separated list of numbers, e.g. 429,500,502,503,504");
-      }
       await Promise.all([
         backend("set_setting", { key: PROXY_REQUEST_TIMEOUT_KEY, value: proxyRequestTimeout.trim() || PROXY_REQUEST_TIMEOUT_DEFAULT }),
         backend("set_setting", { key: PROXY_CONNECT_TIMEOUT_KEY, value: proxyConnectTimeout.trim() || PROXY_CONNECT_TIMEOUT_DEFAULT }),
         backend("set_setting", { key: PROXY_MAX_RETRIES_KEY, value: proxyMaxRetries.trim() || PROXY_MAX_RETRIES_DEFAULT }),
-        backend("set_setting", { key: PROXY_RETRY_ON_STATUS_KEY, value: encodedRetryOnStatus }),
+        backend("set_setting", { key: PROXY_RETRY_ON_STATUS_KEY, value: encodeRetryStatusCodes(proxyRetryStatusCodes) }),
         backend("set_setting", { key: PROXY_MAX_BODY_BYTES_KEY, value: proxyMaxBodyBytes.trim() || PROXY_MAX_BODY_BYTES_DEFAULT }),
       ]);
     },
@@ -251,7 +315,8 @@ export default function SettingsPage() {
           appliesTo={isZh ? "作用于 Gateway" : "Applies to Gateway"}
         />
 
-        <div className="glass rounded-2xl p-6 space-y-5">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          <div className="glass rounded-2xl p-6 space-y-5">
           <h3 className="text-lg font-semibold text-slate-900">{isZh ? "转发参数" : "Forwarding Settings"}</h3>
           <div className="rounded-xl bg-slate-50 p-4 space-y-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -281,23 +346,29 @@ export default function SettingsPage() {
               </div>
               <div className="space-y-1.5 sm:col-span-2">
                 <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
-                  {isZh ? "重试状态码（逗号分隔）" : "Retry Status Codes (comma-separated)"}
+                  {isZh ? "重试状态码" : "Retry Status Codes"}
                   <HelpHint text={isZh ? "对应 proxy.retry_on_status，例如 429,500,502,503,504" : "Maps to proxy.retry_on_status, e.g. 429,500,502,503,504"} />
                 </label>
-                <Input placeholder={PROXY_RETRY_ON_STATUS_DEFAULT.join(",")} value={proxyRetryOnStatus} onChange={(e) => setProxyRetryOnStatus(e.target.value)} />
+                <RetryStatusCodeInput
+                  isZh={isZh}
+                  codes={proxyRetryStatusCodes}
+                  draft={retryStatusDraft}
+                  error={retryStatusError}
+                  onDraftChange={setRetryStatusDraft}
+                  onAdd={addRetryStatusCodes}
+                  onRemove={removeRetryStatusCode}
+                />
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={() => saveProxyMut.mutate()} disabled={saveProxyMut.isPending || !proxyDirty || requestTimeoutInvalid || connectTimeoutInvalid} size="sm" className="flex items-center gap-1.5">
+              <Button onClick={() => saveProxyMut.mutate()} disabled={saveProxyMut.isPending || !proxyDirty || requestTimeoutInvalid || connectTimeoutInvalid || retryStatusDraft.trim() !== ""} size="sm" className="flex items-center gap-1.5">
                 {saveProxyMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 {isZh ? "保存" : "Save"}
               </Button>
               {proxyDirty && <p className="text-xs text-amber-600">{isZh ? "保存后立即推送到 Gateway 配置流" : "Save to publish to the Gateway configuration stream"}</p>}
             </div>
           </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          </div>
           {SIGNALS.map((signal) => (
             <ObsSignalCard key={signal} signal={signal} isZh={isZh} builtInOtlpEndpoint={builtInOtlpEndpoint} showErrorDialog={showErrorDialog} />
           ))}

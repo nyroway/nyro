@@ -24,4 +24,10 @@ describe("Settings control-plane layout", () => {
     expect(source).not.toContain("export_config");
     expect(source).not.toContain("import_config");
   });
+
+  it("uses a shared two-column grid for forwarding and telemetry cards", () => {
+    expect(source).toContain("RetryStatusCodeInput");
+    expect(source).toContain("onPaste={handlePaste}");
+    expect(source).toContain("lg:grid-cols-2");
+  });
 });
