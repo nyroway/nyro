@@ -18,16 +18,12 @@ import (
 
 // ── settings ──
 
-type ServerSpec struct {
-	Listen  string `yaml:"listen,omitempty"`
-	BaseURL string `yaml:"base_url,omitempty"`
-}
-
 type ProxySpec struct {
 	RequestTimeout string `yaml:"request_timeout,omitempty"`
 	ConnectTimeout string `yaml:"connect_timeout,omitempty"`
 	MaxRetries     int    `yaml:"max_retries,omitempty"`
 	RetryOnStatus  []int  `yaml:"retry_on_status,omitempty"`
+	MaxBodyBytes   int64  `yaml:"max_body_bytes,omitempty"`
 }
 
 // ObservabilityLogsSpec is the YAML shape of settings.observability.logs.
@@ -128,7 +124,6 @@ func (o *ObservabilitySpec) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type SettingsSpec struct {
-	Server        ServerSpec        `yaml:"server,omitempty"`
 	Proxy         ProxySpec         `yaml:"proxy,omitempty"`
 	Observability ObservabilitySpec `yaml:"observability,omitempty"`
 }
@@ -443,9 +438,9 @@ func consumerQuotas(q ConsumerQuotasSpec) []storage.CreateConsumerQuota {
 	return out
 }
 
-// flattenSettings expands the nested settings.server/proxy/observability YAML
-// shape into the dot-key rows SettingsStore persists. server.*/proxy.* use
-// their own dot-key namespace. observability.* maps onto the
+// flattenSettings expands the nested settings.proxy/observability YAML
+// shape into the dot-key rows SettingsStore persists. proxy.* uses its own
+// dot-key namespace. observability.* maps onto the
 // obs_<signal>_exporter / obs_<signal>_<engine>_<field> keys
 // internal/observability's LoadConfig consumes, validated against the
 // exporter registry (internal/observability.ExportersFor) as described on
@@ -458,9 +453,6 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 		}
 	}
 
-	setIfNonEmpty("server.listen", s.Server.Listen)
-	setIfNonEmpty("server.base_url", s.Server.BaseURL)
-
 	setIfNonEmpty("proxy.request_timeout", s.Proxy.RequestTimeout)
 	setIfNonEmpty("proxy.connect_timeout", s.Proxy.ConnectTimeout)
 	if s.Proxy.MaxRetries != 0 {
@@ -469,6 +461,9 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 	if len(s.Proxy.RetryOnStatus) > 0 {
 		codes, _ := json.Marshal(s.Proxy.RetryOnStatus)
 		out["proxy.retry_on_status"] = string(codes)
+	}
+	if s.Proxy.MaxBodyBytes > 0 {
+		out["proxy.max_body_bytes"] = fmt.Sprintf("%d", s.Proxy.MaxBodyBytes)
 	}
 
 	// A nil block means the signal's YAML key was absent entirely: silently

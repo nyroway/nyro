@@ -13,6 +13,10 @@ the storage tables.
 
 - The YAML model is the user-facing configuration shape; the database schema is
   the normalized relational form used by admin, config-sync, and storage.
+- Standalone YAML contains data-plane configuration only. Admin-only metadata
+  and local storage settings, such as `gateway.public_url` and telemetry
+  retention, are documented in `config.md` but live in the admin DB or CLI
+  flags and are never distributed to gateways.
 - The data plane resolves routing purely from `route_upstreams.model`. Upstream
   model lists and discovery are control-plane concerns only (route dropdowns,
   health checks) and never drive routing.

@@ -109,6 +109,9 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	// Build storage, build pb snapshot, convert to internal, assert equivalence
 	// with the direct LoadFromStorage path.
 	st, u, rOpen, _, _, rawKey := newPopulatedStorage(t)
+	if err := st.Storage().Settings().Set("proxy.request_timeout", "45s"); err != nil {
+		t.Fatal(err)
+	}
 
 	pbSnap, err := SnapshotFromStorage(st.Storage(), 7)
 	if err != nil {
@@ -141,8 +144,11 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 		t.Error("key via proto path mismatch: not found")
 	}
 	// settings
-	if v, ok := got.SettingGet("proxy_url"); !ok || v == "" {
-		t.Errorf("setting via proto path missing: %q %v", v, ok)
+	if v, ok := got.SettingGet("proxy.request_timeout"); !ok || v != "45s" {
+		t.Errorf("data-plane setting via proto path = %q %v, want 45s true", v, ok)
+	}
+	if _, ok := got.SettingGet("proxy_url"); ok {
+		t.Error("legacy control-plane setting proxy_url must not be carried through proto")
 	}
 }
 
@@ -185,6 +191,54 @@ func TestSnapshotFromStorage_CarriesObservabilitySettings(t *testing.T) {
 	for k, want := range obsSettings {
 		if v, ok := got.SettingGet(k); !ok || v != want {
 			t.Errorf("SettingGet(%q) = %q, %v; want %q, true", k, v, ok, want)
+		}
+	}
+}
+
+func TestSnapshotFromStorage_OnlyCarriesDataPlaneSettings(t *testing.T) {
+	st := memory.New()
+	core := st.Storage()
+	settings := map[string]string{
+		"proxy.request_timeout":           "45s",
+		"proxy.max_body_bytes":            "1048576",
+		"obs_logs_exporter":               "stdout",
+		"obs_traces_otlp_endpoint":        "http://collector:4318",
+		"obs_logs_retention_days":         "7",
+		"gateway.public_url":              "https://ai.example.com",
+		"config_epoch":                    "23",
+		"unrelated_control_plane_setting": "do-not-send",
+	}
+	for key, value := range settings {
+		if err := core.Settings().Set(key, value); err != nil {
+			t.Fatalf("Settings().Set(%q): %v", key, err)
+		}
+	}
+
+	pbSnap, err := SnapshotFromStorage(core, 23)
+	if err != nil {
+		t.Fatalf("SnapshotFromStorage: %v", err)
+	}
+	if pbSnap.GetVersion() != 23 {
+		t.Errorf("snapshot version = %d, want 23", pbSnap.GetVersion())
+	}
+	for _, key := range []string{
+		"proxy.request_timeout",
+		"proxy.max_body_bytes",
+		"obs_logs_exporter",
+		"obs_traces_otlp_endpoint",
+	} {
+		if _, ok := pbSnap.Settings[key]; !ok {
+			t.Errorf("data-plane setting %q was not carried", key)
+		}
+	}
+	for _, key := range []string{
+		"obs_logs_retention_days",
+		"gateway.public_url",
+		"config_epoch",
+		"unrelated_control_plane_setting",
+	} {
+		if _, ok := pbSnap.Settings[key]; ok {
+			t.Errorf("control-plane setting %q must not be carried", key)
 		}
 	}
 }

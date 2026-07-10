@@ -13,6 +13,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/version"
 	"github.com/nyroway/nyro/go/internal/webutil"
 )
 
@@ -55,6 +56,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			health, _ := s.Migrator().Health()
 			webutil.JSON(w, http.StatusOK, map[string]any{
 				"status":         "ok",
+				"version":        version.Version,
 				"upstream_count": len(upstreams),
 				"route_count":    len(routes),
 				"consumer_count": len(consumers),
@@ -334,12 +336,17 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				Value string `json:"value"`
 			}
 			_ = webutil.Decode(r, &body)
-			if err := s.Settings().Set(key, body.Value); err != nil {
+			value, err := normalizeSettingValue(key, body.Value)
+			if err != nil {
+				badRequest(w, err)
+				return
+			}
+			if err := s.Settings().Set(key, value); err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			bumpEpoch(s)
-			webutil.JSON(w, http.StatusOK, map[string]any{"key": key, "value": body.Value})
+			webutil.JSON(w, http.StatusOK, map[string]any{"key": key, "value": value})
 		})
 
 		// ── logs ──

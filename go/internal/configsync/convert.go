@@ -5,8 +5,24 @@ import (
 	"strconv"
 
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
+	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
+
+var dataPlaneProxySettingKeys = map[string]struct{}{
+	"proxy.request_timeout": {},
+	"proxy.connect_timeout": {},
+	"proxy.max_retries":     {},
+	"proxy.retry_on_status": {},
+	"proxy.max_body_bytes":  {},
+}
+
+func isDataPlaneSettingKey(key string) bool {
+	if _, ok := dataPlaneProxySettingKeys[key]; ok {
+		return true
+	}
+	return observability.IsExporterSettingKey(key)
+}
 
 // SnapshotFromProto converts a wire ConfigSnapshot into the gateway's internal
 // read model. Upstreams, routes (with targets), consumers (keys — prefix+hash
@@ -156,7 +172,9 @@ func SnapshotFromStorage(s storage.Storage, version int64) (*pb.ConfigSnapshot, 
 		return nil, err
 	}
 	for _, kv := range settings {
-		out.Settings[kv.Key] = kv.Value
+		if isDataPlaneSettingKey(kv.Key) {
+			out.Settings[kv.Key] = kv.Value
+		}
 	}
 
 	return out, nil

@@ -18,6 +18,7 @@ settings:
   proxy:
     request_timeout: "45s"
     max_retries: 3
+    max_body_bytes: 1048576
   observability:
     logs:
       exporter: stdout
@@ -112,6 +113,9 @@ consumers:
 	}
 	if v, _ := core.Settings().Get("proxy.max_retries"); v != "3" {
 		t.Errorf("proxy.max_retries = %q, want 3", v)
+	}
+	if v, _ := core.Settings().Get("proxy.max_body_bytes"); v != "1048576" {
+		t.Errorf("proxy.max_body_bytes = %q, want 1048576", v)
 	}
 	if v, _ := core.Settings().Get("obs_logs_exporter"); v != "stdout" {
 		t.Errorf("obs_logs_exporter = %q, want stdout", v)
@@ -393,8 +397,7 @@ func TestConsumerQuotas_ExpandsAllCategories(t *testing.T) {
 
 func TestFlattenSettings(t *testing.T) {
 	s := SettingsSpec{
-		Server: ServerSpec{Listen: "127.0.0.1:19530", BaseURL: "http://127.0.0.1:19530"},
-		Proxy:  ProxySpec{RequestTimeout: "120s", MaxRetries: 2, RetryOnStatus: []int{429, 500}},
+		Proxy: ProxySpec{RequestTimeout: "120s", MaxRetries: 2, RetryOnStatus: []int{429, 500}, MaxBodyBytes: 1048576},
 		Observability: ObservabilitySpec{
 			Logs:   &ObservabilityLogsSpec{Exporter: "stdout"},
 			Traces: &ObservabilityTracesSpec{Exporter: "otlp", Endpoint: "http://127.0.0.1:4317", Protocol: "grpc"},
@@ -406,11 +409,10 @@ func TestFlattenSettings(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"server.listen":            "127.0.0.1:19530",
-		"server.base_url":          "http://127.0.0.1:19530",
 		"proxy.request_timeout":    "120s",
 		"proxy.max_retries":        "2",
 		"proxy.retry_on_status":    "[429,500]",
+		"proxy.max_body_bytes":     "1048576",
 		"obs_logs_exporter":        "stdout",
 		"obs_traces_exporter":      "otlp",
 		"obs_traces_otlp_endpoint": "http://127.0.0.1:4317",
@@ -425,6 +427,11 @@ func TestFlattenSettings(t *testing.T) {
 	for k := range got {
 		if strings.HasPrefix(k, "obs_metrics_") {
 			t.Errorf("unset observability.metrics block should not appear in flattened settings, got key %q", k)
+		}
+	}
+	for k := range got {
+		if strings.HasPrefix(k, "server.") {
+			t.Errorf("flattenSettings() produced removed server key %q", k)
 		}
 	}
 	// Deleted dead keys must never be produced by the new scheme.

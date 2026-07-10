@@ -133,3 +133,23 @@ func ExportersFor(signal Signal) []ExporterDef {
 	}
 	return defs
 }
+
+// IsExporterSettingKey reports whether key configures a gateway-side
+// observability exporter. Retention keys are deliberately excluded: they are
+// consumed only by the admin process's parquet janitor.
+func IsExporterSettingKey(key string) bool {
+	for _, signal := range []Signal{SignalLogs, SignalMetrics, SignalTraces} {
+		name := signalKeyNames[signal]
+		if key == "obs_"+name+"_exporter" {
+			return true
+		}
+		for _, def := range ExportersFor(signal) {
+			for _, field := range def.Fields {
+				if key == "obs_"+name+"_"+string(def.Kind)+"_"+field.Name {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

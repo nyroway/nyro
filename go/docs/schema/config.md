@@ -9,15 +9,12 @@ anywhere in the file are expanded from the process environment before parsing.
 version: 1
 
 settings:
-  server:
-    listen: "127.0.0.1:19530"
-    base_url: "http://127.0.0.1:19530"
-
   proxy:
     request_timeout: "120s"
     connect_timeout: "30s"
     max_retries: 2
     retry_on_status: [429, 500, 502, 503, 504]
+    max_body_bytes: 33554432
 
   observability:
     logs:
@@ -130,6 +127,14 @@ uses `routes[].upstreams[].model`.
 
 ## Field Reference
 
+- `settings.proxy`
+  - `request_timeout`, `connect_timeout`: Go duration strings; invalid or
+    omitted values use the gateway defaults (`120s` and `30s`).
+  - `max_retries`: retry attempts per backend (default `2`).
+  - `retry_on_status`: upstream HTTP statuses that trigger retry/failover.
+  - `max_body_bytes`: gateway-wide request-body cap in bytes (default
+    `33554432`, 32 MiB). This is distinct from
+    `consumers[].limits.max_request_body_bytes`, which is a per-consumer cap.
 - `upstreams[]`
   - `name` (required, unique): upstream instance name, referenced by routes.
   - `provider` (required): a provider preset id (e.g. `openai`, `deepseek`,
@@ -198,6 +203,23 @@ uses `routes[].upstreams[].model`.
     validation error (e.g. `logs: {exporter: stdout, endpoint: "..."}` is
     rejected — `stdout` takes no fields).
   - `retention` and `data_dir` are **not** part of this gateway YAML layer —
-    they are admin-side control-plane configuration (admin DB `settings`,
-    editable via the WebUI, or the admin process's `--obs-data-dir` flag) and
-    never appear under `settings.observability` here.
+    they are admin-side control-plane configuration and never appear under
+    `settings.observability` here.
+
+## Admin-only settings
+
+These settings live in the admin DB and are edited through the Go WebUI. They
+are not part of standalone `config.yaml` and are not sent to data-plane
+gateways through config-sync.
+
+- `gateway.public_url`: optional client-facing gateway root URL, normally the
+  LB or Ingress address in front of one or more data-plane nodes. It must be
+  an absolute `http` or `https` root URL without a path, query, fragment, or
+  credentials (for example, `https://ai.example.com`). It is metadata for
+  control-plane connection guidance; it does not bind a listener, route a
+  request, or identify an individual node.
+- `obs_<signal>_retention_days`: retention for the admin-local parquet store
+  (`logs` default `7`, `metrics` `30`, `traces` `3`). Changes take effect
+  when the admin process restarts.
+- `--obs-data-dir`: an admin process flag selecting the parquet store's
+  directory; it is intentionally not a DB setting.

@@ -252,6 +252,7 @@ export interface LogPage {
 
 export interface GatewayStatus {
   status: string;
+  version?: string;
   proxy_port?: number;
   upstream_count?: number;
   route_count?: number;

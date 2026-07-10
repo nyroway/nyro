@@ -72,6 +72,11 @@ export default function DashboardPage() {
     : "0";
 
   const latencyUseSeconds = hourly.some((h) => h.avg_duration_ms >= 1000);
+  const storageState = status?.writable === true
+    ? (isZh ? "可写" : "Writable")
+    : status?.writable === false
+      ? (isZh ? "只读" : "Read-only")
+      : "–";
 
   const cards = [
     { label: isZh ? "总请求数" : "Total Requests", value: fmt(overview?.total_requests ?? 0), icon: Activity, color: "text-blue-600" },
@@ -98,8 +103,8 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold text-slate-900">{isZh ? "概览" : "Dashboard"}</h1>
         <p className="mt-1 text-sm text-slate-500">
           {isZh
-            ? `控制面状态 ${status?.status ?? "–"}，存储 ${status?.backend ?? "–"}`
-            : `Control plane ${status?.status ?? "–"} with ${status?.backend ?? "unknown"} storage`}
+            ? `Admin v${status?.version ?? "–"} · ${status?.backend ?? "–"} · ${storageState}`
+            : `Admin v${status?.version ?? "–"} · ${status?.backend ?? "unknown"} · ${storageState}`}
         </p>
       </div>
 
