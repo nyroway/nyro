@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Server } from "lucide-react";
+import { Info, Server } from "lucide-react";
 import { backend } from "@/lib/backend";
 import type { GatewayNode } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // Locale-specific formatting: zh-CN reads as 24-hour "YYYY/MM/DD HH:mm:ss",
 // en-US as 12-hour "MM/DD/YYYY hh:mm:ss AM/PM" — Intl.DateTimeFormat with
@@ -40,7 +41,22 @@ function formatAddressHost(addr: string) {
   return addr.slice(0, lastColon);
 }
 
-const COLUMN_COUNT = 8;
+// formatServiceAddress combines the two independently-sourced pieces that
+// together make up "where this gateway actually serves traffic": the host
+// from remote_addr (the real gRPC peer IP, observed by admin) and the port
+// from service_port (self-reported by the gateway from its own --listen).
+// Either can be missing on its own (an older gateway build, or a connection
+// still mid-handshake), so each falls back independently rather than the
+// whole cell collapsing to "-" when only one side is present.
+function formatServiceAddress(remoteAddr: string, servicePort: string) {
+  const host = formatAddressHost(remoteAddr);
+  if (!host && !servicePort) return "-";
+  if (!host) return `:${servicePort}`;
+  if (!servicePort) return host;
+  return `${host}:${servicePort}`;
+}
+
+const COLUMN_COUNT = 7;
 
 export default function NodesPage() {
   const { locale } = useLocale();
@@ -75,8 +91,32 @@ export default function NodesPage() {
               <tr>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "节点" : "Node"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "主机名" : "Hostname"}</th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "主机地址" : "Host Address"}</th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "服务端口" : "Service Port"}</th>
+                <th className="px-3 py-2 text-left font-medium">
+                  <span className="inline-flex items-center gap-1">
+                    {isZh ? "服务地址" : "Service Address"}
+                    <TooltipProvider delayDuration={120}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="inline-flex cursor-help text-slate-400 hover:text-slate-600"
+                            aria-label={
+                              isZh
+                                ? "主机来自与该网关的实际连接地址；端口为网关自行上报的服务端口，两者拼接而成"
+                                : "Host is the real connection address to this gateway; port is self-reported by the gateway"
+                            }
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {isZh
+                            ? "主机来自与该网关的实际连接地址；端口为网关自行上报的服务端口，两者拼接而成"
+                            : "Host is the real connection address to this gateway; port is self-reported by the gateway"}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </span>
+                </th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "网关版本" : "Gateway Version"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "配置版本" : "Config Version"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "连接时间" : "Connected At"}</th>
@@ -109,8 +149,9 @@ export default function NodesPage() {
                     </span>
                   </td>
                   <td className="px-3 py-2">{n.hostname || "-"}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{formatAddressHost(n.remote_addr) || "-"}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{n.service_port || "-"}</td>
+                  <td className="px-3 py-2 font-mono text-xs">
+                    {formatServiceAddress(n.remote_addr, n.service_port)}
+                  </td>
                   <td className="px-3 py-2">{n.app_version || "-"}</td>
                   <td className="px-3 py-2">{n.applied_version}</td>
                   <td className="px-3 py-2">{formatConnectedAt(n.connected_at, isZh)}</td>
