@@ -124,9 +124,9 @@ go-webui-embed-build: go-webui-embed-assets
 	cd go && mkdir -p bin && go build -tags webui_embed -o bin/nyro .
 
 # Build and run the Go admin with embedded WebUI for local preview.
-# --grpc-addr defaults to 127.0.0.1:19532 (config-sync gRPC server, a
-# *separate* port from --addr's HTTP REST/WebUI), so
-# `nyro gateway --configsync-addr 127.0.0.1:19532` can connect for config
+# --config-listen defaults to 127.0.0.1:19532 (config-sync gRPC server, a
+# *separate* port from --listen's HTTP REST/WebUI), so
+# `nyro gateway --config-server 127.0.0.1:19532` can connect for config
 # hot-reload with no extra flags here.
 go-webui-embed-run: go-webui-embed-build
 	cd go && ./bin/nyro admin

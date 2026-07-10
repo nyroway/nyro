@@ -24,10 +24,7 @@ func TestRootCmdSubcommands(t *testing.T) {
 
 func TestRootCmdNoGlobalStorageFlags(t *testing.T) {
 	root := newRootCmd()
-	if f := root.PersistentFlags().Lookup("storage"); f != nil {
-		t.Error("--storage must not be a global/root flag (it belongs to admin only)")
-	}
-	if f := root.PersistentFlags().Lookup("db-dsn"); f != nil {
-		t.Error("--db-dsn must not be a global/root flag (it belongs to admin only)")
+	if f := root.PersistentFlags().Lookup("dsn"); f != nil {
+		t.Error("--dsn must not be a global/root flag (it belongs to admin only)")
 	}
 }

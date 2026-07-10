@@ -15,14 +15,14 @@ import (
 
 func TestNewCmdFlags(t *testing.T) {
 	cmd := NewCmd()
-	if addr, _ := cmd.Flags().GetString("addr"); addr != "0.0.0.0:19530" {
-		t.Errorf("default addr = %q; want 0.0.0.0:19530", addr)
+	if addr, _ := cmd.Flags().GetString("listen"); addr != "0.0.0.0:19530" {
+		t.Errorf("default listen = %q; want 0.0.0.0:19530", addr)
 	}
-	if cfg, _ := cmd.Flags().GetString("config"); cfg != "" {
-		t.Errorf("default config = %q; want empty", cfg)
+	if cfg, _ := cmd.Flags().GetString("config-file"); cfg != "" {
+		t.Errorf("default config-file = %q; want empty", cfg)
 	}
-	if cs, _ := cmd.Flags().GetString("configsync-addr"); cs != "" {
-		t.Errorf("default configsync-addr = %q; want empty", cs)
+	if cs, _ := cmd.Flags().GetString("config-server"); cs != "" {
+		t.Errorf("default config-server = %q; want empty", cs)
 	}
 	if cmd.Use != "gateway" {
 		t.Errorf("Use = %q; want gateway", cmd.Use)
@@ -30,13 +30,13 @@ func TestNewCmdFlags(t *testing.T) {
 }
 
 func TestBuildGateway_ConfigAndConfigSyncAreMutuallyExclusive(t *testing.T) {
-	// NOTE: buildGateway itself does NOT enforce XOR (it picks --config when both
+	// NOTE: buildGateway itself does NOT enforce XOR (it picks --config-file when both
 	// are set). The XOR is enforced in the cobra RunE. We exercise it via RunE
 	// below. This test documents that buildGateway picks config when both given.
 	_, _, _, err := buildGateway(context.Background(), "missing.yaml", "localhost:9999", "127.0.0.1:19530")
 	// missing.yaml → file error, proving the config branch was selected.
 	if err == nil {
-		t.Error("expected error selecting config branch with both flags; buildGateway must prefer --config")
+		t.Error("expected error selecting config branch with both flags; buildGateway must prefer --config-file")
 	}
 }
 
@@ -44,11 +44,11 @@ func TestRunE_RejectsBothConfigAndConfigSyncAddr(t *testing.T) {
 	cmd := NewCmd()
 	// ParseFlags binds the args to the flag set first. Calling RunE directly
 	// skips cobra's parse step, so without ParseFlags the flags read as
-	// default-empty, the --config/--configsync-addr XOR guard would NOT fire,
+	// default-empty, the --config-file/--config-server XOR guard would NOT fire,
 	// and RunE would fall through to the default branch and block on
 	// RunServer (test hang). The XOR check still returns before touching
 	// storage/listeners.
-	if err := cmd.ParseFlags([]string{"--config", "a.yaml", "--configsync-addr", "host:1234"}); err != nil {
+	if err := cmd.ParseFlags([]string{"--config-file", "a.yaml", "--config-server", "host:1234"}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
 	err := cmd.RunE(cmd, nil)

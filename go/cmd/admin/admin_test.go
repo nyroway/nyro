@@ -11,43 +11,40 @@ import (
 
 func TestNewCmdFlags(t *testing.T) {
 	cmd := NewCmd()
-	if addr, _ := cmd.Flags().GetString("addr"); addr != "127.0.0.1:19531" {
-		t.Errorf("default addr = %q, want 127.0.0.1:19531", addr)
+	if addr, _ := cmd.Flags().GetString("listen"); addr != "127.0.0.1:19531" {
+		t.Errorf("default listen = %q, want 127.0.0.1:19531", addr)
 	}
 	if cmd.Use != "admin" {
 		t.Errorf("Use = %q, want admin", cmd.Use)
 	}
 }
 
-func TestNewCmdStorageFlagDefaults(t *testing.T) {
+func TestNewCmdDSNFlagDefault(t *testing.T) {
 	cmd := NewCmd()
-	if v, _ := cmd.Flags().GetString("storage"); v != "sqlite" {
-		t.Errorf("default storage = %q, want sqlite", v)
-	}
-	if v, _ := cmd.Flags().GetString("db-dsn"); v != "" {
-		t.Errorf("default db-dsn = %q, want empty (resolved at RunE time)", v)
+	if v, _ := cmd.Flags().GetString("dsn"); v != "" {
+		t.Errorf("default dsn = %q, want empty (resolved at RunE time)", v)
 	}
 }
 
-func TestRunE_RejectsMemoryStorage(t *testing.T) {
+func TestRunE_RejectsMemoryDSN(t *testing.T) {
 	cmd := NewCmd()
-	if err := cmd.ParseFlags([]string{"--storage", "memory"}); err != nil {
+	if err := cmd.ParseFlags([]string{"--dsn", "memory://"}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
 	err := cmd.RunE(cmd, nil)
 	if err == nil {
-		t.Fatal("expected an error rejecting --storage memory, got nil")
+		t.Fatal("expected an error rejecting --dsn memory://, got nil")
 	}
 }
 
-func TestRunE_RejectsUnknownStorage(t *testing.T) {
+func TestRunE_RejectsUnknownDSNScheme(t *testing.T) {
 	cmd := NewCmd()
-	if err := cmd.ParseFlags([]string{"--storage", "bogus"}); err != nil {
+	if err := cmd.ParseFlags([]string{"--dsn", "bogus://x"}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
 	err := cmd.RunE(cmd, nil)
 	if err == nil {
-		t.Fatal("expected an error rejecting --storage bogus, got nil")
+		t.Fatal("expected an error rejecting an unrecognized --dsn scheme, got nil")
 	}
 }
 
@@ -59,38 +56,38 @@ func TestNewCmdObsDataDirFlagDefault(t *testing.T) {
 	}
 }
 
-func TestNewCmdGRPCAddrFlagDefault(t *testing.T) {
+func TestNewCmdConfigListenFlagDefault(t *testing.T) {
 	cmd := NewCmd()
-	if v, _ := cmd.Flags().GetString("grpc-addr"); v != "127.0.0.1:19532" {
-		t.Errorf("default grpc-addr = %q, want 127.0.0.1:19532", v)
+	if v, _ := cmd.Flags().GetString("config-listen"); v != "127.0.0.1:19532" {
+		t.Errorf("default config-listen = %q, want 127.0.0.1:19532", v)
 	}
 }
 
-// An explicit --db-dsn naming a directory that doesn't exist must fail
+// An explicit --dsn naming a sqlite directory that doesn't exist must fail
 // loudly rather than silently create it — unlike the ~/.nyro default,
 // which is our own managed space and safe to auto-create. Silently
 // creating a typo'd explicit path risks masking the mistake with a fresh
 // empty DB instead of the one the operator meant to open.
-func TestRunE_ExplicitDBDSNMissingDirectoryErrors(t *testing.T) {
+func TestRunE_ExplicitDSNMissingDirectoryErrors(t *testing.T) {
 	cmd := NewCmd()
 	missing := filepath.Join(t.TempDir(), "does-not-exist", "nyro.db")
-	if err := cmd.ParseFlags([]string{"--db-dsn", missing}); err != nil {
+	if err := cmd.ParseFlags([]string{"--dsn", "sqlite://" + missing}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
 	err := cmd.RunE(cmd, nil)
 	if err == nil {
-		t.Fatal("expected an error for a missing explicit --db-dsn directory, got nil")
+		t.Fatal("expected an error for a missing explicit --dsn directory, got nil")
 	}
 }
 
-// Same as above, for --obs-data-dir. db-dsn is pointed at a valid temp
+// Same as above, for --obs-data-dir. --dsn is pointed at a valid temp
 // directory so the RunE reaches the obs-data-dir check rather than failing
 // there first — and so the test never touches the real ~/.nyro.
 func TestRunE_ExplicitObsDataDirMissingDirectoryErrors(t *testing.T) {
 	cmd := NewCmd()
 	dbDSN := filepath.Join(t.TempDir(), "nyro.db")
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
-	if err := cmd.ParseFlags([]string{"--db-dsn", dbDSN, "--obs-data-dir", missing}); err != nil {
+	if err := cmd.ParseFlags([]string{"--dsn", "sqlite://" + dbDSN, "--obs-data-dir", missing}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
 	err := cmd.RunE(cmd, nil)

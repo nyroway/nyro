@@ -23,13 +23,14 @@ import (
 // NewCmd builds the gateway (data-plane) subcommand.
 //
 // Config sources (exactly one is required):
-//   - --config: standalone YAML (no admin/DB needed). The snapshot is built once
-//     at startup and never refreshed; edit + restart to change config.
-//   - --configsync-addr: admin's gRPC endpoint. The gateway subscribes to a
+//   - --config-file: standalone YAML (no admin/DB needed). The snapshot is
+//     built once at startup and never refreshed; edit + restart to change
+//     config.
+//   - --config-server: admin's gRPC endpoint. The gateway subscribes to a
 //     long-lived config stream and hot-reloads on every admin config change.
 //
 // Phase 3 removed the transitional Phase-1 DB-poll default — exactly one of
-// --config / --configsync-addr must now be set.
+// --config-file / --config-server must now be set.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "gateway",
@@ -39,19 +40,19 @@ func NewCmd() *cobra.Command {
 	// from real clients (like nginx/envoy/traefik), often from outside its
 	// own host/container — unlike the admin control plane, which manages
 	// sensitive credentials and defaults to loopback-only on purpose.
-	cmd.Flags().String("addr", "0.0.0.0:19530", "listen address for the data plane")
-	cmd.Flags().String("config", "", "standalone YAML config file (no admin/DB needed)")
-	cmd.Flags().String("configsync-addr", "", "admin gRPC config-sync endpoint (host:port) for config hot-reload")
+	cmd.Flags().String("listen", "0.0.0.0:19530", "listen address for the data plane")
+	cmd.Flags().String("config-file", "", "standalone YAML config file (no admin/DB needed)")
+	cmd.Flags().String("config-server", "", "admin gRPC config-sync endpoint (host:port) for config hot-reload")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		addr, _ := cmd.Flags().GetString("addr")
-		cfgPath, _ := cmd.Flags().GetString("config")
-		configSyncAddr, _ := cmd.Flags().GetString("configsync-addr")
+		addr, _ := cmd.Flags().GetString("listen")
+		cfgPath, _ := cmd.Flags().GetString("config-file")
+		configSyncAddr, _ := cmd.Flags().GetString("config-server")
 
 		if cfgPath == "" && configSyncAddr == "" {
-			return errors.New("exactly one of --config or --configsync-addr is required (the legacy DB-poll default was removed in Phase 3)")
+			return errors.New("exactly one of --config-file or --config-server is required (the legacy DB-poll default was removed in Phase 3)")
 		}
 		if cfgPath != "" && configSyncAddr != "" {
-			return errors.New("--config and --configsync-addr are mutually exclusive (set exactly one)")
+			return errors.New("--config-file and --config-server are mutually exclusive (set exactly one)")
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -96,13 +97,13 @@ func servicePort(addr string) string {
 
 // buildGateway selects the config source and returns a ready, storage-free
 // Gateway plus an optional config-sync client stop function (nil unless
-// --configsync-addr) and the OTel provider (always non-nil on success —
+// --config-server) and the OTel provider (always non-nil on success —
 // telemetry is wired in every mode). It constructs the ObsProvider + Handles
 // and calls RegisterHooks exactly ONCE per process (the plugin registry
 // accumulates appends, so re-registering would double-emit). /readyz reflects
 // cache fill, not storage health.
 //
-// listenAddr is this gateway's own data-plane --addr (host:port); only its
+// listenAddr is this gateway's own data-plane --listen (host:port); only its
 // port is used, reported over config-sync as Subscribe.service_port so the
 // admin's node list can show where each gateway actually serves traffic
 // (distinct from the config-sync gRPC connection's ephemeral peer port).
@@ -161,7 +162,7 @@ func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr strin
 
 	default:
 		// Unreachable: RunE enforces the XOR. Guard anyway.
-		return nil, nil, nil, errors.New("exactly one of --config or --configsync-addr is required")
+		return nil, nil, nil, errors.New("exactly one of --config-file or --config-server is required")
 	}
 }
 

@@ -554,7 +554,7 @@ func flattenObservabilitySignal(out map[string]string, signal observability.Sign
 
 // BuildSnapshot constructs a configsync.ConfigSnapshot directly from the YAML
 // config (no persistent storage). This is the standalone-mode path: `nyro
-// gateway --config` swaps this snapshot into the gateway's cache so config
+// gateway --config-file` swaps this snapshot into the gateway's cache so config
 // reads work without an admin or DB. It seeds a throwaway in-memory backend
 // via the same ApplyTo used by persistent backends and reads the snapshot
 // back through configsync.LoadFromStorage — there is no separate

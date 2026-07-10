@@ -27,7 +27,7 @@ type Subscribe struct {
 	NodeId        string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`                // stable per-process identifier (survives reconnects)
 	AppVersion    string                 `protobuf:"bytes,3,opt,name=app_version,json=appVersion,proto3" json:"app_version,omitempty"`    // gateway build version, for node visibility
 	Hostname      string                 `protobuf:"bytes,4,opt,name=hostname,proto3" json:"hostname,omitempty"`                          // gateway's os.Hostname(), for node visibility
-	ServicePort   string                 `protobuf:"bytes,5,opt,name=service_port,json=servicePort,proto3" json:"service_port,omitempty"` // port the gateway's data-plane listener is bound to (from --addr), for node visibility
+	ServicePort   string                 `protobuf:"bytes,5,opt,name=service_port,json=servicePort,proto3" json:"service_port,omitempty"` // port the gateway's data-plane listener is bound to (from --listen), for node visibility
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

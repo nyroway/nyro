@@ -26,7 +26,7 @@ import (
 
 // nyroHomeDir returns ~/.nyro, the default home for admin-local state
 // (sqlite DB, observability parquet data) when the user hasn't pointed
-// --db-dsn/--obs-data-dir elsewhere. Falls back to "./.nyro" (relative to
+// --dsn/--obs-data-dir elsewhere. Falls back to "./.nyro" (relative to
 // the working directory) if the OS user home directory can't be resolved —
 // best-effort, never fatal, so admin still starts.
 func nyroHomeDir() string {
@@ -37,71 +37,73 @@ func nyroHomeDir() string {
 	return filepath.Join(home, ".nyro")
 }
 
+// defaultDSN is the --dsn value used when the flag is left empty: a sqlite
+// file under the admin-managed ~/.nyro home.
+func defaultDSN() string {
+	return "sqlite://" + filepath.Join(nyroHomeDir(), "nyro.db")
+}
+
 // NewCmd builds the admin (control-plane) subcommand.
 //
 // In addition to the REST API + WebUI, the admin optionally runs a gRPC
-// ConfigService server (--grpc-addr) that pushes the full config snapshot to
-// every connected gateway. When enabled, every config write (providers, models,
-// api keys, settings) triggers an immediate push to all gateways.
+// ConfigService server (--config-listen) that pushes the full config snapshot
+// to every connected gateway. When enabled, every config write (providers,
+// models, api keys, settings) triggers an immediate push to all gateways.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "admin",
 		Short: "Run the control plane (management API + WebUI)",
 	}
-	cmd.Flags().String("addr", "127.0.0.1:19531", "listen address for the control plane")
+	cmd.Flags().String("listen", "127.0.0.1:19531", "listen address for the control plane")
 	// Bound to loopback by default: this stream carries every upstream's
 	// credentials_json in the clear (no TLS, no auth — see internal/configsync)
 	// to any client that connects and subscribes. Defaulting it on (rather than
 	// disabled) makes admin+gateway on the same host work with zero flags;
 	// exposing it beyond loopback is a deliberate opt-in via an explicit
-	// --grpc-addr, not something a default should do for you.
-	cmd.Flags().String("grpc-addr", "127.0.0.1:19532", "listen address for the config-sync gRPC server (empty disables it)")
-	cmd.Flags().String("admin-token", "", "Bearer token protecting /api/v1 admin routes")
+	// --config-listen, not something a default should do for you.
+	cmd.Flags().String("config-listen", "127.0.0.1:19532", "listen address for the config-sync gRPC server (empty disables it)")
+	cmd.Flags().String("token", "", "Bearer token protecting /api/v1 admin routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
-	cmd.Flags().String("storage", "sqlite", "storage backend: sqlite|postgres|mysql")
-	cmd.Flags().String("db-dsn", "", fmt.Sprintf("database path/DSN (sqlite: file path, default %s; postgres/mysql: full DSN, required)", filepath.Join(nyroHomeDir(), "nyro.db")))
+	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s), postgres://..., or mysql://...", defaultDSN()))
 	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for admin-local observability parquet data (logs/metrics/traces)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		addr, _ := cmd.Flags().GetString("addr")
-		grpcAddr, _ := cmd.Flags().GetString("grpc-addr")
-		adminToken, _ := cmd.Flags().GetString("admin-token")
+		addr, _ := cmd.Flags().GetString("listen")
+		grpcAddr, _ := cmd.Flags().GetString("config-listen")
+		adminToken, _ := cmd.Flags().GetString("token")
 		webuiDir, _ := cmd.Flags().GetString("webui-dir")
-		storageBackend, _ := cmd.Flags().GetString("storage")
-		dbDSN, _ := cmd.Flags().GetString("db-dsn")
+		dsn, _ := cmd.Flags().GetString("dsn")
 		obsDataDir, _ := cmd.Flags().GetString("obs-data-dir")
 
-		switch storageBackend {
-		case "sqlite":
-			usingDefaultDBDSN := dbDSN == ""
-			if usingDefaultDBDSN {
-				dbDSN = filepath.Join(nyroHomeDir(), "nyro.db")
-			}
+		usingDefaultDSN := dsn == ""
+		if usingDefaultDSN {
+			dsn = defaultDSN()
+		}
+
+		backend, driverDSN, err := bootstrap.ParseDSN(dsn)
+		if err != nil {
+			return err
+		}
+		if backend == "sqlite" {
 			// The sqlite driver opens/creates the DB file itself but never its
 			// parent directory. For the ~/.nyro default that's our own managed
 			// space, so auto-creating it (like ~/.aws, ~/.docker, ~/.kube) is
-			// expected. For an explicit --db-dsn, silently creating a missing
+			// expected. For an explicit --dsn, silently creating a missing
 			// directory risks masking a typo'd path with a fresh empty DB
 			// instead of the one the operator meant to open — fail loudly
 			// instead, matching how `postgres initdb -D <dir>` and friends
 			// treat an explicitly-named data directory.
-			if dir := filepath.Dir(dbDSN); dir != "" && dir != "." {
-				if usingDefaultDBDSN {
+			if dir := filepath.Dir(driverDSN); dir != "" && dir != "." {
+				if usingDefaultDSN {
 					if err := os.MkdirAll(dir, 0o755); err != nil {
-						return fmt.Errorf("create db-dsn directory %q: %w", dir, err)
+						return fmt.Errorf("create --dsn directory %q: %w", dir, err)
 					}
 				} else if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-					return fmt.Errorf("--db-dsn directory %q does not exist (create it first, or leave --db-dsn unset to use the default under ~/.nyro)", dir)
+					return fmt.Errorf("--dsn directory %q does not exist (create it first, or leave --dsn unset to use the default under ~/.nyro)", dir)
 				}
 			}
-		case "postgres", "mysql":
-			if dbDSN == "" {
-				return fmt.Errorf("--db-dsn is required for --storage %s", storageBackend)
-			}
-		default:
-			return fmt.Errorf("unknown --storage %q (want sqlite|postgres|mysql)", storageBackend)
 		}
 
-		// Same reasoning as --db-dsn above: the ~/.nyro default is auto-created
+		// Same reasoning as --dsn above: the ~/.nyro default is auto-created
 		// (parquet.NewSink MkdirAll's it on demand below), but an explicit
 		// --obs-data-dir naming a missing directory fails loudly instead of
 		// silently starting a fresh, empty observability store there.
@@ -111,7 +113,7 @@ func NewCmd() *cobra.Command {
 			}
 		}
 
-		st, err := bootstrap.OpenStorage(storageBackend, dbDSN)
+		st, err := bootstrap.OpenStorageFromDSN(dsn)
 		if err != nil {
 			return err
 		}
@@ -287,18 +289,18 @@ var obsSeedSignals = []string{"logs", "metrics", "traces"}
 // seedDefaultObsEndpoint runs after migration and, only if all three signals'
 // obs_<signal>_otlp_endpoint keys are still empty (fresh install, or a
 // migration that found nothing to copy), seeds every signal's OTLP endpoint
-// to point at this admin instance's own --addr, and defaults any still-empty
+// to point at this admin instance's own --listen, and defaults any still-empty
 // obs_<signal>_exporter to "otlp". This is a real, editable setting written
 // to storage — not an in-memory/runtime override of ObsConfig — so the user
 // can change it later via the WebUI.
 //
 // The seeded value must be a valid absolute URL: provider.go's OTLP builders
 // (otlploghttp/otlpmetrichttp/otlptracehttp) call WithEndpointURL, which
-// url.Parses the string — a schemeless "host:port" value (e.g. what --addr
+// url.Parses the string — a schemeless "host:port" value (e.g. what --listen
 // takes, "127.0.0.1:19531") fails to parse as an absolute URL and causes the
 // OTel SDK to silently fall back to its own built-in default
 // ("localhost:4318") instead of this admin's real address. addrToOTLPURL
-// below normalizes --addr into "http://host:port" (leaving an
+// below normalizes --listen into "http://host:port" (leaving an
 // already-schemed value untouched).
 //
 // Idempotent: if any endpoint is already set (user-configured or seeded on a
@@ -333,13 +335,13 @@ func seedDefaultObsEndpoint(s storage.SettingsStore, addr string) {
 	}
 }
 
-// addrToOTLPURL normalizes a --addr-style value into an absolute URL suitable
+// addrToOTLPURL normalizes a --listen-style value into an absolute URL suitable
 // for otlploghttp/otlpmetrichttp/otlptracehttp's WithEndpointURL, which
-// url.Parses its argument and requires a scheme. --addr is documented and
+// url.Parses its argument and requires a scheme. --listen is documented and
 // used elsewhere (bootstrap.RunServer) as a bare "host:port" listen address
 // (e.g. "127.0.0.1:19531", or ":8080"), so the common case just gets
 // "http://" prepended. If addr already carries an "http://" or "https://"
-// scheme (e.g. a user hand-editing the seeded value, or a future --addr that
+// scheme (e.g. a user hand-editing the seeded value, or a future --listen that
 // accepts a full URL), it is returned unchanged rather than double-prefixed.
 func addrToOTLPURL(addr string) string {
 	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {

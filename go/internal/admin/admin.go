@@ -67,7 +67,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 
 		// /nodes lists gateways currently connected over config-sync (best-effort,
 		// in-memory — never persisted). Returns an empty array (not an error) when
-		// config-sync is disabled (no --grpc-addr) or nothing is connected yet, so
+		// config-sync is disabled (no --config-listen) or nothing is connected yet, so
 		// the WebUI can render an empty state instead of handling a special error.
 		g.Get("/nodes", func(w http.ResponseWriter, r *http.Request) {
 			lister := nodeListerVal
