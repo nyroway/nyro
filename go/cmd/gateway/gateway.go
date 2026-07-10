@@ -35,7 +35,11 @@ func NewCmd() *cobra.Command {
 		Use:   "gateway",
 		Short: "Run the data plane (proxy forwarding to upstreams)",
 	}
-	cmd.Flags().String("addr", "127.0.0.1:19530", "listen address for the data plane")
+	// 0.0.0.0, not loopback: the gateway's entire job is accepting traffic
+	// from real clients (like nginx/envoy/traefik), often from outside its
+	// own host/container — unlike the admin control plane, which manages
+	// sensitive credentials and defaults to loopback-only on purpose.
+	cmd.Flags().String("addr", "0.0.0.0:19530", "listen address for the data plane")
 	cmd.Flags().String("config", "", "standalone YAML config file (no admin/DB needed)")
 	cmd.Flags().String("configsync-addr", "", "admin gRPC config-sync endpoint (host:port) for config hot-reload")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
