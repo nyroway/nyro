@@ -69,9 +69,9 @@ func newInitCmd() *cobra.Command {
 			return err
 		}
 		if existed {
-			fmt.Fprintf(cmd.OutOrStdout(), "reused existing CA in %s\n", *dir)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reused existing CA in %s\n", *dir)
 		} else {
-			fmt.Fprintf(cmd.OutOrStdout(), "generated new CA in %s (valid %s)\n", *dir, *valid)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "generated new CA in %s (valid %s)\n", *dir, *valid)
 		}
 		return nil
 	}
@@ -93,7 +93,7 @@ func newSignAdminCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "wrote %s and %s (identity: spiffe://nyro/%s)\n", certPath, keyPath, pki.AdminSPIFFEID)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s and %s (identity: spiffe://nyro/%s)\n", certPath, keyPath, pki.AdminSPIFFEID)
 		return nil
 	}
 	return cmd
@@ -123,7 +123,7 @@ func newSignGatewayCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "wrote %s and %s (node-id: %s)\n", certPath, keyPath, id)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s and %s (node-id: %s)\n", certPath, keyPath, id)
 		return nil
 	}
 	return cmd

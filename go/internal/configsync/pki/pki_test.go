@@ -157,7 +157,7 @@ func TestMTLSRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tls.Listen: %v", err)
 	}
-	defer lis.Close()
+	defer func() { _ = lis.Close() }()
 
 	acceptOnce := func() <-chan error {
 		errCh := make(chan error, 1)
@@ -167,7 +167,7 @@ func TestMTLSRoundTrip(t *testing.T) {
 				errCh <- err
 				return
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			tlsConn, ok := conn.(*tls.Conn)
 			if !ok {
 				errCh <- nil
@@ -188,7 +188,7 @@ func TestMTLSRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("client dial: %v", err)
 		}
-		conn.Close()
+		_ = conn.Close()
 		if err := <-errCh; err != nil {
 			t.Fatalf("server-side handshake: %v", err)
 		}
@@ -212,7 +212,7 @@ func TestMTLSRoundTrip(t *testing.T) {
 		}
 		conn, dialErr := tls.Dial("tcp", lis.Addr().String(), clientTLS)
 		if dialErr == nil {
-			conn.Close()
+			_ = conn.Close()
 		}
 		serverErr := <-errCh
 		if dialErr == nil && serverErr == nil {
@@ -229,7 +229,7 @@ func TestMTLSRoundTrip(t *testing.T) {
 		// verification of admin's identity.
 		conn, dialErr := tls.Dial("tcp", lis.Addr().String(), &tls.Config{InsecureSkipVerify: true})
 		if dialErr == nil {
-			conn.Close()
+			_ = conn.Close()
 		}
 		serverErr := <-errCh
 		if dialErr == nil && serverErr == nil {
@@ -276,7 +276,7 @@ func TestLoadClientTLS_RejectsNonAdminServerIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lis.Close()
+	defer func() { _ = lis.Close() }()
 	go func() {
 		conn, err := lis.Accept()
 		if err == nil {
@@ -290,7 +290,7 @@ func TestLoadClientTLS_RejectsNonAdminServerIdentity(t *testing.T) {
 	}
 	conn, dialErr := tls.Dial("tcp", lis.Addr().String(), clientTLS)
 	if dialErr == nil {
-		conn.Close()
+		_ = conn.Close()
 		t.Fatal("expected the client to reject a server certificate that isn't identified as admin")
 	}
 }
