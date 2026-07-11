@@ -4,6 +4,7 @@ package admin
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/admin"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
+	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -55,13 +57,15 @@ func NewCmd() *cobra.Command {
 		Short: "Run the control plane (management API + WebUI)",
 	}
 	cmd.Flags().String("listen", "127.0.0.1:19531", "listen address for the control plane")
-	// Bound to loopback by default: this stream carries every upstream's
-	// credentials_json in the clear (no TLS, no auth — see internal/configsync)
-	// to any client that connects and subscribes. Defaulting it on (rather than
-	// disabled) makes admin+gateway on the same host work with zero flags;
-	// exposing it beyond loopback is a deliberate opt-in via an explicit
-	// --config-listen, not something a default should do for you.
+	// Bound to loopback by default. This stream carries every upstream's
+	// credentials_json — it always requires either mTLS (--config-tls-ca/
+	// -cert/-key, see internal/configsync/pki) or an explicit, no-implicit-
+	// default-allowed --config-insecure opt-in; see the RunE gating below.
 	cmd.Flags().String("config-listen", "127.0.0.1:19532", "listen address for the config-sync gRPC server (empty disables it)")
+	cmd.Flags().String("config-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs admin/gateway leaf certs (see `nyro ca`); must be set together with --config-tls-cert/-key")
+	cmd.Flags().String("config-tls-cert", "", "config-sync mTLS: path to admin's server certificate")
+	cmd.Flags().String("config-tls-key", "", "config-sync mTLS: path to admin's server private key")
+	cmd.Flags().Bool("config-insecure", false, "run the config-sync gRPC server in plaintext with no --config-tls-*; DANGEROUS — the stream carries upstream credentials in the clear to any client that connects, regardless of --config-listen's address")
 	cmd.Flags().String("token", "", "Bearer token protecting /api/v1 admin routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s), postgres://..., or mysql://...", defaultDSN()))
@@ -69,10 +73,23 @@ func NewCmd() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("listen")
 		grpcAddr, _ := cmd.Flags().GetString("config-listen")
+		tlsCA, _ := cmd.Flags().GetString("config-tls-ca")
+		tlsCert, _ := cmd.Flags().GetString("config-tls-cert")
+		tlsKey, _ := cmd.Flags().GetString("config-tls-key")
+		insecure, _ := cmd.Flags().GetBool("config-insecure")
 		adminToken, _ := cmd.Flags().GetString("token")
 		webuiDir, _ := cmd.Flags().GetString("webui-dir")
 		dsn, _ := cmd.Flags().GetString("dsn")
 		obsDataDir, _ := cmd.Flags().GetString("obs-data-dir")
+
+		var configTLS *tls.Config
+		if grpcAddr != "" {
+			var err error
+			configTLS, err = resolveConfigSyncServerTLS(tlsCA, tlsCert, tlsKey, insecure)
+			if err != nil {
+				return err
+			}
+		}
 
 		usingDefaultDSN := dsn == ""
 		if usingDefaultDSN {
@@ -165,13 +182,17 @@ func NewCmd() *cobra.Command {
 		// gateways.
 		if grpcAddr != "" {
 			srv := configsync.NewConfigServer(st)
-			shutdown, err := configsync.ServeGRPC(ctx, grpcAddr, srv)
+			shutdown, err := configsync.ServeGRPC(ctx, grpcAddr, srv, configTLS)
 			if err != nil {
 				return err
 			}
 			defer shutdown()
 			admin.SetBroadcaster(srv)
 			admin.SetNodeLister(srv)
+			pki.WatchExpiry(ctx, configTLS, configExpiryCheckInterval, func(notAfter time.Time) {
+				slog.Warn("config-sync server certificate expiring soon — run `nyro ca sign-admin` and redistribute before it lapses",
+					"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
+			})
 		}
 
 		engine := chi.NewRouter()
@@ -198,6 +219,46 @@ func NewCmd() *cobra.Command {
 		return bootstrap.RunServer(engine, addr)
 	}
 	return cmd
+}
+
+// configExpiryCheckInterval is how often WatchExpiry re-checks the loaded
+// config-sync certificate once running (it always checks once immediately
+// at startup too). Daily is frequent enough given the ExpiryWarningWindow is
+// 30 days — see pki.WatchExpiry.
+const configExpiryCheckInterval = 24 * time.Hour
+
+// resolveConfigSyncServerTLS turns the --config-tls-ca/-cert/-key +
+// --config-insecure flags into a *tls.Config for the config-sync gRPC
+// server, or nil for plaintext (Tier 0). See the design note on
+// --config-listen above: there is no address-based default here, only these
+// flags decide.
+//
+//   - All three tls paths set: mTLS is used regardless of --config-insecure
+//     (certificates present always win).
+//   - Some but not all three set: a partial/likely-typo'd configuration —
+//     fail fast rather than silently falling back to plaintext or guessing
+//     which file is missing.
+//   - None set: requires explicit --config-insecure to proceed; otherwise
+//     refuses to start. When --config-insecure is used, a risk warning is
+//     always logged (independent of --config-listen's address).
+func resolveConfigSyncServerTLS(caPath, certPath, keyPath string, insecure bool) (*tls.Config, error) {
+	set := 0
+	for _, p := range []string{caPath, certPath, keyPath} {
+		if p != "" {
+			set++
+		}
+	}
+	switch {
+	case set == 3:
+		return pki.LoadServerTLS(caPath, certPath, keyPath)
+	case set > 0:
+		return nil, fmt.Errorf("--config-tls-ca, --config-tls-cert, and --config-tls-key must be set together (got %d of 3)", set)
+	case insecure:
+		slog.Warn("config-sync gRPC server running in plaintext (--config-insecure): no transport encryption or client authentication — the stream carries upstream credentials in the clear to any client that connects")
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("config-sync gRPC server requires --config-tls-ca/-cert/-key (see `nyro ca`), or pass --config-insecure to explicitly accept plaintext")
+	}
 }
 
 // legacyObsSignalSinkKeys are the deprecated per-signal sink keys, superseded

@@ -3,6 +3,7 @@ package configsync
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
@@ -49,7 +51,18 @@ type ConfigClient struct {
 // publishes received snapshots to cache. servicePort is this gateway's own
 // data-plane listen port (for node-visibility reporting only — pass "" if
 // unknown/not applicable, e.g. in tests).
-func NewConfigClient(target string, cache *ConfigCache, servicePort string) *ConfigClient {
+//
+// tlsConfig is nil for the plaintext Tier 0 (--config-insecure); when set
+// (see pki.LoadClientTLS), the client authenticates itself to admin with a
+// client certificate and verifies admin's server certificate against the
+// configured CA. Callers are responsible for the --config-insecure gating
+// decision (whether nil is actually allowed here) — this constructor just
+// dials with whatever credentials it's given.
+func NewConfigClient(target string, cache *ConfigCache, servicePort string, tlsConfig *tls.Config) *ConfigClient {
+	creds := insecure.NewCredentials()
+	if tlsConfig != nil {
+		creds = credentials.NewTLS(tlsConfig)
+	}
 	return &ConfigClient{
 		target:         target,
 		cache:          cache,
@@ -60,7 +73,7 @@ func NewConfigClient(target string, cache *ConfigCache, servicePort string) *Con
 		initialBackoff: 500 * time.Millisecond,
 		maxBackoff:     30 * time.Second,
 		dialOpts: []grpc.DialOption{
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithTransportCredentials(creds),
 		},
 	}
 }
@@ -182,7 +195,13 @@ func (c *ConfigClient) backoff(attempt int) time.Duration {
 // ServeGRPC starts a gRPC server listening on addr serving srv. It blocks until
 // the listener returns (always in a goroutine for ctx-driven shutdown). The
 // returned shutdown function stops the server gracefully.
-func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer) (shutdown func(), err error) {
+//
+// tlsConfig is nil for the plaintext Tier 0 (--config-insecure); when set, it
+// must require and verify client certificates (see pki.LoadServerTLS) — the
+// gateway's node identity is then derived from the verified client
+// certificate's SPIFFE SAN rather than trusted from Subscribe.node_id (see
+// StreamConfig).
+func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer, tlsConfig *tls.Config) (shutdown func(), err error) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		// If the address looks like it lacks a port, surface a clearer error.
@@ -191,7 +210,11 @@ func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer) (sh
 		}
 		return nil, err
 	}
-	gs := grpc.NewServer()
+	var opts []grpc.ServerOption
+	if tlsConfig != nil {
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsConfig)))
+	}
+	gs := grpc.NewServer(opts...)
 	pb.RegisterConfigServiceServer(gs, srv)
 	go func() {
 		<-ctx.Done()

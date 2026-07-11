@@ -7,10 +7,12 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
+	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
@@ -82,8 +84,25 @@ func NewConfigServer(store storage.Storage) *ConfigServer {
 func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreamingServer[pb.ConfigSnapshot]) error {
 	ctx := stream.Context()
 	remoteAddr := ""
-	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
-		remoteAddr = p.Addr.String()
+	nodeID := req.GetNodeId()
+	if p, ok := peer.FromContext(ctx); ok {
+		if p.Addr != nil {
+			remoteAddr = p.Addr.String()
+		}
+		// Under mTLS (Tier 1), the peer's verified client certificate is the
+		// authoritative source of node identity — it overrides whatever the
+		// gateway self-reported in Subscribe.node_id, which is otherwise
+		// trivially spoofable. Under Tier 0 (plaintext, --config-insecure),
+		// p.AuthInfo carries no TLS state, so this is a no-op and the
+		// self-reported node_id passes through unchanged (existing behavior).
+		if tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo); ok && len(tlsInfo.State.VerifiedChains) > 0 && len(tlsInfo.State.VerifiedChains[0]) > 0 {
+			leaf := tlsInfo.State.VerifiedChains[0][0]
+			if id, err := pki.GatewayNodeIDFromCert(leaf); err == nil {
+				nodeID = id
+			} else {
+				log.Printf("configsync: client cert has no usable identity, keeping self-reported node_id: %v", err)
+			}
+		}
 	}
 
 	// Register BEFORE the initial push. This way, any Notify that arrives
@@ -92,7 +111,7 @@ func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreami
 	// initial push. The gateway dedups by version, so a follow-up is harmless.
 	c := &streamClient{
 		ch:          make(chan *pb.ConfigSnapshot, 1),
-		nodeID:      req.GetNodeId(),
+		nodeID:      nodeID,
 		appVersion:  req.GetAppVersion(),
 		hostname:    req.GetHostname(),
 		servicePort: req.GetServicePort(),

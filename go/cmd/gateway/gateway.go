@@ -4,6 +4,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/config"
 	"github.com/nyroway/nyro/go/internal/configsync"
+	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/proxy"
 )
@@ -43,10 +45,18 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("listen", "0.0.0.0:19530", "listen address for the data plane")
 	cmd.Flags().String("config-file", "", "standalone YAML config file (no admin/DB needed)")
 	cmd.Flags().String("config-server", "", "admin gRPC config-sync endpoint (host:port) for config hot-reload")
+	cmd.Flags().String("config-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs admin/gateway leaf certs (see `nyro ca`); must be set together with --config-tls-cert/-key")
+	cmd.Flags().String("config-tls-cert", "", "config-sync mTLS: path to this gateway's client certificate")
+	cmd.Flags().String("config-tls-key", "", "config-sync mTLS: path to this gateway's client private key")
+	cmd.Flags().Bool("config-insecure", false, "connect to --config-server in plaintext with no --config-tls-*; DANGEROUS — no transport encryption or server authentication, regardless of --config-server's address")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("listen")
 		cfgPath, _ := cmd.Flags().GetString("config-file")
 		configSyncAddr, _ := cmd.Flags().GetString("config-server")
+		tlsCA, _ := cmd.Flags().GetString("config-tls-ca")
+		tlsCert, _ := cmd.Flags().GetString("config-tls-cert")
+		tlsKey, _ := cmd.Flags().GetString("config-tls-key")
+		insecure, _ := cmd.Flags().GetBool("config-insecure")
 
 		if cfgPath == "" && configSyncAddr == "" {
 			return errors.New("exactly one of --config-file or --config-server is required (the legacy DB-poll default was removed in Phase 3)")
@@ -55,10 +65,19 @@ func NewCmd() *cobra.Command {
 			return errors.New("--config-file and --config-server are mutually exclusive (set exactly one)")
 		}
 
+		var configTLS *tls.Config
+		if configSyncAddr != "" {
+			var err error
+			configTLS, err = resolveConfigSyncClientTLS(tlsCA, tlsCert, tlsKey, insecure)
+			if err != nil {
+				return err
+			}
+		}
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		gw, stopConfigSync, obsProvider, err := buildGateway(ctx, cfgPath, configSyncAddr, addr)
+		gw, stopConfigSync, obsProvider, err := buildGateway(ctx, cfgPath, configSyncAddr, addr, configTLS)
 		if err != nil {
 			return err
 		}
@@ -84,6 +103,11 @@ func NewCmd() *cobra.Command {
 // shutdownTimeout bounds the OTel provider flush on graceful exit.
 const shutdownTimeout = 5 * time.Second
 
+// configExpiryCheckInterval is how often WatchExpiry re-checks the loaded
+// config-sync client certificate once running (it always checks once
+// immediately at startup too). See pki.WatchExpiry / ExpiryWarningWindow.
+const configExpiryCheckInterval = 24 * time.Hour
+
 // servicePort extracts the port from a host:port listen address for
 // node-visibility reporting. Returns "" (best-effort, never fatal) if addr
 // isn't in host:port form.
@@ -107,7 +131,7 @@ func servicePort(addr string) string {
 // port is used, reported over config-sync as Subscribe.service_port so the
 // admin's node list can show where each gateway actually serves traffic
 // (distinct from the config-sync gRPC connection's ephemeral peer port).
-func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr string) (gw *proxy.Gateway, stopConfigSync func(), obs *observability.ObsProvider, err error) {
+func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr string, configTLS *tls.Config) (gw *proxy.Gateway, stopConfigSync func(), obs *observability.ObsProvider, err error) {
 	switch {
 	case cfgPath != "":
 		// Standalone YAML: build the config snapshot directly (no DB). The
@@ -144,8 +168,12 @@ func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr strin
 		// Observability config is read from the cache snapshot (published by
 		// the admin) once it arrives.
 		cache := &configsync.ConfigCache{}
-		client := configsync.NewConfigClient(configSyncAddr, cache, servicePort(listenAddr))
+		client := configsync.NewConfigClient(configSyncAddr, cache, servicePort(listenAddr), configTLS)
 		go func() { _ = client.Run(ctx) }()
+		pki.WatchExpiry(ctx, configTLS, configExpiryCheckInterval, func(notAfter time.Time) {
+			slog.Warn("config-sync client certificate expiring soon — run `nyro ca sign-gateway` and redistribute before it lapses",
+				"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
+		})
 		gw = proxy.NewGatewayWithCache(cache)
 
 		// Read obs settings from the cache snapshot when present (the control-
@@ -163,6 +191,37 @@ func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr strin
 	default:
 		// Unreachable: RunE enforces the XOR. Guard anyway.
 		return nil, nil, nil, errors.New("exactly one of --config-file or --config-server is required")
+	}
+}
+
+// resolveConfigSyncClientTLS turns the --config-tls-ca/-cert/-key +
+// --config-insecure flags into a *tls.Config for dialing --config-server, or
+// nil for plaintext (Tier 0). Same all-or-none / explicit-insecure-only
+// gating as resolveConfigSyncServerTLS on the admin side — see that
+// function's doc comment for the rationale.
+//
+// There is deliberately no --config-server-name-style override here:
+// pki.LoadClientTLS verifies admin's server certificate by SPIFFE identity
+// (spiffe://nyro/admin), not by matching its SAN against the dial address,
+// so the address used in --config-server (direct, load balancer, k8s
+// Service name, IP) never affects verification.
+func resolveConfigSyncClientTLS(caPath, certPath, keyPath string, insecure bool) (*tls.Config, error) {
+	set := 0
+	for _, p := range []string{caPath, certPath, keyPath} {
+		if p != "" {
+			set++
+		}
+	}
+	switch {
+	case set == 3:
+		return pki.LoadClientTLS(caPath, certPath, keyPath)
+	case set > 0:
+		return nil, fmt.Errorf("--config-tls-ca, --config-tls-cert, and --config-tls-key must be set together (got %d of 3)", set)
+	case insecure:
+		slog.Warn("config-sync client connecting to --config-server in plaintext (--config-insecure): no transport encryption or server authentication")
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("--config-server requires --config-tls-ca/-cert/-key (see `nyro ca`), or pass --config-insecure to explicitly accept plaintext")
 	}
 }
 

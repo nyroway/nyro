@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nyroway/nyro/go/cmd/admin"
+	"github.com/nyroway/nyro/go/cmd/ca"
 	"github.com/nyroway/nyro/go/cmd/gateway"
 	"github.com/nyroway/nyro/go/internal/version"
 )
@@ -26,6 +27,7 @@ func newRootCmd() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(gateway.NewCmd())
 	root.AddCommand(admin.NewCmd())
+	root.AddCommand(ca.NewCmd())
 	root.AddCommand(newVersionCmd())
 	return root
 }

@@ -37,13 +37,31 @@ shadow phase).
 
 To hot-reload the gateway's config from the admin instead of a static
 `--config-file` YAML file, enable the admin's config-sync gRPC server and point
-the gateway at it:
+the gateway at it. This channel carries every upstream's `credentials_json`,
+so it always requires either mTLS or an explicit `--config-insecure`
+acknowledgment — see [config-sync mTLS](security/config-sync-mtls.md) for the
+full `nyro ca` workflow. For same-host shadow testing, plaintext + loopback is
+the fastest path:
 
 ```bash
-# control plane, with config-sync enabled:
-/tmp/nyro admin --listen 127.0.0.1:19531 --config-listen 127.0.0.1:19532 --token <token>
+# control plane, with config-sync enabled (loopback, explicitly plaintext):
+/tmp/nyro admin --listen 127.0.0.1:19531 --config-listen 127.0.0.1:19532 --config-insecure --token <token>
 # data plane, subscribing to config-sync instead of --config-file:
-/tmp/nyro gateway --listen 127.0.0.1:19529 --config-server 127.0.0.1:19532
+/tmp/nyro gateway --listen 127.0.0.1:19529 --config-server 127.0.0.1:19532 --config-insecure
+```
+
+For anything crossing a host boundary, sign certificates first and drop
+`--config-insecure` in favor of `--config-tls-ca/-cert/-key`:
+
+```bash
+nyro ca init
+nyro ca sign-admin
+nyro ca sign-gateway --node-id gw-1
+# distribute ca.pem + admin.{pem,key.pem} / gateway.{pem,key.pem}, then:
+/tmp/nyro admin --config-listen 0.0.0.0:19532 \
+  --config-tls-ca ~/.nyro/pki/ca.pem --config-tls-cert ~/.nyro/pki/admin.pem --config-tls-key ~/.nyro/pki/admin-key.pem
+/tmp/nyro gateway --config-server admin.internal:19532 \
+  --config-tls-ca ~/.nyro/pki/ca.pem --config-tls-cert ~/.nyro/pki/gateway.pem --config-tls-key ~/.nyro/pki/gateway-key.pem
 ```
 
 `--config-file` and `--config-server` are mutually exclusive — exactly one must

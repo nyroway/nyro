@@ -33,7 +33,7 @@ func TestBuildGateway_ConfigAndConfigSyncAreMutuallyExclusive(t *testing.T) {
 	// NOTE: buildGateway itself does NOT enforce XOR (it picks --config-file when both
 	// are set). The XOR is enforced in the cobra RunE. We exercise it via RunE
 	// below. This test documents that buildGateway picks config when both given.
-	_, _, _, err := buildGateway(context.Background(), "missing.yaml", "localhost:9999", "127.0.0.1:19530")
+	_, _, _, err := buildGateway(context.Background(), "missing.yaml", "localhost:9999", "127.0.0.1:19530", nil)
 	// missing.yaml → file error, proving the config branch was selected.
 	if err == nil {
 		t.Error("expected error selecting config branch with both flags; buildGateway must prefer --config-file")
@@ -82,7 +82,7 @@ consumers:
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gw, stopConfigSync, obs, err := buildGateway(context.Background(), path, "", "127.0.0.1:19530")
+	gw, stopConfigSync, obs, err := buildGateway(context.Background(), path, "", "127.0.0.1:19530", nil)
 	if err != nil {
 		t.Fatalf("buildGateway: %v", err)
 	}
@@ -129,7 +129,7 @@ consumers: []
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, err := buildGateway(context.Background(), path, "", "127.0.0.1:19530")
+	_, _, _, err := buildGateway(context.Background(), path, "", "127.0.0.1:19530", nil)
 	if err == nil {
 		t.Fatal("expected an error: traces.exporter=otlp declared in YAML with no endpoint must fail fast, proving the YAML setting was read")
 	}
@@ -154,7 +154,7 @@ consumers: []
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, _, obs, err := buildGateway(context.Background(), path, "", "127.0.0.1:19530")
+	_, _, obs, err := buildGateway(context.Background(), path, "", "127.0.0.1:19530", nil)
 	if err != nil {
 		t.Fatalf("buildGateway: %v (OTEL_* env vars must not be consulted when the YAML declares nothing)", err)
 	}
