@@ -539,10 +539,19 @@ func conflict(w http.ResponseWriter, msg string) {
 func bumpEpoch(s storage.Storage) {
 	v, _ := s.Settings().Get("config_epoch")
 	n, _ := strconv.ParseInt(v, 10, 64)
-	_ = s.Settings().Set("config_epoch", strconv.FormatInt(n+1, 10))
-	// Push the new config to every connected gateway over config-sync, if a
-	// broadcaster (the admin's gRPC ConfigServer) has been wired in. No-op in
-	// tests/standalone.
+	n++
+	_ = s.Settings().Set("config_epoch", strconv.FormatInt(n, 10))
+	// Drive notification through the EpochWatcher when one is wired: it is
+	// the single decision point for whether/when to push, so a write made on
+	// this replica and the same write observed via polling by a peer replica
+	// (sharing the same DB) converge on calling Notify exactly once each.
+	// Fall back to the raw Broadcaster for standalone/tests where no watcher
+	// is registered (config-sync disabled, or single-instance deployments
+	// with polling turned off).
+	if w := epochWatcher(); w != nil {
+		w.Observe(n)
+		return
+	}
 	if b := configBroadcaster(); b != nil {
 		b.Notify()
 	}
@@ -563,6 +572,24 @@ var configBroadcasterVal Broadcaster
 func SetBroadcaster(b Broadcaster) { configBroadcasterVal = b }
 
 func configBroadcaster() Broadcaster { return configBroadcasterVal }
+
+// EpochObserver is implemented by configsync.EpochWatcher. It replaces the
+// raw Broadcaster as bumpEpoch's push target whenever multi-replica epoch
+// polling is enabled: Observe deduplicates by epoch so the same config write
+// isn't pushed twice (once locally here, once when this replica's own poll
+// tick later catches up to the epoch it just wrote).
+type EpochObserver interface {
+	Observe(epoch int64)
+}
+
+var epochWatcherVal EpochObserver
+
+// SetEpochWatcher wires the config-sync epoch watcher. Call once at admin
+// startup (after Mount) if the gRPC ConfigServer and epoch polling are
+// enabled. Safe to pass nil to fall back to the raw Broadcaster.
+func SetEpochWatcher(w EpochObserver) { epochWatcherVal = w }
+
+func epochWatcher() EpochObserver { return epochWatcherVal }
 
 // NodeLister exposes the set of gateways currently connected over
 // config-sync, for the /api/v1/nodes admin endpoint. The admin's config-sync
