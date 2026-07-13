@@ -78,15 +78,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm -C webui install --frozen-lockfile
 
+      - name: Build webui
+        run: pnpm -C webui build
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
       - name: Build desktop bundles
         run: |
           if [ -n "${{ matrix.rust_target }}" ]; then
-            cargo tauri build --bundles ${{ matrix.bundles }} --target ${{ matrix.rust_target }}
+            cargo tauri build -c '{"build":{"beforeBuildCommand":""}}' --bundles ${{ matrix.bundles }} --target ${{ matrix.rust_target }}
           else
-            cargo tauri build --bundles ${{ matrix.bundles }}
+            cargo tauri build -c '{"build":{"beforeBuildCommand":""}}' --bundles ${{ matrix.bundles }}
           fi
         shell: bash
         env:

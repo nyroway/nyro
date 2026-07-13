@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../webui/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "cd ../webui && pnpm dev",
-    "beforeBuildCommand": "cd ../webui && pnpm build"
+    "beforeDevCommand": "pnpm -C ../webui dev",
+    "beforeBuildCommand": "pnpm -C ../webui build"
   },
   "app": {
     "withGlobalTauri": true,
