@@ -64,8 +64,6 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
       return { method: "GET", url: `${base}/providers` };
     case "get_provider_presets":
       return { method: "GET", url: `${base}/providers/presets` };
-    case "get_loaded_extensions":
-      return { method: "GET", url: `${base}/system/extensions` };
     case "create_provider":
       return { method: "POST", url: `${base}/providers`, body: args?.input as Record<string, unknown> };
     case "copy_provider":
