@@ -62,6 +62,13 @@ func NewCmd() *cobra.Command {
 		if cfgPath != "" && configSyncAddr != "" {
 			return errors.New("--config-file and --config-server are mutually exclusive (set exactly one)")
 		}
+		if cfgPath != "" {
+			for _, name := range []string{"config-tls-ca", "config-tls-cert", "config-tls-key"} {
+				if cmd.Flags().Changed(name) {
+					return fmt.Errorf("--%s is only valid with --config-server (not --config-file)", name)
+				}
+			}
+		}
 
 		var configTLS *tls.Config
 		if configSyncAddr != "" {

@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,6 +83,19 @@ func NewCmd() *cobra.Command {
 		configPollInterval, _ := cmd.Flags().GetDuration("config-poll-interval")
 		if configPollInterval < 0 {
 			return fmt.Errorf("--config-poll-interval must not be negative")
+		}
+		if grpcAddr == "" {
+			if cmd.Flags().Changed("config-poll-interval") {
+				return fmt.Errorf("--config-poll-interval requires --config-listen")
+			}
+			for _, name := range []string{"config-tls-ca", "config-tls-cert", "config-tls-key"} {
+				if cmd.Flags().Changed(name) {
+					return fmt.Errorf("--%s requires --config-listen", name)
+				}
+			}
+		}
+		if adminToken == "" && !isLoopbackListenAddress(addr) {
+			slog.Warn("admin API is exposed without --token; unauthenticated clients can access control-plane routes", "listen", addr)
 		}
 
 		var configTLS *tls.Config
@@ -227,6 +241,18 @@ func NewCmd() *cobra.Command {
 		return bootstrap.RunServer(engine, addr)
 	}
 	return cmd
+}
+
+func isLoopbackListenAddress(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // configExpiryCheckInterval is how often WatchExpiry re-checks the loaded

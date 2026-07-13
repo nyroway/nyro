@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -204,6 +206,81 @@ func TestRunE_RejectsNegativeConfigPollIntervalWhenConfigSyncDisabled(t *testing
 	}
 	if !strings.Contains(err.Error(), "--config-poll-interval") {
 		t.Fatalf("RunE error = %q, want --config-poll-interval validation error", err)
+	}
+}
+
+func TestRunE_RejectsConfigSyncFlagsWhenConfigListenerDisabled(t *testing.T) {
+	tests := []struct {
+		name string
+		flag string
+	}{
+		{name: "positive poll interval", flag: "--config-poll-interval=1s"},
+		{name: "explicit zero poll interval", flag: "--config-poll-interval=0"},
+		{name: "TLS CA", flag: "--config-tls-ca=ca.pem"},
+		{name: "TLS certificate", flag: "--config-tls-cert=cert.pem"},
+		{name: "TLS key", flag: "--config-tls-key=key.pem"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewCmd()
+			if err := cmd.ParseFlags([]string{
+				"--config-listen=",
+				tt.flag,
+				"--dsn=memory://",
+			}); err != nil {
+				t.Fatalf("parse flags: %v", err)
+			}
+
+			err := cmd.RunE(cmd, nil)
+			if err == nil {
+				t.Fatal("RunE returned nil error, want disabled config-listen validation error")
+			}
+			if !strings.Contains(err.Error(), "--config-listen") {
+				t.Fatalf("RunE error = %q, want disabled --config-listen validation error", err)
+			}
+		})
+	}
+}
+
+func TestRunE_WarnsForUnauthenticatedNonLoopbackAdminListen(t *testing.T) {
+	tests := []struct {
+		name     string
+		listen   string
+		token    string
+		wantWarn bool
+	}{
+		{name: "IPv4 loopback", listen: "127.0.0.1:19531"},
+		{name: "IPv6 loopback", listen: "[::1]:19531"},
+		{name: "localhost", listen: "localhost:19531"},
+		{name: "IPv4 any", listen: "0.0.0.0:19531", wantWarn: true},
+		{name: "IPv6 any", listen: "[::]:19531", wantWarn: true},
+		{name: "non-loopback with token", listen: "0.0.0.0:19531", token: "secret"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previousLogger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+			cmd := NewCmd()
+			if err := cmd.ParseFlags([]string{
+				"--listen=" + tt.listen,
+				"--token=" + tt.token,
+				"--config-listen=",
+				"--dsn=memory://",
+			}); err != nil {
+				t.Fatalf("parse flags: %v", err)
+			}
+			if err := cmd.RunE(cmd, nil); err == nil {
+				t.Fatal("RunE returned nil error, want memory DSN rejection after exposure check")
+			}
+
+			gotWarn := strings.Contains(logs.String(), "admin API is exposed without --token")
+			if gotWarn != tt.wantWarn {
+				t.Fatalf("warning present = %v, want %v; logs: %q", gotWarn, tt.wantWarn, logs.String())
+			}
+		})
 	}
 }
 
