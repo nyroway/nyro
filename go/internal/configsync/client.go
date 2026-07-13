@@ -52,12 +52,11 @@ type ConfigClient struct {
 // data-plane listen port (for node-visibility reporting only — pass "" if
 // unknown/not applicable, e.g. in tests).
 //
-// tlsConfig is nil for the plaintext Tier 0 (--config-insecure); when set
-// (see pki.LoadClientTLS), the client authenticates itself to admin with a
-// client certificate and verifies admin's server certificate against the
-// configured CA. Callers are responsible for the --config-insecure gating
-// decision (whether nil is actually allowed here) — this constructor just
-// dials with whatever credentials it's given.
+// A nil tlsConfig selects plaintext. The gateway CLI reaches that mode only
+// when all three --config-tls-* paths are empty and logs a security warning
+// before constructing the client. When set (see pki.LoadClientTLS), the client
+// authenticates itself to admin with a client certificate and verifies admin's
+// server certificate against the configured CA.
 func NewConfigClient(target string, cache *ConfigCache, servicePort string, tlsConfig *tls.Config) *ConfigClient {
 	creds := insecure.NewCredentials()
 	if tlsConfig != nil {
@@ -196,11 +195,12 @@ func (c *ConfigClient) backoff(attempt int) time.Duration {
 // the listener returns (always in a goroutine for ctx-driven shutdown). The
 // returned shutdown function stops the server gracefully.
 //
-// tlsConfig is nil for the plaintext Tier 0 (--config-insecure); when set, it
-// must require and verify client certificates (see pki.LoadServerTLS) — the
-// gateway's node identity is then derived from the verified client
-// certificate's SPIFFE SAN rather than trusted from Subscribe.node_id (see
-// StreamConfig).
+// A nil tlsConfig selects plaintext. The admin CLI reaches that mode only when
+// all three --config-tls-* paths are empty and logs a security warning before
+// starting the server. When set, tlsConfig must require and verify client
+// certificates (see pki.LoadServerTLS) — the gateway's node identity is then
+// derived from the verified client certificate's SPIFFE SAN rather than
+// trusted from Subscribe.node_id (see StreamConfig).
 func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer, tlsConfig *tls.Config) (shutdown func(), err error) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {

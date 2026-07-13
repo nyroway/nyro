@@ -1,17 +1,21 @@
-# config-sync mTLS
+# Config-sync transport and mTLS
 
 The config-sync gRPC channel is how admin (control plane) pushes the live
 config snapshot — including every upstream's `credentials_json` — to every
-connected gateway (data plane). It always requires one of:
+connected gateway (data plane). Its transport mode is selected only from the
+three `--config-tls-*` paths:
 
-- **mTLS** (`--config-tls-ca/-cert/-key`, all three together), or
-- **`--config-insecure`**, an explicit, unconditional opt-out of transport
-  security. There is no address-based exemption (not even loopback) — the
-  flag alone decides, matching CockroachDB's `--insecure`/`--certs-dir`
-  model. Passing it always logs a startup warning.
+- **No TLS paths:** plaintext. Admin warns that the stream carries upstream
+  credentials without encryption or client authentication; gateway warns
+  that it has no transport encryption or server authentication.
+- **All three TLS paths:** mTLS. Admin requires and verifies a gateway client
+  certificate, and gateway verifies admin's certificate and identity.
 
-There is no third state and no implicit default: a config-sync listener/dial
-target with no certs and no `--config-insecure` refuses to start.
+Plaintext needs no separate opt-out flag. Supplying only one or two TLS paths
+is a startup error. Supplying all three paths but failing to read or validate
+any certificate or key is also a startup error; Nyro never downgrades a
+requested mTLS configuration to plaintext. Admin and gateway must be
+configured for the same mode or their connection cannot be established.
 
 ## The three commands
 
@@ -61,10 +65,10 @@ gateway --config-tls-ca ~/.nyro/pki/ca.pem \
 
 All three flags must be given together, or not at all — a partial set (e.g.
 just `--config-tls-cert`) is rejected at startup rather than silently
-guessing at a directory convention for the missing pieces. This keeps the
-loading logic to a single path with no precedence rules to reason about, and
-it means a certificate and its CA can never be silently mismatched from two
-different sources.
+guessing at a directory convention for the missing pieces or falling back to
+plaintext. This keeps the loading logic to a single path with no precedence
+rules to reason about, and it means a certificate and its CA can never be
+silently mismatched from two different sources.
 
 The two lifecycles — `nyro ca`'s offline, one-shot signing and admin/gateway's
 long-running runtime load — are deliberately decoupled. In practice you write
@@ -96,24 +100,129 @@ cert-manager, Vault, or another external PKI work identically to `nyro ca`'s
 own output. admin/gateway have no notion of "self-signed vs. external"; it's
 just three file paths either way.
 
-## Four scenarios
+## Deployment patterns
 
-**Same host** (shadow testing, local dev): skip PKI entirely.
+### Local Admin and gateway
+
+For same-host development or shadow testing, keep both listeners on loopback
+and omit all TLS paths. Both processes log the expected plaintext warning.
 
 ```bash
-admin --config-listen 127.0.0.1:19532 --config-insecure
-gateway --config-server 127.0.0.1:19532 --config-insecure
+nyro admin
+nyro gateway --listen 127.0.0.1:19530 \
+  --config-server 127.0.0.1:19532
 ```
 
-**Cross-host, self-signed**: run the three `nyro ca` commands once (from CI or
-an operator's machine), distribute `ca.pem` + the relevant leaf cert/key pair
-to each host, then start both processes with the three `--config-tls-*` flags
-pointed at the distributed files.
+Admin defaults to HTTP on `127.0.0.1:19531` and config-sync on
+`127.0.0.1:19532`; gateway's config source must still be selected explicitly.
 
-**BYO external PKI**: point `--config-tls-ca/-cert/-key` at cert-manager- or
-Vault-issued files directly.
+### Standalone gateway
 
-**Elastic scaling (containers/k8s)**: `ca.pem` is safe to bake into the image
+A standalone gateway reads YAML once at startup and runs without Admin, a
+database, or config-sync:
+
+```bash
+nyro gateway --config-file ./config.yaml
+```
+
+Edit the file and restart the gateway to apply changes. `--config-file` and
+`--config-server` are mutually exclusive, exactly one is required, and
+`--config-tls-*` flags are invalid with `--config-file`. See
+[Standalone `config.yaml`](../schema/config.md) for the schema.
+
+### Trusted-network plaintext
+
+Plaintext can cross hosts, but it exposes provider credentials in transit and
+does not authenticate the Admin server or gateway clients. Use it only on a
+tightly controlled trusted network:
+
+```bash
+nyro admin --listen 10.0.0.10:19531 \
+  --config-listen 10.0.0.10:19532 \
+  --token "$NYRO_ADMIN_TOKEN"
+nyro gateway --config-server 10.0.0.10:19532
+```
+
+The plaintext warnings are unconditional; a private or loopback address does
+not suppress them.
+
+### Cross-host mTLS
+
+Run the three `nyro ca` commands once (from CI or an operator's machine),
+distribute `ca.pem` plus the relevant leaf cert/key pair to each host, then
+start both processes with complete TLS path sets:
+
+```bash
+nyro ca init
+nyro ca sign-admin
+nyro ca sign-gateway --node-id gw-1
+
+nyro admin --config-listen 0.0.0.0:19532 \
+  --config-tls-ca ~/.nyro/pki/ca.pem \
+  --config-tls-cert ~/.nyro/pki/admin.pem \
+  --config-tls-key ~/.nyro/pki/admin-key.pem
+nyro gateway --config-server admin.internal:19532 \
+  --config-tls-ca ~/.nyro/pki/ca.pem \
+  --config-tls-cert ~/.nyro/pki/gateway.pem \
+  --config-tls-key ~/.nyro/pki/gateway-key.pem
+```
+
+### Multiple Admin replicas
+
+Admin's `--config-poll-interval` defaults to `0`, so a single replica pushes
+its own writes immediately without polling. Replicas that share a database
+must each opt into a positive polling interval so writes handled by one Admin
+are also pushed to gateways connected to the others:
+
+```bash
+# admin-1
+nyro admin --listen 10.0.0.11:19531 \
+  --config-listen 10.0.0.11:19532 \
+  --dsn "$NYRO_SHARED_DSN" --config-poll-interval 1s \
+  --token "$NYRO_ADMIN_TOKEN"
+
+# admin-2
+nyro admin --listen 10.0.0.12:19531 \
+  --config-listen 10.0.0.12:19532 \
+  --dsn "$NYRO_SHARED_DSN" --config-poll-interval 1s \
+  --token "$NYRO_ADMIN_TOKEN"
+```
+
+Use the same shared DSN on every replica (typically PostgreSQL or MySQL) and
+add complete `--config-tls-*` sets to both replicas and every gateway unless
+the config-sync network is deliberately trusted for plaintext. Polling is per
+Admin process; it is not needed by the gateways.
+
+### Config-sync disabled
+
+Set the Admin listener to the empty string when the deployment needs the
+management API but no config-sync server:
+
+```bash
+nyro admin --config-listen=
+nyro gateway --config-file ./config.yaml
+```
+
+With config-sync disabled, Admin changes do not update the standalone gateway.
+Explicit `--config-poll-interval` or `--config-tls-*` flags are rejected when
+`--config-listen` is empty.
+
+## HTTP TLS and the optional Admin token
+
+Admin's REST/WebUI `--listen` endpoint and gateway's client API `--listen`
+endpoint serve HTTP. The config-sync `--config-tls-*` flags do not enable
+HTTPS on either endpoint. Terminate public or cross-host HTTPS in a reverse
+proxy, ingress, load balancer, or service mesh.
+
+`nyro admin --token <value>` optionally adds Bearer authentication to
+`/api/v1` routes; it does not authenticate config-sync. Omitting it is allowed,
+but a non-loopback Admin `--listen` address emits a warning that control-plane
+routes are unauthenticated. Use a token for exposed Admin APIs, and carry it
+over deployment-layer HTTPS so the token itself is not sent in cleartext.
+
+## Elastic scaling
+
+**Elastic scaling (containers/k8s):** `ca.pem` is safe to bake into the image
 (it's a public certificate, not a secret). `gateway.pem`/`gateway-key.pem`
 should **not** — mount them via a Kubernetes Secret (`items`/`subPath` to
 rename into whatever path your command line expects), or use cert-manager to
@@ -131,8 +240,8 @@ never lands in the image layer.
 - Because rotation is manual, admin/gateway log a startup **and** daily
   warning once a loaded leaf certificate is within 30 days of expiring
   (`pki.ExpiryWarningWindow`). Watch for `"certificate expiring soon"` in
-  logs — an expired certificate doesn't crash the process, it just makes the
-  mTLS handshake fail, silently stalling config-sync until it's renewed.
+  logs — an expired certificate doesn't crash the process, but subsequent
+  mTLS handshakes fail and config-sync stalls until it is renewed.
 
 ## Non-goals (by design)
 

@@ -16,47 +16,60 @@ dual-run shadow phase and the cutover from the Rust gateway. It is an
 cd go
 go build -o /tmp/nyro .
 # optional UI:
-(cd ../webui && pnpm install && pnpm build)
+(cd webui && pnpm install && pnpm build)
 ```
 
 ## 1. Stand up both gateways side-by-side
 
 - Rust gateway on the production port (e.g. `:19530`).
-- Go gateway on shadow ports (data plane + control plane share one storage/DB):
+- Go gateway on a shadow port, initially using a standalone snapshot, and Go
+  Admin on its loopback control-plane port with config-sync disabled:
 
 ```bash
 # data plane (shadow):
-/tmp/nyro gateway --listen 127.0.0.1:19529
+/tmp/nyro gateway --listen 127.0.0.1:19529 \
+  --config-file ./config.yaml
 # control plane (admin API + WebUI):
-/tmp/nyro admin --listen 127.0.0.1:19531 --webui-dir ../webui/dist --token <token>
+/tmp/nyro admin --listen 127.0.0.1:19531 \
+  --config-listen= --webui-dir ./webui/dist \
+  --token "$NYRO_ADMIN_TOKEN"
 ```
 
-Both read the same upstream config (point the Go gateway at the same providers;
-config is managed via its own `/api/v1` admin API or seeded from flags for the
-shadow phase).
+The standalone gateway reads `config.yaml` once at startup; edit the file and
+restart to apply a change. Admin manages its own database, but with
+`--config-listen=` its changes are not pushed to that gateway. This is the
+simplest isolated shadow setup. The config schema is documented in
+[Standalone `config.yaml`](schema/config.md).
 
 To hot-reload the gateway's config from the admin instead of a static
 `--config-file` YAML file, enable the admin's config-sync gRPC server and point
 the gateway at it. This channel carries every upstream's `credentials_json`,
-so it always requires either mTLS or an explicit `--config-insecure`
-acknowledgment — see [config-sync mTLS](security/config-sync-mtls.md) for the
-full `nyro ca` workflow. For same-host shadow testing, plaintext + loopback is
-the fastest path:
+so no TLS paths select plaintext with a security warning, while all three
+`--config-tls-ca/-cert/-key` paths select mTLS. A partial set or a certificate
+load failure stops startup; there is no downgrade to plaintext. See
+[config-sync transport and mTLS](security/config-sync-mtls.md) for the full
+`nyro ca` workflow. For same-host shadow testing, plaintext + loopback is the
+fastest path:
 
 ```bash
-# control plane, with config-sync enabled (loopback, explicitly plaintext):
-/tmp/nyro admin --listen 127.0.0.1:19531 --config-listen 127.0.0.1:19532 --config-insecure --token <token>
+# control plane, with config-sync enabled (loopback, plaintext + WARN):
+/tmp/nyro admin --listen 127.0.0.1:19531 \
+  --config-listen 127.0.0.1:19532 --token "$NYRO_ADMIN_TOKEN"
 # data plane, subscribing to config-sync instead of --config-file:
-/tmp/nyro gateway --listen 127.0.0.1:19529 --config-server 127.0.0.1:19532 --config-insecure
+/tmp/nyro gateway --listen 127.0.0.1:19529 \
+  --config-server 127.0.0.1:19532
 ```
 
-For anything crossing a host boundary, sign certificates first and drop
-`--config-insecure` in favor of `--config-tls-ca/-cert/-key`:
+Plaintext can also be used across a tightly controlled trusted network, but
+the warnings remain: provider credentials are unencrypted, Admin is not
+authenticated to gateway, and gateway clients are not authenticated to
+Admin. For normal cross-host deployments, sign certificates and configure a
+complete TLS path set on both processes:
 
 ```bash
-nyro ca init
-nyro ca sign-admin
-nyro ca sign-gateway --node-id gw-1
+/tmp/nyro ca init
+/tmp/nyro ca sign-admin
+/tmp/nyro ca sign-gateway --node-id gw-1
 # distribute ca.pem + admin.{pem,key.pem} / gateway.{pem,key.pem}, then:
 /tmp/nyro admin --config-listen 0.0.0.0:19532 \
   --config-tls-ca ~/.nyro/pki/ca.pem --config-tls-cert ~/.nyro/pki/admin.pem --config-tls-key ~/.nyro/pki/admin-key.pem
@@ -65,10 +78,35 @@ nyro ca sign-gateway --node-id gw-1
 ```
 
 `--config-file` and `--config-server` are mutually exclusive — exactly one must
-be set. `--config-listen` is disabled (no config-sync server started) when left
-empty. Connected gateways are visible on the admin at `GET /api/v1/nodes`
-(and the WebUI's Nodes page) — a best-effort, in-memory view that reflects
-only currently-open connections.
+be set. `--config-listen=` disables the config-sync server; explicitly setting
+`--config-poll-interval` or any `--config-tls-*` flag in that mode is an error.
+Connected gateways are visible on the admin at
+`GET /api/v1/nodes` (and the WebUI's Nodes page) — a best-effort, in-memory
+view that reflects only currently-open connections.
+
+For multiple Admin replicas sharing one database (typically PostgreSQL or
+MySQL), set a positive polling interval on every replica so a write handled by
+one is noticed and pushed by the others:
+
+```bash
+# Run on each Admin host, with a distinct --listen/--config-listen address.
+/tmp/nyro admin --listen 10.0.0.11:19531 \
+  --config-listen 10.0.0.11:19532 \
+  --dsn "$NYRO_SHARED_DSN" --config-poll-interval 1s \
+  --token "$NYRO_ADMIN_TOKEN"
+```
+
+The polling default is `0` (disabled); a single Admin still pushes its own
+writes immediately. Add the complete mTLS path set above to every replica and
+gateway unless the config-sync network is deliberately trusted for plaintext.
+
+Admin's REST/WebUI listener and gateway's client listener are HTTP-only. The
+config-sync TLS flags secure only the gRPC channel; terminate HTTPS for those
+HTTP listeners at a reverse proxy, ingress, load balancer, or service mesh.
+`--token` is optional Bearer protection for Admin `/api/v1` routes and does
+not secure config-sync. A non-loopback Admin listener without `--token` logs a
+warning instead of refusing to start; exposed Admin APIs should use a token
+over deployment-layer HTTPS.
 
 ## 2. Shadow traffic + parity diff
 
@@ -100,14 +138,14 @@ Once shadow parity is clean:
 ## 4. Rollback
 
 Keep the Rust gateway warm during ramp. On regression, flip traffic back — the
-Rust gateway is untouched and still authoritative. No data migration is needed
-for rollback (each gateway has its own storage).
+Rust gateway and its storage are untouched and still authoritative, so no
+rollback data migration is needed.
 
 ## 5. Retire Rust
 
 After the Go gateway serves 100% cleanly for the agreed bake period:
 
-1. Final verification: `go test ./...` + `make -C go build`.
+1. Final verification from `go/`: `go test ./...` + `go build ./...`.
 2. Stop the Rust gateway.
 3. Remove/archive the Rust crates (`crates/`, `src-server/`, `src-tauri/`).
 4. Promote `go/` to the repo root (import-path rewrite) if desired.

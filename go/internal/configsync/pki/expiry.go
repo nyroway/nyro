@@ -40,8 +40,8 @@ func ExpiringSoon(notAfter, now time.Time) bool {
 // that's within ExpiryWarningWindow of expiring. These certificates are
 // offline-signed and manually rotated (see nyro ca sign-*) — nothing renews
 // them — so this is the only mechanism that gives an operator advance notice
-// before the config-sync channel silently stops working. A nil cfg (Tier 0,
-// --config-insecure) is a no-op: there's nothing to expire.
+// before expired certificates prevent new config-sync handshakes. A nil cfg
+// means plaintext mode and is a no-op: there's nothing to expire.
 //
 // warn is called synchronously from the goroutine WatchExpiry starts;
 // callers needing more than a log line should keep it fast and non-blocking.

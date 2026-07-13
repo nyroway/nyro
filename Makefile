@@ -127,7 +127,8 @@ go-webui-embed-build: go-webui-embed-assets
 # --config-listen defaults to 127.0.0.1:19532 (config-sync gRPC server, a
 # *separate* port from --listen's HTTP REST/WebUI), so
 # `nyro gateway --config-server 127.0.0.1:19532` can connect for config
-# hot-reload with no extra flags here.
+# hot-reload with no extra flags here. With no --config-tls-* paths, both
+# processes use plaintext config-sync and log a security warning.
 go-webui-embed-run: go-webui-embed-build
 	cd go && ./bin/nyro admin
 

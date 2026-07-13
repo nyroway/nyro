@@ -89,12 +89,12 @@ func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreami
 		if p.Addr != nil {
 			remoteAddr = p.Addr.String()
 		}
-		// Under mTLS (Tier 1), the peer's verified client certificate is the
+		// Under mTLS, the peer's verified client certificate is the
 		// authoritative source of node identity — it overrides whatever the
 		// gateway self-reported in Subscribe.node_id, which is otherwise
-		// trivially spoofable. Under Tier 0 (plaintext, --config-insecure),
-		// p.AuthInfo carries no TLS state, so this is a no-op and the
-		// self-reported node_id passes through unchanged (existing behavior).
+		// trivially spoofable. In plaintext mode, p.AuthInfo carries no TLS
+		// state, so this is a no-op and the self-reported node_id passes through
+		// unchanged.
 		if tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo); ok && len(tlsInfo.State.VerifiedChains) > 0 && len(tlsInfo.State.VerifiedChains[0]) > 0 {
 			leaf := tlsInfo.State.VerifiedChains[0][0]
 			if id, err := pki.GatewayNodeIDFromCert(leaf); err == nil {
