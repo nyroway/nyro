@@ -154,11 +154,7 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// ── One-time settings migration + first-boot seed (best-effort) ──
-		// Order matters: migration may populate the new obs_<signal>_exporter /
-		// obs_<signal>_otlp_endpoint keys from deprecated ones, and seeding must
-		// only fire when those new keys are still empty afterwards.
-		migrateLegacyObsSettings(st.Settings())
+		// ── First-boot settings seed (best-effort) ──
 		seedDefaultObsEndpoint(st.Settings(), addr)
 
 		// ── Observability sinks (admin side) ──
@@ -321,89 +317,6 @@ func resolveConfigSyncServerTLS(caPath, certPath, keyPath string) (*tls.Config, 
 	default:
 		slog.Warn("config-sync gRPC server running in plaintext: no transport encryption or client authentication — the stream carries upstream credentials in the clear to any client that connects")
 		return nil, nil
-	}
-}
-
-// legacyObsSignalSinkKeys are the deprecated per-signal sink keys, superseded
-// by obs_<signal>_exporter. See global-constraints.md "设置 key 迁移策略".
-var legacyObsSignalSinkKeys = map[string]string{
-	"logs":    "obs_logs_sink",
-	"metrics": "obs_metrics_sink",
-	"traces":  "obs_traces_sink",
-}
-
-// legacyObsDeadKeys are deprecated keys that never map to any new key and are
-// simply dropped once migration is done (obs_metrics_path/obs_traces_protocol
-// are handled specially below; the rest — obs_sink/obs_export_interval/
-// obs_otlp_endpoint — have no new-key destination other than the per-signal
-// copy already performed).
-var legacyObsDeadKeys = []string{
-	"obs_logs_sink",
-	"obs_metrics_sink",
-	"obs_traces_sink",
-	"obs_otlp_endpoint",
-	"obs_metrics_path",
-	"obs_traces_protocol",
-	"obs_sink",
-	"obs_export_interval",
-}
-
-// migrateLegacyObsSettings performs a one-time, best-effort migration of the
-// deprecated global/shared observability settings keys into the new
-// per-signal obs_<signal>_exporter / obs_<signal>_<kind>_<field> keys, then
-// deletes the old keys. This is a destructive, pre-release migration (no
-// runtime fallback compatibility — see global-constraints.md).
-//
-// It is idempotent: once the old keys are gone (e.g. migrated on a prior
-// boot), every Get below returns "" and no writes happen.
-//
-// The storage.SettingsStore interface has no Delete method, so "deleting" a
-// legacy key means Set(key, "") — functionally identical to absence for
-// every reader in this codebase (Get returns "" for both a missing key and
-// one explicitly set to "").
-//
-// Failures are logged and never block startup.
-func migrateLegacyObsSettings(s storage.SettingsStore) {
-	get := func(key string) string {
-		v, err := s.Get(key)
-		if err != nil {
-			slog.Warn("obs settings migration: read failed", "key", key, "error", err)
-			return ""
-		}
-		return v
-	}
-	set := func(key, value string) {
-		if err := s.Set(key, value); err != nil {
-			slog.Error("obs settings migration: write failed", "key", key, "error", err)
-		}
-	}
-
-	legacyEndpoint := get("obs_otlp_endpoint")
-	legacyTracesProtocol := get("obs_traces_protocol")
-
-	for signal, sinkKey := range legacyObsSignalSinkKeys {
-		sink := get(sinkKey)
-		if sink == "" || sink == "none" {
-			continue
-		}
-		set(fmt.Sprintf("obs_%s_exporter", signal), sink)
-		if sink == "otlp" && legacyEndpoint != "" {
-			set(fmt.Sprintf("obs_%s_otlp_endpoint", signal), legacyEndpoint)
-		}
-		if signal == "traces" && sink == "otlp" && legacyTracesProtocol != "" {
-			set("obs_traces_otlp_protocol", legacyTracesProtocol)
-		}
-	}
-
-	// obs_metrics_path has no destination (prometheus, the only engine that
-	// would use it, never existed as a legacy sink value) — it is dropped
-	// below along with the rest of the dead keys.
-	for _, key := range legacyObsDeadKeys {
-		existing, err := s.Get(key)
-		if err != nil || existing == "" {
-			continue // not set (or unreadable) — nothing to delete.
-		}
-		set(key, "")
 	}
 }
 
