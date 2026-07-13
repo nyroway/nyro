@@ -1,9 +1,13 @@
 package admin
 
 import (
+	"context"
 	"net/url"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
@@ -60,6 +64,111 @@ func TestNewCmdConfigListenFlagDefault(t *testing.T) {
 	cmd := NewCmd()
 	if v, _ := cmd.Flags().GetString("config-listen"); v != "127.0.0.1:19532" {
 		t.Errorf("default config-listen = %q, want 127.0.0.1:19532", v)
+	}
+}
+
+func TestNewCmdConfigPollIntervalFlagDefault(t *testing.T) {
+	cmd := NewCmd()
+	if v, _ := cmd.Flags().GetDuration("config-poll-interval"); v != 0 {
+		t.Errorf("default config-poll-interval = %v, want 0", v)
+	}
+}
+
+type countingEpochStore struct {
+	mu    sync.Mutex
+	value int64
+	reads int
+}
+
+func (s *countingEpochStore) Get(key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads++
+	return strconv.FormatInt(s.value, 10), nil
+}
+
+func (s *countingEpochStore) set(value int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.value = value
+}
+
+func (s *countingEpochStore) readCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
+}
+
+type channelNotifier struct {
+	notified chan struct{}
+}
+
+func (n *channelNotifier) Notify() {
+	select {
+	case n.notified <- struct{}{}:
+	default:
+	}
+}
+
+func TestStartEpochWatcher_ZeroReturnsNilWithoutReadingEpoch(t *testing.T) {
+	store := &countingEpochStore{value: 7}
+	notifier := &channelNotifier{notified: make(chan struct{}, 1)}
+
+	watcher, err := startEpochWatcher(context.Background(), 0, store, notifier)
+	if err != nil {
+		t.Fatalf("startEpochWatcher: %v", err)
+	}
+	if watcher != nil {
+		t.Fatalf("watcher = %v, want nil", watcher)
+	}
+	if got := store.readCount(); got != 0 {
+		t.Fatalf("epoch reads = %d, want 0", got)
+	}
+}
+
+func TestStartEpochWatcher_NegativeIntervalErrorsWithoutReadingEpoch(t *testing.T) {
+	store := &countingEpochStore{value: 7}
+	notifier := &channelNotifier{notified: make(chan struct{}, 1)}
+
+	watcher, err := startEpochWatcher(context.Background(), -time.Second, store, notifier)
+	if err == nil {
+		t.Fatal("startEpochWatcher returned nil error, want negative interval error")
+	}
+	if watcher != nil {
+		t.Fatalf("watcher = %v, want nil", watcher)
+	}
+	if got := store.readCount(); got != 0 {
+		t.Fatalf("epoch reads = %d, want 0", got)
+	}
+}
+
+func TestStartEpochWatcher_PositiveIntervalSeedsAndRuns(t *testing.T) {
+	store := &countingEpochStore{value: 7}
+	notifier := &channelNotifier{notified: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	watcher, err := startEpochWatcher(ctx, 5*time.Millisecond, store, notifier)
+	if err != nil {
+		t.Fatalf("startEpochWatcher: %v", err)
+	}
+	if watcher == nil {
+		t.Fatal("watcher = nil, want a running watcher")
+	}
+	if got := store.readCount(); got == 0 {
+		t.Fatal("epoch reads = 0, want a synchronous seed read")
+	}
+	select {
+	case <-notifier.notified:
+		t.Fatal("seed unexpectedly notified")
+	default:
+	}
+
+	store.set(8)
+	select {
+	case <-notifier.notified:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for watcher to observe the new epoch")
 	}
 }
 

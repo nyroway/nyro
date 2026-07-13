@@ -68,7 +68,7 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s), postgres://..., or mysql://...", defaultDSN()))
 	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for admin-local observability parquet data (logs/metrics/traces)")
-	cmd.Flags().Duration("config-poll-interval", time.Second, "how often to poll the shared config_epoch setting for changes made by other admin replicas (0 disables polling; single-instance deployments can leave this at the default, it's a harmless no-op)")
+	cmd.Flags().Duration("config-poll-interval", 0, "how often to poll the shared config_epoch setting for changes made by other admin replicas (0 disables polling)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("listen")
 		grpcAddr, _ := cmd.Flags().GetString("config-listen")
@@ -193,23 +193,11 @@ func NewCmd() *cobra.Command {
 					"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
 			})
 
-			// EpochWatcher lets this replica notice config_epoch bumps made
-			// by any other admin replica sharing the same DSN (not just
-			// writes made through this process), so multi-replica admin
-			// deployments converge on pushing every config change to every
-			// gateway, no matter which replica received the write. Seed
-			// before starting Run so the first poll tick doesn't re-push a
-			// snapshot gateways already got on connect.
-			if configPollInterval > 0 && (backend == "sqlite" || backend == "memory") {
-				slog.Warn("--config-poll-interval is set but --dsn uses a non-shared backend; multi-replica config sync requires all admin replicas to point at the same postgres/mysql --dsn",
-					"backend", backend)
-			}
-			watcher := configsync.NewEpochWatcher(st.Settings(), srv)
-			if err := watcher.Seed(ctx); err != nil {
-				return fmt.Errorf("seed config epoch watcher: %w", err)
+			watcher, err := startEpochWatcher(ctx, configPollInterval, st.Settings(), srv)
+			if err != nil {
+				return err
 			}
 			admin.SetEpochWatcher(watcher)
-			go watcher.Run(ctx, configPollInterval)
 		}
 
 		engine := chi.NewRouter()
@@ -243,6 +231,27 @@ func NewCmd() *cobra.Command {
 // at startup too). Daily is frequent enough given the ExpiryWarningWindow is
 // 30 days — see pki.WatchExpiry.
 const configExpiryCheckInterval = 24 * time.Hour
+
+func startEpochWatcher(
+	ctx context.Context,
+	interval time.Duration,
+	store configsync.EpochStore,
+	notifier configsync.Notifier,
+) (*configsync.EpochWatcher, error) {
+	if interval < 0 {
+		return nil, fmt.Errorf("--config-poll-interval must not be negative")
+	}
+	if interval == 0 {
+		return nil, nil
+	}
+
+	watcher := configsync.NewEpochWatcher(store, notifier)
+	if err := watcher.Seed(ctx); err != nil {
+		return nil, fmt.Errorf("seed config epoch watcher: %w", err)
+	}
+	go watcher.Run(ctx, interval)
+	return watcher, nil
+}
 
 // resolveConfigSyncServerTLS turns the --config-tls-ca/-cert/-key flags into
 // a *tls.Config for the config-sync gRPC server, or nil for plaintext.
