@@ -48,7 +48,6 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("config-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs admin/gateway leaf certs (see `nyro ca`); must be set together with --config-tls-cert/-key")
 	cmd.Flags().String("config-tls-cert", "", "config-sync mTLS: path to this gateway's client certificate")
 	cmd.Flags().String("config-tls-key", "", "config-sync mTLS: path to this gateway's client private key")
-	cmd.Flags().Bool("config-insecure", false, "connect to --config-server in plaintext with no --config-tls-*; DANGEROUS — no transport encryption or server authentication, regardless of --config-server's address")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("listen")
 		cfgPath, _ := cmd.Flags().GetString("config-file")
@@ -56,7 +55,6 @@ func NewCmd() *cobra.Command {
 		tlsCA, _ := cmd.Flags().GetString("config-tls-ca")
 		tlsCert, _ := cmd.Flags().GetString("config-tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("config-tls-key")
-		insecure, _ := cmd.Flags().GetBool("config-insecure")
 
 		if cfgPath == "" && configSyncAddr == "" {
 			return errors.New("exactly one of --config-file or --config-server is required (the legacy DB-poll default was removed in Phase 3)")
@@ -68,7 +66,7 @@ func NewCmd() *cobra.Command {
 		var configTLS *tls.Config
 		if configSyncAddr != "" {
 			var err error
-			configTLS, err = resolveConfigSyncClientTLS(tlsCA, tlsCert, tlsKey, insecure)
+			configTLS, err = resolveConfigSyncClientTLS(tlsCA, tlsCert, tlsKey)
 			if err != nil {
 				return err
 			}
@@ -194,18 +192,16 @@ func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr strin
 	}
 }
 
-// resolveConfigSyncClientTLS turns the --config-tls-ca/-cert/-key +
-// --config-insecure flags into a *tls.Config for dialing --config-server, or
-// nil for plaintext (Tier 0). Same all-or-none / explicit-insecure-only
-// gating as resolveConfigSyncServerTLS on the admin side — see that
-// function's doc comment for the rationale.
+// resolveConfigSyncClientTLS turns the --config-tls-ca/-cert/-key flags into
+// a *tls.Config for dialing --config-server, or nil for plaintext. It uses the
+// same all-or-none behavior as resolveConfigSyncServerTLS on the admin side.
 //
 // There is deliberately no --config-server-name-style override here:
 // pki.LoadClientTLS verifies admin's server certificate by SPIFFE identity
 // (spiffe://nyro/admin), not by matching its SAN against the dial address,
 // so the address used in --config-server (direct, load balancer, k8s
 // Service name, IP) never affects verification.
-func resolveConfigSyncClientTLS(caPath, certPath, keyPath string, insecure bool) (*tls.Config, error) {
+func resolveConfigSyncClientTLS(caPath, certPath, keyPath string) (*tls.Config, error) {
 	set := 0
 	for _, p := range []string{caPath, certPath, keyPath} {
 		if p != "" {
@@ -217,11 +213,9 @@ func resolveConfigSyncClientTLS(caPath, certPath, keyPath string, insecure bool)
 		return pki.LoadClientTLS(caPath, certPath, keyPath)
 	case set > 0:
 		return nil, fmt.Errorf("--config-tls-ca, --config-tls-cert, and --config-tls-key must be set together (got %d of 3)", set)
-	case insecure:
-		slog.Warn("config-sync client connecting to --config-server in plaintext (--config-insecure): no transport encryption or server authentication")
-		return nil, nil
 	default:
-		return nil, fmt.Errorf("--config-server requires --config-tls-ca/-cert/-key (see `nyro ca`), or pass --config-insecure to explicitly accept plaintext")
+		slog.Warn("config-sync client connecting to --config-server in plaintext: no transport encryption or server authentication")
+		return nil, nil
 	}
 }
 

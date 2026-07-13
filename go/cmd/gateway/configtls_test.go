@@ -1,32 +1,30 @@
 package gateway
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 )
 
-func TestResolveConfigSyncClientTLS_NoFlagsRefuses(t *testing.T) {
-	_, err := resolveConfigSyncClientTLS("", "", "", false)
-	if err == nil {
-		t.Fatal("expected an error when no certs and no --config-insecure are given")
-	}
-}
+func TestResolveConfigSyncClientTLS_NoFlagsUsesPlaintextAndWarns(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
-func TestResolveConfigSyncClientTLS_InsecureAllowsPlaintext(t *testing.T) {
-	cfg, err := resolveConfigSyncClientTLS("", "", "", true)
+	cfg, err := resolveConfigSyncClientTLS("", "", "")
 	if err != nil {
 		t.Fatalf("resolveConfigSyncClientTLS: %v", err)
 	}
 	if cfg != nil {
-		t.Fatal("expected a nil *tls.Config for the plaintext Tier 0 path")
+		t.Fatal("expected a nil *tls.Config for plaintext config-sync")
 	}
-}
-
-func TestResolveConfigSyncClientTLS_PartialFlagsRejected(t *testing.T) {
-	if _, err := resolveConfigSyncClientTLS("ca.pem", "cert.pem", "", true); err == nil {
-		t.Fatal("expected an error for a partial tls flag set even with --config-insecure also set")
+	if got := logs.String(); !strings.Contains(got, "level=WARN") || !strings.Contains(got, "plaintext") {
+		t.Fatalf("log = %q; want a plaintext security warning", got)
 	}
 }
 
@@ -42,7 +40,7 @@ func TestResolveConfigSyncClientTLS_AllThreeLoadsMTLS(t *testing.T) {
 	}
 	caPath := dir + "/ca.pem"
 
-	cfg, err := resolveConfigSyncClientTLS(caPath, certPath, keyPath, false)
+	cfg, err := resolveConfigSyncClientTLS(caPath, certPath, keyPath)
 	if err != nil {
 		t.Fatalf("resolveConfigSyncClientTLS: %v", err)
 	}
@@ -51,16 +49,29 @@ func TestResolveConfigSyncClientTLS_AllThreeLoadsMTLS(t *testing.T) {
 	}
 }
 
-// TestRunE_RefusesConfigServerWithoutCertsOrInsecure proves the gateway CLI
-// gate fires as soon as --config-server is given without --config-tls-* or
-// --config-insecure, before touching the network.
-func TestRunE_RefusesConfigServerWithoutCertsOrInsecure(t *testing.T) {
-	cmd := NewCmd()
-	if err := cmd.ParseFlags([]string{"--config-server", "127.0.0.1:19532"}); err != nil {
-		t.Fatalf("parse flags: %v", err)
+func TestResolveConfigSyncClientTLS_PartialFlagsRejected(t *testing.T) {
+	if _, err := resolveConfigSyncClientTLS("ca.pem", "", ""); err == nil {
+		t.Fatal("expected an error when only --config-tls-ca is set")
 	}
-	err := cmd.RunE(cmd, nil)
+	if _, err := resolveConfigSyncClientTLS("ca.pem", "cert.pem", ""); err == nil {
+		t.Fatal("expected an error when --config-tls-key is missing")
+	}
+}
+
+func TestResolveConfigSyncClientTLS_LoadFailure(t *testing.T) {
+	dir := t.TempDir()
+	_, err := resolveConfigSyncClientTLS(
+		dir+"/missing-ca.pem",
+		dir+"/missing-cert.pem",
+		dir+"/missing-key.pem",
+	)
 	if err == nil {
-		t.Fatal("expected an error when --config-server is set without certs or --config-insecure")
+		t.Fatal("expected an error when the TLS files cannot be loaded")
+	}
+}
+
+func TestConfigSyncInsecureFlagRemoved(t *testing.T) {
+	if flag := NewCmd().Flags().Lookup("config-insecure"); flag != nil {
+		t.Fatal("--config-insecure should no longer be registered")
 	}
 }

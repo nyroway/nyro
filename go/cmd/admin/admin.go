@@ -58,14 +58,12 @@ func NewCmd() *cobra.Command {
 	}
 	cmd.Flags().String("listen", "127.0.0.1:19531", "listen address for the control plane")
 	// Bound to loopback by default. This stream carries every upstream's
-	// credentials_json — it always requires either mTLS (--config-tls-ca/
-	// -cert/-key, see internal/configsync/pki) or an explicit, no-implicit-
-	// default-allowed --config-insecure opt-in; see the RunE gating below.
+	// credentials_json, so plaintext mode logs a security warning; operators
+	// can configure mTLS with --config-tls-ca/-cert/-key.
 	cmd.Flags().String("config-listen", "127.0.0.1:19532", "listen address for the config-sync gRPC server (empty disables it)")
 	cmd.Flags().String("config-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs admin/gateway leaf certs (see `nyro ca`); must be set together with --config-tls-cert/-key")
 	cmd.Flags().String("config-tls-cert", "", "config-sync mTLS: path to admin's server certificate")
 	cmd.Flags().String("config-tls-key", "", "config-sync mTLS: path to admin's server private key")
-	cmd.Flags().Bool("config-insecure", false, "run the config-sync gRPC server in plaintext with no --config-tls-*; DANGEROUS — the stream carries upstream credentials in the clear to any client that connects, regardless of --config-listen's address")
 	cmd.Flags().String("token", "", "Bearer token protecting /api/v1 admin routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s), postgres://..., or mysql://...", defaultDSN()))
@@ -77,7 +75,6 @@ func NewCmd() *cobra.Command {
 		tlsCA, _ := cmd.Flags().GetString("config-tls-ca")
 		tlsCert, _ := cmd.Flags().GetString("config-tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("config-tls-key")
-		insecure, _ := cmd.Flags().GetBool("config-insecure")
 		adminToken, _ := cmd.Flags().GetString("token")
 		webuiDir, _ := cmd.Flags().GetString("webui-dir")
 		dsn, _ := cmd.Flags().GetString("dsn")
@@ -87,7 +84,7 @@ func NewCmd() *cobra.Command {
 		var configTLS *tls.Config
 		if grpcAddr != "" {
 			var err error
-			configTLS, err = resolveConfigSyncServerTLS(tlsCA, tlsCert, tlsKey, insecure)
+			configTLS, err = resolveConfigSyncServerTLS(tlsCA, tlsCert, tlsKey)
 			if err != nil {
 				return err
 			}
@@ -247,21 +244,15 @@ func NewCmd() *cobra.Command {
 // 30 days — see pki.WatchExpiry.
 const configExpiryCheckInterval = 24 * time.Hour
 
-// resolveConfigSyncServerTLS turns the --config-tls-ca/-cert/-key +
-// --config-insecure flags into a *tls.Config for the config-sync gRPC
-// server, or nil for plaintext (Tier 0). See the design note on
-// --config-listen above: there is no address-based default here, only these
-// flags decide.
+// resolveConfigSyncServerTLS turns the --config-tls-ca/-cert/-key flags into
+// a *tls.Config for the config-sync gRPC server, or nil for plaintext.
 //
-//   - All three tls paths set: mTLS is used regardless of --config-insecure
-//     (certificates present always win).
+//   - All three tls paths set: mTLS is used.
 //   - Some but not all three set: a partial/likely-typo'd configuration —
 //     fail fast rather than silently falling back to plaintext or guessing
 //     which file is missing.
-//   - None set: requires explicit --config-insecure to proceed; otherwise
-//     refuses to start. When --config-insecure is used, a risk warning is
-//     always logged (independent of --config-listen's address).
-func resolveConfigSyncServerTLS(caPath, certPath, keyPath string, insecure bool) (*tls.Config, error) {
+//   - None set: plaintext is used and a security warning is logged.
+func resolveConfigSyncServerTLS(caPath, certPath, keyPath string) (*tls.Config, error) {
 	set := 0
 	for _, p := range []string{caPath, certPath, keyPath} {
 		if p != "" {
@@ -273,11 +264,9 @@ func resolveConfigSyncServerTLS(caPath, certPath, keyPath string, insecure bool)
 		return pki.LoadServerTLS(caPath, certPath, keyPath)
 	case set > 0:
 		return nil, fmt.Errorf("--config-tls-ca, --config-tls-cert, and --config-tls-key must be set together (got %d of 3)", set)
-	case insecure:
-		slog.Warn("config-sync gRPC server running in plaintext (--config-insecure): no transport encryption or client authentication — the stream carries upstream credentials in the clear to any client that connects")
-		return nil, nil
 	default:
-		return nil, fmt.Errorf("config-sync gRPC server requires --config-tls-ca/-cert/-key (see `nyro ca`), or pass --config-insecure to explicitly accept plaintext")
+		slog.Warn("config-sync gRPC server running in plaintext: no transport encryption or client authentication — the stream carries upstream credentials in the clear to any client that connects")
+		return nil, nil
 	}
 }
 
