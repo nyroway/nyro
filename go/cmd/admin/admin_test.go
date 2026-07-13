@@ -190,6 +190,34 @@ func TestStartEpochWatcher_PositiveIntervalSeedsAndRuns(t *testing.T) {
 	}
 }
 
+func TestStartConfigSyncSeedsEpochWatcherBeforeServing(t *testing.T) {
+	store := &countingEpochStore{value: 7}
+	notifier := &channelNotifier{notified: make(chan struct{}, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	serveCalled := false
+
+	watcher, shutdown, err := startConfigSync(ctx, time.Hour, store, notifier, func() (func(), error) {
+		serveCalled = true
+		if got := store.readCount(); got != 1 {
+			t.Fatalf("epoch reads when serve callback ran = %d, want 1 seed read", got)
+		}
+		return func() {}, nil
+	})
+	if err != nil {
+		t.Fatalf("startConfigSync: %v", err)
+	}
+	if watcher == nil {
+		t.Fatal("watcher = nil, want seeded watcher")
+	}
+	if shutdown == nil {
+		t.Fatal("shutdown = nil, want serve shutdown callback")
+	}
+	if !serveCalled {
+		t.Fatal("serve callback was not called")
+	}
+}
+
 func TestRunE_RejectsNegativeConfigPollIntervalWhenConfigSyncDisabled(t *testing.T) {
 	cmd := NewCmd()
 	if err := cmd.ParseFlags([]string{

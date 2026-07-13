@@ -198,7 +198,9 @@ func NewCmd() *cobra.Command {
 		// gateways.
 		if grpcAddr != "" {
 			srv := configsync.NewConfigServer(st)
-			shutdown, err := configsync.ServeGRPC(ctx, grpcAddr, srv, configTLS)
+			watcher, shutdown, err := startConfigSync(ctx, configPollInterval, st.Settings(), srv, func() (func(), error) {
+				return configsync.ServeGRPC(ctx, grpcAddr, srv, configTLS)
+			})
 			if err != nil {
 				return err
 			}
@@ -210,10 +212,6 @@ func NewCmd() *cobra.Command {
 					"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
 			})
 
-			watcher, err := startEpochWatcher(ctx, configPollInterval, st.Settings(), srv)
-			if err != nil {
-				return err
-			}
 			admin.SetEpochWatcher(watcher)
 		}
 
@@ -260,6 +258,24 @@ func isLoopbackListenAddress(addr string) bool {
 // at startup too). Daily is frequent enough given the ExpiryWarningWindow is
 // 30 days — see pki.WatchExpiry.
 const configExpiryCheckInterval = 24 * time.Hour
+
+func startConfigSync(
+	ctx context.Context,
+	interval time.Duration,
+	store configsync.EpochStore,
+	notifier configsync.Notifier,
+	serve func() (func(), error),
+) (admin.EpochObserver, func(), error) {
+	watcher, err := startEpochWatcher(ctx, interval, store, notifier)
+	if err != nil {
+		return nil, nil, err
+	}
+	shutdown, err := serve()
+	if err != nil {
+		return nil, nil, err
+	}
+	return watcher, shutdown, nil
+}
 
 func startEpochWatcher(
 	ctx context.Context,

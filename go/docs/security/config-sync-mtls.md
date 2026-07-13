@@ -54,13 +54,14 @@ never read it directly (see below).
 They only ever load three explicit file paths:
 
 ```bash
-admin --config-tls-ca ~/.nyro/pki/ca.pem \
-      --config-tls-cert ~/.nyro/pki/admin.pem \
-      --config-tls-key ~/.nyro/pki/admin-key.pem
+nyro admin --config-tls-ca ~/.nyro/pki/ca.pem \
+           --config-tls-cert ~/.nyro/pki/admin.pem \
+           --config-tls-key ~/.nyro/pki/admin-key.pem
 
-gateway --config-tls-ca ~/.nyro/pki/ca.pem \
-        --config-tls-cert ~/.nyro/pki/gateway.pem \
-        --config-tls-key ~/.nyro/pki/gateway-key.pem
+nyro gateway --config-server 127.0.0.1:19532 \
+             --config-tls-ca ~/.nyro/pki/ca.pem \
+             --config-tls-cert ~/.nyro/pki/gateway.pem \
+             --config-tls-key ~/.nyro/pki/gateway-key.pem
 ```
 
 All three flags must be given together, or not at all — a partial set (e.g.
