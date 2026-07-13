@@ -4,6 +4,30 @@ All notable changes to Nyro will be documented in this file.
 
 ---
 
+## v1.8.3
+
+> Released on 2026-07-13
+
+#### Features
+
+- **Request lifecycle P0 scaffolding** (#227): deliver request-lifecycle P0 scaffolding with `RequestContext` end-to-end and typed extension bag
+- **Request lifecycle & extension framework (P0 + P1)** (#229): add the request lifecycle and extension framework with admin extensions API and `PluginKernel` aggregation
+- **OnResponse/OnLog lifecycle phases (P2 A1-A3)** (#230): wire `OnResponse` and `OnLog` lifecycle phases into the dispatch pipeline
+- **API key-level observability** (#237): add API key-level observability to the admin UI and fix cache hit rate reporting
+- **Logging & stats enhancements** (#239): improve logging and stats surfaces plus fix metrics-calculation issues
+
+#### Improvements / Refactoring
+
+- **Architecture documentation** (#232): refresh `architecture.md` to align with the current codebase
+- **WebUI extensions page** (#260): remove the read-only extensions page that had no user-facing controls
+
+#### Fixes
+
+- **Anthropic to OpenAI function calling** (#233): fix function calling failures when converting Anthropic requests to OpenAI
+- **Log page provider filter** (#234): fix the log page provider filter showing empty logs
+
+---
+
 ## v1.8.2
 
 > Released on 2026-06-18
