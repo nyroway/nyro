@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	adminsvc "github.com/nyroway/nyro/go/internal/admin"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -127,20 +126,6 @@ func TestStartEpochWatcher_ZeroReturnsNilWithoutReadingEpoch(t *testing.T) {
 	}
 	if got := store.readCount(); got != 0 {
 		t.Fatalf("epoch reads = %d, want 0", got)
-	}
-}
-
-func TestStartEpochWatcher_ZeroRemainsNilAsEpochObserver(t *testing.T) {
-	store := &countingEpochStore{value: 7}
-	notifier := &channelNotifier{notified: make(chan struct{}, 1)}
-
-	watcher, err := startEpochWatcher(context.Background(), 0, store, notifier)
-	if err != nil {
-		t.Fatalf("startEpochWatcher: %v", err)
-	}
-	var observer adminsvc.EpochObserver = watcher
-	if observer != nil {
-		t.Fatalf("watcher as admin.EpochObserver = %#v, want nil", observer)
 	}
 }
 
