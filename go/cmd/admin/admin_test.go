@@ -5,10 +5,12 @@ import (
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	adminsvc "github.com/nyroway/nyro/go/internal/admin"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -126,6 +128,20 @@ func TestStartEpochWatcher_ZeroReturnsNilWithoutReadingEpoch(t *testing.T) {
 	}
 }
 
+func TestStartEpochWatcher_ZeroRemainsNilAsEpochObserver(t *testing.T) {
+	store := &countingEpochStore{value: 7}
+	notifier := &channelNotifier{notified: make(chan struct{}, 1)}
+
+	watcher, err := startEpochWatcher(context.Background(), 0, store, notifier)
+	if err != nil {
+		t.Fatalf("startEpochWatcher: %v", err)
+	}
+	var observer adminsvc.EpochObserver = watcher
+	if observer != nil {
+		t.Fatalf("watcher as admin.EpochObserver = %#v, want nil", observer)
+	}
+}
+
 func TestStartEpochWatcher_NegativeIntervalErrorsWithoutReadingEpoch(t *testing.T) {
 	store := &countingEpochStore{value: 7}
 	notifier := &channelNotifier{notified: make(chan struct{}, 1)}
@@ -169,6 +185,25 @@ func TestStartEpochWatcher_PositiveIntervalSeedsAndRuns(t *testing.T) {
 	case <-notifier.notified:
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for watcher to observe the new epoch")
+	}
+}
+
+func TestRunE_RejectsNegativeConfigPollIntervalWhenConfigSyncDisabled(t *testing.T) {
+	cmd := NewCmd()
+	if err := cmd.ParseFlags([]string{
+		"--config-listen=",
+		"--config-poll-interval=-1s",
+		"--dsn=memory://",
+	}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE returned nil error, want negative poll interval error")
+	}
+	if !strings.Contains(err.Error(), "--config-poll-interval") {
+		t.Fatalf("RunE error = %q, want --config-poll-interval validation error", err)
 	}
 }
 

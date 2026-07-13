@@ -80,6 +80,9 @@ func NewCmd() *cobra.Command {
 		dsn, _ := cmd.Flags().GetString("dsn")
 		obsDataDir, _ := cmd.Flags().GetString("obs-data-dir")
 		configPollInterval, _ := cmd.Flags().GetDuration("config-poll-interval")
+		if configPollInterval < 0 {
+			return fmt.Errorf("--config-poll-interval must not be negative")
+		}
 
 		var configTLS *tls.Config
 		if grpcAddr != "" {
@@ -237,7 +240,7 @@ func startEpochWatcher(
 	interval time.Duration,
 	store configsync.EpochStore,
 	notifier configsync.Notifier,
-) (*configsync.EpochWatcher, error) {
+) (admin.EpochObserver, error) {
 	if interval < 0 {
 		return nil, fmt.Errorf("--config-poll-interval must not be negative")
 	}
