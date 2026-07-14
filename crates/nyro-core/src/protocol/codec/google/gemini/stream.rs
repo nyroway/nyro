@@ -159,7 +159,13 @@ impl GoogleStreamParser {
 
 impl StreamResponseDecoder for GoogleStreamParser {
     fn parse_chunk(&mut self, raw: &str) -> Result<Vec<AiStreamDelta>> {
-        self.buffer.push_str(raw);
+        // Normalize CRLF → LF so SSE event boundaries are recognized regardless
+        // of terminator style. Vertex AI emits SSE frames with CRLF (`\r\n\r\n`)
+        // between events; the `\n\n` splitter below would otherwise never find a
+        // boundary mid-stream and buffer the entire response until EOF, causing
+        // every delta to flush at once instead of streaming.
+        let normalized = raw.replace("\r\n", "\n");
+        self.buffer.push_str(&normalized);
         let mut deltas = Vec::new();
 
         while let Some(pos) = self.buffer.find("\n\n") {
@@ -938,6 +944,45 @@ mod tests {
             .expect("expected terminal usage event");
         assert_eq!(usage_event["usageMetadata"]["promptTokenCount"], 24);
         assert_eq!(usage_event["usageMetadata"]["candidatesTokenCount"], 1120);
+    }
+
+    #[test]
+    fn stream_parser_streams_crlf_separated_sse_frames_incrementally() {
+        let first_chunk = serde_json::json!({
+            "candidates": [{
+                "content": {"role": "model", "parts": [{"text": "hello"}]}
+            }],
+            "modelVersion": "gemini-2.5-flash"
+        });
+        let second_chunk = serde_json::json!({
+            "candidates": [{
+                "content": {"role": "model", "parts": [{"text": " world"}]},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 2, "totalTokenCount": 5}
+        });
+
+        // Vertex-style CRLF framing, split across two `parse_chunk` calls so the
+        // test proves incremental emission
+        let frame1 = format!("data: {first_chunk}\r\n\r\n");
+        let frame2 = format!("data: {second_chunk}\r\n\r\n");
+
+        let mut parser = GoogleStreamParser::new();
+        let deltas1 = parser.parse_chunk(&frame1).unwrap();
+        assert!(
+            !deltas1.is_empty(),
+            "first CRLF frame must emit deltas immediately, not buffer until EOF"
+        );
+
+        let deltas2 = parser.parse_chunk(&frame2).unwrap();
+        assert!(!deltas2.is_empty(), "second CRLF frame must emit deltas");
+
+        // finish() should have nothing left to emit (all frames already parsed).
+        let remaining = parser.finish().unwrap();
+        assert!(
+            remaining.is_empty(),
+            "no buffered remainder expected after CRLF frames"
+        );
     }
 
     #[test]
