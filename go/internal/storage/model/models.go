@@ -5,7 +5,7 @@ package model
 // Upstream is one configured upstream provider instance.
 type Upstream struct {
 	ID              string `gorm:"column:id;primaryKey"`
-	Name            string `gorm:"column:name;uniqueIndex;not null"`
+	Name            string `gorm:"column:name;uniqueIndex;not null;size:255"`
 	Provider        string `gorm:"column:provider;not null;default:custom"`
 	Protocol        string `gorm:"column:protocol"`
 	BaseURL         string `gorm:"column:base_url"`
@@ -23,7 +23,7 @@ func (Upstream) TableName() string { return "upstreams" }
 // Route is one client-visible model route.
 type Route struct {
 	ID            string `gorm:"column:id;primaryKey"`
-	Model         string `gorm:"column:model;uniqueIndex;not null"`
+	Model         string `gorm:"column:model;uniqueIndex;not null;size:255"`
 	Balance       string `gorm:"column:balance;not null;default:weighted"`
 	EnableAuth    bool   `gorm:"column:enable_auth;not null;default:false"`
 	EnablePayload bool   `gorm:"column:enable_payload;not null;default:false"`
@@ -37,9 +37,9 @@ func (Route) TableName() string { return "routes" }
 // RouteUpstream connects a route to an upstream model.
 type RouteUpstream struct {
 	ID         string `gorm:"column:id;primaryKey"`
-	RouteID    string `gorm:"column:route_id;not null;uniqueIndex:idx_route_upstream_model"`
-	UpstreamID string `gorm:"column:upstream_id;not null;uniqueIndex:idx_route_upstream_model"`
-	Model      string `gorm:"column:model;not null;uniqueIndex:idx_route_upstream_model"`
+	RouteID    string `gorm:"column:route_id;not null;uniqueIndex:idx_route_upstream_model;size:191"`
+	UpstreamID string `gorm:"column:upstream_id;not null;uniqueIndex:idx_route_upstream_model;size:191"`
+	Model      string `gorm:"column:model;not null;uniqueIndex:idx_route_upstream_model;size:255"`
 	Weight     int32  `gorm:"column:weight;not null;default:100"`
 	Priority   int32  `gorm:"column:priority;not null;default:1"`
 	Enabled    bool   `gorm:"column:enabled;not null;default:true"`
@@ -52,7 +52,7 @@ func (RouteUpstream) TableName() string { return "route_upstreams" }
 // Consumer is a downstream caller identity.
 type Consumer struct {
 	ID                  string `gorm:"column:id;primaryKey"`
-	Name                string `gorm:"column:name;uniqueIndex;not null"`
+	Name                string `gorm:"column:name;uniqueIndex;not null;size:255"`
 	Enabled             bool   `gorm:"column:enabled;not null;default:true"`
 	MetadataJSON        string `gorm:"column:metadata_json"`
 	ProtocolsJSON       string `gorm:"column:protocols_json"`
@@ -69,9 +69,9 @@ func (Consumer) TableName() string { return "consumers" }
 // ConsumerKey is one API key owned by a consumer.
 type ConsumerKey struct {
 	ID         string `gorm:"column:id;primaryKey"`
-	ConsumerID string `gorm:"column:consumer_id;not null;uniqueIndex:idx_consumer_key_name"`
-	Name       string `gorm:"column:name;not null;uniqueIndex:idx_consumer_key_name"`
-	KeyPreview string `gorm:"column:key_preview;not null;index"`
+	ConsumerID string `gorm:"column:consumer_id;not null;uniqueIndex:idx_consumer_key_name;size:191"`
+	Name       string `gorm:"column:name;not null;uniqueIndex:idx_consumer_key_name;size:255"`
+	KeyPreview string `gorm:"column:key_preview;not null;index;size:191"`
 	KeyHash    string `gorm:"column:key_hash;not null"`
 	Enabled    bool   `gorm:"column:enabled;not null;default:true"`
 	ExpiresAt  string `gorm:"column:expires_at"`

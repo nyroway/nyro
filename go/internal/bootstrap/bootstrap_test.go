@@ -44,8 +44,8 @@ func TestParseDSN(t *testing.T) {
 }
 
 func TestOpenStorageFromDSN(t *testing.T) {
-	t.Run("sqlite in-memory migrates and serves", func(t *testing.T) {
-		st, err := OpenStorageFromDSN("sqlite://:memory:")
+	t.Run("sqlite in-memory with auto-migrate migrates and serves", func(t *testing.T) {
+		st, err := OpenStorageFromDSN("sqlite://:memory:", true)
 		if err != nil {
 			t.Fatalf("sqlite: %v", err)
 		}
@@ -57,8 +57,13 @@ func TestOpenStorageFromDSN(t *testing.T) {
 			t.Errorf("Upstreams().List after migrate: %v", err)
 		}
 	})
+	t.Run("sqlite in-memory without auto-migrate fails schema check", func(t *testing.T) {
+		if _, err := OpenStorageFromDSN("sqlite://:memory:", false); err == nil {
+			t.Error("expected schema-check error on an unmigrated in-memory db")
+		}
+	})
 	t.Run("bad scheme errors", func(t *testing.T) {
-		if _, err := OpenStorageFromDSN("bogus://x"); err == nil {
+		if _, err := OpenStorageFromDSN("bogus://x", false); err == nil {
 			t.Error("expected error for bogus scheme")
 		}
 	})

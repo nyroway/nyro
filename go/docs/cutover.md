@@ -32,8 +32,13 @@ go build -o /tmp/nyro .
 # control plane (admin API + WebUI):
 /tmp/nyro admin --listen 127.0.0.1:19531 \
   --config-listen= --webui-dir ./webui/dist \
-  --token "$NYRO_ADMIN_TOKEN"
+  --token "$NYRO_ADMIN_TOKEN" --auto-migrate
 ```
+
+`--auto-migrate` above lets this first-boot admin create its own (default
+sqlite) schema; drop it once the db already exists. It's off by default
+regardless of backend — see `go/docs/schema/database.md` for the
+mysql/postgres migration workflow.
 
 The standalone gateway reads `config.yaml` once at startup; edit the file and
 restart to apply a change. Admin manages its own database, but with
@@ -54,7 +59,7 @@ fastest path:
 ```bash
 # control plane, with config-sync enabled (loopback, plaintext + WARN):
 /tmp/nyro admin --listen 127.0.0.1:19531 \
-  --config-listen 127.0.0.1:19532 --token "$NYRO_ADMIN_TOKEN"
+  --config-listen 127.0.0.1:19532 --token "$NYRO_ADMIN_TOKEN" --auto-migrate
 # data plane, subscribing to config-sync instead of --config-file:
 /tmp/nyro gateway --listen 127.0.0.1:19529 \
   --config-server 127.0.0.1:19532
@@ -71,7 +76,7 @@ complete TLS path set on both processes:
 /tmp/nyro ca sign-admin
 /tmp/nyro ca sign-gateway --node-id gw-1
 # distribute ca.pem + admin.{pem,key.pem} / gateway.{pem,key.pem}, then:
-/tmp/nyro admin --config-listen 0.0.0.0:19532 \
+/tmp/nyro admin --config-listen 0.0.0.0:19532 --auto-migrate \
   --config-tls-ca ~/.nyro/pki/ca.pem --config-tls-cert ~/.nyro/pki/admin.pem --config-tls-key ~/.nyro/pki/admin-key.pem
 /tmp/nyro gateway --config-server admin.internal:19532 \
   --config-tls-ca ~/.nyro/pki/ca.pem --config-tls-cert ~/.nyro/pki/gateway.pem --config-tls-key ~/.nyro/pki/gateway-key.pem
@@ -86,7 +91,10 @@ view that reflects only currently-open connections.
 
 For multiple Admin replicas sharing one database (typically PostgreSQL or
 MySQL), set a positive polling interval on every replica so a write handled by
-one is noticed and pushed by the others:
+one is noticed and pushed by the others. Since this is exactly the shared
+mysql/postgres case `go/docs/schema/database.md` covers, apply the migration
+files under `go/migrations/{mysql,postgres}/` (via `atlas migrate apply`)
+before first boot instead of passing `--auto-migrate` here:
 
 ```bash
 # Run on each Admin host, with a distinct --listen/--config-listen address.

@@ -109,13 +109,16 @@ For same-host development or shadow testing, keep both listeners on loopback
 and omit all TLS paths. Both processes log the expected plaintext warning.
 
 ```bash
-nyro admin
+nyro admin --auto-migrate
 nyro gateway --listen 127.0.0.1:19530 \
   --config-server 127.0.0.1:19532
 ```
 
 Admin defaults to HTTP on `127.0.0.1:19531` and config-sync on
 `127.0.0.1:19532`; gateway's config source must still be selected explicitly.
+`--auto-migrate` lets this first-boot admin create its own (default sqlite)
+schema; it's off by default regardless of backend (see
+`go/docs/schema/database.md`), so drop it once the db already exists.
 
 ### Standalone gateway
 
@@ -140,7 +143,7 @@ tightly controlled trusted network:
 ```bash
 nyro admin --listen 10.0.0.10:19531 \
   --config-listen 10.0.0.10:19532 \
-  --token "$NYRO_ADMIN_TOKEN"
+  --token "$NYRO_ADMIN_TOKEN" --auto-migrate
 nyro gateway --config-server 10.0.0.10:19532
 ```
 
@@ -158,7 +161,7 @@ nyro ca init
 nyro ca sign-admin
 nyro ca sign-gateway --node-id gw-1
 
-nyro admin --config-listen 0.0.0.0:19532 \
+nyro admin --config-listen 0.0.0.0:19532 --auto-migrate \
   --config-tls-ca ~/.nyro/pki/ca.pem \
   --config-tls-cert ~/.nyro/pki/admin.pem \
   --config-tls-key ~/.nyro/pki/admin-key.pem
@@ -173,7 +176,11 @@ nyro gateway --config-server admin.internal:19532 \
 Admin's `--config-poll-interval` defaults to `0`, so a single replica pushes
 its own writes immediately without polling. Replicas that share a database
 must each opt into a positive polling interval so writes handled by one Admin
-are also pushed to gateways connected to the others:
+are also pushed to gateways connected to the others. Apply the migration
+files under `go/migrations/{mysql,postgres}/` (via `atlas migrate apply`,
+see `go/docs/schema/database.md`) before first boot instead of passing
+`--auto-migrate` here — this is exactly the shared-database production case
+that workflow is for:
 
 ```bash
 # admin-1
@@ -200,7 +207,7 @@ Set the Admin listener to the empty string when the deployment needs the
 management API but no config-sync server:
 
 ```bash
-nyro admin --config-listen=
+nyro admin --config-listen= --auto-migrate
 nyro gateway --config-file ./config.yaml
 ```
 

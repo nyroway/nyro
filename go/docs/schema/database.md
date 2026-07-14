@@ -4,7 +4,26 @@ The normalized relational schema backing the Go gateway's storage layer. It is
 shared by the SQLite, MySQL, and Postgres backends; the SQL below is the final
 post-migration state with SQLite-flavored types. GORM entities in
 `go/internal/storage/model/` are the canonical source; this document mirrors
-them.
+them for readability — it is illustrative, not applied to any database.
+
+For mysql/postgres, the SQL that actually gets run is the versioned, DBA-
+reviewable migration files under `go/migrations/{mysql,postgres}/`, not this
+document — see [migrations.md](migrations.md) for the full workflow (how
+they're generated, how CI enforces they stay in sync with the models, how a
+DBA applies them, and the `--auto-migrate` flag). sqlite has no migration
+files and keeps using GORM AutoMigrate.
+
+Two columns beyond `id` carry an explicit `size` tag in the GORM models: any
+`string` field with a `uniqueIndex`/`index` tag needs one, because MySQL
+rejects an index on an unbounded `TEXT`/`LONGTEXT` column ("BLOB/TEXT column
+... used in key specification without a key length"). `upstreams.name`,
+`routes.model`, `route_upstreams.{route_id,upstream_id,model}`,
+`consumers.name`, and `consumer_keys.{consumer_id,name,key_preview}` all carry
+`size:191` or `size:255` tags for this reason (191 mirrors GORM's own default
+for primary-key string columns; 255 for the rest). This is a real constraint
+against a live mysql database, not merely a lint concern — confirmed by
+running GORM AutoMigrate against mysql directly, which fails with exactly
+that error without the size tags.
 
 ## Tables
 

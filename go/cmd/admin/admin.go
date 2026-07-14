@@ -68,6 +68,7 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("token", "", "Bearer token protecting /api/v1 admin routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s), postgres://..., or mysql://...", defaultDSN()))
+	cmd.Flags().Bool("auto-migrate", false, "let nyro create/alter the schema itself via GORM AutoMigrate (requires DDL rights on --dsn); default false regardless of backend — without it, nyro only verifies the schema is already at the expected version (see go/migrations/ for mysql/postgres, or run with this flag once for sqlite)")
 	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for admin-local observability parquet data (logs/metrics/traces)")
 	cmd.Flags().Duration("config-poll-interval", 0, "how often to poll the shared config_epoch setting for changes made by other admin replicas (0 disables polling)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -79,6 +80,7 @@ func NewCmd() *cobra.Command {
 		adminToken, _ := cmd.Flags().GetString("token")
 		webuiDir, _ := cmd.Flags().GetString("webui-dir")
 		dsn, _ := cmd.Flags().GetString("dsn")
+		autoMigrate, _ := cmd.Flags().GetBool("auto-migrate")
 		obsDataDir, _ := cmd.Flags().GetString("obs-data-dir")
 		configPollInterval, _ := cmd.Flags().GetDuration("config-poll-interval")
 		if configPollInterval < 0 {
@@ -146,7 +148,7 @@ func NewCmd() *cobra.Command {
 			}
 		}
 
-		st, err := bootstrap.OpenStorageFromDSN(dsn)
+		st, err := bootstrap.OpenStorageFromDSN(dsn, autoMigrate)
 		if err != nil {
 			return err
 		}

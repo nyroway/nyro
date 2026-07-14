@@ -1,4 +1,4 @@
-.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-fmt-check go-lint go-lint-install go-check go-tidy go-gen-storage go-webui-build go-webui-embed-assets go-webui-embed-build go-webui-embed-run go-run help
+.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-fmt-check go-lint go-lint-install go-check go-tidy go-gen-storage go-migrate-render-schema go-migrate-diff go-migrate-lint go-migrate-verify go-migrate-status go-webui-build go-webui-embed-assets go-webui-embed-build go-webui-embed-run go-run help
 
 # golangci-lint version pinned for reproducible fmt/lint (installed to go/bin, never touches go.mod)
 GOLANGCI_LINT_VERSION := v2.6.0
@@ -109,6 +109,63 @@ go-tidy:
 go-gen-storage:
 	cd go && go run ./internal/storage/gen
 
+# ── Go schema migrations (Atlas + GORM provider — mysql/postgres only) ──
+# See go/docs/schema/migrations.md for the full workflow, why sqlite is
+# excluded, and how these targets fit together. Requires docker.
+ATLAS_IMAGE := docker.io/arigaio/atlas:latest-community
+ATLAS_RUN := docker run --rm --network host -v "$(CURDIR)/go":/work -w /work $(ATLAS_IMAGE)
+
+# Render go/schema/<dialect>.sql from the current GORM models — an internal
+# prerequisite for the targets below, not meant to be run standalone.
+go-migrate-render-schema:
+	@command -v docker >/dev/null || { echo "docker not found (needed to run the Atlas Community Edition image)"; exit 1; }
+	mkdir -p go/schema
+	cd go && go run ./tools/atlasloader mysql > schema/mysql.sql
+	cd go && go run ./tools/atlasloader postgres > schema/postgres.sql
+
+# Generate a new versioned migration for both dialects from the current GORM
+# models. Run this after changing go/internal/storage/model, review the
+# generated SQL, then commit it. Usage: make go-migrate-diff NAME=add_x_column
+go-migrate-diff: go-migrate-render-schema
+	@test -n "$(NAME)" || { echo "usage: make go-migrate-diff NAME=<description>"; exit 1; }
+	$(ATLAS_RUN) migrate diff $(NAME) --env mysql --config file://atlas.hcl
+	$(ATLAS_RUN) migrate diff $(NAME) --env postgres --config file://atlas.hcl
+
+# Lint the most recent migration(s) for both dialects: destructive/unsafe
+# changes, locking risks, naming conventions — a static analysis of the SQL
+# already committed under migrations/<dialect>/. Does NOT catch a model
+# changed with no matching migration file; that's go-migrate-verify below.
+# Usage: make go-migrate-lint [LATEST=1]
+go-migrate-lint: go-migrate-render-schema
+	$(ATLAS_RUN) migrate lint --env mysql --config file://atlas.hcl --latest $(or $(LATEST),1)
+	$(ATLAS_RUN) migrate lint --env postgres --config file://atlas.hcl --latest $(or $(LATEST),1)
+
+# Catch drift between the GORM models and the committed migration files for
+# both dialects — the complement to go-migrate-lint above, which lint alone
+# doesn't cover. Runs the real generator and fails if it wrote anything not
+# already committed; only makes sense against an already-committed
+# go/migrations/, i.e. in CI or on a clean working tree.
+go-migrate-verify: NAME := verify
+go-migrate-verify: go-migrate-diff
+	@if [ -n "$$(git status --porcelain go/migrations/)" ]; then \
+		echo "drift detected: go-migrate-diff produced changes under go/migrations/ that are not committed"; \
+		git status --porcelain go/migrations/; \
+		echo "review the changes above, then commit them"; \
+		exit 1; \
+	fi
+
+# Show which migrations are applied/pending against a live database — the
+# read-only check a DBA/operator runs after importing migration files by
+# hand. Thin wrapper over `atlas migrate status`; no nyro-specific logic.
+# DIALECT selects which go/atlas.hcl env to use (named "ENV" there, and on
+# atlas's own --env flag below, per Atlas's own HCL schema — not a
+# deployment environment, just mysql vs postgres).
+# Usage: make go-migrate-status DIALECT=mysql DSN=mysql://user:pass@host:3306/db
+go-migrate-status: go-migrate-render-schema
+	@test -n "$(DIALECT)" || { echo "usage: make go-migrate-status DIALECT=mysql|postgres DSN=..."; exit 1; }
+	@test -n "$(DSN)" || { echo "usage: make go-migrate-status DIALECT=mysql|postgres DSN=..."; exit 1; }
+	$(ATLAS_RUN) migrate status --env $(DIALECT) --config file://atlas.hcl --url "$(DSN)"
+
 # Build the Go WebUI bundle only
 go-webui-build:
 	cd go/webui && pnpm install && pnpm build
@@ -129,8 +186,11 @@ go-webui-embed-build: go-webui-embed-assets
 # `nyro gateway --config-server 127.0.0.1:19532` can connect for config
 # hot-reload with no extra flags here. With no --config-tls-* paths, both
 # processes use plaintext config-sync and log a security warning.
+# --auto-migrate lets this first-boot admin create its own (default sqlite)
+# schema; it's off by default regardless of backend (see
+# go/docs/schema/database.md).
 go-webui-embed-run: go-webui-embed-build
-	cd go && ./bin/nyro admin
+	cd go && ./bin/nyro admin --auto-migrate
 
 # Run the Go gateway (data plane) locally
 go-run:
@@ -171,6 +231,10 @@ help:
 	@echo "  make go-check     go-fmt-check + go-vet + go-lint + go-test"
 	@echo "  make go-tidy      Tidy go.mod/go.sum"
 	@echo "  make go-gen-storage Generate Go storage query code"
+	@echo "  make go-migrate-diff NAME=... Generate a mysql/postgres migration from GORM models"
+	@echo "  make go-migrate-lint Lint committed migrations (destructive/unsafe changes)"
+	@echo "  make go-migrate-verify Check GORM models match committed migrations (CI)"
+	@echo "  make go-migrate-status DIALECT=... DSN=... Show applied/pending migrations on a live DB"
 	@echo "  make go-webui-build Build Go WebUI frontend only"
 	@echo "  make go-webui-embed-build Build Go nyro CLI with embedded Go WebUI"
 	@echo "  make go-webui-embed-run Build and run Go admin with embedded Go WebUI"
