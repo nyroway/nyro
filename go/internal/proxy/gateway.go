@@ -34,6 +34,14 @@ type Gateway struct {
 	Obs     *observability.ObsProvider
 	Handles *observability.Handles
 
+	// UpstreamTransport, when non-nil, replaces the RoundTripper of every
+	// outbound upstream client. Production leaves it nil (real *http.Transport
+	// is built per proxySettings). It exists purely as a test seam: the
+	// protocol-conversion harness (internal/protocoltest) injects a go-vcr
+	// recorder here to record/replay real provider interactions offline. Since
+	// nil is the production default, behaviour is unchanged when unset.
+	UpstreamTransport http.RoundTripper
+
 	clientMu       sync.Mutex
 	client         *http.Client // direct (no proxy) client, rebuilt when timeouts change
 	clientKey      string
@@ -167,7 +175,7 @@ func (g *Gateway) httpClientFor(proxyURL string) (*http.Client, error) {
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
 	}
-	client := &http.Client{Timeout: ps.RequestTimeout, Transport: transport}
+	client := &http.Client{Timeout: ps.RequestTimeout, Transport: g.transportOr(transport)}
 	g.proxyClient = client
 	g.proxyClientKey = cacheKey
 	return client, nil
@@ -184,15 +192,25 @@ func (g *Gateway) directClient(ps proxySettings) *http.Client {
 	}
 	client := &http.Client{
 		Timeout: ps.RequestTimeout,
-		Transport: &http.Transport{
+		Transport: g.transportOr(&http.Transport{
 			DialContext:         (&net.Dialer{Timeout: ps.ConnectTimeout}).DialContext,
 			MaxIdleConns:        256,
 			MaxIdleConnsPerHost: 64,
 			IdleConnTimeout:     90 * time.Second,
 			ForceAttemptHTTP2:   true,
-		},
+		}),
 	}
 	g.client = client
 	g.clientKey = cacheKey
 	return client
+}
+
+// transportOr returns g.UpstreamTransport when set (test seam), else def. It
+// lets the conversion harness swap in a go-vcr recorder without touching the
+// production transport construction. See the UpstreamTransport field.
+func (g *Gateway) transportOr(def http.RoundTripper) http.RoundTripper {
+	if g.UpstreamTransport != nil {
+		return g.UpstreamTransport
+	}
+	return def
 }
