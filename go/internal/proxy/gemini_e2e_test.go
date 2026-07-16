@@ -51,7 +51,9 @@ func TestDispatchGeminiStreamEndToEnd(t *testing.T) {
 	if !strings.Contains(out, `"text":"there"`) {
 		t.Errorf("missing second text delta:\n%s", out)
 	}
-	if !strings.Contains(out, `"finishReason":"stop"`) {
+	// Gemini's finishReason vocabulary is SCREAMING_SNAKE: a STOP upstream must
+	// round-trip back to STOP, not the canonical lowercase "stop".
+	if !strings.Contains(out, `"finishReason":"STOP"`) {
 		t.Errorf("missing finishReason:\n%s", out)
 	}
 }

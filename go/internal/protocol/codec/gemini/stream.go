@@ -124,7 +124,7 @@ func (e *streamResponseEncoder) formatDelta(d ir.StreamDelta) *codec.SSE {
 		return nil
 	case *ir.DoneDelta:
 		// Gemini signals completion via finishReason on the final candidate.
-		b, _ := json.Marshal(response{Candidates: []candidate{{FinishReason: v.StopReason}}})
+		b, _ := json.Marshal(response{Candidates: []candidate{{FinishReason: denormalizeGeminiFinishReason(v.StopReason)}}})
 		return &codec.SSE{Data: string(b)}
 	}
 	return nil

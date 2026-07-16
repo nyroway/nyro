@@ -137,6 +137,38 @@ func TestStreamToolCallStopReason(t *testing.T) {
 	}
 }
 
+// TestResponseEncoderFinishReason guards the reverse mapping: the encoder must
+// translate canonical IR stop reasons (OpenAI- or Anthropic-style, depending on
+// the source codec) into Gemini's SCREAMING_SNAKE finishReason. tool_calls /
+// tool_use become STOP — Gemini has no tool finish reason.
+func TestResponseEncoderFinishReason(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"tool_calls": "STOP",
+		"tool_use":   "STOP",
+		"stop":       "STOP",
+		"end_turn":   "STOP",
+		"length":     "MAX_TOKENS",
+		"max_tokens": "MAX_TOKENS",
+	}
+	for in, want := range cases {
+		resp := ir.NewAiResponse("id", "m")
+		resp.StopReason = in
+		resp.ToolCalls = []ir.ToolCall{{Name: "f", Arguments: "{}"}}
+		out, err := responseEncoder{}.Format(resp)
+		if err != nil {
+			t.Fatalf("format %q: %v", in, err)
+		}
+		var w response
+		if err := json.Unmarshal(out, &w); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if len(w.Candidates) == 0 || w.Candidates[0].FinishReason != want {
+			t.Errorf("StopReason %q → finishReason %q, want %q", in, w.Candidates[0].FinishReason, want)
+		}
+	}
+}
+
 func TestStreamDecode(t *testing.T) {
 	t.Parallel()
 	d := &streamResponseDecoder{}

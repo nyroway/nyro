@@ -73,7 +73,7 @@ func (responseEncoder) Format(resp *ir.AiResponse) ([]byte, error) {
 	out := response{
 		Candidates: []candidate{{
 			Content:      content{Role: "model", Parts: parts},
-			FinishReason: resp.StopReason,
+			FinishReason: denormalizeGeminiFinishReason(resp.StopReason),
 		}},
 	}
 	if resp.Usage.TotalTokens != 0 || resp.Usage.PromptTokens != 0 {
