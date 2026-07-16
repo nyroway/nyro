@@ -169,6 +169,23 @@ func TestResponseEncoderFinishReason(t *testing.T) {
 	}
 }
 
+// TestGeminiFunctionResponseWrapping guards that a tool result is always a JSON
+// object in Gemini's functionResponse.response — Gemini 400s on a bare
+// string/scalar. Objects pass through; scalars are wrapped as {"result": …}.
+func TestGeminiFunctionResponseWrapping(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ in, want string }{
+		{`"18C and sunny"`, `{"result":"18C and sunny"}`},
+		{`{"temp":18}`, `{"temp":18}`},
+		{`42`, `{"result":42}`},
+	}
+	for _, c := range cases {
+		if got := string(geminiFunctionResponse(json.RawMessage(c.in))); got != c.want {
+			t.Errorf("geminiFunctionResponse(%s) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}
+
 func TestStreamDecode(t *testing.T) {
 	t.Parallel()
 	d := &streamResponseDecoder{}

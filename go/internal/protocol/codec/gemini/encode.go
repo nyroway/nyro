@@ -104,7 +104,7 @@ func encodeContent(m ir.Message) content {
 	if m.Role == ir.RoleTool {
 		// functionResponse (Gemini keys results by function name, not call id).
 		return content{Role: "user", Parts: []part{{FunctionResponse: &functionResp{
-			Name: m.ToolCallID, Response: mustJSONRaw(ir.ToText(m.Content)),
+			Name: m.ToolCallID, Response: geminiFunctionResponse(mustJSONRaw(ir.ToText(m.Content))),
 		}}}}
 	}
 	role := "user"
@@ -142,7 +142,7 @@ func encodeBlock(b ir.ContentBlock) part {
 		}
 		return part{FunctionCall: &functionCall{Name: v.Name, Args: input}}
 	case *ir.ToolResultBlock:
-		return part{FunctionResponse: &functionResp{Name: v.ToolUseID, Response: v.Content}}
+		return part{FunctionResponse: &functionResp{Name: v.ToolUseID, Response: geminiFunctionResponse(v.Content)}}
 	case *ir.ImageBlock:
 		if img, ok := v.Source.(*ir.Base64Media); ok {
 			return part{InlineData: &inlineData{MimeType: img.MediaType, Data: img.Data}}
@@ -153,6 +153,25 @@ func encodeBlock(b ir.ContentBlock) part {
 
 func mustJSONRaw(s string) json.RawMessage {
 	b, _ := json.Marshal(s)
+	return b
+}
+
+// geminiFunctionResponse ensures a functionResponse.response is a JSON object:
+// Gemini rejects scalars/strings/arrays there with a 400. A result that is
+// already an object passes through; anything else (a bare string tool result,
+// a number, an array) is wrapped as {"result": <value>}.
+func geminiFunctionResponse(raw json.RawMessage) json.RawMessage {
+	t := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(t, "{") && json.Valid([]byte(t)) {
+		return json.RawMessage(t)
+	}
+	var v any
+	if t != "" && json.Valid([]byte(t)) {
+		_ = json.Unmarshal([]byte(t), &v)
+	} else {
+		v = string(raw)
+	}
+	b, _ := json.Marshal(map[string]any{"result": v})
 	return b
 }
 
