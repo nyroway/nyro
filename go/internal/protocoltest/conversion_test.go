@@ -10,6 +10,10 @@ var (
 		In:  Inbound{Name: "anthropic", Path: "/v1/messages"},
 		Out: Outbound{Name: "openai", Provider: "openai", Protocol: "openai-chat", Path: "/v1/chat/completions"},
 	}
+	anthropicToResponses = Cell{
+		In:  Inbound{Name: "anthropic", Path: "/v1/messages"},
+		Out: Outbound{Name: "responses", Provider: "openai", Protocol: "openai-responses", Path: "/v1/responses"},
+	}
 	anthropicToAnthropic = Cell{
 		In:  Inbound{Name: "anthropic", Path: "/v1/messages"},
 		Out: Outbound{Name: "anthropic", Provider: "anthropic", Protocol: "anthropic-messages", Path: "/v1/messages"},
@@ -38,7 +42,7 @@ var scenarios = []Scenario{
 }
 
 func TestConversionMatrix(t *testing.T) {
-	cells := []Cell{anthropicToOpenAI, anthropicToAnthropic}
+	cells := []Cell{anthropicToOpenAI, anthropicToResponses, anthropicToAnthropic}
 	for _, cell := range cells {
 		for _, sc := range scenarios {
 			t.Run(cell.dir()+"/"+sc.Name, func(t *testing.T) {
