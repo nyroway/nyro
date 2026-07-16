@@ -19,17 +19,17 @@ import (
 // record and replay agree).
 const routeModel = "conversion-test-model"
 
-// Inbound is the client-facing protocol: the name used in golden paths and the
-// ingress path requests are POSTed to.
+// Inbound is the client-facing protocol: its protocol id (used in golden paths)
+// and the ingress path requests are POSTed to.
 type Inbound struct {
-	Name string // e.g. "anthropic"
+	Name string // inbound protocol id, e.g. "anthropic-messages"
 	Path string // ingress path, e.g. "/v1/messages"
 }
 
 // Outbound is the upstream protocol a cell translates to: the provider id (auth
-// scheme), the protocol id (codec), and the expected outbound request path.
+// scheme), the protocol id (codec + golden/cassette label), and the expected
+// outbound request path.
 type Outbound struct {
-	Name     string // e.g. "openai"
 	Provider string // provider id, e.g. "openai"
 	Protocol string // upstream protocol id, e.g. "openai-chat"
 	Path     string // expected outbound request path, e.g. "/v1/chat/completions"
@@ -41,7 +41,10 @@ type Cell struct {
 	Out Outbound
 }
 
-func (c Cell) dir() string { return c.In.Name + "__" + c.Out.Name }
+// dir is the golden-directory label, using full protocol ids on both sides
+// (e.g. "anthropic-messages__openai-chat") so it is unambiguous and matches the
+// cassette tree, which is keyed by protocol id.
+func (c Cell) dir() string { return c.In.Name + "__" + c.Out.Protocol }
 
 // Scenario is a client request exercised across cells. Request is the wire body
 // in the cell's inbound protocol; its model must be routeModel.
@@ -103,7 +106,7 @@ func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey
 	t.Helper()
 	core := memory.New().Storage()
 	up, err := core.Upstreams().Create(storage.CreateUpstream{
-		Name:            "conv-" + cell.Out.Name,
+		Name:            "conv-" + cell.Out.Protocol,
 		Provider:        cell.Out.Provider,
 		Protocol:        cell.Out.Protocol,
 		BaseURL:         baseURL,

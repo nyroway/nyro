@@ -7,16 +7,16 @@ import "testing"
 // lose fidelity). More cells are added as the matrix is filled out.
 var (
 	anthropicToOpenAI = Cell{
-		In:  Inbound{Name: "anthropic", Path: "/v1/messages"},
-		Out: Outbound{Name: "openai", Provider: "openai", Protocol: "openai-chat", Path: "/v1/chat/completions"},
+		In:  Inbound{Name: "anthropic-messages", Path: "/v1/messages"},
+		Out: Outbound{Provider: "openai", Protocol: "openai-chat", Path: "/v1/chat/completions"},
 	}
 	anthropicToResponses = Cell{
-		In:  Inbound{Name: "anthropic", Path: "/v1/messages"},
-		Out: Outbound{Name: "responses", Provider: "openai", Protocol: "openai-responses", Path: "/v1/responses"},
+		In:  Inbound{Name: "anthropic-messages", Path: "/v1/messages"},
+		Out: Outbound{Provider: "openai", Protocol: "openai-responses", Path: "/v1/responses"},
 	}
 	anthropicToAnthropic = Cell{
-		In:  Inbound{Name: "anthropic", Path: "/v1/messages"},
-		Out: Outbound{Name: "anthropic", Provider: "anthropic", Protocol: "anthropic-messages", Path: "/v1/messages"},
+		In:  Inbound{Name: "anthropic-messages", Path: "/v1/messages"},
+		Out: Outbound{Provider: "anthropic", Protocol: "anthropic-messages", Path: "/v1/messages"},
 	}
 )
 
