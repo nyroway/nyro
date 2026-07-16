@@ -1,0 +1,23 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "text": "The weather in Paris is currently 18°C and sunny.",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 100,
+    "output_tokens": 14,
+    "total_tokens": 114
+  }
+}

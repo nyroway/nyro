@@ -1,0 +1,13 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.1-flash-lite:generateContent"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json; charset=UTF-8"
+    },
+    "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"The weather in Paris is currently 18°C and sunny.\",\n            \"thoughtSignature\": \"EjQKMgERTTIPnr4ww+WJiAeQGGADEsOzfYPfE2WckBAtnzuXE6N4L0ZOGH5lyV1CrlvhpYVV\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 100,\n    \"candidatesTokenCount\": 14,\n    \"totalTokenCount\": 114,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 100\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.1-flash-lite\",\n  \"responseId\": \"wG1YarH5IazNjuMP39S8uAc\"\n}\n"
+  }
+}

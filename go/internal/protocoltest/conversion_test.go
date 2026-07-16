@@ -118,7 +118,7 @@ var scenarioBodies = map[string]map[string]string{
 			`"parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]}]}`,
 		"multiturn_tool": `{"contents":[` +
 			`{"role":"user","parts":[{"text":"What is the weather in Paris?"}]},` +
-			`{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"}}}]},` +
+			`{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"}},"thoughtSignature":"sig_test_passthrough"}]},` +
 			`{"role":"user","parts":[{"functionResponse":{"name":"get_weather","response":{"result":"18C and sunny"}}}]}],` +
 			`"generationConfig":{"maxOutputTokens":200},` +
 			`"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Get the weather for a city",` +

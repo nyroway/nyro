@@ -1,0 +1,62 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "What is the weather in Paris?"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "functionCall": {
+            "args": {
+              "city": "Paris"
+            },
+            "name": "get_weather"
+          }
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "functionResponse": {
+            "name": "call_1",
+            "response": {
+              "result": "18C and sunny"
+            }
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 200
+  },
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "description": "Get the weather for a city",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "city": {
+                "type": "STRING"
+              }
+            },
+            "required": [
+              "city"
+            ],
+            "type": "OBJECT"
+          }
+        }
+      ]
+    }
+  ]
+}
