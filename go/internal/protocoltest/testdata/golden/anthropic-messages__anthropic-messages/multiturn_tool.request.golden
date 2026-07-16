@@ -1,0 +1,49 @@
+{
+  "max_tokens": 200,
+  "messages": [
+    {
+      "content": "What is the weather in Paris?",
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "input": {
+            "city": "Paris"
+          },
+          "name": "get_weather",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": "18C and sunny",
+          "tool_use_id": "toolu_1",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "mimo-v2.5-pro",
+  "tools": [
+    {
+      "description": "Get the weather for a city",
+      "input_schema": {
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "type": "object"
+      },
+      "name": "get_weather"
+    }
+  ]
+}

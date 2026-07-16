@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Great, the weather in Paris is 18°C and sunny. I should present this information in a clear, friendly way to the user.",
+            "thought": true
+          },
+          {
+            "text": "The weather in Paris is currently 18°C and sunny. Enjoy the beautiful day! ☀️"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 53,
+    "promptTokenCount": 20,
+    "totalTokenCount": 73
+  }
+}

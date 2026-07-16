@@ -1,0 +1,10 @@
+{
+  "max_tokens": 100,
+  "messages": [
+    {
+      "content": "Describe this image in one word.",
+      "role": "user"
+    }
+  ],
+  "model": "mimo-v2.5"
+}

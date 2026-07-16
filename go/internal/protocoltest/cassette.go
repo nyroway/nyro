@@ -155,6 +155,12 @@ func (rt *recordTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	if err != nil {
 		return nil, err
 	}
+	// Never persist an error response as a cassette — it would make the cell
+	// fail on replay instead of being a usable fixture.
+	if resp.StatusCode/100 != 2 {
+		resp.Body = io.NopCloser(bytes.NewReader(raw))
+		return resp, nil
+	}
 	// Preserve only content-type; drop everything else (may carry rate-limit /
 	// set-cookie / request-id noise, and we never want request headers here).
 	headers := map[string]string{}

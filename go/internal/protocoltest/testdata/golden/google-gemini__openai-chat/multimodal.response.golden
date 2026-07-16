@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The user wants me to describe an image in one word.\nI looked at the provided image.\nThe image appears to be a blank white rectangle.\nTherefore, the most accurate single-word description is \"Blank\".",
+            "thought": true
+          },
+          {
+            "text": "Blank."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 46,
+    "promptTokenCount": 272,
+    "totalTokenCount": 318
+  }
+}

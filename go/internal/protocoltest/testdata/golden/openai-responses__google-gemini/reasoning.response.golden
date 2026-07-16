@@ -1,0 +1,23 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "text": "To calculate **17 × 23**, you can use a few different methods. Here are two common ways to do it step by step:\n\n### Method 1: Using the Difference of Squares\nNotice that 17 and 23 are both the same distance from 20 (20 - 3 = 17 and 20 + 3 = 23). This allows us to use the algebraic formula $(a - b)(a + b) = a^2 - b^2$.\n\n1.  **Identify the variables:** Here, $a = 20$ and $b = 3$.\n2.  **Set up the equation:** $(20 - 3) × (20 + 3) = 20^2 - 3^2$.\n3.  **Square the numbers:**\n    *   $20^2 = 400$\n    *   $3^2 = 9$\n4.  **Subtract:** $400 - 9 = 391$.\n\n---\n\n### Method 2: Distributive Property (Breaking it down)\nYou can break 23 into (20 + 3) and multiply it by 17.\n\n1.  **Set up the multiplication:** $17 × (20 + 3)$\n2.  **Distribute the 17:** $(17 × 20) + (17 × 3)$\n3.  **Calculate each part:**\n    *   $17 × 20 = 340$\n    *   $17 × 3 = 51$\n4.  **Add the results:** $340 + 51 = 391$.\n\n**Final Answer:** 17 × 23 = **391**",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 15,
+    "output_tokens": 396,
+    "total_tokens": 739
+  }
+}

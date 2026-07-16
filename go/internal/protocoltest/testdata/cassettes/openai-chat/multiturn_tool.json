@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "model": "mimo-v2.5-pro"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"665e1e60b7ef4cc599660cae61ee3218\",\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"The current weather in Paris is 18°C and sunny. Perfect conditions for a stroll along the Seine or a visit to the Eiffel Tower! ☀️\",\"role\":\"assistant\",\"tool_calls\":null,\"reasoning_content\":\"The user asked for the weather in Paris. I called the get_weather function with \\\"Paris\\\" as the city parameter. The result returned is \\\"18C and sunny\\\". I should provide a friendly response with this information.\\n\\nThe user's question is straightforward, so I can just relay the information in a conversational tone. No need for additional tools or clarification.\\n\\nI'll respond warmly and include the weather details.\"}}],\"created\":1784177507,\"model\":\"mimo-v2.5-pro\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":121,\"prompt_tokens\":532,\"total_tokens\":653,\"completion_tokens_details\":{\"reasoning_tokens\":0},\"prompt_tokens_details\":{\"cached_tokens\":192}}}"
+  }
+}

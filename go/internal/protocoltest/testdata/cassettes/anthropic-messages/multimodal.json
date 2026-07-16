@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/anthropic/v1/messages",
+    "model": "mimo-v2.5"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"642a276f4b5b4e6bb753f18f62bf750e\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"mimo-v2.5\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Black\"},{\"type\":\"thinking\",\"thinking\":\"The user wants a one-word description of an image.\\nI need to look at the image provided.\\nThe image is a solid black rectangle.\\nI will select a single word that accurately describes this visual. \\\"Black\\\" is the most direct and accurate single-word descriptor.\",\"signature\":\"\"}],\"usage\":{\"input_tokens\":16,\"output_tokens\":57,\"cache_read_input_tokens\":256}}"
+  }
+}

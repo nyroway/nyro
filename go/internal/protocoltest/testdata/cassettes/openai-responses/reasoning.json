@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "model": "mimo-v2.5-pro"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"resp_8a7f57b88d6a471a9f2a098c894f7223\",\"object\":\"response\",\"created_at\":1784177518,\"status\":\"completed\",\"error\":null,\"incomplete_details\":null,\"model\":\"mimo-v2.5-pro\",\"metadata\":null,\"output\":[{\"id\":\"rs_d6ea9979df2a4ac38eed3a672a10b3e7\",\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"17 * 23\\n\\nLet me break this down:\\n17 * 23 = 17 * (20 + 3) = 17*20 + 17*3 = 340 + 51 = 391\"}],\"status\":\"completed\"},{\"id\":\"msg_2ffa115c5647446bb7fd1caf2391535d\",\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"## Solving 17 × 23\\n\\n**Step 1: Break 23 into easier parts**\\n23 = 20 + 3\\n\\n**Step 2: Multiply 17 by each part**\\n- 17 × 20 = 340\\n- 17 × 3 = 51\\n\\n**Step 3: Add the results**\\n340 + 51 = **391**\\n\\n✅ **17 × 23 = 391**\",\"annotations\":[]}]}],\"output_text\":\"## Solving 17 × 23\\n\\n**Step 1: Break 23 into easier parts**\\n23 = 20 + 3\\n\\n**Step 2: Multiply 17 by each part**\\n- 17 × 20 = 340\\n- 17 × 3 = 51\\n\\n**Step 3: Add the results**\\n340 + 51 = **391**\\n\\n✅ **17 × 23 = 391**\",\"usage\":{\"input_tokens\":31,\"input_tokens_details\":{},\"output_tokens\":170,\"output_tokens_details\":{\"reasoning_tokens\":0},\"total_tokens\":201}}"
+  }
+}

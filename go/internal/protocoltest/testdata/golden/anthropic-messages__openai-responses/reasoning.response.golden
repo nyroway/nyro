@@ -1,0 +1,20 @@
+{
+  "content": [
+    {
+      "thinking": "17 * 23\n\nLet me break this down:\n17 * 23 = 17 * (20 + 3) = 17*20 + 17*3 = 340 + 51 = 391",
+      "type": "thinking"
+    },
+    {
+      "text": "## Solving 17 × 23\n\n**Step 1: Break 23 into easier parts**\n23 = 20 + 3\n\n**Step 2: Multiply 17 by each part**\n- 17 × 20 = 340\n- 17 × 3 = 51\n\n**Step 3: Add the results**\n340 + 51 = **391**\n\n✅ **17 × 23 = 391**",
+      "type": "text"
+    }
+  ],
+  "model": "mimo-v2.5-pro",
+  "role": "assistant",
+  "stop_reason": "end_turn",
+  "type": "message",
+  "usage": {
+    "input_tokens": 31,
+    "output_tokens": 170
+  }
+}

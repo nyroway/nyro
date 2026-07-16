@@ -1,0 +1,19 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Black",
+        "role": "assistant"
+      }
+    }
+  ],
+  "model": "gemini-3.1-flash-lite",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 1,
+    "prompt_tokens": 1097,
+    "total_tokens": 1098
+  }
+}

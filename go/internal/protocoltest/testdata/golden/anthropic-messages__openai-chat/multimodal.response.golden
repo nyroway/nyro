@@ -1,0 +1,21 @@
+{
+  "content": [
+    {
+      "thinking": "The user wants me to describe an image in one word.\nI looked at the provided image.\nThe image appears to be a blank white rectangle.\nTherefore, the most accurate single-word description is \"Blank\".",
+      "type": "thinking"
+    },
+    {
+      "text": "Blank.",
+      "type": "text"
+    }
+  ],
+  "model": "mimo-v2.5",
+  "role": "assistant",
+  "stop_reason": "end_turn",
+  "type": "message",
+  "usage": {
+    "cache_read_input_tokens": 192,
+    "input_tokens": 272,
+    "output_tokens": 46
+  }
+}

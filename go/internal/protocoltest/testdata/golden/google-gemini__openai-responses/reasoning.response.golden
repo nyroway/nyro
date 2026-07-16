@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "17 * 23\n\nLet me break this down:\n17 * 23 = 17 * (20 + 3) = 17*20 + 17*3 = 340 + 51 = 391",
+            "thought": true
+          },
+          {
+            "text": "## Solving 17 × 23\n\n**Step 1: Break 23 into easier parts**\n23 = 20 + 3\n\n**Step 2: Multiply 17 by each part**\n- 17 × 20 = 340\n- 17 × 3 = 51\n\n**Step 3: Add the results**\n340 + 51 = **391**\n\n✅ **17 × 23 = 391**"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 170,
+    "promptTokenCount": 31,
+    "totalTokenCount": 201
+  }
+}

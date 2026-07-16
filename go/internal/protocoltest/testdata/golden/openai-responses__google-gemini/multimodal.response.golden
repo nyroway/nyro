@@ -1,0 +1,23 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "text": "Black",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 1097,
+    "output_tokens": 1,
+    "total_tokens": 1098
+  }
+}

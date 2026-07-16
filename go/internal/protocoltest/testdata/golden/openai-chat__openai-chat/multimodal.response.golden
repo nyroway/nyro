@@ -1,0 +1,20 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Blank.",
+        "reasoning_content": "The user wants me to describe an image in one word.\nI looked at the provided image.\nThe image appears to be a blank white rectangle.\nTherefore, the most accurate single-word description is \"Blank\".",
+        "role": "assistant"
+      }
+    }
+  ],
+  "model": "mimo-v2.5",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 46,
+    "prompt_tokens": 272,
+    "total_tokens": 318
+  }
+}

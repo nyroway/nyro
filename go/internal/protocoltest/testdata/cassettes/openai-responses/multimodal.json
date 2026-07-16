@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "model": "mimo-v2.5"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"resp_53de6e1741e04aa28b03ddeea473f70b\",\"object\":\"response\",\"created_at\":1784177794,\"status\":\"completed\",\"error\":null,\"incomplete_details\":null,\"model\":\"mimo-v2.5\",\"metadata\":null,\"output\":[{\"id\":\"rs_c7cdf293763d40db82e9d59c5ef858f7\",\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"The user wants a one-word description of the image.\\nI will examine the image content.\\nThe image is a solid, uniform black rectangle with no discernible details, objects, or text.\\nTherefore, the most appropriate single word to describe it is \\\"black.\\\"\"}],\"status\":\"completed\"},{\"id\":\"msg_3ac6e1a75752428080f870a45e28b4a3\",\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"black\",\"annotations\":[]}]}],\"output_text\":\"black\",\"usage\":{\"input_tokens\":42,\"input_tokens_details\":{},\"output_tokens\":56,\"output_tokens_details\":{\"reasoning_tokens\":52},\"total_tokens\":98}}"
+  }
+}

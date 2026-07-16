@@ -1,0 +1,15 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "What is 17*23? Think step by step."
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 2000
+  }
+}

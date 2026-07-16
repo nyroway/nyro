@@ -1,0 +1,10 @@
+{
+  "max_tokens": 2000,
+  "messages": [
+    {
+      "content": "What is 17*23? Think step by step.",
+      "role": "user"
+    }
+  ],
+  "model": "mimo-v2.5-pro"
+}

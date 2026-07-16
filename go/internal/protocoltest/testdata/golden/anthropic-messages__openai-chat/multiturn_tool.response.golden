@@ -1,0 +1,21 @@
+{
+  "content": [
+    {
+      "thinking": "The user asked for the weather in Paris. I called the get_weather function with \"Paris\" as the city parameter. The result returned is \"18C and sunny\". I should provide a friendly response with this information.\n\nThe user's question is straightforward, so I can just relay the information in a conversational tone. No need for additional tools or clarification.\n\nI'll respond warmly and include the weather details.",
+      "type": "thinking"
+    },
+    {
+      "text": "The current weather in Paris is 18°C and sunny. Perfect conditions for a stroll along the Seine or a visit to the Eiffel Tower! ☀️",
+      "type": "text"
+    }
+  ],
+  "model": "mimo-v2.5-pro",
+  "role": "assistant",
+  "stop_reason": "end_turn",
+  "type": "message",
+  "usage": {
+    "cache_read_input_tokens": 192,
+    "input_tokens": 532,
+    "output_tokens": 121
+  }
+}

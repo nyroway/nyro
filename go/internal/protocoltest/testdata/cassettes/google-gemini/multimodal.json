@@ -1,0 +1,13 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.1-flash-lite:generateContent"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json; charset=UTF-8"
+    },
+    "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Black\",\n            \"thoughtSignature\": \"EjQKMgERTTIPKwfyywdDTfe1NjWRdtisAlZM7ggfwKm+BwM+Qg7ueIO0gAi68JD7wmoQUuLc\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 1097,\n    \"candidatesTokenCount\": 1,\n    \"totalTokenCount\": 1098,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"IMAGE\",\n        \"tokenCount\": 1089\n      },\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 8\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.1-flash-lite\",\n  \"responseId\": \"fGNYasyHMNaijuMPxLXS4Qc\"\n}\n"
+  }
+}

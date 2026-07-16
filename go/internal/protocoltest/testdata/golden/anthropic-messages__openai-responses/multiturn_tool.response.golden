@@ -1,0 +1,20 @@
+{
+  "content": [
+    {
+      "thinking": "The user asked about the weather in Paris. The function returned \"18C and sunny\". I should present this information clearly to the user.",
+      "type": "thinking"
+    },
+    {
+      "text": "The weather in Paris is currently **18°C and sunny**. It's a beautiful day! ☀️",
+      "type": "text"
+    }
+  ],
+  "model": "mimo-v2.5-pro",
+  "role": "assistant",
+  "stop_reason": "end_turn",
+  "type": "message",
+  "usage": {
+    "input_tokens": 298,
+    "output_tokens": 55
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "content": [
+    {
+      "thinking": "The user wants a one-word description of an image.\nI need to look at the image provided.\nThe image is a solid black rectangle.\nI will select a single word that accurately describes this visual. \"Black\" is the most direct and accurate single-word descriptor.",
+      "type": "thinking"
+    },
+    {
+      "text": "Black",
+      "type": "text"
+    }
+  ],
+  "model": "mimo-v2.5",
+  "role": "assistant",
+  "stop_reason": "end_turn",
+  "type": "message",
+  "usage": {
+    "cache_read_input_tokens": 256,
+    "input_tokens": 16,
+    "output_tokens": 57
+  }
+}

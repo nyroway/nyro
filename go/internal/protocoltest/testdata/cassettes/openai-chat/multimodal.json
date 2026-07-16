@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "model": "mimo-v2.5"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"18b8f121ea324f01b815e372b35f86ec\",\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"Blank.\",\"role\":\"assistant\",\"tool_calls\":null,\"reasoning_content\":\"The user wants me to describe an image in one word.\\nI looked at the provided image.\\nThe image appears to be a blank white rectangle.\\nTherefore, the most accurate single-word description is \\\"Blank\\\".\"}}],\"created\":1784177513,\"model\":\"mimo-v2.5\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":46,\"prompt_tokens\":272,\"total_tokens\":318,\"completion_tokens_details\":{\"reasoning_tokens\":41},\"prompt_tokens_details\":{\"cached_tokens\":192,\"image_tokens\":16}}}"
+  }
+}

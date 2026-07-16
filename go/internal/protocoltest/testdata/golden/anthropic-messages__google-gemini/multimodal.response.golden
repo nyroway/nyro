@@ -1,0 +1,16 @@
+{
+  "content": [
+    {
+      "text": "Black",
+      "type": "text"
+    }
+  ],
+  "model": "gemini-3.1-flash-lite",
+  "role": "assistant",
+  "stop_reason": "end_turn",
+  "type": "message",
+  "usage": {
+    "input_tokens": 1097,
+    "output_tokens": 1
+  }
+}

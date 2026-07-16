@@ -1,0 +1,33 @@
+{
+  "model": "mimo-v2.5-pro",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "text": "Let me calculate 17 × 23 step by step.",
+          "type": "reasoning_text"
+        }
+      ],
+      "status": "completed",
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
+          "text": "# Calculating 17 × 23\n\nLet me break this down step by step:\n\n## Method: Breaking apart the numbers\n\n**Step 1:** Split 23 into 20 and 3\n\nSo: 17 × 23 = 17 × (20 + 3)\n\n**Step 2:** Multiply each part\n- 17 × 20 = 340\n- 17 × 3 = 51\n\n**Step 3:** Add the results together\n- 340 + 51 = **391**\n\n## ✅ Answer: **17 × 23 = 391**",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 265,
+    "output_tokens": 161,
+    "total_tokens": 426
+  }
+}

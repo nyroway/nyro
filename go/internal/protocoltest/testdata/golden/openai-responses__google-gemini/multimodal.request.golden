@@ -1,0 +1,15 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "Describe this image in one word."
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 100
+  }
+}

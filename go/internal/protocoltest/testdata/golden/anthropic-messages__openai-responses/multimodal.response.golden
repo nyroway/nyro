@@ -1,0 +1,20 @@
+{
+  "content": [
+    {
+      "thinking": "The user wants a one-word description of the image.\nI will examine the image content.\nThe image is a solid, uniform black rectangle with no discernible details, objects, or text.\nTherefore, the most appropriate single word to describe it is \"black.\"",
+      "type": "thinking"
+    },
+    {
+      "text": "black",
+      "type": "text"
+    }
+  ],
+  "model": "mimo-v2.5",
+  "role": "assistant",
+  "stop_reason": "end_turn",
+  "type": "message",
+  "usage": {
+    "input_tokens": 42,
+    "output_tokens": 56
+  }
+}

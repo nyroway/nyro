@@ -1,0 +1,47 @@
+{
+  "input": [
+    {
+      "content": [
+        {
+          "text": "What is the weather in Paris?",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"city\":\"Paris\"}",
+      "call_id": "toolu_1",
+      "name": "get_weather",
+      "type": "function_call"
+    },
+    {
+      "call_id": "toolu_1",
+      "output": "18C and sunny",
+      "type": "function_call_output"
+    }
+  ],
+  "instructions": "You are a helpful assistant.",
+  "max_output_tokens": 200,
+  "model": "mimo-v2.5-pro",
+  "store": false,
+  "tools": [
+    {
+      "description": "Get the weather for a city",
+      "name": "get_weather",
+      "parameters": {
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "type": "object"
+      },
+      "type": "function"
+    }
+  ]
+}

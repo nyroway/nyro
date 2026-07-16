@@ -1,0 +1,20 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "The weather in Paris is currently 18°C and sunny. Enjoy the beautiful day! ☀️",
+        "reasoning_content": "Great, the weather in Paris is 18°C and sunny. I should present this information in a clear, friendly way to the user.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "model": "mimo-v2.5-pro",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 53,
+    "prompt_tokens": 20,
+    "total_tokens": 73
+  }
+}

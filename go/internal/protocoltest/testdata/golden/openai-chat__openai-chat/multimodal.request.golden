@@ -1,0 +1,21 @@
+{
+  "max_tokens": 100,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "Describe this image in one word.",
+          "type": "text"
+        },
+        {
+          "image_url": {
+            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          },
+          "type": "image_url"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "mimo-v2.5"
+}

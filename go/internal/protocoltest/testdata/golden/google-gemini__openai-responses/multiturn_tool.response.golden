@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The user asked about the weather in Paris. The function returned \"18C and sunny\". I should present this information clearly to the user.",
+            "thought": true
+          },
+          {
+            "text": "The weather in Paris is currently **18°C and sunny**. It's a beautiful day! ☀️"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 55,
+    "promptTokenCount": 298,
+    "totalTokenCount": 353
+  }
+}

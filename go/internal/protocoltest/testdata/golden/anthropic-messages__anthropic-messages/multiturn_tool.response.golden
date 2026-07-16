@@ -1,0 +1,21 @@
+{
+  "content": [
+    {
+      "thinking": "Great, the weather in Paris is 18°C and sunny. I should present this information in a clear, friendly way to the user.",
+      "type": "thinking"
+    },
+    {
+      "text": "The weather in Paris is currently 18°C and sunny. Enjoy the beautiful day! ☀️",
+      "type": "text"
+    }
+  ],
+  "model": "mimo-v2.5-pro",
+  "role": "assistant",
+  "stop_reason": "end_turn",
+  "type": "message",
+  "usage": {
+    "cache_read_input_tokens": 512,
+    "input_tokens": 20,
+    "output_tokens": 53
+  }
+}

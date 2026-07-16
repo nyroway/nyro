@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The user wants a one-word description of the image.\nI will examine the image content.\nThe image is a solid, uniform black rectangle with no discernible details, objects, or text.\nTherefore, the most appropriate single word to describe it is \"black.\"",
+            "thought": true
+          },
+          {
+            "text": "black"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 56,
+    "promptTokenCount": 42,
+    "totalTokenCount": 98
+  }
+}

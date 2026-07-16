@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The user wants a one-word description of an image.\nI need to look at the image provided.\nThe image is a solid black rectangle.\nI will select a single word that accurately describes this visual. \"Black\" is the most direct and accurate single-word descriptor.",
+            "thought": true
+          },
+          {
+            "text": "Black"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 57,
+    "promptTokenCount": 16,
+    "totalTokenCount": 73
+  }
+}

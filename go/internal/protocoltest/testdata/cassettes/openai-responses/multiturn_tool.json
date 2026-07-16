@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "model": "mimo-v2.5-pro"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"resp_1e770929e42240b1af1784faa1e45e00\",\"object\":\"response\",\"created_at\":1784177515,\"status\":\"completed\",\"error\":null,\"incomplete_details\":null,\"model\":\"mimo-v2.5-pro\",\"metadata\":null,\"output\":[{\"id\":\"rs_a273f1b4e3264ea1b25705756d8113b5\",\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"The user asked about the weather in Paris. The function returned \\\"18C and sunny\\\". I should present this information clearly to the user.\"}],\"status\":\"completed\"},{\"id\":\"msg_f7d42be99a0e49bebd62a141c896c01d\",\"type\":\"message\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"The weather in Paris is currently **18°C and sunny**. It's a beautiful day! ☀️\",\"annotations\":[]}]}],\"output_text\":\"The weather in Paris is currently **18°C and sunny**. It's a beautiful day! ☀️\",\"usage\":{\"input_tokens\":298,\"input_tokens_details\":{},\"output_tokens\":55,\"output_tokens_details\":{\"reasoning_tokens\":0},\"total_tokens\":353}}"
+  }
+}

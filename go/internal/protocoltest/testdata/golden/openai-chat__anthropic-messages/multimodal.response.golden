@@ -1,0 +1,20 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Black",
+        "reasoning_content": "The user wants a one-word description of an image.\nI need to look at the image provided.\nThe image is a solid black rectangle.\nI will select a single word that accurately describes this visual. \"Black\" is the most direct and accurate single-word descriptor.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "model": "mimo-v2.5",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 57,
+    "prompt_tokens": 16,
+    "total_tokens": 73
+  }
+}

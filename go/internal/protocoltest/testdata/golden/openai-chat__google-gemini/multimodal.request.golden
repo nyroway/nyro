@@ -1,0 +1,21 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "Describe this image in one word."
+        },
+        {
+          "inlineData": {
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+            "mimeType": "image/png"
+          }
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 100
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/anthropic/v1/messages",
+    "model": "mimo-v2.5-pro"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"eb8c93fb1e404c0c8531ccdbe1a1761d\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"mimo-v2.5-pro\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"## Calculating 17 × 23\\n\\n**Step 1:** Break 23 into easier parts: **20 + 3**\\n\\n**Step 2:** Multiply 17 by each part:\\n- 17 × 20 = **340**\\n- 17 × 3 = **51**\\n\\n**Step 3:** Add the results:\\n- 340 + 51 = **391**\\n\\n✅ **17 × 23 = 391**\"},{\"type\":\"thinking\",\"thinking\":\"Let me calculate 17 × 23 step by step.\\n\\nMethod: Break it down\\n\\n17 × 23\\n\\n= 17 × (20 + 3)\\n\\n= 17 × 20 + 17 × 3\\n\\n= 340 + 51\\n\\n= 391\\n\\nLet me verify:\\n17 × 20 = 340 ✓\\n17 × 3 = 51 ✓\\n340 + 51 = 391 ✓\",\"signature\":\"\"}],\"usage\":{\"input_tokens\":73,\"output_tokens\":223,\"cache_read_input_tokens\":192}}"
+  }
+}

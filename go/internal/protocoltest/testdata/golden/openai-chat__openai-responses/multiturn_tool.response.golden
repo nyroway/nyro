@@ -1,0 +1,20 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "The weather in Paris is currently **18°C and sunny**. It's a beautiful day! ☀️",
+        "reasoning_content": "The user asked about the weather in Paris. The function returned \"18C and sunny\". I should present this information clearly to the user.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "model": "mimo-v2.5-pro",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 55,
+    "prompt_tokens": 298,
+    "total_tokens": 353
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "input": [
+    {
+      "content": [
+        {
+          "text": "Describe this image in one word.",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    }
+  ],
+  "instructions": "You are a helpful assistant.",
+  "max_output_tokens": 100,
+  "model": "mimo-v2.5",
+  "store": false
+}

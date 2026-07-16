@@ -1,0 +1,33 @@
+{
+  "model": "mimo-v2.5",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "text": "The user wants a one-word description of the image.\nI will examine the image content.\nThe image is a solid, uniform black rectangle with no discernible details, objects, or text.\nTherefore, the most appropriate single word to describe it is \"black.\"",
+          "type": "reasoning_text"
+        }
+      ],
+      "status": "completed",
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
+          "text": "black",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 42,
+    "output_tokens": 56,
+    "total_tokens": 98
+  }
+}

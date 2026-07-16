@@ -40,7 +40,13 @@ var scenarioSpecs = []Scenario{
 	{Name: "text"},
 	{Name: "text_stream", Stream: true},
 	{Name: "tool"},
+	{Name: "multiturn_tool"},
+	{Name: "multimodal"},
+	{Name: "reasoning"},
 }
+
+// testTinyPNG is a 1x1 PNG used by the multimodal scenario bodies.
+const testTinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 // scenarioBodies holds each scenario's client request in each inbound protocol's
 // wire format. Model is routeModel where the protocol carries it in the body;
@@ -53,6 +59,17 @@ var scenarioBodies = map[string]map[string]string{
 			`"messages":[{"role":"user","content":"What is the weather in Paris?"}],` +
 			`"tools":[{"name":"get_weather","description":"Get the weather for a city",` +
 			`"input_schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]}`,
+		"multiturn_tool": `{"model":"conversion-test-model","max_tokens":200,` +
+			`"tools":[{"name":"get_weather","description":"Get the weather for a city",` +
+			`"input_schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}],` +
+			`"messages":[{"role":"user","content":"What is the weather in Paris?"},` +
+			`{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"Paris"}}]},` +
+			`{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"18C and sunny"}]}]}`,
+		"multimodal": `{"model":"conversion-test-model","max_tokens":100,"messages":[{"role":"user","content":[` +
+			`{"type":"text","text":"Describe this image in one word."},` +
+			`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + testTinyPNG + `"}}]}]}`,
+		"reasoning": `{"model":"conversion-test-model","max_tokens":2000,"thinking":{"type":"enabled","budget_tokens":1024},` +
+			`"messages":[{"role":"user","content":"What is 17*23? Think step by step."}]}`,
 	},
 	"openai-chat": {
 		"text":        `{"model":"conversion-test-model","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}`,
@@ -61,6 +78,17 @@ var scenarioBodies = map[string]map[string]string{
 			`"messages":[{"role":"user","content":"What is the weather in Paris?"}],` +
 			`"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the weather for a city",` +
 			`"parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}]}`,
+		"multiturn_tool": `{"model":"conversion-test-model","max_tokens":200,` +
+			`"tools":[{"type":"function","function":{"name":"get_weather","description":"Get the weather for a city",` +
+			`"parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}],` +
+			`"messages":[{"role":"user","content":"What is the weather in Paris?"},` +
+			`{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},` +
+			`{"role":"tool","tool_call_id":"call_1","content":"18C and sunny"}]}`,
+		"multimodal": `{"model":"conversion-test-model","max_tokens":100,"messages":[{"role":"user","content":[` +
+			`{"type":"text","text":"Describe this image in one word."},` +
+			`{"type":"image_url","image_url":{"url":"data:image/png;base64,` + testTinyPNG + `"}}]}]}`,
+		"reasoning": `{"model":"conversion-test-model","max_tokens":2000,"reasoning_effort":"medium",` +
+			`"messages":[{"role":"user","content":"What is 17*23? Think step by step."}]}`,
 	},
 	"openai-responses": {
 		"text":        `{"model":"conversion-test-model","max_output_tokens":100,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Hello"}]}]}`,
@@ -69,6 +97,17 @@ var scenarioBodies = map[string]map[string]string{
 			`"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"What is the weather in Paris?"}]}],` +
 			`"tools":[{"type":"function","name":"get_weather","description":"Get the weather for a city",` +
 			`"parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]}`,
+		"multiturn_tool": `{"model":"conversion-test-model","max_output_tokens":200,` +
+			`"tools":[{"type":"function","name":"get_weather","description":"Get the weather for a city",` +
+			`"parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}],` +
+			`"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"What is the weather in Paris?"}]},` +
+			`{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"Paris\"}"},` +
+			`{"type":"function_call_output","call_id":"call_1","output":"18C and sunny"}]}`,
+		"multimodal": `{"model":"conversion-test-model","max_output_tokens":100,` +
+			`"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Describe this image in one word."},` +
+			`{"type":"input_image","image_url":"data:image/png;base64,` + testTinyPNG + `"}]}]}`,
+		"reasoning": `{"model":"conversion-test-model","max_output_tokens":2000,"reasoning":{"effort":"medium"},` +
+			`"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"What is 17*23? Think step by step."}]}]}`,
 	},
 	"google-gemini": {
 		"text":        `{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":100}}`,
@@ -77,6 +116,19 @@ var scenarioBodies = map[string]map[string]string{
 			`"generationConfig":{"maxOutputTokens":100},` +
 			`"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Get the weather for a city",` +
 			`"parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]}]}`,
+		"multiturn_tool": `{"contents":[` +
+			`{"role":"user","parts":[{"text":"What is the weather in Paris?"}]},` +
+			`{"role":"model","parts":[{"functionCall":{"name":"get_weather","args":{"city":"Paris"}}}]},` +
+			`{"role":"user","parts":[{"functionResponse":{"name":"get_weather","response":{"result":"18C and sunny"}}}]}],` +
+			`"generationConfig":{"maxOutputTokens":200},` +
+			`"tools":[{"functionDeclarations":[{"name":"get_weather","description":"Get the weather for a city",` +
+			`"parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}]}]}`,
+		"multimodal": `{"contents":[{"role":"user","parts":[` +
+			`{"text":"Describe this image in one word."},` +
+			`{"inlineData":{"mimeType":"image/png","data":"` + testTinyPNG + `"}}]}],` +
+			`"generationConfig":{"maxOutputTokens":100}}`,
+		"reasoning": `{"contents":[{"role":"user","parts":[{"text":"What is 17*23? Think step by step."}]}],` +
+			`"generationConfig":{"maxOutputTokens":2000}}`,
 	},
 }
 

@@ -5,6 +5,16 @@
     {
       "content": [
         {
+          "text": "\nThe user is asking for the current weather in Paris. I can use the \"get_weather\" tool to retrieve this information. I need to call the function with \"city\" set to \"Paris\".\n",
+          "type": "reasoning_text"
+        }
+      ],
+      "status": "completed",
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
           "text": "\nI'll check the current weather in Paris for you.\n",
           "type": "output_text"
         }
