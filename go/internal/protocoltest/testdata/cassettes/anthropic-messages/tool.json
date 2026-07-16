@@ -1,15 +1,14 @@
 {
-  "note": "PLACEHOLDER — regenerate via `make go-conversion-update` with real keys",
   "request": {
     "method": "POST",
-    "path": "/v1/messages",
-    "model": "conversion-test-model"
+    "path": "/api/v1/messages",
+    "model": "openrouter/free"
   },
   "response": {
     "status": 200,
     "headers": {
       "Content-Type": "application/json"
     },
-    "body": "{\"id\":\"msg_placeholder3\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"conversion-test-model\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_placeholder1\",\"name\":\"get_weather\",\"input\":{\"city\":\"Paris\"}}],\"stop_reason\":\"tool_use\",\"stop_sequence\":null,\"usage\":{\"input_tokens\":20,\"output_tokens\":10}}"
+    "body": "{\"id\":\"gen-1784170540-Vz2cFRk26DfnLmTsrWt9\",\"type\":\"message\",\"role\":\"assistant\",\"container\":null,\"content\":[{\"type\":\"thinking\",\"thinking\":\"\\nThe user is asking for the current weather in Paris. I can use the \\\"get_weather\\\" tool to retrieve this information. I need to call the function with \\\"city\\\" set to \\\"Paris\\\".\\n\",\"signature\":\"\"},{\"type\":\"text\",\"text\":\"\\nI'll check the current weather in Paris for you.\\n\",\"citations\":[]},{\"type\":\"tool_use\",\"id\":\"chatcmpl-tool-f075ad1411a54cab9c3e967ba64b0af9\",\"caller\":{\"type\":\"direct\"},\"name\":\"get_weather\",\"input\":{\"city\":\"Paris\"}},{\"type\":\"redacted_thinking\",\"data\":\"openrouter.reasoning:eyJ0ZXh0IjoiXG5UaGUgdXNlciBpcyBhc2tpbmcgZm9yIHRoZSBjdXJyZW50IHdlYXRoZXIgaW4gUGFyaXMuIEkgY2FuIHVzZSB0aGUgXCJnZXRfd2VhdGhlclwiIHRvb2wgdG8gcmV0cmlldmUgdGhpcyBpbmZvcm1hdGlvbi4gSSBuZWVkIHRvIGNhbGwgdGhlIGZ1bmN0aW9uIHdpdGggXCJjaXR5XCIgc2V0IHRvIFwiUGFyaXNcIi5cbiIsInR5cGUiOiJyZWFzb25pbmcudGV4dCJ9\"}],\"model\":\"poolside/laguna-m.1:free\",\"stop_reason\":\"tool_use\",\"stop_details\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":173,\"output_tokens\":82,\"output_tokens_details\":{\"thinking_tokens\":42},\"cache_creation_input_tokens\":null,\"cache_read_input_tokens\":32,\"cache_creation\":null,\"inference_geo\":null,\"server_tool_use\":null,\"service_tier\":null,\"speed\":\"standard\",\"cost\":0,\"is_byok\":false,\"cost_details\":{\"upstream_inference_cost\":0,\"upstream_inference_prompt_cost\":0,\"upstream_inference_completions_cost\":0}},\"context_management\":null,\"provider\":\"Poolside\"}"
   }
 }

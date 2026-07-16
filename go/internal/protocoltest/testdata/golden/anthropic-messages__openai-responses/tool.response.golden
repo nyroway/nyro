@@ -1,0 +1,23 @@
+{
+  "content": [
+    {
+      "text": "I'll get the current weather in Paris for you.",
+      "type": "text"
+    },
+    {
+      "input": {
+        "city": "Paris"
+      },
+      "name": "get_weather",
+      "type": "tool_use"
+    }
+  ],
+  "model": "poolside/laguna-xs-2.1:free",
+  "role": "assistant",
+  "stop_reason": "tool_use",
+  "type": "message",
+  "usage": {
+    "input_tokens": 117,
+    "output_tokens": 33
+  }
+}

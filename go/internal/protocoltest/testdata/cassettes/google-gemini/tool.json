@@ -1,0 +1,13 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-2.5-flash:generateContent"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json; charset=UTF-8"
+    },
+    "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"city\": \"Paris\"\n              }\n            },\n            \"thoughtSignature\": \"Cu4BARFNMg89vAKxVyzZflDXiFRubZgefoxJaTvtyQ4U1Gvpeiu5ZH3GVnKMTM93J/4LYUkZrbKFdA9HYeQ84/yc0uWlM2hkvd7BQkWpUIcP2sg6FiUObZoAj6H7w+WiYOCM/esxbRXitQJGt1uXhbL1451FhVVaPGravph86Va5zeDudLTVF7TQ8azvZiOBG9AUkhxLzeUhn3M7kZLH4aABQz4+/5XRxt5x6Dufa/eGlOibApQfZf16y5Tw3XCeQhN3Fkc7SNSgNxGiVDtB+vq+LRuhb4P1T8zUOa4GE1UThykuJX9Ro/duF4SJtDjezg==\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 46,\n    \"candidatesTokenCount\": 15,\n    \"totalTokenCount\": 108,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 46\n      }\n    ],\n    \"thoughtsTokenCount\": 47,\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-2.5-flash\",\n  \"responseId\": \"EklYaubZBpiMjuMP68qL6Qs\"\n}\n"
+  }
+}

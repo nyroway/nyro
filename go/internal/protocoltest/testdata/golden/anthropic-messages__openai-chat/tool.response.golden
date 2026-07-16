@@ -1,6 +1,10 @@
 {
   "content": [
     {
+      "thinking": "The user is asking for the weather in Paris. I have access to the get_weather function, which requires a city parameter. I need to call get_weather with city: \"Paris\". Let me do that.\n",
+      "type": "thinking"
+    },
+    {
       "input": {
         "city": "Paris"
       },
@@ -8,12 +12,13 @@
       "type": "tool_use"
     }
   ],
-  "model": "conversion-test-model",
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
   "role": "assistant",
   "stop_reason": "tool_use",
   "type": "message",
   "usage": {
-    "input_tokens": 20,
-    "output_tokens": 10
+    "cache_read_input_tokens": 0,
+    "input_tokens": 275,
+    "output_tokens": 70
   }
 }

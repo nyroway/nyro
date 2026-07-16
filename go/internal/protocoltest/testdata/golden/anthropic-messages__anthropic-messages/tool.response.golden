@@ -1,6 +1,14 @@
 {
   "content": [
     {
+      "thinking": "\nThe user is asking for the current weather in Paris. I can use the \"get_weather\" tool to retrieve this information. I need to call the function with \"city\" set to \"Paris\".\n",
+      "type": "thinking"
+    },
+    {
+      "text": "\nI'll check the current weather in Paris for you.\n",
+      "type": "text"
+    },
+    {
       "input": {
         "city": "Paris"
       },
@@ -8,12 +16,13 @@
       "type": "tool_use"
     }
   ],
-  "model": "conversion-test-model",
+  "model": "poolside/laguna-m.1:free",
   "role": "assistant",
   "stop_reason": "tool_use",
   "type": "message",
   "usage": {
-    "input_tokens": 20,
-    "output_tokens": 10
+    "cache_read_input_tokens": 32,
+    "input_tokens": 173,
+    "output_tokens": 82
   }
 }

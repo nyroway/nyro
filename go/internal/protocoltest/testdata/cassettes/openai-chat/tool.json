@@ -1,15 +1,14 @@
 {
-  "note": "PLACEHOLDER — regenerate via `make go-conversion-update` with real keys",
   "request": {
     "method": "POST",
-    "path": "/v1/chat/completions",
-    "model": "conversion-test-model"
+    "path": "/api/v1/chat/completions",
+    "model": "openrouter/free"
   },
   "response": {
     "status": 200,
     "headers": {
       "Content-Type": "application/json"
     },
-    "body": "{\"id\":\"chatcmpl-placeholder3\",\"object\":\"chat.completion\",\"created\":1700000000,\"model\":\"conversion-test-model\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_placeholder1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":10,\"total_tokens\":30}}"
+    "body": "\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n{\"id\":\"gen-1784170521-7WYijDxr7Rdse7XC7XJZ\",\"object\":\"chat.completion\",\"created\":1784170521,\"model\":\"nvidia/nemotron-3-super-120b-a12b:free\",\"provider\":\"Nvidia\",\"system_fingerprint\":null,\"service_tier\":null,\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"native_finish_reason\":\"tool_calls\",\"message\":{\"role\":\"assistant\",\"content\":null,\"refusal\":null,\"reasoning\":\"The user is asking for the weather in Paris. I have access to the get_weather function, which requires a city parameter. I need to call get_weather with city: \\\"Paris\\\". Let me do that.\\n\",\"tool_calls\":[{\"type\":\"function\",\"index\":0,\"id\":\"call-b79076d8-3ef3-499f-874c-5ab911e8620e\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}],\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"The user is asking for the weather in Paris. I have access to the get_weather function, which requires a city parameter. I need to call get_weather with city: \\\"Paris\\\". Let me do that.\\n\",\"format\":\"unknown\",\"index\":0}]}}],\"usage\":{\"prompt_tokens\":275,\"completion_tokens\":70,\"total_tokens\":345,\"cost\":0,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0,\"upstream_inference_prompt_cost\":0,\"upstream_inference_completions_cost\":0},\"completion_tokens_details\":{\"reasoning_tokens\":47,\"image_tokens\":0,\"audio_tokens\":0}}}"
   }
 }

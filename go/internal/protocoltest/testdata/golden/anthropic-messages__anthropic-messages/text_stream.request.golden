@@ -6,6 +6,6 @@
       "role": "user"
     }
   ],
-  "model": "conversion-test-model",
+  "model": "openrouter/free",
   "stream": true
 }

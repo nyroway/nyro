@@ -1,15 +1,14 @@
 {
-  "note": "PLACEHOLDER — regenerate via `make go-conversion-update` with real keys",
   "request": {
     "method": "POST",
-    "path": "/v1/messages",
-    "model": "conversion-test-model"
+    "path": "/api/v1/messages",
+    "model": "openrouter/free"
   },
   "response": {
     "status": 200,
     "headers": {
       "Content-Type": "application/json"
     },
-    "body": "{\"id\":\"msg_placeholder1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"conversion-test-model\",\"content\":[{\"type\":\"text\",\"text\":\"Hello! How can I help you today?\"}],\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"usage\":{\"input_tokens\":9,\"output_tokens\":9}}"
+    "body": "{\"id\":\"gen-1784170638-CLNWpE2VEH44zIgUdJvW\",\"type\":\"message\",\"role\":\"assistant\",\"container\":null,\"content\":[{\"type\":\"thinking\",\"thinking\":\"The user says \\\"Hello\\\". This is a simple greeting. According to the \\\"General Guidelines\\\", we should respond politely and appropriately. There's no policy violation. Just reply with a friendly greeting, perhaps ask how we can help.\",\"signature\":\"\"},{\"type\":\"text\",\"text\":\"Hello! It's great to hear from you. How can I assist you with your request today?\",\"citations\":[]},{\"type\":\"redacted_thinking\",\"data\":\"openrouter.reasoning:eyJ0ZXh0IjoiVGhlIHVzZXIgc2F5cyBcIkhlbGxvXCIuIFRoaXMgaXMgYSBzaW1wbGUgZ3JlZXRpbmcuIEFjY29yZGluZyB0byB0aGUgXCJHZW5lcmFsIEd1aWRlbGluZXNcIiwgd2Ugc2hvdWxkIHJlc3BvbmQgcG9saXRlbHkgYW5kIGFwcHJvcHJpYXRlbHkuIFRoZXJlJ3Mgbm8gcG9saWN5IHZpb2xhdGlvbi4gSnVzdCByZXBseSB3aXRoIGEgZnJpZW5kbHkgZ3JlZXRpbmcsIHBlcmhhcHMgYXNrIGhvdyB3ZSBjYW4gaGVscC4iLCJ0eXBlIjoicmVhc29uaW5nLnRleHQifQ==\"}],\"model\":\"cohere/north-mini-code:free\",\"stop_reason\":\"end_turn\",\"stop_details\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":64,\"output_tokens_details\":{\"thinking_tokens\":58},\"cache_creation_input_tokens\":null,\"cache_read_input_tokens\":0,\"cache_creation\":null,\"inference_geo\":null,\"server_tool_use\":null,\"service_tier\":null,\"speed\":\"standard\",\"cost\":0,\"is_byok\":false,\"cost_details\":{\"upstream_inference_cost\":0,\"upstream_inference_prompt_cost\":0,\"upstream_inference_completions_cost\":0}},\"context_management\":null,\"provider\":\"Cohere\"}"
   }
 }

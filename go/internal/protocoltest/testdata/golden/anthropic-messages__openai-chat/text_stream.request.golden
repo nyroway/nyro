@@ -6,7 +6,7 @@
       "role": "user"
     }
   ],
-  "model": "conversion-test-model",
+  "model": "openrouter/free",
   "stream": true,
   "stream_options": {
     "include_usage": true

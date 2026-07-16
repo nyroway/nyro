@@ -1,6 +1,6 @@
 {
   "message": {
-    "model": "conversion-test-model",
+    "model": "poolside/laguna-m.1:free",
     "usage": {
       "input_tokens": 0
     }
@@ -14,7 +14,7 @@
 ---
 {
   "content_block": {
-    "type": "text"
+    "type": "thinking"
   },
   "index": 0,
   "type": "content_block_start"
@@ -22,8 +22,764 @@
 ---
 {
   "delta": {
-    "text": "Hello",
-    "type": "text_delta"
+    "thinking": "\n",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": "Okay",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ",",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " the",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " user",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " said",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " \"",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": "Hello",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ".\"",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " I",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " need",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " to",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " respond",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " appropriately",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ".",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " Let",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " me",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " start",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " by",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " greeting",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " them",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " back",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ".",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " Maybe",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " ask",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " how",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " I",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " can",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " assist",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " them",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " today",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ".",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " Keep",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " it",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " friendly",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " and",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " open",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": "-ended",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " so",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " they",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " feel",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " comfortable",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " to",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " ask",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " any",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " questions",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ".",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " Let",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " me",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " check",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " if",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " there",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": "'s",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " any",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " specific",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " context",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " I",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " should",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " be",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " aware",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " of",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ",",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " but",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " since",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " it",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": "'s",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " a",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " general",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " greeting",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ",",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " probably",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " not",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ".",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " Just",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " make",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " sure",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " the",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " response",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " is",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " welcoming",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " and",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " offers",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": " help",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": ".",
+    "type": "thinking_delta"
+  },
+  "index": 0,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "thinking": "\n",
+    "type": "thinking_delta"
   },
   "index": 0,
   "type": "content_block_delta"
@@ -35,17 +791,166 @@
 }
 ---
 {
+  "content_block": {
+    "type": "text"
+  },
+  "index": 1,
+  "type": "content_block_start"
+}
+---
+{
+  "delta": {
+    "text": "\n",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": "Hello",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": "!",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " How",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " can",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " I",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " assist",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " you",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " today",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": "?",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " Feel",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " free",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " to",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "delta": {
+    "text": " ask",
+    "type": "text_delta"
+  },
+  "index": 1,
+  "type": "content_block_delta"
+}
+---
+{
+  "index": 1,
+  "type": "content_block_stop"
+}
+---
+{
   "index": 0,
   "type": "content_block_stop"
 }
 ---
 {
+  "index": 2,
+  "type": "content_block_stop"
+}
+---
+{
+  "index": 1,
+  "type": "content_block_stop"
+}
+---
+{
   "delta": {
-    "stop_reason": "end_turn"
+    "stop_reason": "max_tokens"
   },
   "type": "message_delta",
   "usage": {
-    "output_tokens": 2
+    "output_tokens": 100
   }
 }
 ---

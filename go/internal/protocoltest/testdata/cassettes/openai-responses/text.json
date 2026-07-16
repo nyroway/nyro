@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/responses",
+    "model": "openrouter/free"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "\n         \n\n         \n{\"id\":\"gen-1784170532-ST2BbzhbuUnm8eXXE5wP\",\"object\":\"response\",\"created_at\":1784170532,\"model\":\"nvidia/nemotron-3-super-120b-a12b:free\",\"status\":\"incomplete\",\"completed_at\":1784170533,\"output\":[{\"id\":\"rs_tmp_g249ouegaap\",\"type\":\"reasoning\",\"status\":\"completed\",\"content\":[{\"type\":\"reasoning_text\",\"text\":\"Okay, the user just said \\\"Hello\\\". It's a simple greeting, so I should respond politely. Since they haven't provided any specific context or request, I'll keep it friendly and open-ended to encourage them to share more if they need help. \\n\\nHmm, they might be testing if I'm responsive, or perhaps they're about to ask something but wanted to start with a greeting first. I'll make sure my reply is warm and inviting—no need for overcomplication\"}],\"summary\":[],\"format\":\"unknown\"},{\"id\":\"msg_tmp_ls6kx94tbac\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"Okay, the user just said \\\"Hello\\\". It's a simple greeting, so I should respond politely. Since they haven't provided any specific context or request, I'll keep it friendly and open-ended to encourage them to share more if they need help. \\n\\nHmm, they might be testing if I'm responsive, or perhaps they're about to ask something but wanted to start with a greeting first. I'll make sure my reply is warm and inviting—no need for overcomplication\",\"annotations\":[],\"logprobs\":[]}]}],\"error\":null,\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"tools\":[],\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"max_output_tokens\":100,\"temperature\":1,\"top_p\":1,\"presence_penalty\":0,\"frequency_penalty\":0,\"top_logprobs\":0,\"max_tool_calls\":null,\"metadata\":{},\"background\":false,\"previous_response_id\":null,\"service_tier\":\"auto\",\"truncation\":\"disabled\",\"store\":false,\"instructions\":\"You are a helpful assistant.\",\"text\":{\"format\":{\"type\":\"text\"}},\"reasoning\":null,\"safety_identifier\":null,\"prompt_cache_key\":null,\"usage\":{\"input_tokens\":23,\"input_tokens_details\":{\"cached_tokens\":0},\"output_tokens\":100,\"output_tokens_details\":{\"reasoning_tokens\":112},\"total_tokens\":123,\"cost\":0,\"is_byok\":false,\"cost_details\":{\"upstream_inference_cost\":0,\"upstream_inference_input_cost\":0,\"upstream_inference_output_cost\":0}}}"
+  }
+}

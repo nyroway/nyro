@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/responses",
+    "model": "openrouter/free"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "\n         \n{\"id\":\"gen-1784170535-8sTmWL6L5NT6VVjWcx4h\",\"object\":\"response\",\"created_at\":1784170535,\"model\":\"poolside/laguna-xs-2.1:free\",\"status\":\"completed\",\"completed_at\":1784170535,\"output\":[{\"id\":\"msg_tmp_qcpub45x46\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"I'll get the current weather in Paris for you.\",\"annotations\":[],\"logprobs\":[]}]},{\"id\":\"fc_tmp_pqdxxtkn568\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"chatcmpl-tool-95eb7bacc8793c60\",\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\": \\\"Paris\\\"}\"}],\"error\":null,\"incomplete_details\":null,\"tools\":[{\"type\":\"function\",\"name\":\"get_weather\",\"description\":\"Get the weather for a city\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]},\"strict\":null}],\"tool_choice\":\"auto\",\"parallel_tool_calls\":true,\"max_output_tokens\":100,\"temperature\":1,\"top_p\":1,\"presence_penalty\":0,\"frequency_penalty\":0,\"top_logprobs\":0,\"max_tool_calls\":null,\"metadata\":{},\"background\":false,\"previous_response_id\":null,\"service_tier\":\"auto\",\"truncation\":\"disabled\",\"store\":false,\"instructions\":\"You are a helpful assistant.\",\"text\":{\"format\":{\"type\":\"text\"}},\"reasoning\":null,\"safety_identifier\":null,\"prompt_cache_key\":null,\"usage\":{\"input_tokens\":117,\"input_tokens_details\":{\"cached_tokens\":0},\"output_tokens\":33,\"output_tokens_details\":{\"reasoning_tokens\":0},\"total_tokens\":150,\"cost\":0,\"is_byok\":false,\"cost_details\":{\"upstream_inference_cost\":0,\"upstream_inference_input_cost\":0,\"upstream_inference_output_cost\":0}}}"
+  }
+}

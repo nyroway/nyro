@@ -18,6 +18,13 @@ var (
 		In:  Inbound{Name: "anthropic-messages", Path: "/v1/messages"},
 		Out: Outbound{Provider: "anthropic", Protocol: "anthropic-messages", Path: "/v1/messages"},
 	}
+	// google-gemini embeds the model in the outbound path
+	// (/v1beta/models/{model}:generateContent), so Path is left empty (the
+	// harness skips the path assertion for it).
+	anthropicToGemini = Cell{
+		In:  Inbound{Name: "anthropic-messages", Path: "/v1/messages"},
+		Out: Outbound{Provider: "gemini", Protocol: "google-gemini", Path: ""},
+	}
 )
 
 // Scenarios are Anthropic Messages wire bodies (model == routeModel). Each runs
@@ -42,7 +49,7 @@ var scenarios = []Scenario{
 }
 
 func TestConversionMatrix(t *testing.T) {
-	cells := []Cell{anthropicToOpenAI, anthropicToResponses, anthropicToAnthropic}
+	cells := []Cell{anthropicToOpenAI, anthropicToResponses, anthropicToAnthropic, anthropicToGemini}
 	for _, cell := range cells {
 		for _, sc := range scenarios {
 			t.Run(cell.dir()+"/"+sc.Name, func(t *testing.T) {

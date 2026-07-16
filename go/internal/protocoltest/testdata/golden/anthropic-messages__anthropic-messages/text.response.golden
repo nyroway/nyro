@@ -1,16 +1,21 @@
 {
   "content": [
     {
-      "text": "Hello! How can I help you today?",
+      "thinking": "The user says \"Hello\". This is a simple greeting. According to the \"General Guidelines\", we should respond politely and appropriately. There's no policy violation. Just reply with a friendly greeting, perhaps ask how we can help.",
+      "type": "thinking"
+    },
+    {
+      "text": "Hello! It's great to hear from you. How can I assist you with your request today?",
       "type": "text"
     }
   ],
-  "model": "conversion-test-model",
+  "model": "cohere/north-mini-code:free",
   "role": "assistant",
   "stop_reason": "end_turn",
   "type": "message",
   "usage": {
-    "input_tokens": 9,
-    "output_tokens": 9
+    "cache_read_input_tokens": 0,
+    "input_tokens": 1,
+    "output_tokens": 64
   }
 }

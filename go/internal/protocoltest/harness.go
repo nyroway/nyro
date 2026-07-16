@@ -56,6 +56,19 @@ type Scenario struct {
 
 func recording() bool { return os.Getenv("NYRO_TEST_RECORD") != "" }
 
+// recordProvider is the provider id (auth scheme + preset) to record against.
+// NYRO_TEST_PROVIDER overrides the cell's nominal provider so a cell can be
+// recorded through an aggregator that speaks the same wire protocol — e.g.
+// recording openai-chat / openai-responses / anthropic-messages cassettes all
+// through OpenRouter (Bearer auth). Outside record mode it is the cell's own
+// provider (auth is irrelevant on replay anyway).
+func recordProvider(cell Cell) string {
+	if p := os.Getenv("NYRO_TEST_PROVIDER"); p != "" {
+		return p
+	}
+	return cell.Out.Provider
+}
+
 // providerEnv resolves NYRO_TEST_<PROVIDER>_<KEY>, falling back to the generic
 // NYRO_TEST_<KEY>. The per-provider form lets a single record run target
 // multiple providers; the generic form supports recording one provider at a
@@ -76,12 +89,13 @@ func upstreamFor(t *testing.T, cell Cell, scenario string) (tr capturingTranspor
 	casPath := filepath.Join("testdata", "cassettes", cell.Out.Protocol, scenario+".json")
 
 	if recording() {
-		baseURL = providerEnv(cell.Out.Provider, "BASE_URL")
-		apiKey = providerEnv(cell.Out.Provider, "API_KEY")
-		model = providerEnv(cell.Out.Provider, "MODEL")
+		prov := recordProvider(cell)
+		baseURL = providerEnv(prov, "BASE_URL")
+		apiKey = providerEnv(prov, "API_KEY")
+		model = providerEnv(prov, "MODEL")
 		if baseURL == "" || apiKey == "" || model == "" {
 			t.Fatalf("record mode: set NYRO_TEST[_%s]_{BASE_URL,API_KEY,MODEL}",
-				strings.ToUpper(cell.Out.Provider))
+				strings.ToUpper(prov))
 		}
 		return &recordTransport{real: http.DefaultTransport, path: casPath}, model, baseURL, apiKey
 	}
@@ -107,7 +121,7 @@ func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey
 	core := memory.New().Storage()
 	up, err := core.Upstreams().Create(storage.CreateUpstream{
 		Name:            "conv-" + cell.Out.Protocol,
-		Provider:        cell.Out.Provider,
+		Provider:        recordProvider(cell),
 		Protocol:        cell.Out.Protocol,
 		BaseURL:         baseURL,
 		CredentialsJSON: fmt.Appendf(nil, `{"api_key":%q}`, apiKey),
@@ -152,8 +166,12 @@ func RunCell(t *testing.T, cell Cell, sc Scenario) {
 	if verb != http.MethodPost {
 		t.Errorf("outbound method=%s, want POST", verb)
 	}
-	if cell.Out.Path != "" && path != cell.Out.Path {
-		t.Errorf("outbound path=%s, want %s", path, cell.Out.Path)
+	// Suffix match, not equality: the captured path includes the provider base
+	// URL's own prefix (e.g. OpenRouter's /api/v1), which differs between the
+	// record base URL and the replay placeholder. The codec-produced path is the
+	// suffix.
+	if cell.Out.Path != "" && !strings.HasSuffix(path, cell.Out.Path) {
+		t.Errorf("outbound path=%s, want suffix %s", path, cell.Out.Path)
 	}
 	reqGot, err := canonJSON(outBody)
 	if err != nil {
