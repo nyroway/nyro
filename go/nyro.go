@@ -11,6 +11,7 @@ import (
 	"github.com/nyroway/nyro/go/cmd/admin"
 	"github.com/nyroway/nyro/go/cmd/ca"
 	"github.com/nyroway/nyro/go/cmd/gateway"
+	"github.com/nyroway/nyro/go/internal/envflag"
 	"github.com/nyroway/nyro/go/internal/version"
 )
 
@@ -25,10 +26,17 @@ func newRootCmd() *cobra.Command {
 	// disable cobra's auto-added `completion` subcommand rather than ship an
 	// unmaintained surface.
 	root.CompletionOptions.DisableDefaultCmd = true
+	// Give every subcommand flag an environment-variable layer with precedence
+	// explicit flag > env > default. Bind runs (as the inherited PersistentPreRunE)
+	// for whichever leaf command executes; Decorate advertises each flag's env
+	// var in --help. Both derive NYRO_<SUB>_<FLAG> names from the command path,
+	// so no subcommand code needs to know about env binding.
+	root.PersistentPreRunE = envflag.Bind
 	root.AddCommand(gateway.NewCmd())
 	root.AddCommand(admin.NewCmd())
 	root.AddCommand(ca.NewCmd())
 	root.AddCommand(newVersionCmd())
+	envflag.Decorate(root)
 	return root
 }
 
