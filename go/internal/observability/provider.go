@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -83,6 +84,41 @@ func requireOTLPEndpoint(signal Signal, params map[string]string) (string, error
 	return endpoint, nil
 }
 
+// Per-signal default OTLP/HTTP request paths, matching the OTLP spec (and the
+// paths the admin receiver mounts in internal/observability/receiver.go).
+const (
+	otlpLogsPath    = "/v1/logs"
+	otlpMetricsPath = "/v1/metrics"
+	otlpTracesPath  = "/v1/traces"
+)
+
+// otlpSignalURL normalizes a configured OTLP endpoint for a specific signal.
+// The endpoint stored in settings (and seeded by the admin — see
+// cmd/admin.seedDefaultObsEndpoint) is a BASE url like "http://127.0.0.1:19531"
+// shared across logs/metrics/traces; it carries no per-signal path.
+//
+// This matters because otlploghttp/otlpmetrichttp/otlptracehttp's
+// WithEndpointURL uses the URL's path verbatim and does NOT append the default
+// "/v1/<signal>" when it is empty — a path-less base URL makes the exporter POST
+// to "/", which the receiver 404s. (WithEndpoint, the host:port form, would
+// append the default, but our config carries a full scheme://host so
+// WithEndpointURL is the natural fit.) So we append the per-signal default path
+// ourselves here, mirroring the OTEL_EXPORTER_OTLP_ENDPOINT base-endpoint
+// convention. An endpoint that already carries an explicit path (a user pointing
+// at a custom collector route) is left untouched.
+func otlpSignalURL(endpoint, defaultPath string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		// Malformed or scheme-less: leave it for WithEndpointURL to handle/surface
+		// rather than silently rewriting into something unexpected.
+		return endpoint
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = defaultPath
+	}
+	return u.String()
+}
+
 // exporterKindValid reports whether kind is registered for signal per the
 // exporter registry (exporter.go's ExportersFor) — the actual source of
 // truth for which kinds are valid per signal. Each buildXProvider consults
@@ -114,7 +150,7 @@ func logsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 			if err != nil {
 				return nil, err
 			}
-			return otlploghttp.New(ctx, otlploghttp.WithEndpointURL(endpoint))
+			return otlploghttp.New(ctx, otlploghttp.WithEndpointURL(otlpSignalURL(endpoint, otlpLogsPath)))
 		},
 		ExporterKindStdout: func(params map[string]string) (any, error) {
 			return stdoutlog.New()
@@ -165,7 +201,7 @@ func metricsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 				return nil, err
 			}
 			return otlpmetrichttp.New(ctx,
-				otlpmetrichttp.WithEndpointURL(endpoint),
+				otlpmetrichttp.WithEndpointURL(otlpSignalURL(endpoint, otlpMetricsPath)),
 				otlpmetrichttp.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector),
 			)
 		},
@@ -200,7 +236,7 @@ func tracesBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 			if err != nil {
 				return nil, err
 			}
-			return otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(endpoint))
+			return otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(otlpSignalURL(endpoint, otlpTracesPath)))
 		},
 		ExporterKindStdout: func(params map[string]string) (any, error) {
 			return stdouttrace.New()
@@ -309,9 +345,18 @@ func buildLoggerProvider(ctx context.Context, res *resource.Resource, sc SignalC
 		return nil, fmt.Errorf("observability: logs builder for %q returned unexpected type %T", sc.Kind, raw)
 	}
 
+	// Honor the configured "interval" (the WebUI's Export Interval) as the batch
+	// processor's export cadence, matching how metrics (PeriodicReader interval)
+	// and traces (BatchSpanProcessor timeout) consume the same field. stdout has
+	// no interval field, so it keeps the SDK's own default.
+	var procOpts []sdklog.BatchProcessorOption
+	if d, ok := parseDuration(sc.Params["interval"]); ok {
+		procOpts = append(procOpts, sdklog.WithExportInterval(d))
+	}
+
 	return sdklog.NewLoggerProvider(
 		sdklog.WithResource(res),
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(exp)),
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(exp, procOpts...)),
 	), nil
 }
 
