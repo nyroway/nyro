@@ -1,0 +1,15 @@
+{
+  "note": "PLACEHOLDER — regenerate via `make go-conversion-update` with real keys",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "model": "conversion-test-model"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "text/event-stream"
+    },
+    "body": "data: {\"id\":\"chatcmpl-placeholder2\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"conversion-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\ndata: {\"id\":\"chatcmpl-placeholder2\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"conversion-test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"id\":\"chatcmpl-placeholder2\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"conversion-test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":2,\"total_tokens\":11}}\n\ndata: [DONE]\n\n"
+  }
+}

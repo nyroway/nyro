@@ -1,0 +1,11 @@
+{
+  "max_tokens": 100,
+  "messages": [
+    {
+      "content": "Hello",
+      "role": "user"
+    }
+  ],
+  "model": "conversion-test-model",
+  "stream": true
+}

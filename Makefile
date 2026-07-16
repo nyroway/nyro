@@ -1,4 +1,4 @@
-.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-vet go-fmt go-fmt-check go-lint go-lint-install go-check go-tidy go-gen-storage go-migrate-render-schema go-migrate-diff go-migrate-lint go-migrate-verify go-migrate-status go-webui-build go-webui-embed-assets go-webui-embed-build go-webui-embed-run go-run help
+.PHONY: dev build server server-slim tools check test test-core test-server fmt fmt-check clean webui smoke smoke-storage release-check go-build go-test go-conversion-tests go-conversion-update go-vet go-fmt go-fmt-check go-lint go-lint-install go-check go-tidy go-gen-storage go-migrate-render-schema go-migrate-diff go-migrate-lint go-migrate-verify go-migrate-status go-webui-build go-webui-embed-assets go-webui-embed-build go-webui-embed-run go-run help
 
 # golangci-lint version pinned for reproducible fmt/lint (installed to go/bin, never touches go.mod)
 GOLANGCI_LINT_VERSION := v2.6.0
@@ -76,6 +76,21 @@ go-build:
 # Run all Go tests
 go-test:
 	cd go && go test ./...
+
+# Protocol-conversion matrix tests (internal/protocoltest): offline cassette
+# replay, race-enabled. This is the every-PR gate — no keys, no network.
+go-conversion-tests:
+	cd go && go test -race ./internal/protocoltest/...
+
+# Re-record cassettes from live providers and regenerate golden files. LOCAL
+# ONLY — needs real credentials and hits real providers. Reads
+# NYRO_TEST_API_KEY / NYRO_TEST_BASE_URL / NYRO_TEST_MODEL (or per-provider
+# NYRO_TEST_<PROVIDER>_*; see .env.example). With only the generic vars, record
+# one provider at a time via RUN, e.g.:
+#   make go-conversion-update RUN=anthropic__openai
+go-conversion-update:
+	cd go && NYRO_TEST_RECORD=1 go test ./internal/protocoltest/... -count=1 -update \
+		-run 'TestConversionMatrix/$(RUN)'
 
 # Vet Go code
 go-vet:
@@ -224,6 +239,8 @@ help:
 	@echo "  Go (nyro/go):"
 	@echo "  make go-build     Build Go nyro CLI → go/bin/nyro"
 	@echo "  make go-test      Run Go tests"
+	@echo "  make go-conversion-tests   Protocol-conversion matrix (offline replay, -race)"
+	@echo "  make go-conversion-update  Re-record cassettes + goldens (local, needs keys)"
 	@echo "  make go-vet       Vet Go code"
 	@echo "  make go-fmt       Format Go code (gofumpt + goimports)"
 	@echo "  make go-fmt-check Check Go formatting (CI)"

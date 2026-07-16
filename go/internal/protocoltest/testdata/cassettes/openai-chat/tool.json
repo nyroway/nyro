@@ -1,0 +1,15 @@
+{
+  "note": "PLACEHOLDER — regenerate via `make go-conversion-update` with real keys",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "model": "conversion-test-model"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"chatcmpl-placeholder3\",\"object\":\"chat.completion\",\"created\":1700000000,\"model\":\"conversion-test-model\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_placeholder1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":10,\"total_tokens\":30}}"
+  }
+}

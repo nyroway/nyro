@@ -1,0 +1,15 @@
+{
+  "note": "PLACEHOLDER — regenerate via `make go-conversion-update` with real keys",
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "model": "conversion-test-model"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"msg_placeholder3\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"conversion-test-model\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_placeholder1\",\"name\":\"get_weather\",\"input\":{\"city\":\"Paris\"}}],\"stop_reason\":\"tool_use\",\"stop_sequence\":null,\"usage\":{\"input_tokens\":20,\"output_tokens\":10}}"
+  }
+}

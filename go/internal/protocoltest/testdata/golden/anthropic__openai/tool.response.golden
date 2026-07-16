@@ -1,0 +1,19 @@
+{
+  "content": [
+    {
+      "input": {
+        "city": "Paris"
+      },
+      "name": "get_weather",
+      "type": "tool_use"
+    }
+  ],
+  "model": "conversion-test-model",
+  "role": "assistant",
+  "stop_reason": "tool_use",
+  "type": "message",
+  "usage": {
+    "input_tokens": 20,
+    "output_tokens": 10
+  }
+}

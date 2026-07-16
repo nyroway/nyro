@@ -1,0 +1,27 @@
+{
+  "max_tokens": 100,
+  "messages": [
+    {
+      "content": "What is the weather in Paris?",
+      "role": "user"
+    }
+  ],
+  "model": "conversion-test-model",
+  "tools": [
+    {
+      "description": "Get the weather for a city",
+      "input_schema": {
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "type": "object"
+      },
+      "name": "get_weather"
+    }
+  ]
+}

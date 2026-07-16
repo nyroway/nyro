@@ -132,6 +132,12 @@ jobs:
       - name: Go test
         run: make go-test
 
+      # Protocol-conversion matrix (internal/protocoltest): offline cassette
+      # replay with -race. No keys/network — cassettes are recorded locally via
+      # `make go-conversion-update` and committed. See go/docs/superpowers/specs.
+      - name: Go conversion tests
+        run: make go-conversion-tests
+
       # go-migrate-* below run atlas via the free Community Edition docker
       # image (see go/atlas.hcl and Makefile) — ubuntu-latest runners already
       # have docker, nothing extra to install.
