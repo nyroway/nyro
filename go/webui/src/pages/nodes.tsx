@@ -1,29 +1,34 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Info, Server } from "lucide-react";
+import { Check, Copy, Info, Lock, LockOpen, Server } from "lucide-react";
 import { backend } from "@/lib/backend";
 import type { GatewayNode } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
+import { formatUptime } from "@/lib/format";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-// Locale-specific formatting: zh-CN reads as 24-hour "YYYY/MM/DD HH:mm:ss",
-// en-US as 12-hour "MM/DD/YYYY hh:mm:ss AM/PM" — Intl.DateTimeFormat with
-// explicit "2-digit" parts (rather than the bare toLocaleString default)
-// guarantees single-digit month/day/hour are always zero-padded. Formats via
-// formatToParts (not .format) so the en-US locale's date/time separator
-// comma can be dropped in favor of a plain space.
-function formatConnectedAt(iso: string, isZh: boolean) {
+// The absolute connect timestamp is only shown on hover (the cell itself shows
+// uptime), so it uses one fixed, locale-independent format — "YYYY/MM/DD
+// HH:mm:ss", 24-hour, zero-padded — rather than branching on the UI language.
+function formatConnectedAt(iso: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const parts = new Intl.DateTimeFormat(isZh ? "zh-CN" : "en-US", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: !isZh,
-  }).formatToParts(d);
-  return parts.map((p) => (p.type === "literal" ? p.value.replace(",", "") : p.value)).join("");
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// connModeBadge maps the config-sync stream's transport security to an icon +
+// label. mTLS (mutually authenticated) reads as the secure baseline (green);
+// server-only TLS is amber; plaintext / unknown shows an open lock.
+function connModeBadge(mode: string | undefined, isZh: boolean) {
+  switch (mode) {
+    case "mtls":
+      return { Icon: Lock, label: "mTLS", className: "text-emerald-600" };
+    case "tls":
+      return { Icon: Lock, label: "TLS", className: "text-amber-600" };
+    default:
+      return { Icon: LockOpen, label: isZh ? "明文" : "Plaintext", className: "text-slate-400" };
+  }
 }
 
 // remote_addr is the config-sync gRPC connection's peer address (host +
@@ -54,6 +59,32 @@ function formatServiceAddress(remoteAddr: string, servicePort: string) {
   if (!host) return `:${servicePort}`;
   if (!servicePort) return host;
   return `${host}:${servicePort}`;
+}
+
+// CopyButton copies `value` to the clipboard and briefly swaps its icon to a
+// check as feedback. Self-contained so each row manages its own copied state.
+function CopyButton({ value, isZh }: { value: string; isZh: boolean }) {
+  const [copied, setCopied] = useState(false);
+  if (!value || value === "-") return null;
+  return (
+    <button
+      type="button"
+      aria-label={isZh ? "复制" : "Copy"}
+      title={copied ? (isZh ? "已复制" : "Copied") : isZh ? "复制" : "Copy"}
+      className="inline-flex text-slate-400 transition-colors hover:text-slate-600"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          // Clipboard may be unavailable (insecure context); ignore silently.
+        }
+      }}
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  );
 }
 
 const COLUMN_COUNT = 7;
@@ -119,7 +150,7 @@ export default function NodesPage() {
                 </th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "网关版本" : "Gateway Version"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "配置版本" : "Config Version"}</th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "连接时间" : "Connected At"}</th>
+                <th className="px-3 py-2 text-left font-medium">{isZh ? "连接" : "Connection"}</th>
                 <th className="px-3 py-2 text-left font-medium">{isZh ? "状态" : "Status"}</th>
               </tr>
             </thead>
@@ -150,13 +181,42 @@ export default function NodesPage() {
                   </td>
                   <td className="px-3 py-2">{n.hostname || "-"}</td>
                   <td className="px-3 py-2 font-mono text-xs">
-                    {formatServiceAddress(n.remote_addr, n.service_port)}
+                    <span className="inline-flex items-center gap-1.5">
+                      {formatServiceAddress(n.remote_addr, n.service_port)}
+                      <CopyButton value={formatServiceAddress(n.remote_addr, n.service_port)} isZh={isZh} />
+                    </span>
                   </td>
                   <td className="px-3 py-2">{n.app_version || "-"}</td>
                   <td className="px-3 py-2">{n.applied_version}</td>
-                  <td className="px-3 py-2">{formatConnectedAt(n.connected_at, isZh)}</td>
                   <td className="px-3 py-2">
-                    <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700">
+                    {(() => {
+                      const { Icon, label, className } = connModeBadge(n.conn_mode, isZh);
+                      return (
+                        <TooltipProvider delayDuration={120}>
+                          <span className="inline-flex items-center gap-1.5">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className={`inline-flex cursor-help ${className}`} aria-label={label}>
+                                  <Icon className="h-3.5 w-3.5" />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>{label}</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="cursor-help text-slate-700">
+                                  {formatUptime(n.connected_at)}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>{formatConnectedAt(n.connected_at)}</TooltipContent>
+                            </Tooltip>
+                          </span>
+                        </TooltipProvider>
+                      );
+                    })()}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700">
                       <span className="h-2 w-2 rounded-full bg-emerald-500" />
                       {isZh ? "已连接" : "Connected"}
                     </span>

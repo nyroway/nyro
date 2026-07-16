@@ -6,6 +6,24 @@ export function formatDuration(ms: number | null | undefined): string {
   return `${(ms / 3_600_000).toFixed(1)} h`;
 }
 
+// formatUptime renders how long a stream has been connected (now − fromIso) as
+// a compact, locale-independent two-unit string ("2d 3h" / "2h 15m" / "15m" /
+// "<1m"). Recomputed on each render, so callers relying on a polling refresh
+// see it tick up over time.
+export function formatUptime(fromIso: string): string {
+  const start = new Date(fromIso).getTime();
+  if (Number.isNaN(start)) return "–";
+  const ms = Date.now() - start;
+  if (ms < 60_000) return "<1m";
+  const totalMin = Math.floor(ms / 60_000);
+  const days = Math.floor(totalMin / 1440);
+  const hours = Math.floor((totalMin % 1440) / 60);
+  const mins = totalMin % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+
 export function formatLogTime(ts: number | string | null | undefined): string {
   if (ts == null) return "–";
   const date = typeof ts === "number" ? new Date(ts) : (() => {

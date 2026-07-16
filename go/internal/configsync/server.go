@@ -49,6 +49,7 @@ type streamClient struct {
 	hostname    string
 	servicePort string
 	remoteAddr  string
+	connMode    string // "mtls" | "tls" | "plaintext"
 	connectedAt time.Time
 
 	mu          sync.Mutex
@@ -63,6 +64,7 @@ type NodeInfo struct {
 	AppVersion     string    `json:"app_version"`
 	ServicePort    string    `json:"service_port"`
 	RemoteAddr     string    `json:"remote_addr"`
+	ConnMode       string    `json:"conn_mode"`
 	ConnectedAt    time.Time `json:"connected_at"`
 	AppliedVersion int64     `json:"applied_version"`
 }
@@ -84,6 +86,7 @@ func NewConfigServer(store storage.Storage) *ConfigServer {
 func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreamingServer[pb.ConfigSnapshot]) error {
 	ctx := stream.Context()
 	remoteAddr := ""
+	connMode := "plaintext"
 	nodeID := req.GetNodeId()
 	if p, ok := peer.FromContext(ctx); ok {
 		if p.Addr != nil {
@@ -95,12 +98,20 @@ func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreami
 		// trivially spoofable. In plaintext mode, p.AuthInfo carries no TLS
 		// state, so this is a no-op and the self-reported node_id passes through
 		// unchanged.
-		if tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo); ok && len(tlsInfo.State.VerifiedChains) > 0 && len(tlsInfo.State.VerifiedChains[0]) > 0 {
-			leaf := tlsInfo.State.VerifiedChains[0][0]
-			if id, err := pki.GatewayNodeIDFromCert(leaf); err == nil {
-				nodeID = id
+		if tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo); ok {
+			// A verified client chain means the client authenticated with a
+			// cert (mutual TLS); TLS without a verified chain is server-only
+			// TLS. Both are surfaced for operational visibility.
+			if len(tlsInfo.State.VerifiedChains) > 0 && len(tlsInfo.State.VerifiedChains[0]) > 0 {
+				connMode = "mtls"
+				leaf := tlsInfo.State.VerifiedChains[0][0]
+				if id, err := pki.GatewayNodeIDFromCert(leaf); err == nil {
+					nodeID = id
+				} else {
+					log.Printf("configsync: client cert has no usable identity, keeping self-reported node_id: %v", err)
+				}
 			} else {
-				log.Printf("configsync: client cert has no usable identity, keeping self-reported node_id: %v", err)
+				connMode = "tls"
 			}
 		}
 	}
@@ -116,6 +127,7 @@ func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreami
 		hostname:    req.GetHostname(),
 		servicePort: req.GetServicePort(),
 		remoteAddr:  remoteAddr,
+		connMode:    connMode,
 		connectedAt: time.Now(),
 	}
 	s.register(c)
@@ -251,6 +263,7 @@ func (s *ConfigServer) Nodes() []NodeInfo {
 			AppVersion:     c.appVersion,
 			ServicePort:    c.servicePort,
 			RemoteAddr:     c.remoteAddr,
+			ConnMode:       c.connMode,
 			ConnectedAt:    c.connectedAt,
 			AppliedVersion: c.getLastVersion(),
 		})

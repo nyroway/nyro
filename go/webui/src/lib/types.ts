@@ -272,6 +272,8 @@ export interface GatewayNode {
   app_version: string;
   service_port: string;
   remote_addr: string;
+  /** Transport security of the config-sync stream: "mtls" | "tls" | "plaintext". Optional for backward-compat with older gateways. */
+  conn_mode?: string;
   connected_at: string;
   applied_version: number;
 }
