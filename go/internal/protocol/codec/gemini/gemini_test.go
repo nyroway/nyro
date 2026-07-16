@@ -186,6 +186,33 @@ func TestGeminiFunctionResponseWrapping(t *testing.T) {
 	}
 }
 
+// TestThoughtSignatureEncoding guards Gemini 3's thoughtSignature requirement:
+// a captured signature is re-emitted on the functionCall part, and a tool call
+// without one gets the documented validation-skip sentinel so multi-turn tool
+// history is accepted rather than 400'd.
+func TestThoughtSignatureEncoding(t *testing.T) {
+	t.Parallel()
+	enc := func(sig string) string {
+		req := &ir.AiRequest{Model: "m", Messages: []ir.Message{{
+			Role: ir.RoleAssistant,
+			Content: &ir.BlocksContent{Blocks: []ir.ContentBlock{
+				&ir.ToolUseBlock{ID: "c1", Name: "get_weather", Input: json.RawMessage(`{"city":"Paris"}`), ThoughtSignature: sig},
+			}},
+		}}}
+		out, err := requestEncoder{}.Encode(req)
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return string(out.Body)
+	}
+	if b := enc("realsig"); !strings.Contains(b, `"thoughtSignature":"realsig"`) {
+		t.Errorf("captured signature not preserved:\n%s", b)
+	}
+	if b := enc(""); !strings.Contains(b, `"thoughtSignature":"skip_thought_signature_validator"`) {
+		t.Errorf("missing signature not backfilled with sentinel:\n%s", b)
+	}
+}
+
 func TestStreamDecode(t *testing.T) {
 	t.Parallel()
 	d := &streamResponseDecoder{}

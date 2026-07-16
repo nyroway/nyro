@@ -33,6 +33,7 @@ type content struct {
 type part struct {
 	Text             string        `json:"text,omitempty"`
 	Thought          bool          `json:"thought,omitempty"`
+	ThoughtSignature string        `json:"thoughtSignature,omitempty"` // Gemini 3 reasoning token, sibling of functionCall
 	InlineData       *inlineData   `json:"inlineData,omitempty"`
 	FunctionCall     *functionCall `json:"functionCall,omitempty"`
 	FunctionResponse *functionResp `json:"functionResponse,omitempty"`

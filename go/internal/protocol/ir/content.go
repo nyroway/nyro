@@ -55,6 +55,11 @@ type ToolUseBlock struct {
 	Name         string
 	Input        json.RawMessage
 	CacheControl *CacheControl // optional
+	// ThoughtSignature carries Gemini 3's encrypted reasoning-state token for a
+	// tool call. It is provider-specific: captured on decode and re-emitted on
+	// encode so multi-turn tool history stays valid for Gemini backends. Empty
+	// for tool calls that did not originate from Gemini.
+	ThoughtSignature string
 }
 
 func (*ToolUseBlock) contentBlock() {}

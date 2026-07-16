@@ -118,7 +118,7 @@ func decodeContent(c content) (ir.Message, bool) {
 		case p.FunctionCall != nil:
 			id := "call_" + p.FunctionCall.Name // Gemini has no call id; synthesize
 			toolCalls = append(toolCalls, ir.ToolCall{ID: id, Name: p.FunctionCall.Name, Arguments: string(p.FunctionCall.Args)})
-			blocks = append(blocks, &ir.ToolUseBlock{ID: id, Name: p.FunctionCall.Name, Input: p.FunctionCall.Args})
+			blocks = append(blocks, &ir.ToolUseBlock{ID: id, Name: p.FunctionCall.Name, Input: p.FunctionCall.Args, ThoughtSignature: p.ThoughtSignature})
 		case p.FunctionResponse != nil:
 			hasFnResp = true
 			blocks = append(blocks, &ir.ToolResultBlock{ToolUseID: p.FunctionResponse.Name, Content: p.FunctionResponse.Response})

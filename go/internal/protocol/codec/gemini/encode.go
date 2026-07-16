@@ -140,7 +140,15 @@ func encodeBlock(b ir.ContentBlock) part {
 		if len(input) == 0 {
 			input = json.RawMessage("{}")
 		}
-		return part{FunctionCall: &functionCall{Name: v.Name, Args: input}}
+		// Gemini 3 rejects a functionCall in history without a thoughtSignature.
+		// Re-emit the captured one; for tool calls from another provider (no
+		// signature) use Google's documented validation-skip sentinel so
+		// multi-turn tool history is accepted.
+		sig := v.ThoughtSignature
+		if sig == "" {
+			sig = skipThoughtSignature
+		}
+		return part{FunctionCall: &functionCall{Name: v.Name, Args: input}, ThoughtSignature: sig}
 	case *ir.ToolResultBlock:
 		return part{FunctionResponse: &functionResp{Name: v.ToolUseID, Response: geminiFunctionResponse(v.Content)}}
 	case *ir.ImageBlock:
@@ -150,6 +158,12 @@ func encodeBlock(b ir.ContentBlock) part {
 	}
 	return part{Text: ""}
 }
+
+// skipThoughtSignature is Google's documented sentinel for the thoughtSignature
+// field that skips Gemini 3's validation when a real signature is unavailable
+// (e.g. a tool call relayed from another provider). See
+// ai.google.dev/gemini-api/docs/generate-content/thought-signatures.
+const skipThoughtSignature = "skip_thought_signature_validator"
 
 func mustJSONRaw(s string) json.RawMessage {
 	b, _ := json.Marshal(s)
