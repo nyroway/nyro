@@ -1,0 +1,40 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "User"
+          }
+        ],
+        "role": "model"
+      }
+    }
+  ]
+}
+---
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": " Safety"
+          }
+        ],
+        "role": "model"
+      }
+    }
+  ]
+}
+---
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": null
+      },
+      "finishReason": "MAX_TOKENS"
+    }
+  ]
+}

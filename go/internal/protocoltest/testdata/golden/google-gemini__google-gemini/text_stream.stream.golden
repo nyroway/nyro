@@ -1,0 +1,34 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Hello! How can I help you today?"
+          }
+        ],
+        "role": "model"
+      }
+    }
+  ]
+}
+---
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": null
+      },
+      "finishReason": "STOP"
+    }
+  ]
+}
+---
+{
+  "candidates": null,
+  "usageMetadata": {
+    "candidatesTokenCount": 9,
+    "promptTokenCount": 2,
+    "totalTokenCount": 55
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "model": "gemini-2.5-flash",
+  "object": "response",
+  "output": [
+    {
+      "arguments": "{\n                \"city\": \"Paris\"\n              }",
+      "name": "get_weather",
+      "status": "completed",
+      "type": "function_call"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 46,
+    "output_tokens": 15,
+    "total_tokens": 108
+  }
+}

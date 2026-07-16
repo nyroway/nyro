@@ -1,0 +1,36 @@
+{
+  "input": [
+    {
+      "content": [
+        {
+          "text": "What is the weather in Paris?",
+          "type": "input_text"
+        }
+      ],
+      "role": "user",
+      "type": "message"
+    }
+  ],
+  "instructions": "You are a helpful assistant.",
+  "max_output_tokens": 100,
+  "model": "openrouter/free",
+  "store": false,
+  "tools": [
+    {
+      "description": "Get the weather for a city",
+      "name": "get_weather",
+      "parameters": {
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "type": "object"
+      },
+      "type": "function"
+    }
+  ]
+}

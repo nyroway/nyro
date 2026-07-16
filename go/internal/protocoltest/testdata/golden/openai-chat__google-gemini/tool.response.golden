@@ -1,0 +1,27 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\n                \"city\": \"Paris\"\n              }",
+              "name": "get_weather"
+            },
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "model": "gemini-2.5-flash",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 15,
+    "prompt_tokens": 46,
+    "total_tokens": 108
+  }
+}

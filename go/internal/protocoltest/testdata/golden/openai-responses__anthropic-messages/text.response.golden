@@ -1,0 +1,23 @@
+{
+  "model": "cohere/north-mini-code:free",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "text": "Hello! It's great to hear from you. How can I assist you with your request today?",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 1,
+    "output_tokens": 64,
+    "total_tokens": 65
+  }
+}

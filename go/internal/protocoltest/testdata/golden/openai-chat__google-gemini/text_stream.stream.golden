@@ -1,0 +1,48 @@
+{
+  "choices": [
+    {
+      "delta": {
+        "role": "assistant"
+      },
+      "index": 0
+    }
+  ],
+  "model": "gemini-2.5-flash",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "Hello! How can I help you today?"
+      },
+      "index": 0
+    }
+  ],
+  "model": "gemini-2.5-flash",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {},
+      "finish_reason": "stop",
+      "index": 0
+    }
+  ],
+  "model": "gemini-2.5-flash",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": null,
+  "model": "gemini-2.5-flash",
+  "object": "chat.completion.chunk",
+  "usage": {
+    "completion_tokens": 9,
+    "prompt_tokens": 2,
+    "total_tokens": 55
+  }
+}

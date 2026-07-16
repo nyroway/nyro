@@ -1,0 +1,24 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The user says \"Hello\". This is a simple greeting. According to the \"General Guidelines\", we should respond politely and appropriately. There's no policy violation. Just reply with a friendly greeting, perhaps ask how we can help.",
+            "thought": true
+          },
+          {
+            "text": "Hello! It's great to hear from you. How can I assist you with your request today?"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 64,
+    "promptTokenCount": 1,
+    "totalTokenCount": 65
+  }
+}

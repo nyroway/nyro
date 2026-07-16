@@ -1,0 +1,32 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "\nThe user is asking for the current weather in Paris. I can use the \"get_weather\" tool to retrieve this information. I need to call the function with \"city\" set to \"Paris\".\n",
+            "thought": true
+          },
+          {
+            "text": "\nI'll check the current weather in Paris for you.\n"
+          },
+          {
+            "functionCall": {
+              "args": {
+                "city": "Paris"
+              },
+              "name": "get_weather"
+            }
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 82,
+    "promptTokenCount": 173,
+    "totalTokenCount": 255
+  }
+}

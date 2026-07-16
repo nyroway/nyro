@@ -1,0 +1,945 @@
+{
+  "choices": [
+    {
+      "delta": {
+        "role": "assistant"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "The"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " user"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " just"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " says"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " \""
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "Hello"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "\"."
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " The"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " system"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " says"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " we"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " should"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " be"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " friendly"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": ","
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " supportive"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": ","
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " and"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " enthusiastic"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " We"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " should"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " greet"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " back"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": ","
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " ask"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " a"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " question"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " There's"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " no"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " specific"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " instruction"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " Probably"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " a"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " simple"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " response"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "\n\nWe"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " should"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " respond"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " with"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " a"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " friendly"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " greeting"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": ","
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " maybe"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " ask"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " how"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " can"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " I"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " help"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "Hi"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " there"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "!"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " 👋"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " How"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " can"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " I"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " help"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " you"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " with"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " your"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " question"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " or"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " task"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " today"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "?"
+      },
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {},
+      "finish_reason": "stop",
+      "index": 0
+    }
+  ],
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": null,
+  "model": "cohere/north-mini-code:free",
+  "object": "chat.completion.chunk",
+  "usage": {
+    "completion_tokens": 71,
+    "prompt_tokens": 1,
+    "total_tokens": 72
+  }
+}

@@ -1,0 +1,1322 @@
+{
+  "choices": [
+    {
+      "delta": {
+        "role": "assistant"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "\n"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "Okay"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": ","
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " the"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " user"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " said"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " \""
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "Hello"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": ".\""
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " I"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " need"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " to"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " respond"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " appropriately"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " Let"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " me"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " start"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " by"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " greeting"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " them"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " back"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " Maybe"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " ask"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " how"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " I"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " can"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " assist"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " them"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " today"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " Keep"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " it"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " friendly"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " and"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " open"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "-ended"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " so"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " they"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " feel"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " comfortable"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " to"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " ask"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " any"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " questions"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " Let"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " me"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " check"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " if"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " there"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "'s"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " any"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " specific"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " context"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " I"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " should"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " be"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " aware"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " of"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": ","
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " but"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " since"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " it"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "'s"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " a"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " general"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " greeting"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": ","
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " probably"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " not"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " Just"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " make"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " sure"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " the"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " response"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " is"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " welcoming"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " and"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " offers"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": " help"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "."
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "reasoning_content": "\n"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "\n"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "Hello"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "!"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " How"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " can"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " I"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " assist"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " you"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " today"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "?"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " Feel"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " free"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " to"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " ask"
+      },
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {},
+      "finish_reason": "length",
+      "index": 0
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": null,
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion.chunk",
+  "usage": {
+    "completion_tokens": 100,
+    "prompt_tokens": 0,
+    "total_tokens": 100
+  }
+}

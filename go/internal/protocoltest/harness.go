@@ -24,6 +24,10 @@ const routeModel = "conversion-test-model"
 type Inbound struct {
 	Name string // inbound protocol id, e.g. "anthropic-messages"
 	Path string // ingress path, e.g. "/v1/messages"
+	// StreamPath, when set, is the ingress path used for streaming scenarios.
+	// Gemini encodes the action in the path (:streamGenerateContent) rather than
+	// a body flag; other protocols leave this empty and stream via the body.
+	StreamPath string
 }
 
 // Outbound is the upstream protocol a cell translates to: the provider id (auth
@@ -152,7 +156,11 @@ func RunCell(t *testing.T, cell Cell, sc Scenario) {
 	gw := buildGateway(t, cell, tr, baseURL, apiKey, model)
 	router := proxy.NewRouter(gw)
 
-	req := httptest.NewRequest(http.MethodPost, cell.In.Path, strings.NewReader(sc.Request))
+	inPath := cell.In.Path
+	if sc.Stream && cell.In.StreamPath != "" {
+		inPath = cell.In.StreamPath
+	}
+	req := httptest.NewRequest(http.MethodPost, inPath, strings.NewReader(sc.Request))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

@@ -1,0 +1,92 @@
+{
+  "response": {
+    "model": "gemini-2.5-flash",
+    "status": "in_progress"
+  },
+  "type": "response.created"
+}
+---
+{
+  "response": {
+    "status": "in_progress"
+  },
+  "type": "response.in_progress"
+}
+---
+{
+  "item": {
+    "content": [],
+    "role": "assistant",
+    "status": "in_progress",
+    "type": "message"
+  },
+  "output_index": 0,
+  "type": "response.output_item.added"
+}
+---
+{
+  "content_index": 0,
+  "item_id": "msg_",
+  "output_index": 0,
+  "part": {
+    "text": "",
+    "type": "output_text"
+  },
+  "type": "response.content_part.added"
+}
+---
+{
+  "content_index": 0,
+  "delta": "Hello! How can I help you today?",
+  "item_id": "msg_",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "item_id": "msg_",
+  "output_index": 0,
+  "text": "Hello! How can I help you today?",
+  "type": "response.output_text.done"
+}
+---
+{
+  "content_index": 0,
+  "item_id": "msg_",
+  "output_index": 0,
+  "part": {
+    "text": "Hello! How can I help you today?",
+    "type": "output_text"
+  },
+  "type": "response.content_part.done"
+}
+---
+{
+  "item": {
+    "content": [
+      {
+        "text": "Hello! How can I help you today?",
+        "type": "output_text"
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  "output_index": 0,
+  "type": "response.output_item.done"
+}
+---
+{
+  "response": {
+    "model": "gemini-2.5-flash",
+    "status": "completed",
+    "usage": {
+      "input_tokens": 2,
+      "output_tokens": 9,
+      "total_tokens": 55
+    }
+  },
+  "type": "response.completed"
+}

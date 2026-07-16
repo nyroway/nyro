@@ -1,0 +1,25 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "functionCall": {
+              "args": {
+                "city": "Paris"
+              },
+              "name": "get_weather"
+            }
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 15,
+    "promptTokenCount": 46,
+    "totalTokenCount": 108
+  }
+}

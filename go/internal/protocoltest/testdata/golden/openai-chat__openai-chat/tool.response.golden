@@ -1,0 +1,28 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "reasoning_content": "The user is asking for the weather in Paris. I have access to the get_weather function, which requires a city parameter. I need to call get_weather with city: \"Paris\". Let me do that.\n",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"city\":\"Paris\"}",
+              "name": "get_weather"
+            },
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 70,
+    "prompt_tokens": 275,
+    "total_tokens": 345
+  }
+}

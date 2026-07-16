@@ -1,0 +1,23 @@
+{
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "text": "Okay, the user just said \"Hello\". It's a simple greeting, so I should respond politely. Since they haven't provided any specific context or request, I'll keep it friendly and open-ended to encourage them to share more if they need help. \n\nHmm, they might be testing if I'm responsive, or perhaps they're about to ask something but wanted to start with a greeting first. I'll make sure my reply is warm and inviting—no need for overcomplication",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "incomplete",
+  "usage": {
+    "input_tokens": 23,
+    "output_tokens": 100,
+    "total_tokens": 123
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Okay, the user just said \"Hello\". It's a simple greeting, so I should respond politely. Since they haven't provided any specific context or request, I'll keep it friendly and open-ended to encourage them to share more if they need help. \n\nHmm, they might be testing if I'm responsive, or perhaps they're about to ask something but wanted to start with a greeting first. I'll make sure my reply is warm and inviting—no need for overcomplication"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "MAX_TOKENS"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 100,
+    "promptTokenCount": 23,
+    "totalTokenCount": 123
+  }
+}

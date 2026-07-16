@@ -1,0 +1,212 @@
+{
+  "response": {
+    "model": "cohere/north-mini-code:free",
+    "status": "in_progress"
+  },
+  "type": "response.created"
+}
+---
+{
+  "response": {
+    "status": "in_progress"
+  },
+  "type": "response.in_progress"
+}
+---
+{
+  "item": {
+    "content": [],
+    "role": "assistant",
+    "status": "in_progress",
+    "type": "message"
+  },
+  "output_index": 0,
+  "type": "response.output_item.added"
+}
+---
+{
+  "content_index": 0,
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "part": {
+    "text": "",
+    "type": "output_text"
+  },
+  "type": "response.content_part.added"
+}
+---
+{
+  "content_index": 0,
+  "delta": "Hi",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " there",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": "!",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " 👋",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " How",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " can",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " I",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " help",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " you",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " with",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " your",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " question",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " or",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " task",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " today",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": "?",
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "text": "Hi there! 👋 How can I help you with your question or task today?",
+  "type": "response.output_text.done"
+}
+---
+{
+  "content_index": 0,
+  "item_id": "msg_gen-1784170519-1bmjAOIbqBwDv23IOcRL",
+  "output_index": 0,
+  "part": {
+    "text": "Hi there! 👋 How can I help you with your question or task today?",
+    "type": "output_text"
+  },
+  "type": "response.content_part.done"
+}
+---
+{
+  "item": {
+    "content": [
+      {
+        "text": "Hi there! 👋 How can I help you with your question or task today?",
+        "type": "output_text"
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  "output_index": 0,
+  "type": "response.output_item.done"
+}
+---
+{
+  "response": {
+    "model": "cohere/north-mini-code:free",
+    "status": "completed",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0
+    }
+  },
+  "type": "response.completed"
+}

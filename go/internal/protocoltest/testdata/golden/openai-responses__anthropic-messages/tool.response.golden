@@ -1,0 +1,30 @@
+{
+  "model": "poolside/laguna-m.1:free",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "text": "\nI'll check the current weather in Paris for you.\n",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"city\":\"Paris\"}",
+      "call_id": "chatcmpl-tool-f075ad1411a54cab9c3e967ba64b0af9",
+      "name": "get_weather",
+      "status": "completed",
+      "type": "function_call"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 173,
+    "output_tokens": 82,
+    "total_tokens": 255
+  }
+}

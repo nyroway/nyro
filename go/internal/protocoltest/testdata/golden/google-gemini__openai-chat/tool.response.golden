@@ -1,0 +1,29 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The user is asking for the weather in Paris. I have access to the get_weather function, which requires a city parameter. I need to call get_weather with city: \"Paris\". Let me do that.\n",
+            "thought": true
+          },
+          {
+            "functionCall": {
+              "args": {
+                "city": "Paris"
+              },
+              "name": "get_weather"
+            }
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 70,
+    "promptTokenCount": 275,
+    "totalTokenCount": 345
+  }
+}

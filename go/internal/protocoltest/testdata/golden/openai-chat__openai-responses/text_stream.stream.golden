@@ -1,0 +1,63 @@
+{
+  "choices": [
+    {
+      "delta": {
+        "role": "assistant"
+      },
+      "index": 0
+    }
+  ],
+  "model": "nvidia/nemotron-3.5-content-safety:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "role": "assistant"
+      },
+      "index": 0
+    }
+  ],
+  "model": "nvidia/nemotron-3.5-content-safety:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "User"
+      },
+      "index": 0
+    }
+  ],
+  "model": "nvidia/nemotron-3.5-content-safety:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {
+        "content": " Safety"
+      },
+      "index": 0
+    }
+  ],
+  "model": "nvidia/nemotron-3.5-content-safety:free",
+  "object": "chat.completion.chunk"
+}
+---
+{
+  "choices": [
+    {
+      "delta": {},
+      "finish_reason": "length",
+      "index": 0
+    }
+  ],
+  "model": "nvidia/nemotron-3.5-content-safety:free",
+  "object": "chat.completion.chunk"
+}

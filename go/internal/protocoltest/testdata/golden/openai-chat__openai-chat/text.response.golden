@@ -1,0 +1,19 @@
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "message": {
+        "reasoning_content": "\nWe need to decide safety categories for user input: \"Hello\". That's safe. Assistant response: none. So output:\n\nUser Safety: safe\nResponse Safety: (omit if no assistant response). So only output first line? The instruction: \"Response Safety: safe or unsafe rating of the assistant response. Omit if no assistant response present.\" So we should not include Response Safety line at all. Only output \"User Safety: safe\". Ensure format exactly as described",
+        "role": "assistant"
+      }
+    }
+  ],
+  "model": "nvidia/nemotron-3.5-content-safety:free",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 100,
+    "prompt_tokens": 463,
+    "total_tokens": 563
+  }
+}

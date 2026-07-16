@@ -1,0 +1,29 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": "\nI'll check the current weather in Paris for you.\n",
+        "reasoning_content": "\nThe user is asking for the current weather in Paris. I can use the \"get_weather\" tool to retrieve this information. I need to call the function with \"city\" set to \"Paris\".\n",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"city\":\"Paris\"}",
+              "name": "get_weather"
+            },
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "model": "poolside/laguna-m.1:free",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 82,
+    "prompt_tokens": 173,
+    "total_tokens": 255
+  }
+}

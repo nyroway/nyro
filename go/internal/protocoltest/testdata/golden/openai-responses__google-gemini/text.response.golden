@@ -1,0 +1,23 @@
+{
+  "model": "gemini-2.5-flash",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "text": "Hello! How can I help you today?",
+          "type": "output_text"
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 2,
+    "output_tokens": 9,
+    "total_tokens": 33
+  }
+}

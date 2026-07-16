@@ -1,0 +1,28 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "I'll get the current weather in Paris for you."
+          },
+          {
+            "functionCall": {
+              "args": {
+                "city": "Paris"
+              },
+              "name": "get_weather"
+            }
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 33,
+    "promptTokenCount": 117,
+    "totalTokenCount": 150
+  }
+}

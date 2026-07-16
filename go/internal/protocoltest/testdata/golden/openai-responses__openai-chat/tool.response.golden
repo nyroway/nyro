@@ -1,0 +1,19 @@
+{
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "object": "response",
+  "output": [
+    {
+      "arguments": "{\"city\":\"Paris\"}",
+      "call_id": "call-b79076d8-3ef3-499f-874c-5ab911e8620e",
+      "name": "get_weather",
+      "status": "completed",
+      "type": "function_call"
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 275,
+    "output_tokens": 70,
+    "total_tokens": 345
+  }
+}

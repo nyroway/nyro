@@ -1,0 +1,196 @@
+{
+  "response": {
+    "model": "poolside/laguna-m.1:free",
+    "status": "in_progress"
+  },
+  "type": "response.created"
+}
+---
+{
+  "response": {
+    "status": "in_progress"
+  },
+  "type": "response.in_progress"
+}
+---
+{
+  "item": {
+    "content": [],
+    "role": "assistant",
+    "status": "in_progress",
+    "type": "message"
+  },
+  "output_index": 0,
+  "type": "response.output_item.added"
+}
+---
+{
+  "content_index": 0,
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "part": {
+    "text": "",
+    "type": "output_text"
+  },
+  "type": "response.content_part.added"
+}
+---
+{
+  "content_index": 0,
+  "delta": "\n",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": "Hello",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": "!",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " How",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " can",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " I",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " assist",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " you",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " today",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": "?",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " Feel",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " free",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " to",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "delta": " ask",
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "type": "response.output_text.delta"
+}
+---
+{
+  "content_index": 0,
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "text": "\nHello! How can I assist you today? Feel free to ask",
+  "type": "response.output_text.done"
+}
+---
+{
+  "content_index": 0,
+  "item_id": "msg_gen-1784170538-nNgpDEB1HVfZWWaruQMm",
+  "output_index": 0,
+  "part": {
+    "text": "\nHello! How can I assist you today? Feel free to ask",
+    "type": "output_text"
+  },
+  "type": "response.content_part.done"
+}
+---
+{
+  "item": {
+    "content": [
+      {
+        "text": "\nHello! How can I assist you today? Feel free to ask",
+        "type": "output_text"
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  "output_index": 0,
+  "type": "response.output_item.done"
+}
+---
+{
+  "response": {
+    "model": "poolside/laguna-m.1:free",
+    "status": "completed",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 100,
+      "total_tokens": 100
+    }
+  },
+  "type": "response.completed"
+}

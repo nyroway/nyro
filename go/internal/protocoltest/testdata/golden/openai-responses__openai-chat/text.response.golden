@@ -1,0 +1,11 @@
+{
+  "model": "nvidia/nemotron-3.5-content-safety:free",
+  "object": "response",
+  "output": null,
+  "status": "incomplete",
+  "usage": {
+    "input_tokens": 463,
+    "output_tokens": 100,
+    "total_tokens": 563
+  }
+}
