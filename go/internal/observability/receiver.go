@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	collectlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -50,6 +52,55 @@ func (rcv *Receiver) Flush(ctx context.Context) {
 	_ = rcv.logs.Flush()
 	_ = rcv.metrics.Flush()
 	_ = rcv.traces.Flush()
+}
+
+// DefaultFlushInterval is the fallback time-trigger cadence for StartFlusher.
+// It is the "time" half of the sink's size-or-time flush policy: the sinks
+// otherwise flush only when a buffer reaches maxRows (the "size" half) or on the
+// shutdown Flush, so a low-traffic deployment that never fills a buffer would
+// leave every row invisible to /logs and /stats until the admin restarts.
+const DefaultFlushInterval = 5 * time.Second
+
+// SignalFlush carries the per-signal flush cadence for StartFlusher, mirroring
+// SignalRetention. A zero (or negative) interval for a signal falls back to
+// DefaultFlushInterval.
+type SignalFlush struct {
+	Logs, Metrics, Traces time.Duration
+}
+
+// StartFlusher runs one background ticker per signal, each flushing its own sink
+// on its own interval until ctx is cancelled — the time trigger complementing
+// the sinks' size trigger (maxRows). Whichever fires first flushes; a flush on
+// an empty buffer is a no-op (flushLocked returns early), so idle periods create
+// no files. This bounds each signal's /logs+/stats staleness to at most its
+// interval. Per-signal so, e.g., metrics can persist quickly for dashboards
+// while logs persist less often to reduce file churn.
+//
+// Tuning note: each flush that has buffered rows writes one new parquet file, so
+// a signal's interval trades query freshness against file count — smaller makes
+// data appear sooner but produces more (smaller) files for ReadSince to scan.
+func (rcv *Receiver) StartFlusher(ctx context.Context, f SignalFlush) {
+	tick := func(interval time.Duration, flush func() error, signal string) {
+		if interval <= 0 {
+			interval = DefaultFlushInterval
+		}
+		go func() {
+			t := time.NewTicker(interval)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					_ = flush()
+				}
+			}
+		}()
+		slog.Info("observability sink flusher started", "signal", signal, "interval", interval)
+	}
+	tick(f.Logs, rcv.logs.Flush, "logs")
+	tick(f.Metrics, rcv.metrics.Flush, "metrics")
+	tick(f.Traces, rcv.traces.Flush, "traces")
 }
 
 func (rcv *Receiver) handleLogs(w http.ResponseWriter, r *http.Request) {

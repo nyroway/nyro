@@ -3,6 +3,7 @@ package observability
 import (
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // SignalConfig is the resolved exporter configuration for a single signal
@@ -33,6 +34,16 @@ type ObsConfig struct {
 	LogsRetentionDays    int
 	MetricsRetentionDays int
 	TracesRetentionDays  int
+
+	// Per-signal flush cadence — admin-only (like DataDir and the retention
+	// fields): how often the receiver flushes that signal's buffered rows to
+	// parquet (the time trigger complementing the sink's maxRows size trigger).
+	// Resolved from obs_<signal>_flush_interval, each defaulting to
+	// DefaultFlushInterval. The gateway loads them too but never uses them — it
+	// does not persist telemetry.
+	LogsFlushInterval    time.Duration
+	MetricsFlushInterval time.Duration
+	TracesFlushInterval  time.Duration
 }
 
 // signalKeyNames maps each Signal to the key-name segment used in setting
@@ -74,11 +85,22 @@ func LoadConfig(get func(string) (string, error)) (ObsConfig, error) {
 		}
 		return def
 	}
+	dur := func(k string, def time.Duration) time.Duration {
+		if v := g(k); v != "" {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+		return def
+	}
 
 	cfg := ObsConfig{
 		LogsRetentionDays:    ret("obs_logs_retention_days", 7),
 		MetricsRetentionDays: ret("obs_metrics_retention_days", 30),
 		TracesRetentionDays:  ret("obs_traces_retention_days", 3),
+		LogsFlushInterval:    dur("obs_logs_flush_interval", DefaultFlushInterval),
+		MetricsFlushInterval: dur("obs_metrics_flush_interval", DefaultFlushInterval),
+		TracesFlushInterval:  dur("obs_traces_flush_interval", DefaultFlushInterval),
 	}
 
 	var err error

@@ -34,6 +34,7 @@ import {
   exporterKindLabel,
   exporterSettingKey,
   retentionSettingKey,
+  flushIntervalSettingKey,
   settingKey,
   SIGNALS,
   type ExporterDef,
@@ -58,6 +59,12 @@ const OBS_RETENTION_DEFAULT: Record<Signal, string> = {
   metrics: "30",
   traces: "3",
 };
+
+// Admin-local flush cadence (per signal): how often the receiver persists that
+// signal's buffered rows to parquet — the time trigger complementing the sink's
+// size trigger. A sibling of the per-signal retention settings, same admin-local
+// storage tier, applied at boot.
+const OBS_FLUSH_DEFAULT = "5s";
 
 const OBS_SIGNAL_LABEL: Record<Signal, { zh: string; en: string }> = {
   logs: { zh: "日志", en: "Logs" },
@@ -454,51 +461,84 @@ function PublicGatewayURLForm({
 
 function RetentionSettingsCard({ isZh, showErrorDialog }: { isZh: boolean; showErrorDialog: (titleZh: string, titleEn: string, error: unknown) => void }) {
   const qc = useQueryClient();
-  const keys = useMemo(() => SIGNALS.map(retentionSettingKey), []);
-  const queries = useQueries({
-    queries: keys.map((key) => ({ queryKey: ["setting", key], queryFn: () => backend<string | null>("get_setting", { key }) })),
+  const retentionKeys = useMemo(() => SIGNALS.map(retentionSettingKey), []);
+  const flushKeys = useMemo(() => SIGNALS.map(flushIntervalSettingKey), []);
+  const retentionQueries = useQueries({
+    queries: retentionKeys.map((key) => ({ queryKey: ["setting", key], queryFn: () => backend<string | null>("get_setting", { key }) })),
   });
-  const settings = queries.map((query) => query.data ?? null);
-  const baseline = useMemo(() => {
+  const flushQueries = useQueries({
+    queries: flushKeys.map((key) => ({ queryKey: ["setting", key], queryFn: () => backend<string | null>("get_setting", { key }) })),
+  });
+  const retentionSettings = retentionQueries.map((query) => query.data ?? null);
+  const flushSettings = flushQueries.map((query) => query.data ?? null);
+
+  const retentionBaseline = useMemo(() => {
     const values = {} as Record<Signal, string>;
-    SIGNALS.forEach((signal, index) => { values[signal] = settings[index]?.trim() || OBS_RETENTION_DEFAULT[signal]; });
+    SIGNALS.forEach((signal, index) => { values[signal] = retentionSettings[index]?.trim() || OBS_RETENTION_DEFAULT[signal]; });
     return values;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(settings)]);
-  const [values, setValues] = useState<Record<Signal, string>>(baseline);
-  useEffect(() => setValues(baseline), [baseline]);
-  const dirty = SIGNALS.some((signal) => values[signal].trim() !== baseline[signal]);
+  }, [JSON.stringify(retentionSettings)]);
+  const flushBaseline = useMemo(() => {
+    const values = {} as Record<Signal, string>;
+    SIGNALS.forEach((signal, index) => { values[signal] = flushSettings[index]?.trim() || OBS_FLUSH_DEFAULT; });
+    return values;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(flushSettings)]);
+
+  const [retention, setRetention] = useState<Record<Signal, string>>(retentionBaseline);
+  const [flush, setFlush] = useState<Record<Signal, string>>(flushBaseline);
+  useEffect(() => setRetention(retentionBaseline), [retentionBaseline]);
+  useEffect(() => setFlush(flushBaseline), [flushBaseline]);
+
+  const dirty = SIGNALS.some((signal) => retention[signal].trim() !== retentionBaseline[signal] || flush[signal].trim() !== flushBaseline[signal]);
+  const flushInvalid = SIGNALS.some((signal) => !GO_DURATION_RE.test(flush[signal].trim() || OBS_FLUSH_DEFAULT));
+
   const saveMut = useMutation({
     mutationFn: async () => {
-      await Promise.all(SIGNALS.map((signal) => backend("set_setting", {
-        key: retentionSettingKey(signal),
-        value: values[signal].trim() || OBS_RETENTION_DEFAULT[signal],
-      })));
+      await Promise.all(SIGNALS.flatMap((signal) => [
+        backend("set_setting", { key: retentionSettingKey(signal), value: retention[signal].trim() || OBS_RETENTION_DEFAULT[signal] }),
+        backend("set_setting", { key: flushIntervalSettingKey(signal), value: flush[signal].trim() || OBS_FLUSH_DEFAULT }),
+      ]));
     },
-    onSuccess: () => { for (const key of keys) qc.invalidateQueries({ queryKey: ["setting", key] }); },
-    onError: (error: unknown) => showErrorDialog("保存遥测保留策略失败", "Failed to save telemetry retention", error),
+    onSuccess: () => { for (const key of [...retentionKeys, ...flushKeys]) qc.invalidateQueries({ queryKey: ["setting", key] }); },
+    onError: (error: unknown) => showErrorDialog("保存遥测存储策略失败", "Failed to save telemetry storage settings", error),
   });
 
   return (
     <div className="glass rounded-2xl p-6 space-y-4">
       <div>
         <h3 className="text-lg font-semibold text-slate-900">{isZh ? "本地遥测保留" : "Local Telemetry Retention"}</h3>
-        <p className="mt-1 text-sm text-slate-500">{isZh ? "Admin 本地 parquet 存储的保留天数，不配置外部导出器的生命周期。" : "Retention days for Admin-local parquet storage, not an external exporter's lifecycle."}</p>
+        <p className="mt-1 text-sm text-slate-500">{isZh ? "Admin 本地 parquet 存储的保留天数与落盘间隔，不配置外部导出器的生命周期。" : "Retention days and flush interval for Admin-local parquet storage, not an external exporter's lifecycle."}</p>
       </div>
-      <div className="grid grid-cols-3 gap-3">
-        {SIGNALS.map((signal) => (
-          <div key={signal} className="space-y-1.5">
-            <label className="ml-1 text-xs text-slate-700">{isZh ? OBS_SIGNAL_LABEL[signal].zh : OBS_SIGNAL_LABEL[signal].en}</label>
-            <Input type="number" min={1} max={365} placeholder={OBS_RETENTION_DEFAULT[signal]} value={values[signal]} onChange={(e) => setValues((prev) => ({ ...prev, [signal]: e.target.value }))} />
-          </div>
-        ))}
+      <div className="space-y-1.5">
+        <p className="ml-1 text-xs font-medium text-slate-600">{isZh ? "保留天数" : "Retention (days)"}</p>
+        <div className="grid grid-cols-3 gap-3">
+          {SIGNALS.map((signal) => (
+            <div key={signal} className="space-y-1.5">
+              <label className="ml-1 text-xs text-slate-700">{isZh ? OBS_SIGNAL_LABEL[signal].zh : OBS_SIGNAL_LABEL[signal].en}</label>
+              <Input type="number" min={1} max={365} placeholder={OBS_RETENTION_DEFAULT[signal]} value={retention[signal]} onChange={(e) => setRetention((prev) => ({ ...prev, [signal]: e.target.value }))} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <p className="ml-1 text-xs font-medium text-slate-600">{isZh ? "落盘间隔（如 5s）" : "Flush interval (e.g. 5s)"}</p>
+        <div className="grid grid-cols-3 gap-3">
+          {SIGNALS.map((signal) => (
+            <div key={signal} className="space-y-1.5">
+              <label className="ml-1 text-xs text-slate-700">{isZh ? OBS_SIGNAL_LABEL[signal].zh : OBS_SIGNAL_LABEL[signal].en}</label>
+              <Input placeholder={OBS_FLUSH_DEFAULT} value={flush[signal]} onChange={(e) => setFlush((prev) => ({ ...prev, [signal]: e.target.value }))} />
+            </div>
+          ))}
+        </div>
       </div>
       <div className="flex items-center gap-2">
-        <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !dirty} size="sm" className="flex items-center gap-1.5">
+        <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !dirty || flushInvalid} size="sm" className="flex items-center gap-1.5">
           {saveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
           {isZh ? "保存" : "Save"}
         </Button>
-        {dirty && <p className="text-xs text-amber-600">{isZh ? "重启 Admin 后生效" : "Restart Admin to apply"}</p>}
+        {flushInvalid && <p className="text-xs text-rose-600">{isZh ? "落盘间隔格式无效（示例：5s、30s、1m）" : "Invalid flush interval (e.g. 5s, 30s, 1m)"}</p>}
+        {dirty && !flushInvalid && <p className="text-xs text-amber-600">{isZh ? "重启 Admin 后生效" : "Restart Admin to apply"}</p>}
       </div>
     </div>
   );

@@ -183,6 +183,19 @@ func NewCmd() *cobra.Command {
 		}
 		rcv := observability.NewReceiver(logSink, metricSink, traceSink)
 
+		// Time-trigger flush: the sinks flush on their size trigger (maxRows) or
+		// on shutdown, so without this a low-traffic deployment would never fill a
+		// buffer and /logs + /stats would stay empty until restart. The cadence is
+		// the per-signal obs_<signal>_flush_interval settings (resolved into obsCfg
+		// by LoadConfig, each defaulting to DefaultFlushInterval) — siblings of the
+		// retention settings, edited in the WebUI's Local Telemetry card and applied
+		// at boot. Whichever trigger fires first wins.
+		rcv.StartFlusher(ctx, observability.SignalFlush{
+			Logs:    obsCfg.LogsFlushInterval,
+			Metrics: obsCfg.MetricsFlushInterval,
+			Traces:  obsCfg.TracesFlushInterval,
+		})
+
 		// Janitor sweeps aged parquet files per signal on an hourly tick; exits
 		// when ctx is cancelled (server shutdown).
 		observability.StartJanitor(ctx, obsCfg.DataDir, observability.SignalRetention{
