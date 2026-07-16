@@ -67,6 +67,20 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 			}
 			if p.Usage != nil {
 				d.outputTokens = p.Usage.OutputTokens
+				// Providers that report the full usage only in message_delta
+				// (e.g. Zhipu/GLM, whose message_start usage is all-zero) carry
+				// the real input/cache counts here. Adopt them when present;
+				// real Anthropic omits these fields (decode to 0 / nil), so the
+				// message_start values captured above are preserved.
+				if p.Usage.InputTokens != 0 {
+					d.inputTokens = p.Usage.InputTokens
+				}
+				if p.Usage.CacheReadTokens != nil {
+					d.cacheReadTokens = p.Usage.CacheReadTokens
+				}
+				if p.Usage.CacheCreationTokens != nil {
+					d.cacheCreationTokens = p.Usage.CacheCreationTokens
+				}
 			}
 		}
 	case "message_stop":

@@ -1316,7 +1316,7 @@
   "object": "chat.completion.chunk",
   "usage": {
     "completion_tokens": 100,
-    "prompt_tokens": 0,
-    "total_tokens": 100
+    "prompt_tokens": 15,
+    "total_tokens": 115
   }
 }

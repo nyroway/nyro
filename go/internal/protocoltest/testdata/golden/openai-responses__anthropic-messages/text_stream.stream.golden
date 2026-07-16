@@ -187,9 +187,9 @@
     "model": "poolside/laguna-m.1:free",
     "status": "completed",
     "usage": {
-      "input_tokens": 0,
+      "input_tokens": 15,
       "output_tokens": 100,
-      "total_tokens": 100
+      "total_tokens": 115
     }
   },
   "type": "response.completed"

@@ -1498,7 +1498,7 @@
   "candidates": null,
   "usageMetadata": {
     "candidatesTokenCount": 100,
-    "promptTokenCount": 0,
-    "totalTokenCount": 100
+    "promptTokenCount": 15,
+    "totalTokenCount": 115
   }
 }

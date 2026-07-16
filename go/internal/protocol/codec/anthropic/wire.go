@@ -136,7 +136,16 @@ type messageDeltaPayload struct {
 		StopReason string `json:"stop_reason,omitempty"`
 	} `json:"delta"`
 	Usage *struct {
-		OutputTokens uint32 `json:"output_tokens"`
+		// InputTokens (and the cache counters) are included in message_delta by
+		// some Anthropic-compatible providers (e.g. Zhipu/GLM), which report the
+		// full usage only in the final message_delta and leave message_start's
+		// usage all-zero. Real Anthropic omits input_tokens here (it lives in
+		// message_start), so an absent field decodes to 0 and the decoder keeps
+		// the message_start value. See streamResponseDecoder.ParseChunk.
+		InputTokens         uint32  `json:"input_tokens"`
+		OutputTokens        uint32  `json:"output_tokens"`
+		CacheReadTokens     *uint32 `json:"cache_read_input_tokens,omitempty"`
+		CacheCreationTokens *uint32 `json:"cache_creation_input_tokens,omitempty"`
 	} `json:"usage,omitempty"`
 }
 
