@@ -376,7 +376,7 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	body, _ := json.Marshal(map[string]any{
-		"error": map[string]any{"message": message, "type": "gateway_error"},
+		"error": map[string]any{"message": message, "type": "GATEWAY_ERROR"},
 	})
 	_, _ = w.Write(body)
 }

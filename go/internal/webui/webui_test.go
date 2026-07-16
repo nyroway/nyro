@@ -49,7 +49,7 @@ func TestMountServesDirectorySpaAndKeepsAPIsJSON404(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("api status = %d, want 404", rec.Code)
 	}
-	if got := rec.Body.String(); !strings.Contains(got, "gateway_error") {
+	if got := rec.Body.String(); !strings.Contains(got, "GATEWAY_ERROR") {
 		t.Fatalf("api body = %q, want gateway_error JSON", got)
 	}
 }
@@ -71,7 +71,7 @@ func TestMountDisabledLeavesDefaultNotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, "gateway_error") {
+	if strings.Contains(body, "GATEWAY_ERROR") {
 		t.Fatalf("body = %q, want chi's default 404 body, not the webui package's custom NotFound handler", body)
 	}
 	if !strings.Contains(body, "404 page not found") {

@@ -34,11 +34,11 @@ func mount(r chi.Router, fsys fs.FS) {
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		p := req.URL.Path
 		if isReservedPath(p) {
-			webutil.Error(w, http.StatusNotFound, "not found", "gateway_error")
+			webutil.Error(w, http.StatusNotFound, "not found", "GATEWAY_ERROR")
 			return
 		}
 		if req.Method != http.MethodGet {
-			webutil.Error(w, http.StatusNotFound, "not found", "gateway_error")
+			webutil.Error(w, http.StatusNotFound, "not found", "GATEWAY_ERROR")
 			return
 		}
 
@@ -77,7 +77,7 @@ func servePath(fileServer http.Handler, targetPath string, w http.ResponseWriter
 func serveIndex(fsys fs.FS, w http.ResponseWriter) {
 	body, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
-		webutil.Error(w, http.StatusNotFound, "not found", "gateway_error")
+		webutil.Error(w, http.StatusNotFound, "not found", "GATEWAY_ERROR")
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -65,7 +65,7 @@ func NewRouter(gw *Gateway) chi.Router {
 	r.Post("/v1beta/models/{resource}", func(w http.ResponseWriter, r *http.Request) {
 		model, action, ok := strings.Cut(chi.URLParam(r, "resource"), ":")
 		if !ok {
-			webutil.Error(w, http.StatusNotFound, "malformed Gemini path, expected models/{model}:{action}", "gateway_error")
+			webutil.Error(w, http.StatusNotFound, "malformed Gemini path, expected models/{model}:{action}", "GATEWAY_ERROR")
 			return
 		}
 		handleProxy(w, r, gw, ids.GeminiGenerateContentV1Beta, model, action == "streamGenerateContent")
@@ -78,7 +78,7 @@ func NewRouter(gw *Gateway) chi.Router {
 func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep ids.ProtocolEndpoint, pathModel string, pathStream bool) {
 	h, ok := codec.Get(ep)
 	if !ok {
-		webutil.Error(w, http.StatusNotImplemented, "no codec registered for endpoint", "gateway_error")
+		webutil.Error(w, http.StatusNotImplemented, "no codec registered for endpoint", "GATEWAY_ERROR")
 		return
 	}
 	limit := resolveProxySettings(gw.snapshot()).MaxBodyBytes
@@ -87,10 +87,10 @@ func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep ids.Pro
 	if err != nil {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
-			webutil.Error(w, http.StatusRequestEntityTooLarge, "request body too large", "gateway_error")
+			webutil.Error(w, http.StatusRequestEntityTooLarge, "request body too large", "GATEWAY_ERROR")
 			return
 		}
-		webutil.Error(w, http.StatusBadRequest, "read body: "+err.Error(), "gateway_error")
+		webutil.Error(w, http.StatusBadRequest, "read body: "+err.Error(), "GATEWAY_ERROR")
 		return
 	}
 
@@ -98,7 +98,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep ids.Pro
 	if pathModel != "" {
 		md, ok := h.MakeRequestDecoder().(codec.PathModelDecoder)
 		if !ok {
-			webutil.Error(w, http.StatusInternalServerError, "codec does not support path-model decode", "gateway_error")
+			webutil.Error(w, http.StatusInternalServerError, "codec does not support path-model decode", "GATEWAY_ERROR")
 			return
 		}
 		req, err = md.DecodeWithModel(body, pathModel, pathStream)
@@ -106,7 +106,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep ids.Pro
 		req, err = h.MakeRequestDecoder().Decode(body)
 	}
 	if err != nil {
-		webutil.Error(w, http.StatusBadRequest, "decode request: "+err.Error(), "gateway_error")
+		webutil.Error(w, http.StatusBadRequest, "decode request: "+err.Error(), "GATEWAY_ERROR")
 		return
 	}
 

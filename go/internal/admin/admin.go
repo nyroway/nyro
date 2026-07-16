@@ -492,7 +492,7 @@ func bearerAuth(token string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
 			if !strings.HasPrefix(h, "Bearer ") || strings.TrimPrefix(h, "Bearer ") != token {
-				webutil.Error(w, http.StatusUnauthorized, "unauthorized", "auth_error")
+				webutil.Error(w, http.StatusUnauthorized, "unauthorized", "AUTH_ERROR")
 				return
 			}
 			next.ServeHTTP(w, r)
