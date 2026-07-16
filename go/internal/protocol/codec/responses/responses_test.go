@@ -138,6 +138,49 @@ func TestStreamStopReason(t *testing.T) {
 	}
 }
 
+// TestReasoningRoundTrip guards that a reasoning output item is decoded into
+// IR reasoning (not dropped) and re-encoded back as a reasoning item.
+func TestReasoningRoundTrip(t *testing.T) {
+	t.Parallel()
+	body := `{"status":"completed","output":[` +
+		`{"type":"reasoning","content":[{"type":"reasoning_text","text":"17*23=391"}]},` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"391"}]}]}`
+	resp, err := responseDecoder{}.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.ReasoningContent != "17*23=391" {
+		t.Errorf("ReasoningContent=%q, want the reasoning text", resp.ReasoningContent)
+	}
+	out, _ := responseEncoder{}.Format(resp)
+	if !strings.Contains(string(out), `"type":"reasoning"`) || !strings.Contains(string(out), "17*23=391") {
+		t.Errorf("encoded output missing reasoning item:\n%s", out)
+	}
+}
+
+// TestImageRequestEncoding guards that an image block survives request encoding
+// as an input_image part — ir.ToText alone dropped it.
+func TestImageRequestEncoding(t *testing.T) {
+	t.Parallel()
+	req := &ir.AiRequest{
+		Model: "m",
+		Messages: []ir.Message{{
+			Role: ir.RoleUser,
+			Content: &ir.BlocksContent{Blocks: []ir.ContentBlock{
+				&ir.TextBlock{Text: "what is this"},
+				&ir.ImageBlock{Source: &ir.Base64Media{MediaType: "image/png", Data: "AAAA"}},
+			}},
+		}},
+	}
+	out, err := requestEncoder{}.Encode(req)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if !strings.Contains(string(out.Body), `"input_image"`) || !strings.Contains(string(out.Body), "data:image/png;base64,AAAA") {
+		t.Errorf("outbound request missing input_image:\n%s", out.Body)
+	}
+}
+
 func TestStreamDecode(t *testing.T) {
 	t.Parallel()
 	d := &streamResponseDecoder{}

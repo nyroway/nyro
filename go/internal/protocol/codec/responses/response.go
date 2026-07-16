@@ -20,6 +20,14 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 			for _, c := range it.Content {
 				resp.Content += c.Text
 			}
+		case "reasoning":
+			// Reasoning items carry the chain-of-thought in content[].text
+			// (type reasoning_text). Without this the thinking is dropped and
+			// downstream clients see none. (OpenAI's encrypted summary is not
+			// surfaced here.)
+			for _, c := range it.Content {
+				resp.ReasoningContent += c.Text
+			}
 		case "function_call":
 			args := it.Arguments
 			if args == "" {
@@ -74,6 +82,12 @@ type responseEncoder struct{}
 
 func (responseEncoder) Format(resp *ir.AiResponse) ([]byte, error) {
 	var output []outputItem
+	if resp.ReasoningContent != "" {
+		output = append(output, outputItem{
+			Type: "reasoning", ID: "rs", Status: "completed",
+			Content: []outputContent{{Type: "reasoning_text", Text: resp.ReasoningContent}},
+		})
+	}
 	if resp.Content != "" {
 		output = append(output, outputItem{
 			Type: "message", ID: "msg", Role: "assistant", Status: "completed",

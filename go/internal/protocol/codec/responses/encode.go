@@ -12,6 +12,41 @@ import (
 // requestEncoder implements codec.RequestEncoder for the Responses API.
 type requestEncoder struct{}
 
+// responsesMessageContent builds a Responses message content array from an IR
+// message, preserving image blocks (input_image) alongside text. Using
+// ir.ToText alone dropped images, so multimodal requests reached the model
+// without the picture. Returns nil when there is nothing to send.
+func responsesMessageContent(m ir.Message) json.RawMessage {
+	textType := "input_text"
+	if m.Role == ir.RoleAssistant {
+		textType = "output_text"
+	}
+	var parts []map[string]string
+	if bc, ok := m.Content.(*ir.BlocksContent); ok {
+		for _, b := range bc.Blocks {
+			switch blk := b.(type) {
+			case *ir.TextBlock:
+				if blk.Text != "" {
+					parts = append(parts, map[string]string{"type": textType, "text": blk.Text})
+				}
+			case *ir.ImageBlock:
+				if img, ok := blk.Source.(*ir.Base64Media); ok {
+					parts = append(parts, map[string]string{"type": "input_image", "image_url": "data:" + img.MediaType + ";base64," + img.Data})
+				} else if u, ok := blk.Source.(*ir.URLMedia); ok {
+					parts = append(parts, map[string]string{"type": "input_image", "image_url": u.URL})
+				}
+			}
+		}
+	} else if t := ir.ToText(m.Content); t != "" {
+		parts = append(parts, map[string]string{"type": textType, "text": t})
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(parts)
+	return b
+}
+
 func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 	var instructions []string
 	var input []inputItem
@@ -22,12 +57,7 @@ func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 				instructions = append(instructions, t)
 			}
 		case ir.RoleUser, ir.RoleAssistant:
-			if text := ir.ToText(m.Content); text != "" {
-				contentType := "input_text"
-				if m.Role == ir.RoleAssistant {
-					contentType = "output_text"
-				}
-				content, _ := json.Marshal([]map[string]string{{"type": contentType, "text": text}})
+			if content := responsesMessageContent(m); content != nil {
 				input = append(input, inputItem{Type: "message", Role: string(m.Role), Content: content})
 			}
 			for _, tc := range m.ToolCalls {
