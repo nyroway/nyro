@@ -82,18 +82,18 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		gw, stopConfigSync, obsProvider, err := buildGateway(ctx, cfgPath, configSyncAddr, addr, configTLS)
+		gw, stopConfigSync, obsMgr, err := buildGateway(ctx, cfgPath, configSyncAddr, addr, configTLS)
 		if err != nil {
 			return err
 		}
 		if stopConfigSync != nil {
 			defer stopConfigSync()
 		}
-		if obsProvider != nil {
+		if obsMgr != nil {
 			defer func() {
 				shutCtx, shutCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 				defer shutCancel()
-				if err := obsProvider.Shutdown(shutCtx); err != nil {
+				if err := obsMgr.Shutdown(shutCtx); err != nil {
 					slog.Warn("observability provider shutdown failed", "error", err)
 				}
 			}()
@@ -126,17 +126,21 @@ func servicePort(addr string) string {
 
 // buildGateway selects the config source and returns a ready, storage-free
 // Gateway plus an optional config-sync client stop function (nil unless
-// --config-server) and the OTel provider (always non-nil on success —
-// telemetry is wired in every mode). It constructs the ObsProvider + Handles
-// and calls RegisterHooks exactly ONCE per process (the plugin registry
-// accumulates appends, so re-registering would double-emit). /readyz reflects
-// cache fill, not storage health.
+// --config-server) and the observability manager (always non-nil on success —
+// telemetry is wired in every mode). It constructs the initial ObsProvider,
+// wraps it in a SwappableProvider, and calls RegisterHooks exactly ONCE per
+// process (the plugin registry accumulates appends, so re-registering would
+// double-emit). In --config-server mode it also registers the manager's
+// hot-reload callback on the cache BEFORE starting the config stream, so the
+// control-plane-seeded obs settings (which arrive with the first snapshot,
+// after this initial build) are applied instead of stuck on the stdout default.
+// /readyz reflects cache fill, not storage health.
 //
 // listenAddr is this gateway's own data-plane --listen (host:port); only its
 // port is used, reported over config-sync as Subscribe.service_port so the
 // admin's node list can show where each gateway actually serves traffic
 // (distinct from the config-sync gRPC connection's ephemeral peer port).
-func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr string, configTLS *tls.Config) (gw *proxy.Gateway, stopConfigSync func(), obs *observability.ObsProvider, err error) {
+func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr string, configTLS *tls.Config) (gw *proxy.Gateway, stopConfigSync func(), obs *obsManager, err error) {
 	switch {
 	case cfgPath != "":
 		// Standalone YAML: build the config snapshot directly (no DB). The
@@ -159,39 +163,47 @@ func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr strin
 		cache.Swap(snap)
 		gw = proxy.NewGatewayWithCache(cache)
 
+		// Standalone config is static: the snapshot is already in the cache, so
+		// the initial resolve sees the real (YAML-declared) obs config and no
+		// hot-reload callback is needed — the cache never swaps again.
 		obsCfg := resolveObsConfig(cache)
 		prov, perr := observability.NewProvider(ctx, obsCfg)
 		if perr != nil {
 			return nil, nil, nil, fmt.Errorf("observability provider: %w", perr)
 		}
-		attachObservability(gw, prov)
-		startMetricsServer(ctx, prov, obsCfg.Metrics.Params["path"])
-		return gw, nil, prov, nil
+		sp := observability.NewSwappableProvider(prov)
+		attachObservability(gw, prov, sp)
+		return gw, nil, newObsManager(ctx, cache, sp, prov, obsCfg), nil
 
 	case configSyncAddr != "":
 		// config-sync hot-reload: empty cache is filled by the stream.
-		// Observability config is read from the cache snapshot (published by
-		// the admin) once it arrives.
 		cache := &configsync.ConfigCache{}
+		gw = proxy.NewGatewayWithCache(cache)
+
+		// Build the INITIAL provider from the still-empty cache: it resolves to
+		// the fixed default (logs→stdout, metrics/traces disabled). The real obs
+		// config (the admin-seeded otlp settings, or anything an operator edits
+		// later) arrives with config-sync snapshots and is applied by
+		// mgr.rebuild. Registering SetOnSwap BEFORE starting the client is what
+		// closes the startup race that previously left the gateway stuck on the
+		// stdout default: no snapshot can be published until client.Run starts.
+		obsCfg := resolveObsConfig(cache)
+		prov, perr := observability.NewProvider(ctx, obsCfg)
+		if perr != nil {
+			return nil, nil, nil, fmt.Errorf("observability provider: %w", perr)
+		}
+		sp := observability.NewSwappableProvider(prov)
+		attachObservability(gw, prov, sp)
+		mgr := newObsManager(ctx, cache, sp, prov, obsCfg)
+		cache.SetOnSwap(mgr.rebuild)
+
 		client := configsync.NewConfigClient(configSyncAddr, cache, servicePort(listenAddr), configTLS)
 		go func() { _ = client.Run(ctx) }()
 		pki.WatchExpiry(ctx, configTLS, configExpiryCheckInterval, func(notAfter time.Time) {
 			slog.Warn("config-sync client certificate expiring soon — run `nyro ca sign-gateway` and redistribute before it lapses",
 				"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
 		})
-		gw = proxy.NewGatewayWithCache(cache)
-
-		// Read obs settings from the cache snapshot when present (the control-
-		// plane push); before the first push lands, or when nothing was pushed,
-		// apply the fixed default — never env vars (see resolveObsConfig).
-		obsCfg := resolveObsConfig(cache)
-		prov, perr := observability.NewProvider(ctx, obsCfg)
-		if perr != nil {
-			return nil, nil, nil, fmt.Errorf("observability provider: %w", perr)
-		}
-		attachObservability(gw, prov)
-		startMetricsServer(ctx, prov, obsCfg.Metrics.Params["path"])
-		return gw, nil, prov, nil
+		return gw, nil, mgr, nil
 
 	default:
 		// Unreachable: RunE enforces the XOR. Guard anyway.
@@ -226,12 +238,17 @@ func resolveConfigSyncClientTLS(caPath, certPath, keyPath string) (*tls.Config, 
 	}
 }
 
-// attachObservability wires the ObsProvider + Handles into the Gateway and
-// registers the OTel phase hooks ONCE per process. Safe to call exactly once.
-func attachObservability(gw *proxy.Gateway, prov *observability.ObsProvider) {
+// attachObservability wires the initial ObsProvider into the Gateway and
+// registers the OTel phase hooks ONCE per process against the SwappableProvider.
+// Must be called exactly once: the hooks read the current pipeline from sp on
+// every request, so a hot-reload swaps sp (obsManager.rebuild) rather than
+// re-registering. gw.Obs/gw.Handles are informational only (the proxy dispatch
+// path does not read them — telemetry flows entirely through the sp-backed
+// hooks) and reflect the initial provider.
+func attachObservability(gw *proxy.Gateway, prov *observability.ObsProvider, sp *observability.SwappableProvider) {
 	gw.Obs = prov
 	gw.Handles = observability.NewHandles(prov.Meter)
-	observability.RegisterHooks(prov.Tracer, prov.Logger, gw.Handles)
+	observability.RegisterHooks(sp)
 }
 
 // cacheObsGet returns a get-func that reads obs_* settings from the
@@ -320,49 +337,15 @@ func defaultObsGet(key string) (string, error) {
 	return "", nil
 }
 
-// startMetricsServer starts a second, independent http.Server exposing
-// Prometheus scrape output on obs.PromListen, but only when obs.PromHandler
-// is non-nil (i.e. the metrics signal is configured with exporter=prometheus
-// — see observability.NewProvider). It is a no-op otherwise: the gateway's
-// primary server (bootstrap.RunServer) never carries a /metrics route, so
-// nothing starts unless prometheus was actually selected.
-//
-// The server is best-effort: a bind/serve failure is logged (slog.Error) but
-// never fatal, since a broken scrape endpoint must not take down request
-// serving. It shuts down (with a bounded timeout, matching shutdownTimeout
-// used elsewhere in this file) once ctx is cancelled.
-func startMetricsServer(ctx context.Context, obs *observability.ObsProvider, path string) {
-	if obs == nil || obs.PromHandler == nil {
-		return
-	}
-	srv := newMetricsServer(obs, path)
-
-	go func() {
-		slog.Info("prometheus metrics server starting", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("prometheus metrics server failed", "error", err)
-		}
-	}()
-
-	go func() {
-		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		if err := srv.Shutdown(shutCtx); err != nil {
-			slog.Warn("prometheus metrics server shutdown failed", "error", err)
-		}
-	}()
-}
-
-// newMetricsServer builds (without starting) the http.Server that
-// startMetricsServer runs: obs.PromHandler mounted at path on a fresh mux,
+// newMetricsServer builds (without starting) the http.Server the obsManager
+// runs for prometheus scraping: obs.PromHandler mounted at path on a fresh mux,
 // listening on obs.PromListen. path defaults to "/metrics" when empty —
 // defensive, since observability.LoadConfig always fills the prometheus
 // exporter's "path" field from its registry default when the signal is
 // configured, but NewProvider (and therefore ObsProvider) can also be built
 // directly from a hand-assembled ObsConfig that skipped LoadConfig. Split out
-// from startMetricsServer so tests can inspect routing/Addr without binding a
-// real network port.
+// from the obsManager's start path so tests can inspect routing/Addr without
+// binding a real network port.
 func newMetricsServer(obs *observability.ObsProvider, path string) *http.Server {
 	if path == "" {
 		path = "/metrics"

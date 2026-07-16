@@ -53,7 +53,7 @@ func TestHooksOnRequestStoresSpan(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterHooks(tracer, cl, handles)
+	RegisterHooks(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
@@ -93,7 +93,7 @@ func TestHooksOnLogRecordsMetricsTokensAndSpan(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterHooks(tracer, cl, handles)
+	RegisterHooks(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
@@ -209,7 +209,7 @@ func TestHooksOnLogEmitsUpstreamAuditAttrs(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterHooks(tracer, cl, handles)
+	RegisterHooks(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
@@ -277,7 +277,7 @@ func TestHooksOnLog5xxMarksSpanError(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterHooks(tracer, cl, handles)
+	RegisterHooks(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())

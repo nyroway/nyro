@@ -195,3 +195,47 @@ func waitFor(t *testing.T, d time.Duration, cond func() bool) {
 	}
 	t.Fatalf("condition not met within %v", d)
 }
+
+// TestConfigCache_OnSwapFiresAfterPublish verifies the SetOnSwap callback runs
+// on every Swap and, crucially, AFTER the new snapshot is visible to readers
+// (so the callback may Load() what was just published). This is the hook the
+// gateway relies on to hot-reload observability config from a control-plane
+// push.
+func TestConfigCache_OnSwapFiresAfterPublish(t *testing.T) {
+	var c ConfigCache
+
+	var calls int
+	var seenModel string
+	c.SetOnSwap(func() {
+		calls++
+		if s := c.Load(); s != nil {
+			if r := s.RouteByModel("gpt-4o"); r != nil {
+				seenModel = r.Model
+			}
+		}
+	})
+
+	var b Snapshot
+	b.SetRoute(storage.Route{ID: "r1", Model: "gpt-4o"})
+	c.Swap(b.Done())
+
+	if calls != 1 {
+		t.Errorf("onSwap fired %d times; want 1", calls)
+	}
+	if seenModel != "gpt-4o" {
+		t.Errorf("callback saw model %q; want gpt-4o (snapshot not visible when callback ran)", seenModel)
+	}
+
+	// A second swap fires it again.
+	c.Swap(b.Done())
+	if calls != 2 {
+		t.Errorf("onSwap fired %d times after two swaps; want 2", calls)
+	}
+
+	// Clearing the callback stops further invocations.
+	c.SetOnSwap(nil)
+	c.Swap(b.Done())
+	if calls != 2 {
+		t.Errorf("onSwap fired %d times after clear; want 2", calls)
+	}
+}

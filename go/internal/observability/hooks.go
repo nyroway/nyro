@@ -30,13 +30,15 @@ const (
 )
 
 // onRequestHook starts the per-request "dispatch" span and stashes the span +
-// span-context in the bag for the OnLog hook to finish.
-type onRequestHook struct{ tracer trace.Tracer }
+// span-context in the bag for the OnLog hook to finish. It holds the swappable
+// provider rather than a concrete tracer so a config-sync hot-reload can change
+// the underlying pipeline without re-registering the hook.
+type onRequestHook struct{ sp *SwappableProvider }
 
 func (h onRequestHook) Name() string        { return "obs.on_request" }
 func (h onRequestHook) Phase() plugin.Phase { return plugin.PhaseOnRequest }
 func (h onRequestHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
-	ctx, span := h.tracer.Start(pctx.Ctx, "dispatch")
+	ctx, span := h.sp.load().tracer.Start(pctx.Ctx, "dispatch")
 	pctx.Bag.Set(BagSpanCtx, ctx)
 	pctx.Bag.Set(BagSpan, span)
 	return plugin.OutcomeContinue
@@ -44,15 +46,16 @@ func (h onRequestHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 
 // onLogHook is terminal: it reads the per-request state the dispatcher left in
 // the bag, records the metrics, emits the structured audit LogRecord, and ends
-// the span started by onRequestHook.
+// the span started by onRequestHook. Like onRequestHook it holds the swappable
+// provider so the logger/handles it emits through follow a hot-reload.
 type onLogHook struct {
-	logger  log.Logger
-	handles *Handles
+	sp *SwappableProvider
 }
 
 func (h onLogHook) Name() string        { return "obs.on_log" }
 func (h onLogHook) Phase() plugin.Phase { return plugin.PhaseOnLog }
 func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
+	active := h.sp.load()
 	bag := pctx.Bag
 	span, _ := pluginGet(bag, BagSpan).(trace.Span)
 	spanCtx, _ := pluginGet(bag, BagSpanCtx).(context.Context)
@@ -79,14 +82,14 @@ func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 	// variadic ...AddOption / ...RecordOption, NOT raw attribute.KeyValue. We
 	// wrap the attributes in metric.WithAttributes (which satisfies both option
 	// types via the shared attrOpt).
-	if h.handles != nil {
+	if active.handles != nil {
 		reqAttrs := metric.WithAttributes(
 			attribute.String("model", route.Model),
 			attribute.String("provider", upstream.Name),
 			attribute.String("apikey", apiKeyID),
 			attribute.String("status_class", statusClass),
 		)
-		h.handles.requests.Add(emitCtx, 1, reqAttrs)
+		active.handles.requests.Add(emitCtx, 1, reqAttrs)
 
 		tokenIn := metric.WithAttributes(
 			attribute.String("model", route.Model),
@@ -98,10 +101,10 @@ func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 			attribute.String("apikey", apiKeyID),
 			attribute.String("direction", "out"),
 		)
-		h.handles.tokens.Add(emitCtx, int64(usage.PromptTokens), tokenIn)
-		h.handles.tokens.Add(emitCtx, int64(usage.CompletionTokens), tokenOut)
+		active.handles.tokens.Add(emitCtx, int64(usage.PromptTokens), tokenIn)
+		active.handles.tokens.Add(emitCtx, int64(usage.CompletionTokens), tokenOut)
 
-		h.handles.latency.Record(emitCtx, float64(latencyMs), metric.WithAttributes(
+		active.handles.latency.Record(emitCtx, float64(latencyMs), metric.WithAttributes(
 			attribute.String("model", route.Model),
 			attribute.String("provider", upstream.Name),
 		))
@@ -143,7 +146,7 @@ func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 	// reached the upstream) omits the attribute entirely so the receiver leaves
 	// the parquet optional column null.
 	rec.AddAttributes(upstreamLogAttrs(lc)...)
-	h.logger.Emit(emitCtx, rec)
+	active.logger.Emit(emitCtx, rec)
 
 	// --- finish the span (status for 5xx, then End) ---
 	if span != nil {
@@ -198,9 +201,14 @@ func classify(status int) string {
 // plugin registry. It is NOT called from an init(): instrumentation stays inert
 // until the dispatcher/cmd calls it (T3.3/T3.4), so importing observability has
 // no process-wide side effects.
-func RegisterHooks(tracer trace.Tracer, logger log.Logger, handles *Handles) {
-	plugin.Register(onRequestHook{tracer: tracer})
-	plugin.Register(onLogHook{logger: logger, handles: handles})
+//
+// It must be called exactly once per process: the plugin registry appends, so a
+// second call would double-emit. Hot-reloading the underlying pipeline is done
+// by swapping sp (SwappableProvider.Swap), NOT by re-registering — the hooks
+// read the current handles from sp on every request.
+func RegisterHooks(sp *SwappableProvider) {
+	plugin.Register(onRequestHook{sp: sp})
+	plugin.Register(onLogHook{sp: sp})
 }
 
 // pluginGet is a tiny helper so the type-assertion chain reads without repeating

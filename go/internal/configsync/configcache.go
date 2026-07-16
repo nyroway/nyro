@@ -12,13 +12,39 @@ import (
 // one. Until the first Swap, Load() returns nil and Ready() is false.
 type ConfigCache struct {
 	snap atomic.Pointer[ConfigSnapshot]
+	// onSwap is an optional callback fired after every Swap publishes a new
+	// snapshot. It is how the gateway learns a control-plane push arrived so it
+	// can re-resolve observability config and hot-reload the OTel provider (the
+	// obs pipeline is otherwise built once and would never pick up the seeded
+	// otlp settings the admin pushes after startup). Stored behind an atomic
+	// pointer so SetOnSwap is safe to call concurrently with Swap.
+	onSwap atomic.Pointer[func()]
 }
 
 // Load returns the current snapshot (nil before the first Swap).
 func (c *ConfigCache) Load() *ConfigSnapshot { return c.snap.Load() }
 
-// Swap atomically publishes a new snapshot.
-func (c *ConfigCache) Swap(s *ConfigSnapshot) { c.snap.Store(s) }
+// SetOnSwap registers (or replaces, when called again) the callback invoked
+// after each Swap. Pass nil to clear it. It is typically set once at startup,
+// before the config-sync client begins publishing snapshots.
+func (c *ConfigCache) SetOnSwap(fn func()) {
+	if fn == nil {
+		c.onSwap.Store(nil)
+		return
+	}
+	c.onSwap.Store(&fn)
+}
+
+// Swap atomically publishes a new snapshot, then fires the onSwap callback (if
+// any). The callback runs synchronously on the caller's goroutine (the
+// config-sync receive loop) after the snapshot is visible to readers, so it may
+// safely Load() the value just published.
+func (c *ConfigCache) Swap(s *ConfigSnapshot) {
+	c.snap.Store(s)
+	if fn := c.onSwap.Load(); fn != nil {
+		(*fn)()
+	}
+}
 
 // Ready reports whether a snapshot has been published.
 func (c *ConfigCache) Ready() bool { return c.snap.Load() != nil }

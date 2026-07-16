@@ -2,13 +2,11 @@ package gateway
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/observability"
@@ -353,73 +351,3 @@ func TestNewMetricsServer_CustomPath(t *testing.T) {
 	}
 }
 
-func TestStartMetricsServer_NilHandlerIsNoOp(t *testing.T) {
-	// Must not panic and must not start anything when metrics isn't
-	// configured as prometheus (PromHandler == nil).
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	startMetricsServer(ctx, &observability.ObsProvider{}, "")
-	startMetricsServer(ctx, nil, "")
-}
-
-// TestStartMetricsServer_BindsAndShutsDownOnCtxCancel is the one test in this
-// file that binds a real port — deliberately picking an OS-assigned free port
-// (":0" via net.Listen, then closing immediately) to avoid a fixed-port
-// collision in CI, at the cost of a small, standard TOCTOU race window that
-// is common practice for this kind of test.
-func TestStartMetricsServer_BindsAndShutsDownOnCtxCancel(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("find free port: %v", err)
-	}
-	addr := ln.Addr().String()
-	if err := ln.Close(); err != nil {
-		t.Fatalf("close probe listener: %v", err)
-	}
-
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-	obs := &observability.ObsProvider{PromHandler: h, PromListen: addr}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	startMetricsServer(ctx, obs, "")
-
-	var lastErr error
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get("http://" + addr + "/metrics")
-		if err == nil {
-			statusCode := resp.StatusCode
-			if closeErr := resp.Body.Close(); closeErr != nil {
-				t.Fatalf("close response body: %v", closeErr)
-			}
-			if statusCode == http.StatusOK {
-				lastErr = nil
-				break
-			}
-		}
-		lastErr = err
-		time.Sleep(20 * time.Millisecond)
-	}
-	if lastErr != nil {
-		t.Fatalf("server never became reachable at %s: %v", addr, lastErr)
-	}
-
-	cancel()
-
-	deadline = time.Now().Add(2 * time.Second)
-	var shutErr error
-	for time.Now().Before(deadline) {
-		var resp *http.Response
-		resp, shutErr = http.Get("http://" + addr + "/metrics")
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
-		if shutErr != nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if shutErr == nil {
-		t.Fatal("expected the metrics server to stop accepting connections after ctx cancellation")
-	}
-}
