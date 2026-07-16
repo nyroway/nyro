@@ -14,7 +14,6 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 		return nil, err
 	}
 	resp := ir.NewAiResponse(w.ID, w.Model)
-	resp.StopReason = w.Status
 	for _, it := range w.Output {
 		switch it.Type {
 		case "message":
@@ -29,6 +28,7 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 			resp.ToolCalls = append(resp.ToolCalls, ir.ToolCall{ID: it.CallID, Name: it.Name, Arguments: args})
 		}
 	}
+	resp.StopReason = responsesStopReason(w.Status, len(resp.ToolCalls) > 0)
 	if w.Usage != nil {
 		resp.Usage = ir.Usage{
 			PromptTokens:     w.Usage.InputTokens,
@@ -37,6 +37,37 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 		}
 	}
 	return resp, nil
+}
+
+// responsesWireStatus maps the canonical IR stop reason back to the Responses
+// API lifecycle status: length/content_filter mean the output was cut short
+// (incomplete); everything else (stop/tool_calls/empty) completed.
+func responsesWireStatus(stopReason string) string {
+	switch stopReason {
+	case "length", "max_tokens", "content_filter":
+		return "incomplete"
+	default:
+		return "completed"
+	}
+}
+
+// responsesStopReason maps the Responses API status to the canonical IR stop
+// reason. The raw status ("completed"/"incomplete") is not valid downstream
+// vocabulary (Anthropic/OpenAI), and a completed response carrying a
+// function_call must become tool_calls so clients run the tool rather than
+// ending the turn.
+func responsesStopReason(status string, hasTool bool) string {
+	switch status {
+	case "completed":
+		if hasTool {
+			return "tool_calls"
+		}
+		return "stop"
+	case "incomplete":
+		return "length" // Responses incomplete is almost always max_output_tokens
+	default:
+		return status
+	}
 }
 
 type responseEncoder struct{}
@@ -61,7 +92,7 @@ func (responseEncoder) Format(resp *ir.AiResponse) ([]byte, error) {
 	}
 	out := response{
 		ID: resp.ID, Object: "response", Model: resp.Model,
-		Output: output, Status: nvl(resp.StopReason, "completed"),
+		Output: output, Status: responsesWireStatus(resp.StopReason),
 	}
 	if resp.Usage.TotalTokens != 0 || resp.Usage.PromptTokens != 0 {
 		out.Usage = &responseUsage{

@@ -85,6 +85,59 @@ func TestNonStreamResponse(t *testing.T) {
 	}
 }
 
+// TestNonStreamStopReason guards the Responses status → canonical stop-reason
+// mapping: raw "completed"/"incomplete" are not valid downstream vocabulary,
+// and a completed response carrying a function_call must become tool_calls so
+// clients run the tool instead of ending the turn.
+func TestNonStreamStopReason(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, body, want string }{
+		{"completed_text", `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}]}`, "stop"},
+		{"incomplete", `{"status":"incomplete","output":[]}`, "length"},
+		{"completed_tool", `{"status":"completed","output":[{"type":"function_call","call_id":"c1","name":"get_weather","arguments":"{}"}]}`, "tool_calls"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := responseDecoder{}.Parse([]byte(tc.body))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if resp.StopReason != tc.want {
+				t.Errorf("StopReason=%q, want %q", resp.StopReason, tc.want)
+			}
+		})
+	}
+}
+
+// TestStreamStopReason is the streaming counterpart: a function_call item yields
+// tool_calls, and a response.incomplete event becomes length — never the raw
+// event-type string.
+func TestStreamStopReason(t *testing.T) {
+	t.Parallel()
+	stopOf := func(events []string) string {
+		d := &streamResponseDecoder{}
+		var stop string
+		for _, e := range events {
+			deltas, _ := d.ParseChunk(e)
+			for _, dl := range deltas {
+				if v, ok := dl.(*ir.DoneDelta); ok {
+					stop = v.StopReason
+				}
+			}
+		}
+		return stop
+	}
+	if got := stopOf([]string{
+		`{"type":"response.output_item.added","item":{"type":"function_call","call_id":"c1","name":"get_weather"}}`,
+		`{"type":"response.completed","response":{"status":"completed"}}`,
+	}); got != "tool_calls" {
+		t.Errorf("tool stream stop=%q, want tool_calls", got)
+	}
+	if got := stopOf([]string{`{"type":"response.incomplete"}`}); got != "length" {
+		t.Errorf("incomplete stream stop=%q, want length", got)
+	}
+}
+
 func TestStreamDecode(t *testing.T) {
 	t.Parallel()
 	d := &streamResponseDecoder{}

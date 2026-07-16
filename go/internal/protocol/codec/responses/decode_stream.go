@@ -11,6 +11,7 @@ type streamResponseDecoder struct {
 	id, model string
 	done      bool
 	stop      string
+	sawTool   bool // a function_call item appeared → stop reason is tool_calls
 }
 
 func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, error) {
@@ -36,6 +37,7 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 		out = append(out, &ir.ToolCallDeltaDelta{Index: 0, Arguments: ev.Delta})
 	case "response.output_item.added":
 		if ev.Item != nil && ev.Item.Type == "function_call" {
+			d.sawTool = true
 			out = append(out, &ir.ToolCallStartDelta{Index: 0, ID: ev.Item.CallID, Name: ev.Item.Name})
 		}
 	case "response.completed":
@@ -47,16 +49,23 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 					TotalTokens:      ev.Response.Usage.TotalTokens,
 				}})
 			}
-			d.stop = ev.Response.Status
+			d.stop = responsesStopReason(ev.Response.Status, d.sawTool)
 		}
 		if !d.done {
 			d.done = true
-			out = append(out, &ir.DoneDelta{StopReason: nvl(d.stop, "completed")})
+			out = append(out, &ir.DoneDelta{StopReason: nvl(d.stop, "stop")})
 		}
-	case "response.failed", "response.incomplete":
+	case "response.incomplete":
+		// Raw event type is not a valid downstream stop reason; incomplete is
+		// almost always max_output_tokens → length.
 		if !d.done {
 			d.done = true
-			out = append(out, &ir.DoneDelta{StopReason: ev.Type})
+			out = append(out, &ir.DoneDelta{StopReason: "length"})
+		}
+	case "response.failed":
+		if !d.done {
+			d.done = true
+			out = append(out, &ir.DoneDelta{StopReason: "stop"})
 		}
 	}
 	return out, nil
@@ -67,5 +76,5 @@ func (d *streamResponseDecoder) Finish() []ir.StreamDelta {
 		return nil
 	}
 	d.done = true
-	return []ir.StreamDelta{&ir.DoneDelta{StopReason: nvl(d.stop, "completed")}}
+	return []ir.StreamDelta{&ir.DoneDelta{StopReason: nvl(d.stop, "stop")}}
 }
