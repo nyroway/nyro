@@ -92,6 +92,51 @@ func TestNonStreamResponse(t *testing.T) {
 	}
 }
 
+// TestNonStreamToolCallStopReason guards the fix for Gemini function calls:
+// Gemini returns finishReason=STOP even when emitting a functionCall, so the
+// decoder must upgrade the canonical stop reason to "tool_calls" — otherwise
+// downstream protocols emit end_turn and clients never run the tool.
+func TestNonStreamToolCallStopReason(t *testing.T) {
+	t.Parallel()
+	body := `{"candidates":[{"content":{"role":"model","parts":[` +
+		`{"functionCall":{"name":"get_weather","args":{"city":"Paris"}}}]},` +
+		`"finishReason":"STOP"}]}`
+	resp, err := responseDecoder{}.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.StopReason != "tool_calls" {
+		t.Errorf("StopReason=%q, want tool_calls (functionCall present)", resp.StopReason)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != "get_weather" {
+		t.Errorf("tool calls=%+v", resp.ToolCalls)
+	}
+}
+
+// TestStreamToolCallStopReason is the streaming counterpart: a functionCall
+// chunk (finishReason=STOP) must terminate the stream with a tool_calls stop
+// reason.
+func TestStreamToolCallStopReason(t *testing.T) {
+	t.Parallel()
+	d := &streamResponseDecoder{}
+	chunk := `{"candidates":[{"content":{"parts":[` +
+		`{"functionCall":{"name":"get_weather","args":{"city":"Paris"}}}]},` +
+		`"finishReason":"STOP"}]}`
+	deltas, err := d.ParseChunk(chunk)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var stop string
+	for _, dl := range deltas {
+		if v, ok := dl.(*ir.DoneDelta); ok {
+			stop = v.StopReason
+		}
+	}
+	if stop != "tool_calls" {
+		t.Errorf("stream stop=%q, want tool_calls", stop)
+	}
+}
+
 func TestStreamDecode(t *testing.T) {
 	t.Parallel()
 	d := &streamResponseDecoder{}

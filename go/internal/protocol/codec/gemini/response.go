@@ -32,6 +32,15 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 				resp.Content += p.Text
 			}
 		}
+		// Gemini signals tool use only via functionCall parts — its finishReason
+		// stays STOP — so upgrade the canonical stop reason to "tool_calls" when
+		// a tool call is present. Without this, downstream protocols emit
+		// end_turn instead of tool_use and clients never run the tool. Only
+		// override a normal stop (not length/content_filter, which mean the
+		// tool call may be truncated).
+		if len(resp.ToolCalls) > 0 && resp.StopReason == "stop" {
+			resp.StopReason = "tool_calls"
+		}
 	}
 	if w.UsageMetadata != nil {
 		resp.Usage = ir.Usage{

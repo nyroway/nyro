@@ -14,6 +14,7 @@ type streamResponseDecoder struct {
 	done    bool
 	stop    string
 	started bool
+	sawTool bool // a functionCall part was seen → stop reason is tool_calls
 }
 
 func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, error) {
@@ -34,6 +35,7 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 		for _, p := range c.Content.Parts {
 			switch {
 			case p.FunctionCall != nil:
+				d.sawTool = true
 				out = append(out, &ir.ToolCallStartDelta{Index: 0, Name: p.FunctionCall.Name})
 			case p.Thought:
 				out = append(out, &ir.ThinkingDelta{Text: p.Text})
@@ -45,6 +47,11 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 		}
 		if c.FinishReason != "" {
 			d.stop = normalizeGeminiFinishReason(c.FinishReason)
+			// Gemini keeps finishReason=STOP even when returning a functionCall;
+			// upgrade so downstream emits tool_use rather than end_turn.
+			if d.sawTool && d.stop == "stop" {
+				d.stop = "tool_calls"
+			}
 		}
 	}
 	if chunk.UsageMetadata != nil {
