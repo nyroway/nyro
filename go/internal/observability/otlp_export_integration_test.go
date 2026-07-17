@@ -83,7 +83,7 @@ func TestOTLPLogsHonorsExportInterval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
-	defer prov.Shutdown(context.Background())
+	defer func() { _ = prov.Shutdown(context.Background()) }()
 
 	var rec otellog.Record
 	rec.SetTimestamp(time.Now())
