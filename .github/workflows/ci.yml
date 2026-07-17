@@ -143,7 +143,7 @@ jobs:
       # have docker, nothing extra to install.
       - name: Create atlas dev-database scratch schemas
         run: |
-          mysql -h127.0.0.1 -P13306 -uroot -ppass -e "CREATE DATABASE IF NOT EXISTS dev;"
+          mysql -h127.0.0.1 -P13306 -uroot -ppass -e "CREATE DATABASE IF NOT EXISTS dev CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
           PGPASSWORD=pass psql -h127.0.0.1 -p15432 -Upostgres -c "CREATE DATABASE dev;" || true
 
       # Two different checks, see go/docs/schema/migrations.md: lint

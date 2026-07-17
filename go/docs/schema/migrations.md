@@ -71,12 +71,21 @@ in `go/atlas.hcl` (`localhost:13306`/`:15432`). Spin them up once with:
 docker run -d --name nyro-atlas-mysql-dev -e MYSQL_ROOT_PASSWORD=pass -p 13306:3306 mysql:8
 docker run -d --name nyro-atlas-postgres-dev -e POSTGRES_PASSWORD=pass -p 15432:5432 postgres:16
 # once both are up (mysqladmin ping / pg_isready):
-docker exec nyro-atlas-mysql-dev mysql -ppass -e "CREATE DATABASE IF NOT EXISTS dev;"
+docker exec nyro-atlas-mysql-dev mysql -ppass -e "CREATE DATABASE IF NOT EXISTS dev CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
 docker exec nyro-atlas-postgres-dev psql -U postgres -c "CREATE DATABASE dev;"
 ```
 
 They're scratch space atlas uses to compute diffs — never a real target,
 safe to leave running or throw away and recreate at any time.
+
+The `dev` mysql database's charset/collation must be set explicitly to
+`utf8mb4`/`utf8mb4_general_ci` (matching CI's setup step): tables with no
+explicit charset inherit whatever the connected database defaults to, and
+Atlas bakes that into the generated `CREATE TABLE` statements. Left
+unset, MySQL 8 defaults to `utf8mb4_0900_ai_ci`, a collation unsupported
+by MySQL 5.7 and most MariaDB versions — the broadly-compatible
+`utf8mb4_general_ci` needs to come from the dev database, not the
+generator.
 
 ## Makefile targets
 

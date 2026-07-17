@@ -13,7 +13,7 @@ CREATE TABLE `consumer_keys` (
   PRIMARY KEY (`id`),
   UNIQUE INDEX `idx_consumer_key_name` (`consumer_id`, `name`),
   INDEX `idx_consumer_keys_key_preview` (`key_preview`)
-) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+) CHARSET utf8mb4 COLLATE utf8mb4_general_ci;
 -- Create "consumer_quotas" table
 CREATE TABLE `consumer_quotas` (
   `id` varchar(191) NOT NULL,
@@ -25,13 +25,13 @@ CREATE TABLE `consumer_quotas` (
   `created_at` longtext NOT NULL,
   `updated_at` longtext NOT NULL,
   PRIMARY KEY (`id`)
-) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+) CHARSET utf8mb4 COLLATE utf8mb4_general_ci;
 -- Create "consumer_routes" table
 CREATE TABLE `consumer_routes` (
   `consumer_id` varchar(191) NOT NULL,
   `route_id` varchar(191) NOT NULL,
   PRIMARY KEY (`consumer_id`, `route_id`)
-) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+) CHARSET utf8mb4 COLLATE utf8mb4_general_ci;
 -- Create "consumers" table
 CREATE TABLE `consumers` (
   `id` varchar(191) NOT NULL,
@@ -47,7 +47,7 @@ CREATE TABLE `consumers` (
   `updated_at` longtext NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `idx_consumers_name` (`name`)
-) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+) CHARSET utf8mb4 COLLATE utf8mb4_general_ci;
 -- Create "route_upstreams" table
 CREATE TABLE `route_upstreams` (
   `id` varchar(191) NOT NULL,
@@ -61,7 +61,7 @@ CREATE TABLE `route_upstreams` (
   `updated_at` longtext NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `idx_route_upstream_model` (`route_id`, `upstream_id`, `model`)
-) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+) CHARSET utf8mb4 COLLATE utf8mb4_general_ci;
 -- Create "routes" table
 CREATE TABLE `routes` (
   `id` varchar(191) NOT NULL,
@@ -74,14 +74,14 @@ CREATE TABLE `routes` (
   `updated_at` longtext NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `idx_routes_model` (`model`)
-) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+) CHARSET utf8mb4 COLLATE utf8mb4_general_ci;
 -- Create "settings" table
 CREATE TABLE `settings` (
   `key` varchar(191) NOT NULL,
   `value` longtext NOT NULL,
   `updated_at` longtext NOT NULL,
   PRIMARY KEY (`key`)
-) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+) CHARSET utf8mb4 COLLATE utf8mb4_general_ci;
 -- Create "upstreams" table
 CREATE TABLE `upstreams` (
   `id` varchar(191) NOT NULL,
@@ -98,4 +98,4 @@ CREATE TABLE `upstreams` (
   `updated_at` longtext NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `idx_upstreams_name` (`name`)
-) CHARSET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+) CHARSET utf8mb4 COLLATE utf8mb4_general_ci;
