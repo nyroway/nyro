@@ -114,3 +114,22 @@ export function tryPrettyJson(raw: string | null | undefined): string {
     return raw;
   }
 }
+
+/** Backend only ever returns a masked key_preview (leading 12 + trailing 6
+ *  characters of the raw key, concatenated — never the full plaintext, except
+ *  the one-time reveal right after create/add/regenerate). This renders it as
+ *  "sk-abc123************************abc123": a fixed-length mask so the
+ *  asterisk run never hints at the real key's length. Shared by the API-keys
+ *  page and the request-log table so a preview looks the same everywhere. */
+const KEY_PREVIEW_LEAD_VISIBLE = 9;
+const KEY_PREVIEW_TRAIL_VISIBLE = 6;
+const KEY_PREVIEW_MASK_LEN = 28;
+
+export function formatKeyPreview(preview: string | undefined | null): string {
+  const trimmed = (preview ?? "").trim();
+  if (!trimmed) return "sk-";
+  if (trimmed.length <= KEY_PREVIEW_LEAD_VISIBLE + KEY_PREVIEW_TRAIL_VISIBLE) return trimmed;
+  const lead = trimmed.slice(0, KEY_PREVIEW_LEAD_VISIBLE);
+  const trail = trimmed.slice(-KEY_PREVIEW_TRAIL_VISIBLE);
+  return `${lead}${"*".repeat(KEY_PREVIEW_MASK_LEN)}${trail}`;
+}

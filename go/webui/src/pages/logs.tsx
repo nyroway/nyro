@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, ScrollText, Trash2 } from "lucide-react";
 import { backend } from "@/lib/backend";
 import type { Consumer, LogPage, LogQuery, ModelStats, Upstream, RequestLog } from "@/lib/types";
 import { getRouteType } from "@/lib/types";
-import { computeTps, formatDuration, formatLogTime, formatTokenCount, formatTps } from "@/lib/format";
+import { computeTps, formatDuration, formatKeyPreview, formatLogTime, formatTokenCount, formatTps } from "@/lib/format";
 import { prettyName } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
@@ -281,7 +281,7 @@ export default function LogsPage() {
                           </span>
                           {log.api_key_preview && log.api_key_preview !== log.api_key_name ? (
                             <span className="text-[11px] text-slate-400">
-                              {log.api_key_preview}
+                              {formatKeyPreview(log.api_key_preview)}
                             </span>
                           ) : null}
                         </div>

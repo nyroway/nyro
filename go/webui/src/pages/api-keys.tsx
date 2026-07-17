@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { formatKeyPreview } from "@/lib/format";
 import {
   ChevronLeft,
   ChevronRight,
@@ -129,23 +130,6 @@ function SectionTitle({ children, info }: { children: string; info?: string }) {
   );
 }
 
-/** Backend only ever returns a masked key_preview (leading 12 + trailing 6
- *  characters of the raw key, concatenated — never the full plaintext, except
- *  the one-time reveal right after create/add/regenerate). This renders it as
- *  "sk-abc123************************abc123": a fixed-length mask so the
- *  asterisk run never hints at the real key's length. */
-const KEY_PREVIEW_LEAD_VISIBLE = 9;
-const KEY_PREVIEW_TRAIL_VISIBLE = 6;
-const KEY_PREVIEW_MASK_LEN = 28;
-
-function formatKeyPreview(preview: string | undefined | null) {
-  const trimmed = (preview ?? "").trim();
-  if (!trimmed) return "sk-";
-  if (trimmed.length <= KEY_PREVIEW_LEAD_VISIBLE + KEY_PREVIEW_TRAIL_VISIBLE) return trimmed;
-  const lead = trimmed.slice(0, KEY_PREVIEW_LEAD_VISIBLE);
-  const trail = trimmed.slice(-KEY_PREVIEW_TRAIL_VISIBLE);
-  return `${lead}${"*".repeat(KEY_PREVIEW_MASK_LEN)}${trail}`;
-}
 
 function formatExpiresText(value: string | null | undefined, isZh: boolean) {
   if (!value) return isZh ? "永不过期" : "Never";

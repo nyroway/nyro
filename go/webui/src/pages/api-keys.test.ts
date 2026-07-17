@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { formatKeyPreview } from "@/lib/format";
 
 const source = readFileSync(resolve(__dirname, "api-keys.tsx"), "utf8");
 
@@ -204,13 +205,13 @@ describe("multi-key management", () => {
   });
 
   it("masks the key preview to a fixed length regardless of the real key's length", () => {
-    const start = source.indexOf("function formatKeyPreview(");
-    const end = source.indexOf("\nfunction formatExpiresText", start);
-    if (start < 0 || end < 0) {
-      throw new Error("Could not locate formatKeyPreview");
-    }
-    const body = source.slice(start, end);
-
-    expect(body).toContain('"*".repeat(KEY_PREVIEW_MASK_LEN)');
+    // formatKeyPreview is shared from @/lib/format; the mask run must be a fixed
+    // length so it never hints at the real key's length.
+    const maskOf = (s: string) => (formatKeyPreview(s).match(/\*+/) ?? [""])[0];
+    const shortMask = maskOf("sk-abcdefghijklmnop"); // 19 chars
+    const longMask = maskOf("sk-abcdefghijklmnopqrstuvwxyz0123456789"); // longer
+    expect(shortMask.length).toBe(28);
+    expect(longMask.length).toBe(28);
+    expect(formatKeyPreview("sk-abcdefghijklmnop")).toBe(`sk-abcdef${"*".repeat(28)}klmnop`);
   });
 });
