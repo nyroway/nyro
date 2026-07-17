@@ -350,4 +350,3 @@ func TestNewMetricsServer_CustomPath(t *testing.T) {
 		t.Error("default /metrics path should not respond when a custom path was configured")
 	}
 }
-
