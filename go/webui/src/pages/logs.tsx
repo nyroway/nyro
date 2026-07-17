@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -274,17 +275,28 @@ export default function LogsPage() {
                           {log.client_status_code ?? "–"}
                         </span>
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <div className="flex flex-col leading-tight">
-                          <span className="text-xs font-medium text-slate-700">
-                            {log.api_key_name ?? "–"}
+                      <td className="px-3 py-2 text-xs whitespace-nowrap">
+                        {log.api_key_preview && log.api_key_preview !== log.api_key_name ? (
+                          // Named key: show the name, reveal the masked preview on hover
+                          // (same affordance as the nodes list' connection-time tooltip).
+                          <TooltipProvider delayDuration={120}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="cursor-help font-medium text-slate-700">
+                                  {log.api_key_name}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent className="font-mono">
+                                {formatKeyPreview(log.api_key_preview)}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : (
+                          // Unnamed key (name falls back to the preview) or no key.
+                          <span className="font-medium text-slate-700">
+                            {log.api_key_name ? formatKeyPreview(log.api_key_name) : "–"}
                           </span>
-                          {log.api_key_preview && log.api_key_preview !== log.api_key_name ? (
-                            <span className="text-[11px] text-slate-400">
-                              {formatKeyPreview(log.api_key_preview)}
-                            </span>
-                          ) : null}
-                        </div>
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex flex-col leading-tight">
