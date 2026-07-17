@@ -78,6 +78,7 @@ message ConsumerKeyRef {
   string key_hash = 4;
   bool enabled = 5;
   string expires_at = 6;
+  string name = 7;
 }
 
 message ConsumerQuota {

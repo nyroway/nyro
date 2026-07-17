@@ -132,6 +132,7 @@ func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 		log.String("nyro.path", lc.Path),
 		log.String("nyro.api_key_id", apiKeyID),
 		log.String("nyro.api_key_name", lc.APIKeyName),
+		log.String("nyro.api_key_preview", lc.APIKeyPreview),
 		log.Int("nyro.client_status", status),
 		log.Int64("nyro.latency_total_ms", latencyMs),
 		log.Int64("nyro.input_tokens", int64(usage.PromptTokens)),

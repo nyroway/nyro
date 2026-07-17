@@ -148,7 +148,7 @@ func logRecordFromOTLP(lr *logsv1.LogRecord) LogRecord {
 		ModelID: m.str("nyro.model_id"), ModelName: m.str("nyro.model_name"),
 		ClientModel: m.str("nyro.client_model"), UpstreamModel: m.str("nyro.upstream_model"),
 		Method: m.str("nyro.method"), Path: m.str("nyro.path"),
-		APIKeyID: m.str("nyro.api_key_id"), APIKeyName: m.str("nyro.api_key_name"),
+		APIKeyID: m.str("nyro.api_key_id"), APIKeyName: m.str("nyro.api_key_name"), APIKeyPreview: m.str("nyro.api_key_preview"),
 		InputTokens: int32(m.i("nyro.input_tokens")), OutputTokens: int32(m.i("nyro.output_tokens")),
 		CacheReadTokens: int32(m.i("nyro.cache_read_tokens")),
 	}

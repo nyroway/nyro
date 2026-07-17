@@ -9,6 +9,7 @@ import "github.com/nyroway/nyro/go/internal/storage"
 type consumerKeyEntry struct {
 	KeyID      string
 	ConsumerID string
+	Name       string
 	KeyPreview string
 	KeyHash    string
 	Enabled    bool
@@ -82,6 +83,7 @@ func (s *ConfigSnapshot) FindKey(rawKey string) *storage.ConsumerKeyAccessRecord
 		return &storage.ConsumerKeyAccessRecord{
 			KeyID:      entry.KeyID,
 			ConsumerID: entry.ConsumerID,
+			Name:       entry.Name,
 			KeyPreview: entry.KeyPreview,
 			Enabled:    entry.Enabled,
 			ExpiresAt:  entry.ExpiresAt,
@@ -126,9 +128,9 @@ func (b *Snapshot) SetRoute(r storage.Route) {
 
 // AddConsumerKey registers one consumer key's gateway-facing view (preview,
 // hash, grants). Called once per key across all consumers.
-func (b *Snapshot) AddConsumerKey(keyID, consumerID, keyPreview, keyHash string, enabled bool, expiresAt string, routes []string, quotas []storage.ConsumerQuota) {
+func (b *Snapshot) AddConsumerKey(keyID, consumerID, name, keyPreview, keyHash string, enabled bool, expiresAt string, routes []string, quotas []storage.ConsumerQuota) {
 	b.keys = append(b.keys, consumerKeyEntry{
-		KeyID: keyID, ConsumerID: consumerID, KeyPreview: keyPreview, KeyHash: keyHash,
+		KeyID: keyID, ConsumerID: consumerID, Name: name, KeyPreview: keyPreview, KeyHash: keyHash,
 		Enabled: enabled, ExpiresAt: expiresAt, Routes: routes, Quotas: quotas,
 	})
 }

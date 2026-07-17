@@ -183,6 +183,7 @@ func ValidateConsumerQuota(q CreateConsumerQuota) error {
 type ConsumerKeyAccessRecord struct {
 	KeyID      string          `json:"key_id"`
 	ConsumerID string          `json:"consumer_id"`
+	Name       string          `json:"name,omitempty"`
 	KeyPreview string          `json:"key_preview"`
 	Enabled    bool            `json:"enabled"`
 	ExpiresAt  string          `json:"expires_at,omitempty"`

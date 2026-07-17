@@ -41,7 +41,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 	lc := observability.LogCtx{
 		Method:         r.Method,
 		Path:           r.URL.Path,
-		ClientProtocol: ingress.Endpoint().String(),
+		ClientProtocol: string(ingress.Endpoint().Protocol),
 		ClientModel:    req.Model,
 		IsStream:       req.Stream.Enabled,
 	}
@@ -92,7 +92,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 
 	// inbound auth + OnAccess
 	plugin.RunPhaseHooks(plugin.PhaseOnAccess, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
-	status, msg, release := checkAccess(g.snapshot(), g.Quota, route, r, &consumerID, &lc.APIKeyName)
+	status, msg, release := checkAccess(g.snapshot(), g.Quota, route, r, &consumerID, &lc.APIKeyName, &lc.APIKeyPreview)
 	if status != 0 {
 		writeJSONError(rec, status, msg)
 		return
@@ -195,7 +195,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		// Populate upstream logCtx fields + bag now that they're known.
 		upstream = *p
 		lc.UpstreamModel = actualModel
-		lc.UpstreamProtocol = egressHandler.Endpoint().String()
+		lc.UpstreamProtocol = string(egressHandler.Endpoint().Protocol)
 		us := int32(resp.StatusCode)
 		lc.UpstreamStatus = &us
 		um := int64(latencyMs)

@@ -204,6 +204,7 @@ export interface RequestLog {
   created_at: number;
   api_key_id?: string;
   api_key_name?: string;
+  api_key_preview?: string;
 
   client_protocol?: string;
   upstream_protocol?: string;

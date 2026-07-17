@@ -473,6 +473,7 @@ type ConsumerKeyRef struct {
 	KeyHash       string                 `protobuf:"bytes,4,opt,name=key_hash,json=keyHash,proto3" json:"key_hash,omitempty"`
 	Enabled       bool                   `protobuf:"varint,5,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	ExpiresAt     string                 `protobuf:"bytes,6,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	Name          string                 `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -545,6 +546,13 @@ func (x *ConsumerKeyRef) GetEnabled() bool {
 func (x *ConsumerKeyRef) GetExpiresAt() string {
 	if x != nil {
 		return x.ExpiresAt
+	}
+	return ""
+}
+
+func (x *ConsumerKeyRef) GetName() string {
+	if x != nil {
+		return x.Name
 	}
 	return ""
 }
@@ -757,7 +765,7 @@ const file_configsync_v1_configsync_proto_rawDesc = "" +
 	"enableAuth\x12%\n" +
 	"\x0eenable_payload\x18\x05 \x01(\bR\renablePayload\x12\x18\n" +
 	"\aenabled\x18\x06 \x01(\bR\aenabled\x12;\n" +
-	"\atargets\x18\a \x03(\v2!.nyro.configsync.v1.RouteUpstreamR\atargets\"\xb6\x01\n" +
+	"\atargets\x18\a \x03(\v2!.nyro.configsync.v1.RouteUpstreamR\atargets\"\xca\x01\n" +
 	"\x0eConsumerKeyRef\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vconsumer_id\x18\x02 \x01(\tR\n" +
@@ -767,7 +775,8 @@ const file_configsync_v1_configsync_proto_rawDesc = "" +
 	"\bkey_hash\x18\x04 \x01(\tR\akeyHash\x12\x18\n" +
 	"\aenabled\x18\x05 \x01(\bR\aenabled\x12\x1d\n" +
 	"\n" +
-	"expires_at\x18\x06 \x01(\tR\texpiresAt\"\x98\x01\n" +
+	"expires_at\x18\x06 \x01(\tR\texpiresAt\x12\x12\n" +
+	"\x04name\x18\a \x01(\tR\x04name\"\x98\x01\n" +
 	"\rConsumerQuota\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vconsumer_id\x18\x02 \x01(\tR\n" +

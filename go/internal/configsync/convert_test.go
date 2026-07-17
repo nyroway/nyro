@@ -67,7 +67,7 @@ func TestSnapshotFromProto_ConsumerKeysAndGrants(t *testing.T) {
 		Consumers: []*pb.Consumer{{
 			Id: "c-1", Name: "alice", Enabled: true,
 			Keys: []*pb.ConsumerKeyRef{{
-				Id: "k-1", ConsumerId: "c-1", KeyPreview: "sk-abcd", KeyHash: "deadbeef", Enabled: true,
+				Id: "k-1", ConsumerId: "c-1", Name: "codex-key", KeyPreview: "sk-abcd", KeyHash: "deadbeef", Enabled: true,
 			}, {
 				Id: "k-2", ConsumerId: "c-1", KeyPreview: "", KeyHash: "x", // empty preview dropped
 			}},
@@ -82,6 +82,9 @@ func TestSnapshotFromProto_ConsumerKeysAndGrants(t *testing.T) {
 	entries := snap.keysByPreview["sk-abcd"]
 	if len(entries) != 1 || entries[0].ConsumerID != "c-1" || entries[0].KeyHash != "deadbeef" {
 		t.Errorf("consumer key not carried: %+v", entries)
+	}
+	if entries[0].Name != "codex-key" {
+		t.Errorf("consumer key name not carried: got %q, want codex-key", entries[0].Name)
 	}
 	if len(entries[0].Routes) != 2 {
 		t.Errorf("route grants not carried: %+v", entries[0].Routes)

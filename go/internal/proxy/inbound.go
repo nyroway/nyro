@@ -19,7 +19,7 @@ import (
 // (0, "", nil) to allow, or (statusCode, message, nil) to deny. When a
 // concurrency quota slot was acquired, the third return is a non-nil release
 // func that MUST be called exactly once when the request finishes.
-func checkAccess(snap *configsync.ConfigSnapshot, qc *quota.Counter, route storage.Route, r *http.Request, consumerID *string, keyName *string) (int, string, func()) {
+func checkAccess(snap *configsync.ConfigSnapshot, qc *quota.Counter, route storage.Route, r *http.Request, consumerID *string, keyName *string, keyPreview *string) (int, string, func()) {
 	if !route.EnableAuth {
 		return 0, "", nil
 	}
@@ -32,7 +32,15 @@ func checkAccess(snap *configsync.ConfigSnapshot, qc *quota.Counter, route stora
 		return http.StatusUnauthorized, "invalid API key", nil
 	}
 	*consumerID = rec.ConsumerID
-	*keyName = rec.KeyPreview
+	// Prefer the human-readable key name; fall back to the preview so an unnamed
+	// key still identifies itself in the logs. The preview is kept separately so
+	// the UI can show it alongside the name.
+	if rec.Name != "" {
+		*keyName = rec.Name
+	} else {
+		*keyName = rec.KeyPreview
+	}
+	*keyPreview = rec.KeyPreview
 	if !rec.Enabled {
 		return http.StatusForbidden, "API key is disabled", nil
 	}

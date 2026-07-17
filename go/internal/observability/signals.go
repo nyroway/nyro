@@ -16,6 +16,7 @@ import (
 // proxy original, keeping T3.2 and T3.3 independently green).
 type LogCtx struct {
 	APIKeyName        string
+	APIKeyPreview     string
 	ClientProtocol    string
 	UpstreamProtocol  string
 	ClientModel       string
@@ -45,6 +46,7 @@ type LogRecord struct {
 	CreatedAt          int64  `json:"created_at" parquet:"created_at"`
 	APIKeyID           string `json:"api_key_id,omitempty" parquet:"api_key_id,dict"`
 	APIKeyName         string `json:"api_key_name,omitempty" parquet:"api_key_name"`
+	APIKeyPreview      string `json:"api_key_preview,omitempty" parquet:"api_key_preview"`
 	ClientProtocol     string `json:"client_protocol,omitempty" parquet:"client_protocol,dict"`
 	UpstreamProtocol   string `json:"upstream_protocol,omitempty" parquet:"upstream_protocol,dict"`
 	ProviderID         string `json:"provider_id,omitempty" parquet:"provider_id,dict"`

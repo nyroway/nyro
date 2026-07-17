@@ -274,8 +274,17 @@ export default function LogsPage() {
                           {log.client_status_code ?? "–"}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap">
-                        {log.api_key_name ?? "–"}
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <div className="flex flex-col leading-tight">
+                          <span className="text-xs font-medium text-slate-700">
+                            {log.api_key_name ?? "–"}
+                          </span>
+                          {log.api_key_preview && log.api_key_preview !== log.api_key_name ? (
+                            <span className="text-[11px] text-slate-400">
+                              {log.api_key_preview}
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex flex-col leading-tight">
