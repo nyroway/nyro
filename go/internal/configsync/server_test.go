@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
@@ -129,6 +131,44 @@ func TestNodes_RemovedOnDisconnect(t *testing.T) {
 
 	cancel()
 	waitFor(t, time.Second, func() bool { return len(srv.Nodes()) == 0 })
+}
+
+// TestDrain_EndsActiveStream verifies Drain returns every active StreamConfig
+// with Unavailable so a graceful shutdown does not block on long-lived streams.
+func TestDrain_EndsActiveStream(t *testing.T) {
+	st, _, _, _, _, _ := newPopulatedStorage(t)
+	srv, dialOpt, stop := bufconnEnv(t, st)
+	defer stop()
+
+	stream, closeFn := dialClient(t, dialOpt)
+	defer closeFn()
+
+	// Consume the initial snapshot so the stream is parked in its push loop.
+	if _, err := stream.Recv(); err != nil {
+		t.Fatalf("initial Recv: %v", err)
+	}
+	waitFor(t, time.Second, func() bool { return srv.ClientCount() == 1 })
+
+	srv.Drain()
+
+	// The stream must end promptly with Unavailable.
+	done := make(chan error, 1)
+	go func() {
+		_, err := stream.Recv()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if status.Code(err) != codes.Unavailable {
+			t.Fatalf("Recv after Drain = %v; want Unavailable", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream did not end after Drain")
+	}
+	waitFor(t, time.Second, func() bool { return srv.ClientCount() == 0 })
+
+	// Drain is idempotent.
+	srv.Drain()
 }
 
 func TestNotify_PushesToConnectedGateway(t *testing.T) {

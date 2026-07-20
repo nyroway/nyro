@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"math"
+	mrand "math/rand"
 	"net"
 	"os"
 	"strings"
@@ -45,6 +46,11 @@ type ConfigClient struct {
 	// Backoff config. Overridable for tests.
 	initialBackoff time.Duration
 	maxBackoff     time.Duration
+
+	// rng sources the reconnect jitter. Seeded per-process so multiple
+	// gateways that drop together don't reconnect in lockstep. Overridable
+	// for tests to make jitter deterministic.
+	rng *mrand.Rand
 }
 
 // NewConfigClient builds a client that connects to target (host:port) and
@@ -71,6 +77,7 @@ func NewConfigClient(target string, cache *ConfigCache, servicePort string, tlsC
 		servicePort:    servicePort,
 		initialBackoff: 500 * time.Millisecond,
 		maxBackoff:     30 * time.Second,
+		rng:            mrand.New(mrand.NewSource(time.Now().UnixNano())),
 		dialOpts: []grpc.DialOption{
 			grpc.WithTransportCredentials(creds),
 		},
@@ -177,8 +184,11 @@ func (c *ConfigClient) runOnce(ctx context.Context) (connected bool, err error) 
 	}
 }
 
-// backoff returns a growing delay for attempt (1-based), capped at maxBackoff.
-func (c *ConfigClient) backoff(attempt int) time.Duration {
+// baseBackoff returns the deterministic exponential delay for attempt
+// (1-based), capped at maxBackoff — base * 2^(attempt-1). It carries no
+// randomness so the growth schedule stays easy to reason about and test;
+// backoff layers jitter on top.
+func (c *ConfigClient) baseBackoff(attempt int) time.Duration {
 	if attempt <= 1 {
 		return c.initialBackoff
 	}
@@ -189,6 +199,20 @@ func (c *ConfigClient) backoff(attempt int) time.Duration {
 		d = c.maxBackoff
 	}
 	return d
+}
+
+// backoff returns the actual reconnect delay: the exponential baseBackoff with
+// equal jitter applied — base/2 + rand[0, base/2). The jitter spreads the
+// reconnect instants of gateways that dropped together (e.g. on an admin
+// restart) so they don't stampede the admin in lockstep. The result stays in
+// [base/2, base), so it never exceeds maxBackoff.
+func (c *ConfigClient) backoff(attempt int) time.Duration {
+	base := c.baseBackoff(attempt)
+	half := base / 2
+	if half <= 0 {
+		return base
+	}
+	return half + time.Duration(c.rng.Int63n(int64(half)))
 }
 
 // ServeGRPC starts a gRPC server listening on addr serving srv. It blocks until
@@ -218,6 +242,12 @@ func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer, tls
 	pb.RegisterConfigServiceServer(gs, srv)
 	go func() {
 		<-ctx.Done()
+		// Drain active gateway streams first so GracefulStop is not blocked
+		// waiting on the long-lived StreamConfig RPCs. The 5s hard-stop below
+		// remains as a safety net.
+		if d, ok := srv.(interface{ Drain() }); ok {
+			d.Drain()
+		}
 		stopped := make(chan struct{})
 		go func() { gs.GracefulStop(); close(stopped) }()
 		select {

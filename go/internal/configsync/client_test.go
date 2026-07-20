@@ -2,6 +2,7 @@ package configsync
 
 import (
 	"context"
+	mrand "math/rand"
 	"testing"
 	"time"
 
@@ -76,20 +77,42 @@ func TestConfigClient_StopsOnContextCancel(t *testing.T) {
 	}
 }
 
-// TestConfigClient_BackoffGrows verifies the reconnect backoff schedule grows
-// exponentially and is capped at maxBackoff.
-func TestConfigClient_BackoffGrows(t *testing.T) {
+// TestConfigClient_BaseBackoffGrows verifies the deterministic backoff schedule
+// grows exponentially and is capped at maxBackoff.
+func TestConfigClient_BaseBackoffGrows(t *testing.T) {
 	c := &ConfigClient{initialBackoff: 10 * time.Millisecond, maxBackoff: 100 * time.Millisecond}
-	if d := c.backoff(1); d != 10*time.Millisecond {
-		t.Errorf("backoff(1) = %v; want 10ms", d)
+	if d := c.baseBackoff(1); d != 10*time.Millisecond {
+		t.Errorf("baseBackoff(1) = %v; want 10ms", d)
 	}
-	if d := c.backoff(2); d != 20*time.Millisecond {
-		t.Errorf("backoff(2) = %v; want 20ms", d)
+	if d := c.baseBackoff(2); d != 20*time.Millisecond {
+		t.Errorf("baseBackoff(2) = %v; want 20ms", d)
 	}
-	if d := c.backoff(3); d != 40*time.Millisecond {
-		t.Errorf("backoff(3) = %v; want 40ms", d)
+	if d := c.baseBackoff(3); d != 40*time.Millisecond {
+		t.Errorf("baseBackoff(3) = %v; want 40ms", d)
 	}
-	if d := c.backoff(10); d != 100*time.Millisecond {
-		t.Errorf("backoff(10) = %v; want capped 100ms", d)
+	if d := c.baseBackoff(10); d != 100*time.Millisecond {
+		t.Errorf("baseBackoff(10) = %v; want capped 100ms", d)
+	}
+}
+
+// TestConfigClient_BackoffJitter verifies backoff applies equal jitter: the
+// result stays in [base/2, base) and varies across calls (not lockstep).
+func TestConfigClient_BackoffJitter(t *testing.T) {
+	c := &ConfigClient{
+		initialBackoff: 10 * time.Millisecond,
+		maxBackoff:     100 * time.Millisecond,
+		rng:            mrand.New(mrand.NewSource(1)),
+	}
+	base := c.baseBackoff(4) // 80ms, below the cap
+	seen := map[time.Duration]struct{}{}
+	for range 50 {
+		d := c.backoff(4)
+		if d < base/2 || d >= base {
+			t.Fatalf("backoff(4) = %v; want in [%v, %v)", d, base/2, base)
+		}
+		seen[d] = struct{}{}
+	}
+	if len(seen) < 2 {
+		t.Errorf("jitter produced no variation across 50 calls: %v", seen)
 	}
 }

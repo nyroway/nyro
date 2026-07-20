@@ -33,6 +33,14 @@ type ConfigServer struct {
 	current  *pb.ConfigSnapshot // last snapshot handed to Notify (nil until first push)
 	clients  map[*streamClient]struct{}
 	buildCnt int // diagnostics: number of snapshot rebuilds
+
+	// done is closed by Drain to signal a server shutdown to every active
+	// StreamConfig loop so they return immediately instead of blocking until
+	// the gateway disconnects. Without this, GracefulStop would wait on the
+	// long-lived streams until its hard-stop timeout. drainOnce guards the
+	// close so Drain is idempotent.
+	done      chan struct{}
+	drainOnce sync.Once
 }
 
 type streamClient struct {
@@ -74,7 +82,16 @@ func NewConfigServer(store storage.Storage) *ConfigServer {
 	return &ConfigServer{
 		store:   store,
 		clients: map[*streamClient]struct{}{},
+		done:    make(chan struct{}),
 	}
+}
+
+// Drain signals every active StreamConfig loop to return so a graceful
+// shutdown completes promptly instead of waiting for gateways to disconnect.
+// It is idempotent and safe to call concurrently. Call it before the gRPC
+// server's GracefulStop (see ServeGRPC).
+func (s *ConfigServer) Drain() {
+	s.drainOnce.Do(func() { close(s.done) })
 }
 
 // StreamConfig implements the long-lived gateway subscription. The gateway
@@ -152,6 +169,11 @@ func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreami
 			c.setLastVersion(snap.GetVersion())
 		case <-ctx.Done():
 			return nil
+		case <-s.done:
+			// Server is shutting down: end the stream so GracefulStop can
+			// complete. Unavailable tells the gateway this is a server-side
+			// close, and it reconnects with backoff as usual.
+			return status.Error(codes.Unavailable, "server shutting down")
 		}
 	}
 }
