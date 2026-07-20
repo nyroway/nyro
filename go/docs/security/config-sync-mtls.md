@@ -176,9 +176,9 @@ nyro gateway --config-server admin.internal:19532 \
 Admin's `--config-poll-interval` defaults to `0`, so a single replica pushes
 its own writes immediately without polling. Replicas that share a database
 must each opt into a positive polling interval so writes handled by one Admin
-are also pushed to gateways connected to the others. Apply the migration
-files under `go/migrations/{mysql,postgres}/` (via `atlas migrate apply`,
-see `go/docs/schema/database.md`) before first boot instead of passing
+are also pushed to gateways connected to the others. Apply the schema with DDL a
+DBA reviews (print it with `nyro migrate dump`/`diff`, see
+`go/docs/schema/migrations.md`) before first boot instead of passing
 `--auto-migrate` here — this is exactly the shared-database production case
 that workflow is for:
 

@@ -11,6 +11,7 @@ import (
 	"github.com/nyroway/nyro/go/cmd/admin"
 	"github.com/nyroway/nyro/go/cmd/ca"
 	"github.com/nyroway/nyro/go/cmd/gateway"
+	"github.com/nyroway/nyro/go/cmd/migrate"
 	"github.com/nyroway/nyro/go/internal/envflag"
 	"github.com/nyroway/nyro/go/internal/version"
 )
@@ -35,6 +36,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(gateway.NewCmd())
 	root.AddCommand(admin.NewCmd())
 	root.AddCommand(ca.NewCmd())
+	root.AddCommand(migrate.NewCmd())
 	root.AddCommand(newVersionCmd())
 	envflag.Decorate(root)
 	return root

@@ -18,7 +18,6 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/database"
-	"github.com/nyroway/nyro/go/migrations"
 )
 
 // ParseDSN parses a --dsn value into a storage backend name and the
@@ -87,9 +86,8 @@ func mysqlURLToGormDSN(dsn string) (string, error) {
 // whether the connecting account has DDL rights is a deployment-posture
 // decision the operator makes explicitly, not something inferred from the
 // database engine. When false, the backend instead gets a read-only schema
-// version check: mysql/postgres compare against the versioned migrations
-// under go/migrations/<dialect>/ (see the migrations package and
-// go/atlas.hcl); sqlite just confirms its tables already exist.
+// check (Backend.CheckSchema): it confirms the canonical tables already exist
+// (all backends), without doing any DDL.
 func OpenStorageFromDSN(dsn string, autoMigrate bool) (storage.Storage, error) {
 	backend, driverDSN, err := ParseDSN(dsn)
 	if err != nil {
@@ -101,25 +99,25 @@ func OpenStorageFromDSN(dsn string, autoMigrate bool) (storage.Storage, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open sqlite: %w", err)
 		}
-		return bootstrapSQL(b, "sqlite", autoMigrate)
+		return bootstrapSQL(b, autoMigrate)
 	case "postgres":
 		b, err := database.NewPostgres(driverDSN)
 		if err != nil {
 			return nil, fmt.Errorf("open postgres: %w", err)
 		}
-		return bootstrapSQL(b, "postgres", autoMigrate)
+		return bootstrapSQL(b, autoMigrate)
 	case "mysql":
 		b, err := database.NewMySQL(driverDSN)
 		if err != nil {
 			return nil, fmt.Errorf("open mysql: %w", err)
 		}
-		return bootstrapSQL(b, "mysql", autoMigrate)
+		return bootstrapSQL(b, autoMigrate)
 	default:
 		return nil, fmt.Errorf("unknown storage backend %q", backend)
 	}
 }
 
-func bootstrapSQL(st storage.Storage, backend string, autoMigrate bool) (storage.Storage, error) {
+func bootstrapSQL(st storage.Storage, autoMigrate bool) (storage.Storage, error) {
 	if err := st.Migrator().Init(); err != nil {
 		return nil, fmt.Errorf("storage init: %w", err)
 	}
@@ -129,21 +127,13 @@ func bootstrapSQL(st storage.Storage, backend string, autoMigrate bool) (storage
 		}
 		return st, nil
 	}
-	checker, ok := st.(interface{ CheckSchemaVersion(expected string) error })
+	checker, ok := st.(interface{ CheckSchema() error })
 	if !ok {
-		// Backend has no versioned-schema concept (e.g. the in-memory test
-		// backend) — nothing to check.
+		// Backend has no schema concept (e.g. the in-memory test backend) —
+		// nothing to check.
 		return st, nil
 	}
-	var expected string
-	if backend != "sqlite" {
-		v, err := migrations.LatestVersion(backend)
-		if err != nil {
-			return nil, fmt.Errorf("determine expected schema version: %w", err)
-		}
-		expected = v
-	}
-	if err := checker.CheckSchemaVersion(expected); err != nil {
+	if err := checker.CheckSchema(); err != nil {
 		return nil, fmt.Errorf("schema check failed (pass --auto-migrate to let nyro create/update the schema itself): %w", err)
 	}
 	return st, nil

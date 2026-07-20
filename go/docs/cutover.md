@@ -92,9 +92,10 @@ view that reflects only currently-open connections.
 For multiple Admin replicas sharing one database (typically PostgreSQL or
 MySQL), set a positive polling interval on every replica so a write handled by
 one is noticed and pushed by the others. Since this is exactly the shared
-mysql/postgres case `go/docs/schema/database.md` covers, apply the migration
-files under `go/migrations/{mysql,postgres}/` (via `atlas migrate apply`)
-before first boot instead of passing `--auto-migrate` here:
+mysql/postgres case `go/docs/schema/database.md` covers, apply the schema with
+DDL a DBA reviews (print it with `nyro migrate dump`/`diff`; see
+`go/docs/schema/migrations.md`) before first boot instead of passing
+`--auto-migrate` here:
 
 ```bash
 # Run on each Admin host, with a distinct --listen/--config-listen address.

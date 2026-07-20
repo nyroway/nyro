@@ -83,33 +83,6 @@ jobs:
     permissions:
       contents: read
 
-    # mysql/postgres here are throwaway "dev" databases for `atlas migrate
-    # diff`, not real targets — go/atlas.hcl points at them by default
-    # (localhost:13306 / :15432), matching what a local dev spins up too.
-    services:
-      mysql:
-        image: mysql:8
-        env:
-          MYSQL_ROOT_PASSWORD: pass
-        ports:
-          - 13306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -ppass"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=10
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: pass
-        ports:
-          - 15432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=10
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -137,24 +110,6 @@ jobs:
       # `make go-conversion-update` and committed. See go/docs/superpowers/specs.
       - name: Go conversion tests
         run: make go-conversion-tests
-
-      # go-migrate-* below run atlas via the free Community Edition docker
-      # image (see go/atlas.hcl and Makefile) — ubuntu-latest runners already
-      # have docker, nothing extra to install.
-      - name: Create atlas dev-database scratch schemas
-        run: |
-          mysql -h127.0.0.1 -P13306 -uroot -ppass -e "CREATE DATABASE IF NOT EXISTS dev CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
-          PGPASSWORD=pass psql -h127.0.0.1 -p15432 -Upostgres -c "CREATE DATABASE dev;" || true
-
-      # Two different checks, see go/docs/schema/migrations.md: lint
-      # statically analyzes the committed migration SQL (destructive
-      # changes, locking risks); verify catches a model change with no
-      # matching migration file, which lint alone does not.
-      - name: Lint committed migrations (mysql + postgres)
-        run: make go-migrate-lint
-
-      - name: Verify go/internal/storage/model matches committed migrations (mysql + postgres)
-        run: make go-migrate-verify
 
   unit-tests:
     needs: build

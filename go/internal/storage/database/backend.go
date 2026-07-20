@@ -67,45 +67,18 @@ func (b *Backend) Migrate() error {
 	return b.db.AutoMigrate(model.All()...)
 }
 
-// CheckSchemaVersion is the read-only alternative to Migrate: it performs no
-// DDL, and is used at startup when --auto-migrate is not set (see
-// internal/bootstrap.bootstrapSQL).
-//
-// sqlite has no versioned migrations (go/migrations/ only covers
-// mysql/postgres), so for sqlite this just confirms the canonical tables
-// exist; expected is ignored and may be empty.
-//
-// For mysql/postgres it compares expected (the latest version embedded in
-// go/migrations/<dialect>/, see the migrations package) against the version
-// recorded in atlas_schema_revisions — the bookkeeping table `atlas migrate
-// apply` creates when a DBA applies the migration files (see go/atlas.hcl;
-// applying the same SQL via a raw mysql/psql client instead skips this
-// bookkeeping, so this check would still report it as unmigrated). A
-// missing table, no applied row, or a version mismatch all fail with a
-// message pointing at the pending migration files.
-func (b *Backend) CheckSchemaVersion(expected string) error {
-	if b.backend == "sqlite" {
-		for _, m := range model.All() {
-			if !b.db.Migrator().HasTable(m) {
-				return fmt.Errorf("sqlite database has no schema yet (missing table for %T) — pass --auto-migrate to initialize it", m)
-			}
+// CheckSchema is the read-only alternative to Migrate: it performs no DDL, and
+// is used at startup when --auto-migrate is not set (see
+// internal/bootstrap.bootstrapSQL). It confirms every canonical table
+// (model.All()) exists — a lightweight existence check for all backends. It
+// does not verify column-level drift; keeping the schema in sync with the
+// models is the operator's job (run with --auto-migrate, or apply the DDL from
+// `nyro migrate dump`/`diff`).
+func (b *Backend) CheckSchema() error {
+	for _, m := range model.All() {
+		if !b.db.Migrator().HasTable(m) {
+			return fmt.Errorf("%s database has no schema yet (missing table for %T) — initialize it with --auto-migrate, or apply the DDL from `nyro migrate dump`/`diff`", b.backend, m)
 		}
-		return nil
-	}
-	// atlas's revisions bookkeeping table lives at "atlas_schema_revisions"
-	// in mysql (same database as the data), but postgres puts it in its own
-	// dedicated schema of the same name — must be schema-qualified there or
-	// it resolves against search_path (typically "public") and 404s.
-	revisionsTable := "atlas_schema_revisions"
-	if b.backend == "postgres" {
-		revisionsTable = "atlas_schema_revisions.atlas_schema_revisions"
-	}
-	var version string
-	if err := b.db.Raw(fmt.Sprintf("SELECT version FROM %s ORDER BY version DESC LIMIT 1", revisionsTable)).Row().Scan(&version); err != nil {
-		return fmt.Errorf("no migrations applied yet on this %s database (expected version %s): ask your DBA to run `atlas migrate apply` on go/migrations/%s/, or pass --auto-migrate if this account has DDL rights (%w)", b.backend, expected, b.backend, err)
-	}
-	if version != expected {
-		return fmt.Errorf("%s schema version mismatch: database is at %s, this binary expects %s — ask your DBA to run `atlas migrate apply` for the pending files under go/migrations/%s/", b.backend, version, expected, b.backend)
 	}
 	return nil
 }
