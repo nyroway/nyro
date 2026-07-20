@@ -69,9 +69,11 @@ The "current schema" comes from exactly one source:
   database (session `SET`s and psql `\` meta-commands are ignored; only the DDL
   is replayed). **Precise, recommended.**
 - `--target-dsn <ro-dsn>` — a read-only live database, introspected via GORM.
-  **Lossy**: it reconstructs tables/columns/primary keys but not secondary
-  indexes/constraints, so the diff may re-suggest indexes that already exist on
-  the target (review and skip those). The target is only read.
+  It reconstructs tables, columns (type/nullability/default), primary keys, and
+  secondary indexes — so for typical schemas the diff is as clean as
+  `--target-file`. It does not capture foreign keys or check constraints, so a
+  diff may occasionally re-suggest those (review and skip). The target is only
+  read.
 
 `--shadow-dsn` must be the same dialect as the target and point at a dedicated
 scratch database (its model tables are dropped before each run). Omit it for
@@ -112,8 +114,9 @@ in any schema-tool dependency.
   quirks — handle rare destructive changes with a hand-written one-off SQL.
 - **`dump` needs a live dialect connection** (read-only): pure GORM can't render
   mysql/postgres DDL fully offline. sqlite uses an in-memory connection.
-- **`diff --target-dsn` is lossy** (indexes/constraints) — prefer
-  `--target-file` when precision matters.
+- **`diff --target-dsn`** reconstructs tables/columns/defaults/PKs/indexes via
+  introspection but not foreign keys or check constraints — prefer
+  `--target-file` when absolute precision matters.
 
 ## Out of scope
 

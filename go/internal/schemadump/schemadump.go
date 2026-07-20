@@ -93,11 +93,12 @@ func Diff(shadow *gorm.DB, currentSchemaSQL string) (string, error) {
 // introspection. Used by `nyro migrate diff --target-dsn` to seed the shadow
 // with the target's current state.
 //
-// It is deliberately lossy: it reconstructs columns (name, type, nullability)
-// but NOT indexes, constraints, or defaults — so a diff computed against it may
-// re-suggest indexes/constraints that already exist on the target (review and
-// skip those). Prefer `--target-file` with an exact schema dump when precision
-// matters. target is only read (introspection SELECTs), never written.
+// It reconstructs tables, columns (name, type, nullability, default), primary
+// keys, and secondary indexes. It does not capture foreign keys or check
+// constraints, and its default/type reconstruction relies on GORM
+// introspection, so a diff may occasionally still re-suggest something — prefer
+// `--target-file` with an exact schema dump when precision matters. target is
+// only read (introspection SELECTs), never written.
 func IntrospectSchema(target *gorm.DB) (string, error) {
 	m := target.Migrator()
 	quote := func(s string) string {
@@ -124,24 +125,58 @@ func IntrospectSchema(target *gorm.DB) (string, error) {
 			if ct, ok := c.ColumnType(); ok && ct != "" {
 				typ = ct
 			}
-			nullable := ""
+			def := quote(c.Name()) + " " + typ
 			if n, ok := c.Nullable(); ok && !n {
-				nullable = " NOT NULL"
+				def += " NOT NULL"
 			}
-			defs = append(defs, fmt.Sprintf("%s %s%s", quote(c.Name()), typ, nullable))
+			if dv, ok := c.DefaultValue(); ok && dv != "" {
+				def += " DEFAULT " + formatDefault(dv, typ)
+			}
+			defs = append(defs, def)
 			if isPK, ok := c.PrimaryKey(); ok && isPK {
 				pk = append(pk, quote(c.Name()))
 			}
 		}
-		// Capture the primary key (the one constraint whose absence forces a
-		// full table recreate on the diff). Indexes/other constraints remain
-		// lossy — see the doc comment.
 		if len(pk) > 0 {
 			defs = append(defs, fmt.Sprintf("PRIMARY KEY (%s)", strings.Join(pk, ", ")))
 		}
 		out = append(out, fmt.Sprintf("CREATE TABLE %s (%s);", quote(table), strings.Join(defs, ", ")))
+
+		// Secondary indexes (skip the primary-key index — already emitted inline).
+		idxs, err := m.GetIndexes(mdl)
+		if err != nil {
+			return "", fmt.Errorf("introspect indexes for %s: %w", table, err)
+		}
+		for _, ix := range idxs {
+			if p, ok := ix.PrimaryKey(); ok && p {
+				continue
+			}
+			cols := ix.Columns()
+			qcols := make([]string, len(cols))
+			for i, col := range cols {
+				qcols[i] = quote(col)
+			}
+			kw := "INDEX"
+			if u, ok := ix.Unique(); ok && u {
+				kw = "UNIQUE INDEX"
+			}
+			out = append(out, fmt.Sprintf("CREATE %s %s ON %s (%s);", kw, quote(ix.Name()), quote(table), strings.Join(qcols, ", ")))
+		}
 	}
 	return strings.Join(out, "\n"), nil
+}
+
+// formatDefault renders a column default for reconstruction. GORM returns the
+// raw value (unquoted, no cast) for both mysql and postgres, so string-typed
+// defaults are quoted and numeric/boolean/keyword defaults are used as-is.
+func formatDefault(value, typ string) string {
+	t := strings.ToLower(typ)
+	isString := strings.Contains(t, "char") || strings.Contains(t, "text") ||
+		strings.Contains(t, "clob") || strings.Contains(t, "enum")
+	if isString {
+		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	}
+	return value
 }
 
 // ResetShadow drops every model.All() table from db (reverse order for FK

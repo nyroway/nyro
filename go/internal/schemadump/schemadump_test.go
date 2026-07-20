@@ -146,6 +146,8 @@ func TestIntrospectSchemaRoundTrip(t *testing.T) {
 		"`key`", "`window`", // reserved words must be quoted
 		"PRIMARY KEY (`id`)", "PRIMARY KEY (`key`)",
 		"PRIMARY KEY (`consumer_id`, `route_id`)", // composite PK
+		"DEFAULT", // column defaults reconstructed
+		"CREATE UNIQUE INDEX `idx_upstreams_name`", // secondary indexes reconstructed
 	} {
 		if !strings.Contains(current, want) {
 			t.Fatalf("introspection missing %q:\n%s", want, current)
