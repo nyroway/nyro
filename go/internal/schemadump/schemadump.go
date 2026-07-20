@@ -69,6 +69,13 @@ func Diff(shadow *gorm.DB, currentSchemaSQL string) (string, error) {
 		return "", err
 	}
 	for _, stmt := range SplitStatements(currentSchemaSQL) {
+		// Only replay schema DDL. A real pg_dump/mysqldump also carries session
+		// setup (SET ..., SELECT pg_catalog.set_config('search_path','',...))
+		// that is irrelevant to the schema shape and, in pg_dump's case,
+		// actively breaks a later unqualified CREATE by blanking search_path.
+		if !isDDL(stmt) {
+			continue
+		}
 		if err := shadow.Exec(stmt).Error; err != nil {
 			return "", fmt.Errorf("load current schema into shadow: %w", err)
 		}
@@ -153,14 +160,17 @@ func ResetShadow(db *gorm.DB) error {
 }
 
 // SplitStatements breaks a SQL script into individual statements: it strips
-// full-line "--" comments and splits on ";". Sufficient for schema DDL (no
-// semicolons inside string literals) — the input is a dump/export, not
-// arbitrary SQL with procedures.
+// full-line "--" comments and psql "\" meta-commands (e.g. the \restrict /
+// \unrestrict markers pg_dump emits), then splits on ";". Sufficient for schema
+// DDL from a dump/export (no semicolons inside string literals, no procedure
+// bodies) — it accepts both `nyro migrate dump` output and a real
+// pg_dump/mysqldump schema-only dump.
 func SplitStatements(sqlScript string) []string {
 	var b strings.Builder
 	for _, line := range strings.Split(sqlScript, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "--") {
-			continue
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, `\`) {
+			continue // SQL comment or psql meta-command
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')
@@ -180,14 +190,16 @@ func SplitStatements(sqlScript string) []string {
 func formatDDL(stmts []string) string {
 	var out []string
 	for _, s := range stmts {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		upper := strings.ToUpper(s)
-		if strings.HasPrefix(upper, "CREATE") || strings.HasPrefix(upper, "ALTER") || strings.HasPrefix(upper, "DROP") {
-			out = append(out, s+";")
+		if isDDL(s) {
+			out = append(out, strings.TrimSpace(s)+";")
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// isDDL reports whether s is a schema DDL statement (CREATE/ALTER/DROP),
+// filtering out introspection SELECTs, session SET commands, and blank lines.
+func isDDL(s string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(s))
+	return strings.HasPrefix(upper, "CREATE") || strings.HasPrefix(upper, "ALTER") || strings.HasPrefix(upper, "DROP")
 }

@@ -64,8 +64,10 @@ run on a throwaway is used deliberately — it's exactly what a real apply does.
 
 The "current schema" comes from exactly one source:
 
-- `--target-file <schema.sql>` — an exact schema dump (e.g. a previous `dump`
-  output). **Precise, recommended.**
+- `--target-file <schema.sql>` — an exact schema dump: a previous `nyro migrate
+  dump` output, or a `pg_dump --schema-only` / `mysqldump --no-data` of the live
+  database (session `SET`s and psql `\` meta-commands are ignored; only the DDL
+  is replayed). **Precise, recommended.**
 - `--target-dsn <ro-dsn>` — a read-only live database, introspected via GORM.
   **Lossy**: it reconstructs tables/columns/primary keys but not secondary
   indexes/constraints, so the diff may re-suggest indexes that already exist on

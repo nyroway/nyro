@@ -99,6 +99,34 @@ func TestDiffDetectsMissingTable(t *testing.T) {
 	}
 }
 
+func TestSplitStatementsSkipsPsqlMetaCommands(t *testing.T) {
+	// Real pg_dump (pg16) emits \restrict/\unrestrict meta-commands, SET lines,
+	// and -- comments alongside the DDL.
+	script := `--
+-- PostgreSQL database dump
+--
+\restrict SomeOpaqueToken
+SET statement_timeout = 0;
+CREATE TABLE "upstreams" ("id" text, PRIMARY KEY ("id"));
+\unrestrict SomeOpaqueToken
+`
+	stmts := SplitStatements(script)
+	for _, s := range stmts {
+		if strings.HasPrefix(s, `\`) || strings.HasPrefix(s, "--") {
+			t.Fatalf("meta-command/comment leaked into statements: %q", s)
+		}
+	}
+	var hasCreate bool
+	for _, s := range stmts {
+		if strings.Contains(s, "CREATE TABLE") {
+			hasCreate = true
+		}
+	}
+	if !hasCreate {
+		t.Fatalf("CREATE TABLE dropped: %#v", stmts)
+	}
+}
+
 func TestIntrospectSchemaRoundTrip(t *testing.T) {
 	target := memDB(t)
 	if err := target.AutoMigrate(model.All()...); err != nil {
