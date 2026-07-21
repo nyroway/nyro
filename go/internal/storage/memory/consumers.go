@@ -18,6 +18,11 @@ func (b *Backend) consumerWithDetails(c storage.Consumer) storage.Consumer {
 	var keys []storage.ConsumerKey
 	for _, k := range b.consumerKeys {
 		if k.ConsumerID == c.ID {
+			// For plaintext-stored keys, expose the recoverable raw key on read
+			// paths via Token (matches the database backend's convert path).
+			if k.KeyPlaintext != "" {
+				k.Token = k.KeyPlaintext
+			}
 			keys = append(keys, k)
 		}
 	}
@@ -63,6 +68,9 @@ func (b *Backend) createConsumerKey(consumerID string, in storage.CreateConsumer
 	k := storage.ConsumerKey{
 		ID: newID(), ConsumerID: consumerID, Name: in.Name, KeyPreview: preview, KeyHash: hash,
 		Enabled: enabled, ExpiresAt: in.ExpiresAt, CreatedAt: now, UpdatedAt: now,
+	}
+	if b.plaintextKeys {
+		k.KeyPlaintext = raw
 	}
 	b.consumerKeys[k.ID] = k
 	k.Token = raw
@@ -333,8 +341,11 @@ func (s consumerStore) UpdateKey(keyID string, in storage.UpdateConsumerKey) (st
 		k.ExpiresAt = *in.ExpiresAt
 	}
 	k.UpdatedAt = nowISO()
-	k.Token = ""
 	s.b.consumerKeys[keyID] = k
+	// Return Token only for plaintext-stored keys (recoverable); hash-only keys
+	// never expose a raw token on read/update paths. The stored map entry keeps
+	// Token empty — it is a transient response field.
+	k.Token = k.KeyPlaintext
 	return k, nil
 }
 

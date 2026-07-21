@@ -158,18 +158,25 @@ func stringSliceToJSON(v []string) string {
 }
 
 func consumerKeyFromModel(m *model.ConsumerKey) storage.ConsumerKey {
-	return storage.ConsumerKey{
-		ID:         m.ID,
-		ConsumerID: m.ConsumerID,
-		Name:       m.Name,
-		KeyPreview: m.KeyPreview,
-		KeyHash:    m.KeyHash,
-		Enabled:    m.Enabled,
-		ExpiresAt:  m.ExpiresAt,
-		LastUsedAt: m.LastUsedAt,
-		CreatedAt:  m.CreatedAt,
-		UpdatedAt:  m.UpdatedAt,
+	k := storage.ConsumerKey{
+		ID:           m.ID,
+		ConsumerID:   m.ConsumerID,
+		Name:         m.Name,
+		KeyPreview:   m.KeyPreview,
+		KeyHash:      m.KeyHash,
+		KeyPlaintext: m.KeyPlaintext,
+		Enabled:      m.Enabled,
+		ExpiresAt:    m.ExpiresAt,
+		LastUsedAt:   m.LastUsedAt,
+		CreatedAt:    m.CreatedAt,
+		UpdatedAt:    m.UpdatedAt,
 	}
+	// For plaintext-stored keys, expose the recoverable raw key on read paths
+	// via Token (create sets Token to the same value explicitly).
+	if k.KeyPlaintext != "" {
+		k.Token = k.KeyPlaintext
+	}
+	return k
 }
 
 func consumerQuotaFromModel(m *model.ConsumerQuota) storage.ConsumerQuota {

@@ -8,6 +8,7 @@ import {
   ScrollText,
   BarChart3,
   KeyRound,
+  Plug,
   ChevronLeft,
   Settings,
   MessageSquarePlus,
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { label: "Providers", path: "/providers", icon: Server },
   { label: "Models", path: "/models", icon: Route },
   { label: "API Keys", path: "/api-keys", icon: KeyRound },
+  { label: "Connect", path: "/connect", icon: Plug },
   { label: "Nodes", path: "/nodes", icon: Network },
   { type: "divider" as const },
   { label: "Logs", path: "/logs", icon: ScrollText },
@@ -128,13 +130,15 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                           ? "模型"
                           : label === "API Keys"
                             ? "秘钥"
-                            : label === "Nodes"
-                              ? "节点"
-                              : label === "Logs"
-                                ? "日志"
-                                : label === "Stats"
-                                  ? "统计"
-                                  : "系统设置"
+                            : label === "Connect"
+                              ? "接入"
+                              : label === "Nodes"
+                                ? "节点"
+                                : label === "Logs"
+                                  ? "日志"
+                                  : label === "Stats"
+                                    ? "统计"
+                                    : "系统设置"
                     : label}
                 </span>
               )}

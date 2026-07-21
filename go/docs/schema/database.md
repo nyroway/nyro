@@ -81,6 +81,7 @@ CREATE TABLE consumer_keys (
   name TEXT NOT NULL,
   key_preview TEXT NOT NULL,
   key_hash TEXT NOT NULL,
+  key_plaintext TEXT,            -- recoverable raw key; set only under admin --plaintext-keys, else empty
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   expires_at TEXT,
   last_used_at TEXT,

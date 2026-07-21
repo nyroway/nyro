@@ -9,13 +9,17 @@ import (
 
 // keyPreviewLeadLen and keyPreviewTrailLen are the number of raw-key
 // characters persisted as KeyPreview (leading+trailing, concatenated). The
-// leading slice alone is also what KeyAuthStore.FindKey uses to narrow
+// whole concatenated preview is also what KeyAuthStore.FindKey uses to narrow
 // candidates before a hash compare — auth time always has the full raw key,
 // so it derives the identical leading+trailing slice and does an exact-match
 // lookup against the stored value, preserving the same indexed-equality
-// lookup behavior as before this field also carried a trailing slice.
+// lookup behavior.
+//
+// The lead length is 9 so the preview keeps the "sk-" prefix plus the first 6
+// key characters; the UI renders it as "sk-xxxxxx******xxxxxx" (a fixed run of
+// mask characters added at display time, never persisted).
 const (
-	keyPreviewLeadLen  = 12
+	keyPreviewLeadLen  = 9
 	keyPreviewTrailLen = 6
 )
 

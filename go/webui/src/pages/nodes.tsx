@@ -5,6 +5,7 @@ import { backend } from "@/lib/backend";
 import type { GatewayNode } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 import { formatUptime } from "@/lib/format";
+import { formatServiceAddress } from "@/lib/service-address";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // The absolute connect timestamp is only shown on hover (the cell itself shows
@@ -29,36 +30,6 @@ function connModeBadge(mode: string | undefined, isZh: boolean) {
     default:
       return { Icon: LockOpen, label: isZh ? "明文" : "Plaintext", className: "text-slate-400" };
   }
-}
-
-// remote_addr is the config-sync gRPC connection's peer address (host +
-// ephemeral source port) — the port has no relation to the gateway's own
-// service port, so it's stripped here to avoid misleading readers.
-function formatAddressHost(addr: string) {
-  if (!addr) return "";
-  if (addr.startsWith("[")) {
-    // Bracketed IPv6, e.g. "[::1]:54321" -> "[::1]".
-    const bracketEnd = addr.indexOf("]");
-    return bracketEnd >= 0 ? addr.slice(0, bracketEnd + 1) : addr;
-  }
-  const lastColon = addr.lastIndexOf(":");
-  if (lastColon <= 0) return addr;
-  return addr.slice(0, lastColon);
-}
-
-// formatServiceAddress combines the two independently-sourced pieces that
-// together make up "where this gateway actually serves traffic": the host
-// from remote_addr (the real gRPC peer IP, observed by admin) and the port
-// from service_port (self-reported by the gateway from its own --listen).
-// Either can be missing on its own (an older gateway build, or a connection
-// still mid-handshake), so each falls back independently rather than the
-// whole cell collapsing to "-" when only one side is present.
-function formatServiceAddress(remoteAddr: string, servicePort: string) {
-  const host = formatAddressHost(remoteAddr);
-  if (!host && !servicePort) return "-";
-  if (!host) return `:${servicePort}`;
-  if (!servicePort) return host;
-  return `${host}:${servicePort}`;
 }
 
 // CopyButton copies `value` to the clipboard and briefly swaps its icon to a

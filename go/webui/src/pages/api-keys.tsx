@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatKeyPreview } from "@/lib/format";
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Info,
   KeyRound,
   Pencil,
@@ -57,6 +59,33 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const PAGE_SIZE = 7;
+
+// CopyFullKeyButton copies a recoverable raw key (present only when the admin
+// runs with --plaintext-keys) to the clipboard, briefly swapping its icon to a
+// check as feedback. Module-scope so it can own per-row state without breaking
+// the rules-of-hooks in the renderKeyRow map callback.
+function CopyFullKeyButton({ token, isZh }: { token: string; isZh: boolean }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title={copied ? (isZh ? "已复制" : "Copied") : isZh ? "复制完整 Key" : "Copy full key"}
+      aria-label={isZh ? "复制完整 Key" : "Copy full key"}
+      className="inline-flex text-slate-400 transition-colors hover:text-slate-600"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(token);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          // Clipboard may be unavailable (insecure context); ignore silently.
+        }
+      }}
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
 
 type ExpirePreset = "never" | "1d" | "7d" | "30d" | "90d" | "180d" | "1y";
 
@@ -869,20 +898,26 @@ export default function ApiKeysPage() {
   // per-key add/delete.
   function renderKeyRow(consumer: Consumer, key: ConsumerKey) {
     const keyExpired = isApiKeyExpired(key.expires_at);
+    // key.token is only present on read when admin runs with --plaintext-keys
+    // (recoverable storage); otherwise the full key is shown once at creation.
+    const recoverableToken = key.token;
     return (
       <div key={key.id} className="flex items-center justify-between rounded-xl bg-slate-50/60 p-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="inline-flex h-5 items-center text-xs text-slate-800">{key.name}</span>
           <code
             title={
-              isZh
-                ? "完整 Key 仅在创建/新增/重新生成时展示一次，此处仅展示部分字符，无法复制完整 Key"
-                : "Full key is shown once on create/add/regenerate; this is a partial preview and cannot be copied here"
+              recoverableToken
+                ? (isZh ? "明文存储已开启，可复制完整 Key" : "Plaintext storage is on; the full key can be copied")
+                : isZh
+                  ? "完整 Key 仅在创建/新增/重新生成时展示一次，此处仅展示部分字符，无法复制完整 Key"
+                  : "Full key is shown once on create/add/regenerate; this is a partial preview and cannot be copied here"
             }
             className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600"
           >
             {formatKeyPreview(key.key_preview)}
           </code>
+          {recoverableToken && <CopyFullKeyButton token={recoverableToken} isZh={isZh} />}
           {!key.enabled && (
             <Badge variant="danger" className="connect-label-badge">
               {isZh ? "已禁用" : "Disabled"}

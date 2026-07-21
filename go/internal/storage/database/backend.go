@@ -20,7 +20,16 @@ type Backend struct {
 	backend string
 	db      *gorm.DB
 	q       *query.Query
+	// plaintextKeys, when true, stores the recoverable raw key alongside the
+	// hash on creation so it can be retrieved later. Set once at startup via
+	// SetPlaintextKeys; default false (hash-only).
+	plaintextKeys bool
 }
+
+// SetPlaintextKeys toggles recoverable plaintext key storage. It is set once
+// at startup (from the admin's --plaintext-keys flag) before the backend
+// serves any request.
+func (b *Backend) SetPlaintextKeys(v bool) { b.plaintextKeys = v }
 
 // NewSQLite opens a SQLite database and returns a shared SQL backend.
 func NewSQLite(path string) (*Backend, error) {
@@ -106,7 +115,9 @@ func (b *Backend) Upstreams() storage.UpstreamStore { return upstreamStore{q: b.
 func (b *Backend) Routes() storage.RouteStore { return routeStore{q: b.q} }
 
 // Consumers returns the config-schema consumer store.
-func (b *Backend) Consumers() storage.ConsumerStore { return consumerStore{q: b.q} }
+func (b *Backend) Consumers() storage.ConsumerStore {
+	return consumerStore{q: b.q, plaintextKeys: b.plaintextKeys}
+}
 
 // Auth returns the config-schema inbound key-auth read path.
 func (b *Backend) Auth() storage.KeyAuthStore { return keyAuthStore{q: b.q} }

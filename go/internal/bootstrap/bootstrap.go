@@ -88,7 +88,12 @@ func mysqlURLToGormDSN(dsn string) (string, error) {
 // database engine. When false, the backend instead gets a read-only schema
 // check (Backend.CheckSchema): it confirms the canonical tables already exist
 // (all backends), without doing any DDL.
-func OpenStorageFromDSN(dsn string, autoMigrate bool) (storage.Storage, error) {
+//
+// plaintextKeys, when true, makes the backend store the recoverable raw API
+// key alongside its hash on creation, so keys can be retrieved after creation
+// (e.g. to display/copy a full key in the UI). Default false (hash-only); it
+// never affects the inbound auth path, which always compares hashes.
+func OpenStorageFromDSN(dsn string, autoMigrate, plaintextKeys bool) (storage.Storage, error) {
 	backend, driverDSN, err := ParseDSN(dsn)
 	if err != nil {
 		return nil, err
@@ -99,18 +104,21 @@ func OpenStorageFromDSN(dsn string, autoMigrate bool) (storage.Storage, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open sqlite: %w", err)
 		}
+		b.SetPlaintextKeys(plaintextKeys)
 		return bootstrapSQL(b, autoMigrate)
 	case "postgres":
 		b, err := database.NewPostgres(driverDSN)
 		if err != nil {
 			return nil, fmt.Errorf("open postgres: %w", err)
 		}
+		b.SetPlaintextKeys(plaintextKeys)
 		return bootstrapSQL(b, autoMigrate)
 	case "mysql":
 		b, err := database.NewMySQL(driverDSN)
 		if err != nil {
 			return nil, fmt.Errorf("open mysql: %w", err)
 		}
+		b.SetPlaintextKeys(plaintextKeys)
 		return bootstrapSQL(b, autoMigrate)
 	default:
 		return nil, fmt.Errorf("unknown storage backend %q", backend)

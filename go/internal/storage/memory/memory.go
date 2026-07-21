@@ -30,7 +30,17 @@ type Backend struct {
 	consumerRoutes map[string]consumerRouteGrant // synthetic id -> grant
 	consumerQuotas map[string]storage.ConsumerQuota
 	settings       map[string]string
+
+	// plaintextKeys mirrors the database backend: store the recoverable raw
+	// key on creation so it can be retrieved later. Set once at startup via
+	// SetPlaintextKeys; default false (hash-only). Standalone mode leaves this
+	// off — the raw keys already live in the operator's YAML.
+	plaintextKeys bool
 }
+
+// SetPlaintextKeys toggles recoverable plaintext key storage. It is set once
+// at startup before the backend serves any request.
+func (b *Backend) SetPlaintextKeys(v bool) { b.plaintextKeys = v }
 
 // consumerRouteGrant is one consumer_routes row (consumer_id, route_id), kept
 // under a synthetic map key since the pair itself has no natural single key

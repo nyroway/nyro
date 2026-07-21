@@ -12,7 +12,12 @@ import (
 	"github.com/nyroway/nyro/go/internal/storage/query"
 )
 
-type consumerStore struct{ q *query.Query }
+type consumerStore struct {
+	q *query.Query
+	// plaintextKeys mirrors Backend.plaintextKeys: store the recoverable raw
+	// key alongside the hash when creating keys.
+	plaintextKeys bool
+}
 
 func (s consumerStore) loadDetails(ctx context.Context, tx *query.Query, c *model.Consumer) (storage.Consumer, error) {
 	out := consumerFromModel(c)
@@ -133,7 +138,7 @@ func (s consumerStore) Create(in storage.CreateConsumer) (storage.Consumer, erro
 		// since raw tokens are never persisted.
 		createdKeys := make([]storage.ConsumerKey, 0, len(in.Keys))
 		for _, k := range in.Keys {
-			ck, err := createConsumerKey(ctx, tx, c.ID, k)
+			ck, err := createConsumerKey(ctx, tx, c.ID, k, s.plaintextKeys)
 			if err != nil {
 				return err
 			}
@@ -170,10 +175,11 @@ func (s consumerStore) Create(in storage.CreateConsumer) (storage.Consumer, erro
 	return out, err
 }
 
-// createConsumerKey generates (or accepts) a raw token, persists only its
-// prefix+hash, and returns the DTO with Token populated (the one-time plaintext
-// exposure at creation).
-func createConsumerKey(ctx context.Context, tx *query.Query, consumerID string, in storage.CreateConsumerKey) (storage.ConsumerKey, error) {
+// createConsumerKey generates (or accepts) a raw token, persists its
+// prefix+hash (and, when plaintextKeys is set, the recoverable raw key), and
+// returns the DTO with Token populated (the one-time plaintext exposure at
+// creation).
+func createConsumerKey(ctx context.Context, tx *query.Query, consumerID string, in storage.CreateConsumerKey, plaintextKeys bool) (storage.ConsumerKey, error) {
 	now := nowISO()
 	raw := in.Token
 	var preview, hash string
@@ -201,6 +207,9 @@ func createConsumerKey(ctx context.Context, tx *query.Query, consumerID string, 
 		ExpiresAt:  in.ExpiresAt,
 		CreatedAt:  now,
 		UpdatedAt:  now,
+	}
+	if plaintextKeys {
+		k.KeyPlaintext = raw
 	}
 	if err := tx.ConsumerKey.WithContext(ctx).Create(k); err != nil {
 		return storage.ConsumerKey{}, err
@@ -384,7 +393,7 @@ func (s consumerStore) AddKey(consumerID string, in storage.CreateConsumerKey) (
 		if _, err := tx.Consumer.WithContext(ctx).Where(tx.Consumer.ID.Eq(consumerID)).First(); err != nil {
 			return err
 		}
-		ck, err := createConsumerKey(ctx, tx, consumerID, in)
+		ck, err := createConsumerKey(ctx, tx, consumerID, in, s.plaintextKeys)
 		if err != nil {
 			return err
 		}

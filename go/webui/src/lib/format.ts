@@ -118,17 +118,23 @@ export function tryPrettyJson(raw: string | null | undefined): string {
 /** Backend only ever returns a masked key_preview (leading 12 + trailing 6
  *  characters of the raw key, concatenated — never the full plaintext, except
  *  the one-time reveal right after create/add/regenerate). This renders it as
- *  "sk-abc123************************abc123": a fixed-length mask so the
- *  asterisk run never hints at the real key's length. Shared by the API-keys
- *  page and the request-log table so a preview looks the same everywhere. */
+ *  "sk-abc123******abc123": the backend persists the preview as lead(9)+trail(6)
+ *  with no middle, and this inserts a fixed-length mask between them so it reads
+ *  as a masked key without hinting at the real key's length. Shared by the
+ *  API-keys page, Connect page, and request-log table so a preview looks the
+ *  same everywhere. */
 const KEY_PREVIEW_LEAD_VISIBLE = 9;
 const KEY_PREVIEW_TRAIL_VISIBLE = 6;
-const KEY_PREVIEW_MASK_LEN = 28;
+const KEY_PREVIEW_MASK_LEN = 6;
 
 export function formatKeyPreview(preview: string | undefined | null): string {
   const trimmed = (preview ?? "").trim();
   if (!trimmed) return "sk-";
-  if (trimmed.length <= KEY_PREVIEW_LEAD_VISIBLE + KEY_PREVIEW_TRAIL_VISIBLE) return trimmed;
+  // Strictly-less-than: the canonical preview is exactly lead+trail (15 chars)
+  // with no overlap, so it should be masked; only shorter strings (where the
+  // lead and trail slices would overlap and duplicate characters) render
+  // verbatim.
+  if (trimmed.length < KEY_PREVIEW_LEAD_VISIBLE + KEY_PREVIEW_TRAIL_VISIBLE) return trimmed;
   const lead = trimmed.slice(0, KEY_PREVIEW_LEAD_VISIBLE);
   const trail = trimmed.slice(-KEY_PREVIEW_TRAIL_VISIBLE);
   return `${lead}${"*".repeat(KEY_PREVIEW_MASK_LEN)}${trail}`;

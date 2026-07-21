@@ -46,9 +46,15 @@ type ConsumerKey struct {
 	Name       string `json:"name"`
 	KeyPreview string `json:"key_preview"`
 	KeyHash    string `json:"-"` // never serialized
-	// Token carries the raw key exactly once, in the response to the create
-	// call that generated it. It is never populated on read paths (List/Get)
-	// and never persisted.
+	// KeyPlaintext holds the recoverable raw key, populated on read paths only
+	// when the admin was started with --plaintext-keys (which stores the
+	// plaintext alongside the hash). It is empty for hash-only keys (the
+	// default) and never serialized directly; when non-empty a store copies it
+	// into Token so callers can retrieve the full key after creation.
+	KeyPlaintext string `json:"-"`
+	// Token carries the raw key: exactly once in the create response, and — for
+	// keys stored with --plaintext-keys — also on read paths (List/Get), copied
+	// from KeyPlaintext. It is empty for hash-only keys on read.
 	Token      string `json:"token,omitempty"`
 	Enabled    bool   `json:"enabled"`
 	ExpiresAt  string `json:"expires_at,omitempty"`

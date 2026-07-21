@@ -73,11 +73,15 @@ type ConsumerKey struct {
 	Name       string `gorm:"column:name;not null;uniqueIndex:idx_consumer_key_name;size:255"`
 	KeyPreview string `gorm:"column:key_preview;not null;index;size:191"`
 	KeyHash    string `gorm:"column:key_hash;not null"`
-	Enabled    bool   `gorm:"column:enabled;not null;default:true"`
-	ExpiresAt  string `gorm:"column:expires_at"`
-	LastUsedAt string `gorm:"column:last_used_at"`
-	CreatedAt  string `gorm:"column:created_at;not null"`
-	UpdatedAt  string `gorm:"column:updated_at;not null"`
+	// KeyPlaintext stores the recoverable raw key when the admin runs with
+	// --plaintext-keys; empty (hash-only) by default. Never sent to gateways
+	// over config-sync.
+	KeyPlaintext string `gorm:"column:key_plaintext"`
+	Enabled      bool   `gorm:"column:enabled;not null;default:true"`
+	ExpiresAt    string `gorm:"column:expires_at"`
+	LastUsedAt   string `gorm:"column:last_used_at"`
+	CreatedAt    string `gorm:"column:created_at;not null"`
+	UpdatedAt    string `gorm:"column:updated_at;not null"`
 }
 
 func (ConsumerKey) TableName() string { return "consumer_keys" }
