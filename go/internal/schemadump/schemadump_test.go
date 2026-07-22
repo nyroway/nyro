@@ -156,7 +156,7 @@ func TestIntrospectSchemaRoundTrip(t *testing.T) {
 	// The introspected script must be loadable (Diff execs it into a shadow).
 	// On sqlite, type-affinity round-tripping (bool→numeric) can still trigger
 	// a recreate, so we only assert it runs without error — precise diff
-	// cleanliness against mysql/postgres is covered by the docker e2e.
+	// cleanliness against postgres is covered by the docker e2e.
 	shadow := memDB(t)
 	if _, err := Diff(shadow, current); err != nil {
 		t.Fatalf("Diff against introspected schema errored: %v", err)

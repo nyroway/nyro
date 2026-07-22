@@ -67,7 +67,7 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("config-tls-key", "", "config-sync mTLS: path to admin's server private key")
 	cmd.Flags().String("token", "", "Bearer token protecting /api/v1 admin routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
-	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s), postgres://..., or mysql://...", defaultDSN()))
+	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s) or postgres://...", defaultDSN()))
 	cmd.Flags().Bool("auto-migrate", false, "let nyro create/alter the schema itself via GORM AutoMigrate (requires DDL rights on --dsn); default false regardless of backend — without it, nyro only verifies the canonical tables exist, and a DBA applies the DDL from `nyro migrate dump`/`diff` (see go/docs/schema/migrations.md)")
 	cmd.Flags().Bool("plaintext-keys", false, "store the recoverable raw API key alongside its hash so full keys can be retrieved/copied after creation; default false (hash-only, keys shown once at creation). Never affects inbound auth (always hash-compared) and is never sent to gateways over config-sync")
 	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for admin-local observability parquet data (logs/metrics/traces)")

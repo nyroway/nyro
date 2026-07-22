@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -21,8 +20,8 @@ import (
 )
 
 // ParseDSN parses a --dsn value into a storage backend name and the
-// driver-native DSN that backend's constructor (NewSQLite/NewPostgres/
-// NewMySQL) expects. Recognized schemes:
+// driver-native DSN that backend's constructor (NewSQLite/NewPostgres)
+// expects. Recognized schemes:
 //   - "sqlite://<path>": path is everything after "sqlite://" verbatim, so
 //     an absolute path is "sqlite:///abs/x.db", a relative path is
 //     "sqlite://./x.db", and an in-memory DB is "sqlite://:memory:".
@@ -30,52 +29,18 @@ import (
 //     driver (pgx) accepts the URL form natively. "postgresql://" (the other
 //     libpq-recognized alias) is deliberately not accepted, to keep exactly
 //     one spelling per backend.
-//   - "mysql://user:pass@host:port/db?params": converted to gorm's mysql
-//     DSN form "user:pass@tcp(host:port)/db?params" (defaulting the port to
-//     3306 when omitted).
 //
-// Any other scheme (including "memory://" and "postgresql://") is a hard
-// error — there is no ephemeral backend reachable through --dsn.
+// Any other scheme (including "mysql://", "memory://" and "postgresql://") is
+// a hard error — there is no ephemeral backend reachable through --dsn.
 func ParseDSN(dsn string) (string, string, error) {
 	switch {
 	case strings.HasPrefix(dsn, "sqlite://"):
 		return "sqlite", strings.TrimPrefix(dsn, "sqlite://"), nil
 	case strings.HasPrefix(dsn, "postgres://"):
 		return "postgres", dsn, nil
-	case strings.HasPrefix(dsn, "mysql://"):
-		driverDSN, err := mysqlURLToGormDSN(dsn)
-		if err != nil {
-			return "", "", fmt.Errorf("parse mysql dsn: %w", err)
-		}
-		return "mysql", driverDSN, nil
 	default:
-		return "", "", fmt.Errorf("unrecognized --dsn scheme %q (want sqlite://, postgres://, or mysql://)", dsn)
+		return "", "", fmt.Errorf("unrecognized --dsn scheme %q (want sqlite:// or postgres://)", dsn)
 	}
-}
-
-// mysqlURLToGormDSN converts a "mysql://user:pass@host:port/db?params" URL
-// into gorm's mysql driver DSN form "user:pass@tcp(host:port)/db?params",
-// defaulting the port to 3306 when the URL omits it.
-func mysqlURLToGormDSN(dsn string) (string, error) {
-	u, err := url.Parse(dsn)
-	if err != nil {
-		return "", err
-	}
-	host := u.Hostname()
-	port := u.Port()
-	if port == "" {
-		port = "3306"
-	}
-	var userinfo string
-	if u.User != nil {
-		userinfo = u.User.String()
-	}
-	db := strings.TrimPrefix(u.Path, "/")
-	driverDSN := fmt.Sprintf("%s@tcp(%s:%s)/%s", userinfo, host, port, db)
-	if u.RawQuery != "" {
-		driverDSN += "?" + u.RawQuery
-	}
-	return driverDSN, nil
 }
 
 // OpenStorageFromDSN parses dsn via ParseDSN and opens the resulting
@@ -110,13 +75,6 @@ func OpenStorageFromDSN(dsn string, autoMigrate, plaintextKeys bool) (storage.St
 		b, err := database.NewPostgres(driverDSN)
 		if err != nil {
 			return nil, fmt.Errorf("open postgres: %w", err)
-		}
-		b.SetPlaintextKeys(plaintextKeys)
-		return bootstrapSQL(b, autoMigrate)
-	case "mysql":
-		b, err := database.NewMySQL(driverDSN)
-		if err != nil {
-			return nil, fmt.Errorf("open mysql: %w", err)
 		}
 		b.SetPlaintextKeys(plaintextKeys)
 		return bootstrapSQL(b, autoMigrate)

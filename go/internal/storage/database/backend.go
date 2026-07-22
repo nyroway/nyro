@@ -1,12 +1,11 @@
-// Package database implements the shared SQL storage backend for SQLite,
-// MySQL, and Postgres.
+// Package database implements the shared SQL storage backend for SQLite and
+// Postgres.
 package database
 
 import (
 	"fmt"
 
 	sqlite "github.com/glebarez/sqlite"
-	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -45,15 +44,6 @@ func NewSQLite(path string) (*Backend, error) {
 	db.Exec("PRAGMA journal_mode=WAL")
 	db.Exec("PRAGMA busy_timeout=5000")
 	return &Backend{backend: "sqlite", db: db, q: query.Use(db)}, nil
-}
-
-// NewMySQL opens a MySQL database and returns a shared SQL backend.
-func NewMySQL(dsn string) (*Backend, error) {
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil {
-		return nil, err
-	}
-	return &Backend{backend: "mysql", db: db, q: query.Use(db)}, nil
 }
 
 // NewPostgres opens a Postgres database and returns a shared SQL backend.

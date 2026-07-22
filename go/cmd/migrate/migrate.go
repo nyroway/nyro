@@ -28,7 +28,7 @@ import (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate",
-		Short: "Render and diff the mysql/postgres schema DDL (GORM-only)",
+		Short: "Render and diff the postgres schema DDL (GORM-only)",
 	}
 	cmd.AddCommand(newDumpCmd())
 	cmd.AddCommand(newDiffCmd())
@@ -41,7 +41,7 @@ func newDumpCmd() *cobra.Command {
 		Short: "Print the full CREATE DDL for the models (fresh-database schema)",
 		Long: "Renders model.All() to CREATE DDL in --dsn's dialect via a DryRun " +
 			"session — nothing is executed, so a read-only account is fine. --dsn " +
-			"only selects the dialect (mysql/postgres); omit it for sqlite (in-memory).",
+			"only selects the dialect (postgres); omit it for sqlite (in-memory).",
 	}
 	dsn := cmd.Flags().String("dsn", "", "a reachable DB of the target dialect (read-only ok) whose dialect selects the DDL; sqlite in-memory if omitted")
 	output := cmd.Flags().String("output", "", "write SQL to this file instead of stdout")
@@ -130,8 +130,6 @@ func openGorm(dsn string) (*gorm.DB, error) {
 		b, err = database.NewSQLite(driverDSN)
 	case "postgres":
 		b, err = database.NewPostgres(driverDSN)
-	case "mysql":
-		b, err = database.NewMySQL(driverDSN)
 	default:
 		return nil, fmt.Errorf("unknown backend %q", backend)
 	}

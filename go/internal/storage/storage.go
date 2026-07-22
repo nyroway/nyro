@@ -9,7 +9,7 @@ var ErrNotFound = errors.New("storage: not found")
 
 // StorageHealth describes a backend's runtime status.
 type StorageHealth struct {
-	Backend          string // "sqlite" | "postgres" | "mysql" | "memory"
+	Backend          string // "sqlite" | "postgres" | "memory"
 	CanConnect       bool
 	SchemaCompatible bool
 	Writable         bool

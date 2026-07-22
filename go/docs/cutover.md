@@ -38,7 +38,7 @@ go build -o /tmp/nyro .
 `--auto-migrate` above lets this first-boot admin create its own (default
 sqlite) schema; drop it once the db already exists. It's off by default
 regardless of backend — see `go/docs/schema/database.md` for the
-mysql/postgres migration workflow.
+postgres migration workflow.
 
 The standalone gateway reads `config.yaml` once at startup; edit the file and
 restart to apply a change. Admin manages its own database, but with
@@ -89,10 +89,10 @@ Connected gateways are visible on the admin at
 `GET /api/v1/nodes` (and the WebUI's Nodes page) — a best-effort, in-memory
 view that reflects only currently-open connections.
 
-For multiple Admin replicas sharing one database (typically PostgreSQL or
-MySQL), set a positive polling interval on every replica so a write handled by
-one is noticed and pushed by the others. Since this is exactly the shared
-mysql/postgres case `go/docs/schema/database.md` covers, apply the schema with
+For multiple Admin replicas sharing one database (typically PostgreSQL), set a
+positive polling interval on every replica so a write handled by one is noticed
+and pushed by the others. Since this is exactly the shared postgres case
+`go/docs/schema/database.md` covers, apply the schema with
 DDL a DBA reviews (print it with `nyro migrate dump`/`diff`; see
 `go/docs/schema/migrations.md`) before first boot instead of passing
 `--auto-migrate` here:

@@ -27,7 +27,7 @@ until parity is reached (P0–P6 migration plan).
 | `internal/plugin/` | `plugin/` | five-phase lifecycle (`OnRequest`/`OnAccess`/`OnUpstream`/`OnResponse`/`OnLog`) |
 | `internal/admin/` | `admin/` | control plane: keys+quotas, models/routing, providers, OAuth, logs/stats, import/export |
 | `internal/auth/` | `auth/` + `admin/oauth.rs` | inbound API key + quotas; outbound OAuth drivers (Claude/Codex/Vertex) |
-| `internal/storage/` | `db/` + `storage/` | `Storage` interface, idempotent migrations, sqlite/pg/mysql/memory |
+| `internal/storage/` | `db/` + `storage/` | `Storage` interface, idempotent migrations, sqlite/pg/memory |
 | `internal/logging/` | `logging/` | async request-log collector + retention |
 | `nyro.go` | `src-server/` + `crates/nyro-tools/` | unified CLI: `nyro gateway` (data plane) / `nyro admin` (control plane) / `nyro tool` (utilities) |
 
@@ -38,7 +38,7 @@ until parity is reached (P0–P6 migration plan).
 | axum | **Gin** (`github.com/gin-gonic/gin`) | full-featured router/middleware; Ollama's `middleware/` is Gin, so a direct cross-reference for protocol-conversion patterns |
 | tokio | goroutines + channels | native |
 | reqwest | `net/http` | |
-| sqlx (sqlite/pg/mysql) | **GORM** (`gorm.io/gorm`) + per-backend drivers | **AutoMigrate OFF** — schema source-of-truth is the migration layer (`deploy/schema/*.sql`); GORM is used for CRUD/struct mapping only |
+| sqlx (sqlite/pg/mysql) | **GORM** (`gorm.io/gorm`) + sqlite/postgres drivers | **AutoMigrate OFF** — schema source-of-truth is the migration layer (`deploy/schema/*.sql`); GORM is used for CRUD/struct mapping only |
 | serde | `encoding/json` + struct tags | |
 | tracing | `log/slog` | stdlib |
 | `inventory` | `init()` + global registry | Go has no link-time registration; codecs/vendors/hooks register at init |
