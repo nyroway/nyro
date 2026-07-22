@@ -4,6 +4,7 @@ package database
 
 import (
 	"fmt"
+	"os"
 
 	sqlite "github.com/glebarez/sqlite"
 	"gorm.io/driver/postgres"
@@ -35,7 +36,7 @@ func NewSQLite(path string) (*Backend, error) {
 	if path == "" {
 		path = ":memory:"
 	}
-	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: newGormLogger(os.Stderr)})
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +49,7 @@ func NewSQLite(path string) (*Backend, error) {
 
 // NewPostgres opens a Postgres database and returns a shared SQL backend.
 func NewPostgres(dsn string) (*Backend, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: newGormLogger(os.Stderr)})
 	if err != nil {
 		return nil, err
 	}
