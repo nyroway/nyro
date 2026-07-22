@@ -461,3 +461,61 @@ func assertGet(t *testing.T, st storage.Storage, key, want string) {
 		t.Errorf("Get(%q) = %q, want %q", key, got, want)
 	}
 }
+
+// The gate is what makes the plan's "no --insecure flag" decision safe: the
+// only rejected combination has two escape hatches, both of which improve
+// security, so there is nothing left for an override flag to be needed for.
+func TestRunE_RefusesNonLoopbackPlaintextConfigSync(t *testing.T) {
+	cmd := NewCmd()
+	if err := cmd.ParseFlags([]string{
+		"--sync-listen=0.0.0.0:19532",
+		"--dsn=memory://",
+	}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE returned nil, want a refusal to expose an unauthenticated plaintext config-sync port")
+	}
+	// The message carries the discoverability a flag would have; if it stops
+	// naming the ways out, operators are stuck with a bare refusal.
+	for _, want := range []string{"--sync-token", "--sync-tls-ca", "loopback"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal does not mention %q:\n%s", want, err)
+		}
+	}
+}
+
+// A join token is one of the two escape hatches, so it must actually get past
+// the gate — the run then fails later on the rejected memory:// DSN, which is
+// enough to prove the gate was cleared.
+func TestRunE_NonLoopbackPlaintextAllowedWithToken(t *testing.T) {
+	cmd := NewCmd()
+	if err := cmd.ParseFlags([]string{
+		"--sync-listen=0.0.0.0:19532",
+		"--sync-token=shared-secret",
+		"--dsn=memory://",
+	}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	err := cmd.RunE(cmd, nil)
+	if err != nil && strings.Contains(err.Error(), "--sync-token") {
+		t.Fatalf("a configured token must clear the plaintext gate, got: %v", err)
+	}
+}
+
+// Loopback is the zero-config default and must stay silent: a warning every
+// single-node user sees on every start is one they learn to ignore.
+func TestRunE_LoopbackPlaintextConfigSyncIsNotGated(t *testing.T) {
+	cmd := NewCmd()
+	if err := cmd.ParseFlags([]string{
+		"--sync-listen=127.0.0.1:19532",
+		"--dsn=memory://",
+	}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	err := cmd.RunE(cmd, nil)
+	if err != nil && strings.Contains(err.Error(), "non-loopback") {
+		t.Fatalf("loopback config-sync must not be gated, got: %v", err)
+	}
+}

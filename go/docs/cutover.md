@@ -48,16 +48,16 @@ simplest isolated shadow setup. The config schema is documented in
 
 To hot-reload the proxy's config from the server instead of a static
 `--config` YAML file, enable the server's config-sync gRPC server and point
-the proxy at it. This channel carries every upstream's `credentials_json`,
-so no TLS paths select plaintext with a security warning, while all three
-`--sync-tls-ca/-cert/-key` paths select mTLS. A partial set or a certificate
-load failure stops startup; there is no downgrade to plaintext. See
+the proxy at it. This channel carries every upstream's `credentials_json`, so
+no TLS paths select plaintext, while all three `--sync-tls-ca/-cert/-key` paths
+select mTLS. A partial set or a certificate load failure stops startup; there
+is no downgrade to plaintext. See
 [config-sync transport and mTLS](security/config-sync-mtls.md) for the full
 `nyro ca` workflow. For same-host shadow testing, plaintext + loopback is the
-fastest path:
+fastest path — and the only one that needs no token:
 
 ```bash
-# control plane, with config-sync enabled (loopback, plaintext + WARN):
+# control plane, with config-sync enabled (loopback plaintext, no token needed):
 /tmp/nyro server --listen 127.0.0.1:19531 \
   --sync-listen 127.0.0.1:19532 --token "$NYRO_SERVER_TOKEN" --auto-migrate
 # data plane, subscribing to config-sync instead of --config:
@@ -65,11 +65,12 @@ fastest path:
   --server 127.0.0.1:19532
 ```
 
-Plaintext can also be used across a tightly controlled trusted network, but
-the warnings remain: provider credentials are unencrypted, the server is not
-authenticated to the proxy, and proxy clients are not authenticated to the
-server. For normal cross-host deployments, sign certificates and configure a
-complete TLS path set on both processes:
+Off-host, plaintext config-sync requires a join token on both sides
+(`--sync-token`): without one the processes refuse to start, because an
+unauthenticated plaintext port hands the full configuration to anyone who can
+reach it. A token still leaves credentials unencrypted in transit and is
+replayable by an observer, so for normal cross-host deployments sign
+certificates and configure a complete TLS path set on both processes:
 
 ```bash
 /tmp/nyro ca init

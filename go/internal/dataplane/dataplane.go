@@ -51,6 +51,11 @@ type Options struct {
 	// Ignored when SyncDialOpts is set (an in-process pipe has no TLS).
 	SyncTLS *tls.Config
 
+	// SyncToken is the join token presented when subscribing, or empty for
+	// none. Never set for the in-process channel, which has no transport to
+	// authenticate across.
+	SyncToken string
+
 	// SyncDialOpts, when non-empty, replaces the client's dial options
 	// wholesale. This is how the in-process channel is selected: pass what
 	// configsync.ServeInProcess returned. Leave nil for a normal TCP dial.
@@ -138,6 +143,7 @@ func Build(ctx context.Context, opts Options) (*proxy.Gateway, *ObsManager, erro
 		if len(opts.SyncDialOpts) > 0 {
 			client.SetDialOptions(opts.SyncDialOpts...)
 		}
+		client.SetJoinToken(opts.SyncToken)
 		go func() { _ = client.Run(ctx) }()
 
 		// Only meaningful for a real TLS dial; WatchExpiry no-ops on a nil

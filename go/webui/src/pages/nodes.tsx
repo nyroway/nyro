@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, Info, Lock, LockOpen, Server } from "lucide-react";
+import { Check, Copy, Info, Lock, LockOpen, Server, ShieldAlert } from "lucide-react";
 import { backend } from "@/lib/backend";
 import type { GatewayNode } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
@@ -20,16 +20,38 @@ function formatConnectedAt(iso: string) {
 
 // connModeBadge maps the config-sync stream's transport security to an icon +
 // label. mTLS (mutually authenticated) reads as the secure baseline (green);
-// server-only TLS is amber; plaintext / unknown shows an open lock.
+// an in-process stream is equally safe by construction — it is this process's
+// own embedded data plane, reached over an in-memory pipe with no socket to
+// intercept. Server-only TLS is amber; plaintext / unknown shows an open lock.
 function connModeBadge(mode: string | undefined, isZh: boolean) {
   switch (mode) {
     case "mtls":
       return { Icon: Lock, label: "mTLS", className: "text-emerald-600" };
+    case "inprocess":
+      return {
+        Icon: Lock,
+        label: isZh ? "进程内（内嵌数据面）" : "In-process (embedded data plane)",
+        className: "text-emerald-600",
+      };
     case "tls":
       return { Icon: Lock, label: "TLS", className: "text-amber-600" };
     default:
       return { Icon: LockOpen, label: isZh ? "明文" : "Plaintext", className: "text-slate-400" };
   }
+}
+
+// A node's identity is only verified under mTLS, where the server derives it
+// from the client certificate's SPIFFE SAN. Over a token-authenticated or
+// plaintext stream the id is whatever the client claimed in Subscribe, so any
+// client that can connect can present any id — a join token authorizes, it does
+// not identify. In-process is trusted for a different reason: the "client" is
+// this same process.
+//
+// Surfacing that distinction matters because an operator reading this table
+// would otherwise treat every id as attested and, for example, use it to decide
+// which node to trust.
+function nodeIdIsVerified(mode: string | undefined) {
+  return mode === "mtls" || mode === "inprocess";
 }
 
 // CopyButton copies `value` to the clipboard and briefly swaps its icon to a
@@ -148,6 +170,25 @@ export default function NodesPage() {
                     <span className="inline-flex items-center gap-2">
                       <Server className="h-3.5 w-3.5 text-purple-600" />
                       {n.node_id || (isZh ? "（未知）" : "(unknown)")}
+                      {!nodeIdIsVerified(n.conn_mode) && (
+                        <TooltipProvider delayDuration={120}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span
+                                className="inline-flex cursor-help text-amber-600"
+                                aria-label={isZh ? "身份未经验证" : "Unverified identity"}
+                              >
+                                <ShieldAlert className="h-3.5 w-3.5" />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {isZh
+                                ? "身份未经验证：该 ID 由节点自行上报，可被伪造。仅 mTLS 会用证书 SAN 校验节点身份；join token 只做准入，不提供身份。"
+                                : "Unverified identity: this ID is self-reported by the node and can be spoofed. Only mTLS verifies it against the certificate SAN; a join token authorizes, it does not identify."}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
                     </span>
                   </td>
                   <td className="px-3 py-2">{n.hostname || "-"}</td>

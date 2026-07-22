@@ -5,18 +5,82 @@ live config snapshot — including every upstream's `credentials_json` — to ev
 connected `nyro proxy` (data plane). Its transport mode is selected only from
 the three `--sync-tls-*` paths:
 
-- **No TLS paths:** plaintext. The server warns that the stream carries
-  upstream credentials without encryption or client authentication; the proxy
-  warns that it has no transport encryption or server authentication.
+- **No TLS paths:** plaintext, allowed on loopback and refused off-host unless
+  a join token is configured (see "The non-loopback plaintext gate").
 - **All three TLS paths:** mTLS. The server requires and verifies a proxy
   client certificate, and the proxy verifies the server's certificate and
   identity.
+
+Authentication is a separate layer from encryption: `--sync-token` gates who
+may subscribe and works with or without TLS, while mTLS additionally gives each
+node a verifiable identity.
 
 Plaintext needs no separate opt-out flag. Supplying only one or two TLS paths
 is a startup error. Supplying all three paths but failing to read or validate
 any certificate or key is also a startup error; Nyro never downgrades a
 requested mTLS configuration to plaintext. Server and proxy must be
 configured for the same mode or their connection cannot be established.
+
+## The non-loopback plaintext gate
+
+The stream carries every upstream's `credentials_json`, and there is no way to
+trim that — a data plane cannot call an upstream without its credentials — so
+an unauthenticated plaintext config-sync port is equivalent to publishing the
+whole configuration to anyone who can reach it.
+
+Nyro therefore **refuses to start** when config-sync would cross a network with
+neither encryption nor authentication:
+
+| Address | Transport | Auth | Behaviour |
+|---|---|---|---|
+| loopback | plaintext | none | starts silently — the single-node default |
+| loopback | plaintext | token | starts silently |
+| non-loopback | plaintext | none | **refuses to start** |
+| non-loopback | plaintext | token | starts, warns the token crosses the wire in the clear |
+| any | mTLS | certificate | starts silently |
+
+The trigger is the address, not whether TLS is configured. Both `--listen` and
+`--sync-listen` default to loopback, so the zero-config single-node path never
+trips the gate — and because loopback no longer emits a plaintext warning, a
+warning that does appear is worth reading.
+
+Server and proxy enforce this symmetrically. The listener is where the exposure
+is created, but a proxy dialling in the clear still pulls credentials across the
+network, so `--server` pointing at a non-loopback address is gated too.
+
+**There is no `--insecure`-style override.** The only rejected combination is
+non-loopback + plaintext + no token, and its escape hatch is to set a token —
+which is itself a security improvement, unlike a flag whose whole function is
+to switch a safety check off. Set `--sync-token`, or configure mTLS, or bind to
+loopback.
+
+> **Containers:** binding loopback inside a container makes the port
+> unreachable from outside it, so any Docker/Kubernetes deployment that exposes
+> config-sync lands in the non-loopback row and **must** set a token or mTLS.
+
+### Join tokens
+
+`--sync-token` is repeatable on the server and accepts any of the configured
+values, so a token can be rotated with no downtime: add the new one, roll the
+proxies onto it, then drop the old one.
+
+```bash
+nyro server --sync-listen 0.0.0.0:19532 --sync-token "$OLD" --sync-token "$NEW"
+nyro proxy --server server.internal:19532 --sync-token "$NEW"
+```
+
+Prefer the environment (`NYRO_SERVER_SYNC_TOKEN`, `NYRO_PROXY_SYNC_TOKEN`) over
+the flag, which exposes the value in `ps`. The same applies to the management
+API's `--token`.
+
+**A token authorizes; it does not identify.** Every holder is equally
+privileged and indistinguishable, and `node_id` stays self-reported — so any
+client that can subscribe can claim any id. The WebUI's node list flags such
+ids as unverified for exactly this reason. Only mTLS yields a per-node identity,
+derived from the client certificate's SPIFFE SAN.
+
+The embedded data plane of `nyro server` needs no token: it subscribes over an
+in-memory pipe with no socket, and is reported as `conn_mode: inprocess`.
 
 > **Naming note.** The subcommands are `server` / `proxy`, but the PKI layer
 > still uses the historical identifiers `admin` / `gateway`: the SPIFFE SANs
@@ -143,6 +207,9 @@ nyro server --sync-listen 127.0.0.1:19532 --auto-migrate
 nyro proxy --listen 127.0.0.1:19530 --server 127.0.0.1:19532
 ```
 
+Both ends are on loopback here, so no token is required. Off-host they are —
+see "The non-loopback plaintext gate".
+
 Add `--proxy-listen=` to the server if that node should not serve traffic
 itself — a control-plane-only node. The proxy's config source must always be
 selected explicitly (`--server` or `--config`).
@@ -163,19 +230,23 @@ Edit the file and restart the proxy to apply changes. `--config` and
 
 ### Trusted-network plaintext
 
-Plaintext can cross hosts, but it exposes provider credentials in transit and
-does not authenticate the server or its proxy clients. Use it only on a
-tightly controlled trusted network:
+Plaintext can cross hosts, but it exposes provider credentials in transit. A
+join token is mandatory here — without one both processes refuse to start (see
+"The non-loopback plaintext gate") — and it only gates who may subscribe: it
+travels in the clear alongside the credentials it protects and can be replayed
+by anyone who observes it. Use this only on a tightly controlled network, and
+prefer mTLS below.
 
 ```bash
+export NYRO_SERVER_SYNC_TOKEN=... NYRO_PROXY_SYNC_TOKEN=...   # same value
+
 nyro server --listen 10.0.0.10:19531 \
   --sync-listen 10.0.0.10:19532 \
   --token "$NYRO_SERVER_TOKEN" --auto-migrate
 nyro proxy --server 10.0.0.10:19532
 ```
 
-The plaintext warnings are unconditional; a private or loopback address does
-not suppress them.
+Both processes log a warning that the token is unencrypted on the wire.
 
 ### Cross-host mTLS
 
@@ -283,8 +354,10 @@ never lands in the image layer.
 
 ## Non-goals (by design)
 
-- **No bearer token / API key on this channel.** Node identity comes from
-  the client certificate's SPIFFE SAN, not a shared secret.
+- **No per-node secrets.** `--sync-token` is a shared join credential, not a
+  per-node one: there is no issuing, revoking or rotating of individual node
+  secrets. Per-node identity is mTLS's job, derived from the client
+  certificate's SPIFFE SAN.
 - **No online enrollment service.** Provisioning new proxy certs at scale
   is cert-manager's/SPIRE's job, not something nyro re-implements.
 - **No CRL/OCSP revocation.** If a certificate needs to be revoked before its

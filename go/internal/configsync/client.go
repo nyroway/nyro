@@ -218,6 +218,18 @@ func (c *ConfigClient) backoff(attempt int) time.Duration {
 	return half + time.Duration(c.rng.Int63n(int64(half)))
 }
 
+// SetJoinToken makes the client present token as `authorization: Bearer
+// <token>` on the config-sync stream. Empty disables it (the in-process channel
+// and mTLS deployments need no token).
+//
+// Must be called before Run.
+func (c *ConfigClient) SetJoinToken(token string) {
+	if token == "" {
+		return
+	}
+	c.dialOpts = append(c.dialOpts, grpc.WithPerRPCCredentials(bearerCredentials{token: token}))
+}
+
 // SetDialOptions replaces the client's gRPC dial options wholesale. It is the
 // production entry point for the in-process channel: pass the options returned
 // by ServeInProcess, which already include their own (insecure, pipe-local)
@@ -240,7 +252,7 @@ func (c *ConfigClient) SetDialOptions(opts ...grpc.DialOption) {
 // certificates (see pki.LoadServerTLS) — the proxy's node identity is then
 // derived from the verified client certificate's SPIFFE SAN rather than
 // trusted from Subscribe.node_id (see StreamConfig).
-func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer, tlsConfig *tls.Config) (shutdown func(), err error) {
+func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer, tlsConfig *tls.Config, extra ...grpc.ServerOption) (shutdown func(), err error) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		// If the address looks like it lacks a port, surface a clearer error.
@@ -252,6 +264,13 @@ func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer, tls
 	var opts []grpc.ServerOption
 	if tlsConfig != nil {
 		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsConfig)))
+	}
+	// A nil entry means "not configured" (see StreamTokenAuth); drop it rather
+	// than making every caller branch.
+	for _, o := range extra {
+		if o != nil {
+			opts = append(opts, o)
+		}
 	}
 	return serveOn(ctx, lis, srv, opts...), nil
 }

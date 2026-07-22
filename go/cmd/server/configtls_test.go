@@ -10,7 +10,13 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 )
 
-func TestResolveConfigSyncServerTLS_NoFlagsUsesPlaintextAndWarns(t *testing.T) {
+// Plaintext is selected without a warning on purpose. Whether an unencrypted
+// config-sync channel is acceptable depends on the bind address, and
+// configsync.GuardPlaintextListen decides that; warning here would fire on
+// every loopback single-node start, where there is nothing to act on. A warning
+// seen on every boot is one operators learn to skip — including the ones that
+// matter.
+func TestResolveConfigSyncServerTLS_NoFlagsUsesPlaintextSilently(t *testing.T) {
 	var logs bytes.Buffer
 	previousLogger := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -23,8 +29,8 @@ func TestResolveConfigSyncServerTLS_NoFlagsUsesPlaintextAndWarns(t *testing.T) {
 	if cfg != nil {
 		t.Fatal("expected a nil *tls.Config for plaintext config-sync")
 	}
-	if got := logs.String(); !strings.Contains(got, "level=WARN") || !strings.Contains(got, "plaintext") {
-		t.Fatalf("log = %q; want a plaintext security warning", got)
+	if got := logs.String(); strings.Contains(got, "WARN") {
+		t.Fatalf("log = %q; want silence — the address-based gate owns this decision now", got)
 	}
 }
 
