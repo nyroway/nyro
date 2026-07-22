@@ -1,6 +1,6 @@
-// Package gateway implements the `nyro gateway` subcommand: the data plane
-// that forwards client requests to upstream providers.
-package gateway
+// Package proxy implements the `nyro proxy` subcommand: the data plane that
+// forwards client requests to upstream providers.
+package proxy
 
 import (
 	"context"
@@ -22,50 +22,49 @@ import (
 	"github.com/nyroway/nyro/go/internal/proxy"
 )
 
-// NewCmd builds the gateway (data-plane) subcommand.
+// NewCmd builds the proxy (data-plane) subcommand.
 //
 // Config sources (exactly one is required):
-//   - --config-file: standalone YAML (no admin/DB needed). The snapshot is
-//     built once at startup and never refreshed; edit + restart to change
-//     config.
-//   - --config-server: admin's gRPC endpoint. The gateway subscribes to a
-//     long-lived config stream and hot-reloads on every admin config change.
+//   - --config: standalone YAML (no server/DB needed). The snapshot is built
+//     once at startup and never refreshed; edit + restart to change config.
+//   - --server: the server's gRPC config-sync endpoint. The proxy subscribes
+//     to a long-lived config stream and hot-reloads on every config change.
 //
 // Phase 3 removed the transitional Phase-1 DB-poll default — exactly one of
-// --config-file / --config-server must now be set.
+// --config / --server must now be set.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "gateway",
-		Short: "Run the data plane (proxy forwarding to upstreams)",
+		Use:   "proxy",
+		Short: "Run the data plane (forwards requests to upstreams)",
 	}
-	// 0.0.0.0, not loopback: the gateway's entire job is accepting traffic
-	// from real clients (like nginx/envoy/traefik), often from outside its
-	// own host/container — unlike the admin control plane, which manages
+	// 0.0.0.0, not loopback: the standalone proxy's entire job is accepting
+	// traffic from real clients (like nginx/envoy/traefik), often from outside
+	// its own host/container — unlike the control plane, which manages
 	// sensitive credentials and defaults to loopback-only on purpose.
 	cmd.Flags().String("listen", "0.0.0.0:19530", "listen address for the data plane")
-	cmd.Flags().String("config-file", "", "standalone YAML config file (no admin/DB needed)")
-	cmd.Flags().String("config-server", "", "admin gRPC config-sync endpoint (host:port) for config hot-reload")
-	cmd.Flags().String("config-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs admin/gateway leaf certs (see `nyro ca`); must be set together with --config-tls-cert/-key")
-	cmd.Flags().String("config-tls-cert", "", "config-sync mTLS: path to this gateway's client certificate")
-	cmd.Flags().String("config-tls-key", "", "config-sync mTLS: path to this gateway's client private key")
+	cmd.Flags().String("config", "", "standalone YAML config file (no server/DB needed)")
+	cmd.Flags().String("server", "", "the server's gRPC config-sync endpoint (host:port) for config hot-reload")
+	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro ca`); must be set together with --sync-tls-cert/-key")
+	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to this proxy's client certificate")
+	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to this proxy's client private key")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("listen")
-		cfgPath, _ := cmd.Flags().GetString("config-file")
-		configSyncAddr, _ := cmd.Flags().GetString("config-server")
-		tlsCA, _ := cmd.Flags().GetString("config-tls-ca")
-		tlsCert, _ := cmd.Flags().GetString("config-tls-cert")
-		tlsKey, _ := cmd.Flags().GetString("config-tls-key")
+		cfgPath, _ := cmd.Flags().GetString("config")
+		configSyncAddr, _ := cmd.Flags().GetString("server")
+		tlsCA, _ := cmd.Flags().GetString("sync-tls-ca")
+		tlsCert, _ := cmd.Flags().GetString("sync-tls-cert")
+		tlsKey, _ := cmd.Flags().GetString("sync-tls-key")
 
 		if cfgPath == "" && configSyncAddr == "" {
-			return errors.New("exactly one of --config-file or --config-server is required (the legacy DB-poll default was removed in Phase 3)")
+			return errors.New("exactly one of --config or --server is required (the legacy DB-poll default was removed in Phase 3)")
 		}
 		if cfgPath != "" && configSyncAddr != "" {
-			return errors.New("--config-file and --config-server are mutually exclusive (set exactly one)")
+			return errors.New("--config and --server are mutually exclusive (set exactly one)")
 		}
 		if cfgPath != "" {
-			for _, name := range []string{"config-tls-ca", "config-tls-cert", "config-tls-key"} {
+			for _, name := range []string{"sync-tls-ca", "sync-tls-cert", "sync-tls-key"} {
 				if cmd.Flags().Changed(name) {
-					return fmt.Errorf("--%s is only valid with --config-server (not --config-file)", name)
+					return fmt.Errorf("--%s is only valid with --server (not --config)", name)
 				}
 			}
 		}
@@ -126,11 +125,11 @@ func servicePort(addr string) string {
 
 // buildGateway selects the config source and returns a ready, storage-free
 // Gateway plus an optional config-sync client stop function (nil unless
-// --config-server) and the observability manager (always non-nil on success —
+// --server) and the observability manager (always non-nil on success —
 // telemetry is wired in every mode). It constructs the initial ObsProvider,
 // wraps it in a SwappableProvider, and calls RegisterHooks exactly ONCE per
 // process (the plugin registry accumulates appends, so re-registering would
-// double-emit). In --config-server mode it also registers the manager's
+// double-emit). In --server mode it also registers the manager's
 // hot-reload callback on the cache BEFORE starting the config stream, so the
 // control-plane-seeded obs settings (which arrive with the first snapshot,
 // after this initial build) are applied instead of stuck on the stdout default.
@@ -200,25 +199,25 @@ func buildGateway(ctx context.Context, cfgPath, configSyncAddr, listenAddr strin
 		client := configsync.NewConfigClient(configSyncAddr, cache, servicePort(listenAddr), configTLS)
 		go func() { _ = client.Run(ctx) }()
 		pki.WatchExpiry(ctx, configTLS, configExpiryCheckInterval, func(notAfter time.Time) {
-			slog.Warn("config-sync client certificate expiring soon — run `nyro ca sign-gateway` and redistribute before it lapses",
+			slog.Warn("config-sync client certificate expiring soon — run `nyro ca sign-proxy` and redistribute before it lapses",
 				"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
 		})
 		return gw, nil, mgr, nil
 
 	default:
 		// Unreachable: RunE enforces the XOR. Guard anyway.
-		return nil, nil, nil, errors.New("exactly one of --config-file or --config-server is required")
+		return nil, nil, nil, errors.New("exactly one of --config or --server is required")
 	}
 }
 
-// resolveConfigSyncClientTLS turns the --config-tls-ca/-cert/-key flags into
-// a *tls.Config for dialing --config-server, or nil for plaintext. It uses the
+// resolveConfigSyncClientTLS turns the --sync-tls-ca/-cert/-key flags into
+// a *tls.Config for dialing --server, or nil for plaintext. It uses the
 // same all-or-none behavior as resolveConfigSyncServerTLS on the admin side.
 //
-// There is deliberately no --config-server-name-style override here:
+// There is deliberately no --server-name-style override here:
 // pki.LoadClientTLS verifies admin's server certificate by SPIFFE identity
 // (spiffe://nyro/admin), not by matching its SAN against the dial address,
-// so the address used in --config-server (direct, load balancer, k8s
+// so the address used in --server (direct, load balancer, k8s
 // Service name, IP) never affects verification.
 func resolveConfigSyncClientTLS(caPath, certPath, keyPath string) (*tls.Config, error) {
 	set := 0
@@ -231,9 +230,9 @@ func resolveConfigSyncClientTLS(caPath, certPath, keyPath string) (*tls.Config, 
 	case set == 3:
 		return pki.LoadClientTLS(caPath, certPath, keyPath)
 	case set > 0:
-		return nil, fmt.Errorf("--config-tls-ca, --config-tls-cert, and --config-tls-key must be set together (got %d of 3)", set)
+		return nil, fmt.Errorf("--sync-tls-ca, --sync-tls-cert, and --sync-tls-key must be set together (got %d of 3)", set)
 	default:
-		slog.Warn("config-sync client connecting to --config-server in plaintext: no transport encryption or server authentication")
+		slog.Warn("config-sync client connecting to --server in plaintext: no transport encryption or server authentication")
 		return nil, nil
 	}
 }

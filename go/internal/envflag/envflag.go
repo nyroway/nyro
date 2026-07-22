@@ -11,10 +11,10 @@
 //
 // The env var name for a flag is derived from the command path and flag name:
 //
-//	nyro admin       --listen               -> NYRO_ADMIN_LISTEN
-//	nyro gateway     --config-file          -> NYRO_GATEWAY_CONFIG_FILE
+//	nyro server      --listen               -> NYRO_SERVER_LISTEN
+//	nyro proxy       --config               -> NYRO_PROXY_CONFIG
 //	nyro ca init     --dir                  -> NYRO_CA_INIT_DIR
-//	nyro ca sign-admin --out                -> NYRO_CA_SIGN_ADMIN_OUT
+//	nyro ca sign-server --out               -> NYRO_CA_SIGN_SERVER_OUT
 package envflag
 
 import (
@@ -32,8 +32,8 @@ import (
 const envPrefix = "NYRO"
 
 // EnvKey builds the environment variable name for a flag under the given
-// per-command prefix (e.g. prefix "ADMIN", flag "config-poll-interval" ->
-// "NYRO_ADMIN_CONFIG_POLL_INTERVAL"). The flag name's dashes become
+// per-command prefix (e.g. prefix "SERVER", flag "obs-data-dir" ->
+// "NYRO_SERVER_OBS_DATA_DIR"). The flag name's dashes become
 // underscores and everything is upper-cased.
 func EnvKey(prefix, flagName string) string {
 	return envPrefix + "_" + prefix + "_" + normalize(flagName)
@@ -49,7 +49,7 @@ func normalize(s string) string {
 
 // prefixFromCommand derives the per-command env prefix from a command's full
 // path by dropping the leading root segment ("nyro") and joining the rest with
-// underscores, upper-cased. "nyro ca sign-admin" -> "CA_SIGN_ADMIN". Returns ""
+// underscores, upper-cased. "nyro ca sign-server" -> "CA_SIGN_SERVER". Returns ""
 // for the bare root command (which carries no flags of its own).
 func prefixFromCommand(cmd *cobra.Command) string {
 	path := strings.Fields(cmd.CommandPath())

@@ -14,11 +14,19 @@ func TestRootCmdSubcommands(t *testing.T) {
 	if names["tool"] {
 		t.Error("tool subcommand should be removed")
 	}
-	if !names["gateway"] {
-		t.Error("gateway subcommand missing")
+	if !names["proxy"] {
+		t.Error("proxy subcommand missing")
 	}
-	if !names["admin"] {
-		t.Error("admin subcommand missing")
+	if !names["server"] {
+		t.Error("server subcommand missing")
+	}
+	// The pre-rename names must be fully gone: the rename ships without a
+	// compatibility period, so a lingering alias would be a bug, not a courtesy.
+	if names["gateway"] {
+		t.Error("gateway subcommand should have been renamed to proxy")
+	}
+	if names["admin"] {
+		t.Error("admin subcommand should have been renamed to server")
 	}
 }
 

@@ -1,4 +1,4 @@
-package gateway
+package proxy
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 const obsReloadGrace = 30 * time.Second
 
 // obsManager owns the gateway's hot-reloadable observability pipeline. The OTel
-// provider is built once at startup (in config-server mode, from the still-empty
+// provider is built once at startup (in --server mode, from the still-empty
 // cache, so it resolves to the fixed stdout default) and rebuilt whenever a
 // config-sync snapshot changes the resolved ObsConfig — this is what lets the
 // control-plane-seeded otlp settings, which only arrive AFTER startup over the
@@ -42,7 +42,7 @@ type obsManager struct {
 // newObsManager wires the manager around an already-built initial provider and
 // its resolved config, and starts the prometheus scrape server if that initial
 // config selected the prometheus metrics exporter. It does NOT register the
-// SetOnSwap callback — the caller does that (only config-server mode needs it),
+// SetOnSwap callback — the caller does that (only --server mode needs it),
 // after ensuring no snapshot can be published before the callback is in place.
 func newObsManager(ctx context.Context, cache *configsync.ConfigCache, sp *observability.SwappableProvider, initial *observability.ObsProvider, initialCfg observability.ObsConfig) *obsManager {
 	m := &obsManager{

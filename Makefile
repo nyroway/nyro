@@ -143,21 +143,22 @@ go-webui-embed-assets: go-webui-build
 go-webui-embed-build: go-webui-embed-assets
 	cd go && mkdir -p bin && go build -tags webui_embed -o bin/nyro .
 
-# Build and run the Go admin with embedded WebUI for local preview.
-# --config-listen defaults to 127.0.0.1:19532 (config-sync gRPC server, a
+# Build and run the Go server (control plane) with embedded WebUI for local
+# preview.
+# --sync-listen defaults to 127.0.0.1:19532 (config-sync gRPC server, a
 # *separate* port from --listen's HTTP REST/WebUI), so
-# `nyro gateway --config-server 127.0.0.1:19532` can connect for config
-# hot-reload with no extra flags here. With no --config-tls-* paths, both
+# `nyro proxy --server 127.0.0.1:19532` can connect for config
+# hot-reload with no extra flags here. With no --sync-tls-* paths, both
 # processes use plaintext config-sync and log a security warning.
-# --auto-migrate lets this first-boot admin create its own (default sqlite)
+# --auto-migrate lets this first-boot server create its own (default sqlite)
 # schema; it's off by default regardless of backend (see
 # go/docs/schema/database.md).
 go-webui-embed-run: go-webui-embed-build
-	cd go && ./bin/nyro admin --auto-migrate
+	cd go && ./bin/nyro server --auto-migrate
 
-# Run the Go gateway (data plane) locally
+# Run the Go proxy (data plane) locally
 go-run:
-	cd go && go run . gateway
+	cd go && go run . proxy
 
 # Clean all build artifacts
 clean:
