@@ -69,7 +69,7 @@ func Diff(shadow *gorm.DB, currentSchemaSQL string) (string, error) {
 		return "", err
 	}
 	for _, stmt := range SplitStatements(currentSchemaSQL) {
-		// Only replay schema DDL. A real pg_dump/mysqldump also carries session
+		// Only replay schema DDL. A real pg_dump also carries session
 		// setup (SET ..., SELECT pg_catalog.set_config('search_path','',...))
 		// that is irrelevant to the schema shape and, in pg_dump's case,
 		// actively breaks a later unqualified CREATE by blanking search_path.
@@ -167,7 +167,7 @@ func IntrospectSchema(target *gorm.DB) (string, error) {
 }
 
 // formatDefault renders a column default for reconstruction. GORM returns the
-// raw value (unquoted, no cast) for both mysql and postgres, so string-typed
+// raw value (unquoted, no cast) for postgres, so string-typed
 // defaults are quoted and numeric/boolean/keyword defaults are used as-is.
 func formatDefault(value, typ string) string {
 	t := strings.ToLower(typ)
@@ -199,7 +199,7 @@ func ResetShadow(db *gorm.DB) error {
 // \unrestrict markers pg_dump emits), then splits on ";". Sufficient for schema
 // DDL from a dump/export (no semicolons inside string literals, no procedure
 // bodies) — it accepts both `nyro migrate dump` output and a real
-// pg_dump/mysqldump schema-only dump.
+// pg_dump schema-only dump.
 func SplitStatements(sqlScript string) []string {
 	var b strings.Builder
 	for _, line := range strings.Split(sqlScript, "\n") {

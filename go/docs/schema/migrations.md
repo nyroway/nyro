@@ -1,6 +1,6 @@
-# Schema Migrations (mysql/postgres)
+# Schema Migrations (postgres)
 
-How the Go storage backend's mysql/postgres schema gets changed in production.
+How the Go storage backend's postgres schema gets changed in production.
 The canonical schema is the GORM models (`go/internal/storage/model`,
 `model.All()`); everything here is about turning those into DDL. This system
 depends on **GORM only** — no Atlas, no external migration framework. sqlite is
@@ -14,7 +14,7 @@ covered too (it just uses AutoMigrate directly; see [database.md](database.md)).
 creating/altering tables to match the models. Requires the connecting account
 to have DDL rights. Off by default (whether the account has DDL rights is a
 deployment decision, not inferred from the engine). Good for local sqlite dev
-and for mysql/postgres accounts that are allowed to run DDL.
+and for postgres accounts that are allowed to run DDL.
 
 AutoMigrate is **additive**: it creates missing tables/columns/indexes but
 never drops a column or table, and it can misread a column *rename* as a new
@@ -47,10 +47,10 @@ applied.
 Renders `model.All()` to `CREATE TABLE`/index DDL in the target dialect. It runs
 in a GORM **DryRun** session — nothing is executed — so `--dsn` may point at a
 **read-only** account; it exists only to select the dialect (GORM generates
-mysql-vs-postgres DDL through a live dialector). Omit `--dsn` for sqlite
+postgres DDL through a live dialector). Omit `--dsn` for sqlite
 (in-memory).
 
-Because rendering needs a live dialect connection, a fresh mysql/postgres
+Because rendering needs a live dialect connection, a fresh postgres
 deployment points `--dsn` at the (empty) target server — nothing is written to
 it.
 
@@ -65,7 +65,7 @@ run on a throwaway is used deliberately — it's exactly what a real apply does.
 The "current schema" comes from exactly one source:
 
 - `--target-file <schema.sql>` — an exact schema dump: a previous `nyro migrate
-  dump` output, or a `pg_dump --schema-only` / `mysqldump --no-data` of the live
+  dump` output, or a `pg_dump --schema-only` of the live
   database (session `SET`s and psql `\` meta-commands are ignored; only the DDL
   is replayed). **Precise, recommended.**
 - `--target-dsn <ro-dsn>` — a read-only live database, introspected via GORM.
@@ -84,9 +84,9 @@ against it — no live database needed:
 
 ```
 # release N: snapshot the schema (store it anywhere; it need not be committed)
-nyro migrate dump --dsn mysql://ro@host/anydb > schema_vN.sql
+nyro migrate dump --dsn postgres://ro@host/anydb > schema_vN.sql
 # release N+1: incremental DDL from N to the new models
-nyro migrate diff --target-file schema_vN.sql --shadow-dsn mysql://ddl@host/scratch
+nyro migrate diff --target-file schema_vN.sql --shadow-dsn postgres://ddl@host/scratch
 ```
 
 ## How it works (GORM only)
@@ -113,7 +113,7 @@ in any schema-tool dependency.
 - **AutoMigrate ceiling**: no drops, rename-as-add, cross-dialect type-change
   quirks — handle rare destructive changes with a hand-written one-off SQL.
 - **`dump` needs a live dialect connection** (read-only): pure GORM can't render
-  mysql/postgres DDL fully offline. sqlite uses an in-memory connection.
+  postgres DDL fully offline. sqlite uses an in-memory connection.
 - **`diff --target-dsn`** reconstructs tables/columns/defaults/PKs/indexes via
   introspection but not foreign keys or check constraints — prefer
   `--target-file` when absolute precision matters.
