@@ -113,22 +113,39 @@ just three file paths either way.
 
 ## Deployment patterns
 
-### Local server and proxy
+### Single node (the default)
 
-For same-host development or shadow testing, keep both listeners on loopback
-and omit all TLS paths. Both processes log the expected plaintext warning.
+One command is a complete, usable nyro — the control plane on
+`127.0.0.1:19531` and an embedded data plane on `127.0.0.1:19530`:
 
 ```bash
 nyro server --auto-migrate
-nyro proxy --listen 127.0.0.1:19530 \
-  --server 127.0.0.1:19532
 ```
 
-The server defaults to HTTP on `127.0.0.1:19531` and config-sync on
-`127.0.0.1:19532`; the proxy's config source must still be selected explicitly.
+**No config-sync port is opened.** The embedded data plane subscribes over an
+in-process pipe, which has no listening socket and cannot be dialled from
+outside the process, so none of this document's transport rules apply to it —
+it needs no TLS and no token. It is otherwise an ordinary subscriber: it runs
+the same config-sync client, cache and router as a remote proxy, and appears in
+`/api/v1/nodes` with `conn_mode: inprocess`.
+
 `--auto-migrate` lets this first-boot server create its own (default sqlite)
 schema; it's off by default regardless of backend (see
 `go/docs/schema/database.md`), so drop it once the db already exists.
+
+### Adding a separate proxy node
+
+To attach data planes running elsewhere, open the config-sync listener
+(`--sync-listen`, off by default) and point each proxy at it:
+
+```bash
+nyro server --sync-listen 127.0.0.1:19532 --auto-migrate
+nyro proxy --listen 127.0.0.1:19530 --server 127.0.0.1:19532
+```
+
+Add `--proxy-listen=` to the server if that node should not serve traffic
+itself — a control-plane-only node. The proxy's config source must always be
+selected explicitly (`--server` or `--config`).
 
 ### Standalone proxy
 
@@ -183,48 +200,50 @@ nyro proxy --server server.internal:19532 \
 
 ### Multiple server replicas
 
-The server's `--config-poll-interval` defaults to `0`, so a single replica
-pushes its own writes immediately without polling. Replicas that share a
-database must each opt into a positive polling interval so writes handled by
-one server are also pushed to proxies connected to the others. Apply the schema with DDL a
-DBA reviews (print it with `nyro migrate dump`/`diff`, see
-`go/docs/schema/migrations.md`) before first boot instead of passing
-`--auto-migrate` here — this is exactly the shared-database production case
-that workflow is for:
+A replica pushes its own writes immediately. To also pick up writes handled by
+a SIBLING replica it polls the shared `config_epoch`, and whether that is even
+possible is already stated by the DSN — only `postgres://` can have a second
+writer — so the cadence is derived from the backend rather than configured.
+There is no poll-interval flag: on postgres, replicas poll automatically; on
+sqlite, polling is skipped because no sibling exists.
+
+Apply the schema with DDL a DBA reviews (print it with `nyro migrate
+dump`/`diff`, see `go/docs/schema/migrations.md`) before first boot instead of
+passing `--auto-migrate` here — this is exactly the shared-database production
+case that workflow is for:
 
 ```bash
 # server-1
 nyro server --listen 10.0.0.11:19531 \
   --sync-listen 10.0.0.11:19532 \
-  --dsn "$NYRO_SHARED_DSN" --config-poll-interval 1s \
+  --dsn "$NYRO_SHARED_DSN" \
   --token "$NYRO_SERVER_TOKEN"
 
 # server-2
 nyro server --listen 10.0.0.12:19531 \
   --sync-listen 10.0.0.12:19532 \
-  --dsn "$NYRO_SHARED_DSN" --config-poll-interval 1s \
+  --dsn "$NYRO_SHARED_DSN" \
   --token "$NYRO_SERVER_TOKEN"
 ```
 
-Use the same shared DSN on every replica (PostgreSQL) and add complete
+Use the same shared PostgreSQL DSN on every replica and add complete
 `--sync-tls-*` sets to both replicas and every proxy unless the config-sync
-network is deliberately trusted for plaintext. Polling is per server process;
-it is not needed by the proxies.
+network is deliberately trusted for plaintext. Each replica also runs its own
+embedded data plane unless given `--proxy-listen=`.
 
-### Config-sync disabled
+### Config-sync listener disabled (the default)
 
-Set the config-sync listener to the empty string when the deployment needs
-the management API but no config-sync server:
+`--sync-listen` is empty unless set, so no config-sync port is opened. A
+standalone proxy driven by a YAML file is therefore fully independent of the
+control plane:
 
 ```bash
-nyro server --sync-listen= --auto-migrate
+nyro server --auto-migrate
 nyro proxy --config ./config.yaml
 ```
 
-With config-sync disabled, control-plane changes do not update the standalone
-proxy.
-Explicit `--config-poll-interval` or `--sync-tls-*` flags are rejected when
-`--sync-listen` is empty.
+Control-plane changes do not reach a proxy configured this way. `--sync-tls-*`
+flags are rejected when `--sync-listen` is empty.
 
 ## HTTP TLS and the optional management token
 

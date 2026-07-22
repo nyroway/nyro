@@ -84,7 +84,7 @@ complete TLS path set on both processes:
 
 `--config` and `--server` are mutually exclusive — exactly one must
 be set. `--sync-listen=` disables the config-sync server; explicitly setting
-`--config-poll-interval` or any `--sync-tls-*` flag in that mode is an error.
+any `--sync-tls-*` flag in that mode is an error.
 Connected proxies are visible on the server at
 `GET /api/v1/nodes` (and the WebUI's Nodes page) — a best-effort, in-memory
 view that reflects only currently-open connections.
@@ -101,7 +101,7 @@ DDL a DBA reviews (print it with `nyro migrate dump`/`diff`; see
 # Run on each server host, with a distinct --listen/--sync-listen address.
 /tmp/nyro server --listen 10.0.0.11:19531 \
   --sync-listen 10.0.0.11:19532 \
-  --dsn "$NYRO_SHARED_DSN" --config-poll-interval 1s \
+  --dsn "$NYRO_SHARED_DSN" \
   --token "$NYRO_SERVER_TOKEN"
 ```
 

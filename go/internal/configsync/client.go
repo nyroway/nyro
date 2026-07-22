@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -40,7 +41,9 @@ type ConfigClient struct {
 	hostname    string
 	servicePort string
 
-	// dialOpts allow tests to inject a bufconn dialer.
+	// dialOpts carry the transport credentials plus, for the in-process
+	// channel, a bufconn dialer (see SetDialOptions / ServeInProcess). Tests
+	// also inject a bufconn dialer here.
 	dialOpts []grpc.DialOption
 
 	// Backoff config. Overridable for tests.
@@ -215,14 +218,26 @@ func (c *ConfigClient) backoff(attempt int) time.Duration {
 	return half + time.Duration(c.rng.Int63n(int64(half)))
 }
 
+// SetDialOptions replaces the client's gRPC dial options wholesale. It is the
+// production entry point for the in-process channel: pass the options returned
+// by ServeInProcess, which already include their own (insecure, pipe-local)
+// transport credentials. Because it replaces rather than appends, the caller
+// supplies the complete set — there is no way to end up with the constructor's
+// TCP credentials silently combined with a pipe dialer.
+//
+// Must be called before Run.
+func (c *ConfigClient) SetDialOptions(opts ...grpc.DialOption) {
+	c.dialOpts = opts
+}
+
 // ServeGRPC starts a gRPC server listening on addr serving srv. It blocks until
 // the listener returns (always in a goroutine for ctx-driven shutdown). The
 // returned shutdown function stops the server gracefully.
 //
-// A nil tlsConfig selects plaintext. The admin CLI reaches that mode only when
-// all three --config-tls-* paths are empty and logs a security warning before
+// A nil tlsConfig selects plaintext. The server CLI reaches that mode only when
+// all three --sync-tls-* paths are empty and logs a security warning before
 // starting the server. When set, tlsConfig must require and verify client
-// certificates (see pki.LoadServerTLS) — the gateway's node identity is then
+// certificates (see pki.LoadServerTLS) — the proxy's node identity is then
 // derived from the verified client certificate's SPIFFE SAN rather than
 // trusted from Subscribe.node_id (see StreamConfig).
 func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer, tlsConfig *tls.Config) (shutdown func(), err error) {
@@ -238,28 +253,50 @@ func ServeGRPC(ctx context.Context, addr string, srv pb.ConfigServiceServer, tls
 	if tlsConfig != nil {
 		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsConfig)))
 	}
+	return serveOn(ctx, lis, srv, opts...), nil
+}
+
+// serveOn wires srv onto an already-open listener and starts the ctx-driven
+// graceful shutdown goroutine. Shared by ServeGRPC (TCP) and ServeInProcess
+// (bufconn) so both transports get identical drain-then-stop semantics.
+//
+// The returned shutdown drains before stopping and is idempotent, so it is safe
+// to call it explicitly AND let ctx cancellation fire it. That matters because
+// callers naturally write `defer cancel()` before `defer shutdown()`, which LIFO
+// runs shutdown FIRST — with a bare GracefulStop that would block forever on the
+// still-open StreamConfig RPCs of subscribers that ctx has not yet told to go
+// away, hanging process exit whenever a data plane is connected.
+func serveOn(ctx context.Context, lis net.Listener, srv pb.ConfigServiceServer, opts ...grpc.ServerOption) (shutdown func()) {
 	gs := grpc.NewServer(opts...)
 	pb.RegisterConfigServiceServer(gs, srv)
+
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			// Drain active proxy streams first so GracefulStop is not blocked
+			// waiting on the long-lived StreamConfig RPCs. The 5s hard-stop
+			// below remains as a safety net.
+			if d, ok := srv.(interface{ Drain() }); ok {
+				d.Drain()
+			}
+			stopped := make(chan struct{})
+			go func() { gs.GracefulStop(); close(stopped) }()
+			select {
+			case <-stopped:
+			case <-time.After(5 * time.Second):
+				gs.Stop()
+			}
+		})
+	}
+
 	go func() {
 		<-ctx.Done()
-		// Drain active gateway streams first so GracefulStop is not blocked
-		// waiting on the long-lived StreamConfig RPCs. The 5s hard-stop below
-		// remains as a safety net.
-		if d, ok := srv.(interface{ Drain() }); ok {
-			d.Drain()
-		}
-		stopped := make(chan struct{})
-		go func() { gs.GracefulStop(); close(stopped) }()
-		select {
-		case <-stopped:
-		case <-time.After(5 * time.Second):
-			gs.Stop()
-		}
+		stop()
 	}()
 	go func() {
 		if err := gs.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			log.Printf("configsync grpc server: %v", err)
 		}
 	}()
-	return gs.GracefulStop, nil
+	return stop
 }

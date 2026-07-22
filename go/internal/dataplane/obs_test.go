@@ -1,4 +1,4 @@
-package proxy
+package dataplane
 
 import (
 	"context"
@@ -11,11 +11,11 @@ import (
 	"github.com/nyroway/nyro/go/internal/observability"
 )
 
-// buildManager wires an obsManager the way buildGateway's config-server branch
+// buildManager wires an ObsManager the way buildGateway's config-server branch
 // does: an initial provider resolved from cache, a SwappableProvider, and the
 // rebuild callback registered on the cache. Returns the manager and cache so a
 // test can push new snapshots and observe the hot-reload.
-func buildManager(t *testing.T, cache *configsync.ConfigCache) *obsManager {
+func buildManager(t *testing.T, cache *configsync.ConfigCache) *ObsManager {
 	t.Helper()
 	obsCfg := resolveObsConfig(cache)
 	prov, err := observability.NewProvider(context.Background(), obsCfg)

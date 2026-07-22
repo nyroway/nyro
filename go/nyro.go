@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/nyroway/nyro/go/cmd/server"
 	"github.com/nyroway/nyro/go/cmd/ca"
-	"github.com/nyroway/nyro/go/cmd/proxy"
 	"github.com/nyroway/nyro/go/cmd/migrate"
+	"github.com/nyroway/nyro/go/cmd/proxy"
+	"github.com/nyroway/nyro/go/cmd/server"
 	"github.com/nyroway/nyro/go/internal/envflag"
 	"github.com/nyroway/nyro/go/internal/version"
 )

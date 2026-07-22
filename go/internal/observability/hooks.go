@@ -2,6 +2,8 @@ package observability
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -30,15 +32,20 @@ const (
 )
 
 // onRequestHook starts the per-request "dispatch" span and stashes the span +
-// span-context in the bag for the OnLog hook to finish. It holds the swappable
-// provider rather than a concrete tracer so a config-sync hot-reload can change
-// the underlying pipeline without re-registering the hook.
-type onRequestHook struct{ sp *SwappableProvider }
+// span-context in the bag for the OnLog hook to finish. It reads the active
+// swappable provider from hooksTarget rather than holding a concrete tracer, so
+// a config-sync hot-reload can change the underlying pipeline without
+// re-registering the hook.
+type onRequestHook struct{}
 
 func (h onRequestHook) Name() string        { return "obs.on_request" }
 func (h onRequestHook) Phase() plugin.Phase { return plugin.PhaseOnRequest }
 func (h onRequestHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
-	ctx, span := h.sp.load().tracer.Start(pctx.Ctx, "dispatch")
+	sp := hooksTarget.Load()
+	if sp == nil {
+		return plugin.OutcomeContinue
+	}
+	ctx, span := sp.load().tracer.Start(pctx.Ctx, "dispatch")
 	pctx.Bag.Set(BagSpanCtx, ctx)
 	pctx.Bag.Set(BagSpan, span)
 	return plugin.OutcomeContinue
@@ -46,16 +53,19 @@ func (h onRequestHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
 
 // onLogHook is terminal: it reads the per-request state the dispatcher left in
 // the bag, records the metrics, emits the structured audit LogRecord, and ends
-// the span started by onRequestHook. Like onRequestHook it holds the swappable
-// provider so the logger/handles it emits through follow a hot-reload.
-type onLogHook struct {
-	sp *SwappableProvider
-}
+// the span started by onRequestHook. Like onRequestHook it reads the swappable
+// provider from hooksTarget so the logger/handles it emits through follow a
+// hot-reload.
+type onLogHook struct{}
 
 func (h onLogHook) Name() string        { return "obs.on_log" }
 func (h onLogHook) Phase() plugin.Phase { return plugin.PhaseOnLog }
 func (h onLogHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
-	active := h.sp.load()
+	sp := hooksTarget.Load()
+	if sp == nil {
+		return plugin.OutcomeContinue
+	}
+	active := sp.load()
 	bag := pctx.Bag
 	span, _ := pluginGet(bag, BagSpan).(trace.Span)
 	spanCtx, _ := pluginGet(bag, BagSpanCtx).(context.Context)
@@ -198,18 +208,39 @@ func classify(status int) string {
 	}
 }
 
-// RegisterHooks wires the OnRequest/OnLog phase hooks into the package-level
-// plugin registry. It is NOT called from an init(): instrumentation stays inert
-// until the dispatcher/cmd calls it (T3.3/T3.4), so importing observability has
-// no process-wide side effects.
+// hooksTarget is the SwappableProvider the registered phase hooks read on every
+// request. It is re-pointed by RegisterHooks and read (never captured) by the
+// hooks, which is what makes repeated RegisterHooks calls safe.
 //
-// It must be called exactly once per process: the plugin registry appends, so a
-// second call would double-emit. Hot-reloading the underlying pipeline is done
-// by swapping sp (SwappableProvider.Swap), NOT by re-registering — the hooks
-// read the current handles from sp on every request.
+// A nil value means no provider has been registered yet; the hooks then no-op
+// so a request served before (or without) observability wiring still succeeds.
+var hooksTarget atomic.Pointer[SwappableProvider]
+
+// hooksOnce guards the actual plugin-registry insertion. The registry appends,
+// so inserting twice would double-emit every span/log/metric.
+var hooksOnce sync.Once
+
+// RegisterHooks points the OnRequest/OnLog phase hooks at sp, inserting them
+// into the package-level plugin registry on the first call. It is NOT called
+// from an init(): instrumentation stays inert until the dispatcher/cmd calls
+// it, so importing observability has no process-wide side effects.
+//
+// Calling it more than once per process is safe and idempotent: the hooks are
+// inserted once, and each subsequent call simply re-points them at the new
+// provider. This matters because a single process can assemble more than one
+// data plane over its lifetime — `nyro server` embeds one alongside the control
+// plane, and tests build many — and the previous append-per-call contract made
+// that a silent double-emit bug enforced only by a comment.
+//
+// Note this is distinct from hot-reload: an obs config change swaps the
+// pipeline inside sp (SwappableProvider.Swap) without touching the registry at
+// all. RegisterHooks is for replacing sp itself.
 func RegisterHooks(sp *SwappableProvider) {
-	plugin.Register(onRequestHook{sp: sp})
-	plugin.Register(onLogHook{sp: sp})
+	hooksTarget.Store(sp)
+	hooksOnce.Do(func() {
+		plugin.Register(onRequestHook{})
+		plugin.Register(onLogHook{})
+	})
 }
 
 // pluginGet is a tiny helper so the type-assertion chain reads without repeating

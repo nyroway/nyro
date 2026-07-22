@@ -68,7 +68,7 @@ smoke-storage:
 # Pre-release verification gate
 release-check: check smoke
 
-# ── Go (nyro/go) — gateway + admin (data plane + control plane) ──
+# ── Go (nyro/go) — server + proxy (control plane + data plane) ──
 # Build the Go nyro CLI into go/bin/nyro
 go-build:
 	cd go && mkdir -p bin && go build -o bin/nyro .
@@ -124,7 +124,7 @@ go-tidy:
 go-gen-storage:
 	cd go && go run ./internal/storage/gen
 
-# ── Go schema migrations (mysql/postgres only) ──
+# ── Go schema migrations (postgres only) ──
 # No Makefile targets: schema is GORM AutoMigrate; to preview/apply DDL for a
 # DDL-less deployment use the `nyro migrate dump`/`diff` subcommands (they only
 # depend on GORM). See go/docs/schema/migrations.md.
@@ -143,22 +143,20 @@ go-webui-embed-assets: go-webui-build
 go-webui-embed-build: go-webui-embed-assets
 	cd go && mkdir -p bin && go build -tags webui_embed -o bin/nyro .
 
-# Build and run the Go server (control plane) with embedded WebUI for local
-# preview.
-# --sync-listen defaults to 127.0.0.1:19532 (config-sync gRPC server, a
-# *separate* port from --listen's HTTP REST/WebUI), so
-# `nyro proxy --server 127.0.0.1:19532` can connect for config
-# hot-reload with no extra flags here. With no --sync-tls-* paths, both
-# processes use plaintext config-sync and log a security warning.
+# Build and run the Go server with embedded WebUI for local preview.
+# One command is a complete nyro: management API + WebUI on 127.0.0.1:19531 and
+# an embedded data plane on 127.0.0.1:19530, wired over an in-process
+# config-sync pipe (no TCP config-sync port is opened). Pass
+# `--sync-listen 127.0.0.1:19532` if a separate `nyro proxy` must subscribe.
 # --auto-migrate lets this first-boot server create its own (default sqlite)
 # schema; it's off by default regardless of backend (see
 # go/docs/schema/database.md).
 go-webui-embed-run: go-webui-embed-build
 	cd go && ./bin/nyro server --auto-migrate
 
-# Run the Go proxy (data plane) locally
+# Run a standalone Go proxy (data plane) locally against a running server
 go-run:
-	cd go && go run . proxy
+	cd go && go run . proxy --server 127.0.0.1:19532
 
 # Clean all build artifacts
 clean:

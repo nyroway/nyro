@@ -69,17 +69,42 @@ func TestNewCmdObsDataDirFlagDefault(t *testing.T) {
 	}
 }
 
-func TestNewCmdConfigListenFlagDefault(t *testing.T) {
+// The config-sync TCP listener is opt-in: with an embedded data plane a
+// single-node install needs no config-sync port, so one is not opened unless
+// remote proxies have to subscribe.
+func TestNewCmdSyncListenDefaultsToDisabled(t *testing.T) {
 	cmd := NewCmd()
-	if v, _ := cmd.Flags().GetString("sync-listen"); v != "127.0.0.1:19532" {
-		t.Errorf("default config-listen = %q, want 127.0.0.1:19532", v)
+	if v, _ := cmd.Flags().GetString("sync-listen"); v != "" {
+		t.Errorf("default sync-listen = %q, want empty (disabled)", v)
 	}
 }
 
-func TestNewCmdConfigPollIntervalFlagDefault(t *testing.T) {
+// The embedded data plane is on by default and bound to loopback — unlike a
+// standalone `nyro proxy`, which binds 0.0.0.0 because accepting off-host
+// client traffic is its whole job.
+func TestNewCmdProxyListenDefault(t *testing.T) {
 	cmd := NewCmd()
-	if v, _ := cmd.Flags().GetDuration("config-poll-interval"); v != 0 {
-		t.Errorf("default config-poll-interval = %v, want 0", v)
+	if v, _ := cmd.Flags().GetString("proxy-listen"); v != "127.0.0.1:19530" {
+		t.Errorf("default proxy-listen = %q, want 127.0.0.1:19530", v)
+	}
+}
+
+// The poll cadence is derived from the DSN scheme rather than exposed as a
+// flag: only postgres can have a sibling replica writing to the same database.
+func TestEpochPollIntervalDerivedFromBackend(t *testing.T) {
+	if got := epochPollInterval("postgres"); got != postgresEpochPollInterval {
+		t.Errorf("epochPollInterval(postgres) = %v, want %v", got, postgresEpochPollInterval)
+	}
+	for _, backend := range []string{"sqlite", "memory", ""} {
+		if got := epochPollInterval(backend); got != 0 {
+			t.Errorf("epochPollInterval(%q) = %v, want 0 (no sibling replica can bump the epoch)", backend, got)
+		}
+	}
+}
+
+func TestNewCmdConfigPollIntervalFlagIsGone(t *testing.T) {
+	if f := NewCmd().Flags().Lookup("config-poll-interval"); f != nil {
+		t.Error("--config-poll-interval should have been removed in favour of DSN-derived polling")
 	}
 }
 
@@ -135,13 +160,15 @@ func TestStartEpochWatcher_ZeroReturnsNilWithoutReadingEpoch(t *testing.T) {
 	}
 }
 
-func TestStartEpochWatcher_NegativeIntervalErrorsWithoutReadingEpoch(t *testing.T) {
+func TestStartEpochWatcher_NonPositiveIntervalDisablesWithoutReadingEpoch(t *testing.T) {
 	store := &countingEpochStore{value: 7}
 	notifier := &channelNotifier{notified: make(chan struct{}, 1)}
 
+	// The interval is no longer operator-supplied, so a non-positive value is
+	// simply "polling disabled" rather than a validation error.
 	watcher, err := startEpochWatcher(context.Background(), -time.Second, store, notifier)
-	if err == nil {
-		t.Fatal("startEpochWatcher returned nil error, want negative interval error")
+	if err != nil {
+		t.Fatalf("startEpochWatcher: %v", err)
 	}
 	if watcher != nil {
 		t.Fatalf("watcher = %v, want nil", watcher)
@@ -181,50 +208,24 @@ func TestStartEpochWatcher_PositiveIntervalSeedsAndRuns(t *testing.T) {
 	}
 }
 
-func TestStartConfigSyncSeedsEpochWatcherBeforeServing(t *testing.T) {
+// The watcher must be seeded (one epoch read) before it is handed out, so the
+// first poll tick cannot mistake the current epoch for a change and re-push a
+// snapshot every subscriber already has.
+func TestStartEpochWatcher_SeedsBeforeReturning(t *testing.T) {
 	store := &countingEpochStore{value: 7}
 	notifier := &channelNotifier{notified: make(chan struct{}, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	serveCalled := false
 
-	watcher, shutdown, err := startConfigSync(ctx, time.Hour, store, notifier, func() (func(), error) {
-		serveCalled = true
-		if got := store.readCount(); got != 1 {
-			t.Fatalf("epoch reads when serve callback ran = %d, want 1 seed read", got)
-		}
-		return func() {}, nil
-	})
+	watcher, err := startEpochWatcher(ctx, time.Hour, store, notifier)
 	if err != nil {
-		t.Fatalf("startConfigSync: %v", err)
+		t.Fatalf("startEpochWatcher: %v", err)
 	}
 	if watcher == nil {
 		t.Fatal("watcher = nil, want seeded watcher")
 	}
-	if shutdown == nil {
-		t.Fatal("shutdown = nil, want serve shutdown callback")
-	}
-	if !serveCalled {
-		t.Fatal("serve callback was not called")
-	}
-}
-
-func TestRunE_RejectsNegativeConfigPollIntervalWhenConfigSyncDisabled(t *testing.T) {
-	cmd := NewCmd()
-	if err := cmd.ParseFlags([]string{
-		"--sync-listen=",
-		"--config-poll-interval=-1s",
-		"--dsn=memory://",
-	}); err != nil {
-		t.Fatalf("parse flags: %v", err)
-	}
-
-	err := cmd.RunE(cmd, nil)
-	if err == nil {
-		t.Fatal("RunE returned nil error, want negative poll interval error")
-	}
-	if !strings.Contains(err.Error(), "--config-poll-interval") {
-		t.Fatalf("RunE error = %q, want --config-poll-interval validation error", err)
+	if got := store.readCount(); got != 1 {
+		t.Fatalf("epoch reads after seeding = %d, want exactly 1", got)
 	}
 }
 
@@ -233,8 +234,6 @@ func TestRunE_RejectsConfigSyncFlagsWhenConfigListenerDisabled(t *testing.T) {
 		name string
 		flag string
 	}{
-		{name: "positive poll interval", flag: "--config-poll-interval=1s"},
-		{name: "explicit zero poll interval", flag: "--config-poll-interval=0"},
 		{name: "TLS CA", flag: "--sync-tls-ca=ca.pem"},
 		{name: "TLS certificate", flag: "--sync-tls-cert=cert.pem"},
 		{name: "TLS key", flag: "--sync-tls-key=key.pem"},
