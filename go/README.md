@@ -72,6 +72,10 @@ go run . proxy --server 127.0.0.1:19532                         # extra data pla
 go run . proxy --config ./nyro.yaml                             # standalone: no server, no DB
 ```
 
+Off-host config-sync needs a join token (`--sync-token`) or mTLS — nyro refuses
+to serve upstream credentials over an unauthenticated plaintext network port.
+See [config-sync transport and mTLS](docs/security/config-sync-mtls.md).
+
 ## Go WebUI
 
 The Go admin control plane has its own management console at `go/webui/`,
@@ -88,7 +92,7 @@ npm install
 npm run lint
 npm run build
 cd ..
-go run . admin --webui-dir ./webui/dist
+go run . server --webui-dir ./webui/dist
 ```
 
 **Release-embedding workflow** — bake the built assets into the `nyro`

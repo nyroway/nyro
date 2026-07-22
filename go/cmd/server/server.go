@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +79,10 @@ func NewCmd() *cobra.Command {
 	// every upstream's credentials_json, so plaintext mode logs a security
 	// warning; operators can configure mTLS with --sync-tls-ca/-cert/-key.
 	cmd.Flags().String("sync-listen", "", "listen address for the config-sync gRPC server so remote `nyro proxy` nodes can subscribe (empty disables it)")
+	// Repeatable so a token can be rotated without downtime: add the new one,
+	// roll the proxies onto it, then drop the old one. Prefer the env var —
+	// a token passed as a flag is visible in `ps`.
+	cmd.Flags().StringArray("sync-token", nil, "join token a remote `nyro proxy` must present to subscribe to config-sync; repeatable so tokens can be rotated without downtime. A join credential, NOT an identity: mTLS is what gives each node a verifiable identity. Prefer NYRO_SERVER_SYNC_TOKEN over the flag, which exposes the value in `ps`")
 	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro ca`); must be set together with --sync-tls-cert/-key")
 	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to the server's config-sync server certificate")
 	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to the server's config-sync server private key")
@@ -93,6 +96,7 @@ func NewCmd() *cobra.Command {
 		addr, _ := cmd.Flags().GetString("listen")
 		proxyAddr, _ := cmd.Flags().GetString("proxy-listen")
 		grpcAddr, _ := cmd.Flags().GetString("sync-listen")
+		syncTokens, _ := cmd.Flags().GetStringArray("sync-token")
 		tlsCA, _ := cmd.Flags().GetString("sync-tls-ca")
 		tlsCert, _ := cmd.Flags().GetString("sync-tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("sync-tls-key")
@@ -103,13 +107,15 @@ func NewCmd() *cobra.Command {
 		plaintextKeys, _ := cmd.Flags().GetBool("raw-api-keys")
 		obsDataDir, _ := cmd.Flags().GetString("obs-data-dir")
 		if grpcAddr == "" {
-			for _, name := range []string{"sync-tls-ca", "sync-tls-cert", "sync-tls-key"} {
+			// The in-process channel used by the embedded data plane needs
+			// neither, so these only make sense with a TCP listener.
+			for _, name := range []string{"sync-tls-ca", "sync-tls-cert", "sync-tls-key", "sync-token"} {
 				if cmd.Flags().Changed(name) {
 					return fmt.Errorf("--%s requires --sync-listen", name)
 				}
 			}
 		}
-		if adminToken == "" && !isLoopbackListenAddress(addr) {
+		if adminToken == "" && !configsync.IsLoopbackListenAddress(addr) {
 			slog.Warn("management API is exposed without --token; unauthenticated clients can access control-plane routes", "listen", addr)
 		}
 
@@ -119,6 +125,16 @@ func NewCmd() *cobra.Command {
 			configTLS, err = resolveConfigSyncServerTLS(tlsCA, tlsCert, tlsKey)
 			if err != nil {
 				return err
+			}
+			// Fail closed before anything is opened: an unauthenticated
+			// plaintext config-sync port on a routable address publishes every
+			// upstream credential to whoever reaches it.
+			if err := configsync.GuardPlaintextListen(grpcAddr, configTLS != nil, len(syncTokens) > 0); err != nil {
+				return err
+			}
+			if configTLS == nil && len(syncTokens) > 0 {
+				slog.Warn("config-sync is authenticated by join token over an unencrypted connection; the token crosses the network in the clear and can be replayed — prefer mTLS (`nyro ca`) off-host",
+					"listen", grpcAddr)
 			}
 		}
 
@@ -238,7 +254,7 @@ func NewCmd() *cobra.Command {
 			admin.SetEpochWatcher(watcher)
 
 			if grpcAddr != "" {
-				shutdown, err := configsync.ServeGRPC(ctx, grpcAddr, srv, configTLS)
+				shutdown, err := configsync.ServeGRPC(ctx, grpcAddr, srv, configTLS, configsync.StreamTokenAuth(syncTokens))
 				if err != nil {
 					return err
 				}
@@ -317,18 +333,6 @@ func NewCmd() *cobra.Command {
 	return cmd
 }
 
-func isLoopbackListenAddress(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return false
-	}
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
 // configExpiryCheckInterval is how often WatchExpiry re-checks the loaded
 // config-sync certificate once running (it always checks once immediately
 // at startup too). Daily is frequent enough given the ExpiryWarningWindow is
@@ -387,7 +391,12 @@ func startEpochWatcher(
 //   - Some but not all three set: a partial/likely-typo'd configuration —
 //     fail fast rather than silently falling back to plaintext or guessing
 //     which file is missing.
-//   - None set: plaintext is used and a security warning is logged.
+//   - None set: plaintext is used, silently. Whether that is acceptable is
+//     decided by the bind address, not here: configsync.GuardPlaintextListen
+//     refuses a non-loopback plaintext listener that has no join token either.
+//     Warning unconditionally would fire on every loopback single-node start —
+//     a warning nobody can act on, seen so often it trains operators to skip
+//     the one that matters.
 func resolveConfigSyncServerTLS(caPath, certPath, keyPath string) (*tls.Config, error) {
 	set := 0
 	for _, p := range []string{caPath, certPath, keyPath} {
@@ -401,7 +410,6 @@ func resolveConfigSyncServerTLS(caPath, certPath, keyPath string) (*tls.Config, 
 	case set > 0:
 		return nil, fmt.Errorf("--sync-tls-ca, --sync-tls-cert, and --sync-tls-key must be set together (got %d of 3)", set)
 	default:
-		slog.Warn("config-sync gRPC server running in plaintext: no transport encryption or client authentication — the stream carries upstream credentials in the clear to any client that connects")
 		return nil, nil
 	}
 }

@@ -10,7 +10,10 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 )
 
-func TestResolveConfigSyncClientTLS_NoFlagsUsesPlaintextAndWarns(t *testing.T) {
+// Mirrors the server side: plaintext is selected silently and
+// configsync.GuardPlaintextDial decides whether the target makes it
+// unacceptable.
+func TestResolveConfigSyncClientTLS_NoFlagsUsesPlaintextSilently(t *testing.T) {
 	var logs bytes.Buffer
 	previousLogger := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -23,8 +26,8 @@ func TestResolveConfigSyncClientTLS_NoFlagsUsesPlaintextAndWarns(t *testing.T) {
 	if cfg != nil {
 		t.Fatal("expected a nil *tls.Config for plaintext config-sync")
 	}
-	if got := logs.String(); !strings.Contains(got, "level=WARN") || !strings.Contains(got, "plaintext") {
-		t.Fatalf("log = %q; want a plaintext security warning", got)
+	if got := logs.String(); strings.Contains(got, "WARN") {
+		t.Fatalf("log = %q; want silence — the address-based gate owns this decision now", got)
 	}
 }
 

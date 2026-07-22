@@ -81,3 +81,22 @@ func TestRunE_RejectsConfigTLSFlagsWithConfigFile(t *testing.T) {
 		})
 	}
 }
+
+// Symmetric with the server-side gate: the listener is where exposure is
+// created, but a proxy dialling in the clear still drags upstream credentials
+// across the network, so accepting it here would undercut the other side.
+func TestRunE_RefusesNonLoopbackPlaintextServer(t *testing.T) {
+	cmd := NewCmd()
+	if err := cmd.ParseFlags([]string{"--server=10.0.0.10:19532"}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	err := cmd.RunE(cmd, nil)
+	if err == nil {
+		t.Fatal("RunE returned nil, want a refusal to pull config in the clear from an off-host server")
+	}
+	for _, want := range []string{"--sync-token", "--sync-tls-ca", "loopback"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal does not mention %q:\n%s", want, err)
+		}
+	}
+}

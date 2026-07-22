@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nyroway/nyro/go/internal/bootstrap"
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/dataplane"
 	"github.com/nyroway/nyro/go/internal/proxy"
@@ -39,6 +40,7 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("listen", "0.0.0.0:19530", "listen address for the data plane")
 	cmd.Flags().String("config", "", "standalone YAML config file (no server/DB needed)")
 	cmd.Flags().String("server", "", "the server's gRPC config-sync endpoint (host:port) for config hot-reload")
+	cmd.Flags().String("sync-token", "", "join token presented to the server when subscribing to config-sync (must match one of the server's --sync-token values). Prefer NYRO_PROXY_SYNC_TOKEN over the flag, which exposes the value in `ps`")
 	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro ca`); must be set together with --sync-tls-cert/-key")
 	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to this proxy's client certificate")
 	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to this proxy's client private key")
@@ -46,6 +48,7 @@ func NewCmd() *cobra.Command {
 		addr, _ := cmd.Flags().GetString("listen")
 		cfgPath, _ := cmd.Flags().GetString("config")
 		configSyncAddr, _ := cmd.Flags().GetString("server")
+		syncToken, _ := cmd.Flags().GetString("sync-token")
 		tlsCA, _ := cmd.Flags().GetString("sync-tls-ca")
 		tlsCert, _ := cmd.Flags().GetString("sync-tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("sync-tls-key")
@@ -57,7 +60,7 @@ func NewCmd() *cobra.Command {
 			return errors.New("--config and --server are mutually exclusive (set exactly one)")
 		}
 		if cfgPath != "" {
-			for _, name := range []string{"sync-tls-ca", "sync-tls-cert", "sync-tls-key"} {
+			for _, name := range []string{"sync-token", "sync-tls-ca", "sync-tls-cert", "sync-tls-key"} {
 				if cmd.Flags().Changed(name) {
 					return fmt.Errorf("--%s is only valid with --server (not --config)", name)
 				}
@@ -71,6 +74,16 @@ func NewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Symmetric with the server-side guard: refuse to pull upstream
+			// credentials across a network in the clear with nothing
+			// authenticating either end.
+			if err := configsync.GuardPlaintextDial(configSyncAddr, configTLS != nil, syncToken != ""); err != nil {
+				return err
+			}
+			if configTLS == nil && syncToken != "" {
+				slog.Warn("config-sync join token is sent over an unencrypted connection; it crosses the network in the clear and can be replayed — prefer mTLS (`nyro ca`) off-host",
+					"server", configSyncAddr)
+			}
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -80,6 +93,7 @@ func NewCmd() *cobra.Command {
 			ConfigPath: cfgPath,
 			SyncTarget: configSyncAddr,
 			SyncTLS:    configTLS,
+			SyncToken:  syncToken,
 			ListenAddr: addr,
 		})
 		if err != nil {
@@ -101,7 +115,10 @@ func NewCmd() *cobra.Command {
 
 // resolveConfigSyncClientTLS turns the --sync-tls-ca/-cert/-key flags into
 // a *tls.Config for dialing --server, or nil for plaintext. It uses the
-// same all-or-none behavior as resolveConfigSyncServerTLS on the admin side.
+// same all-or-none behavior as resolveConfigSyncServerTLS on the server side.
+//
+// Plaintext is selected silently; configsync.GuardPlaintextDial decides whether
+// it is acceptable based on whether --server leaves this host.
 //
 // There is deliberately no --server-name-style override here:
 // pki.LoadClientTLS verifies admin's server certificate by SPIFFE identity
@@ -121,7 +138,6 @@ func resolveConfigSyncClientTLS(caPath, certPath, keyPath string) (*tls.Config, 
 	case set > 0:
 		return nil, fmt.Errorf("--sync-tls-ca, --sync-tls-cert, and --sync-tls-key must be set together (got %d of 3)", set)
 	default:
-		slog.Warn("config-sync client connecting to --server in plaintext: no transport encryption or server authentication")
 		return nil, nil
 	}
 }
