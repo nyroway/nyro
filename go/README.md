@@ -52,9 +52,24 @@ by `modernc.org/sqlite`. Added with the storage layer in P3.
 
 ```bash
 go build ./...
-go run . gateway                    # data plane, listens on 0.0.0.0:19530
+go run . server --auto-migrate      # everything: control plane + embedded data plane
 go test ./...
 go vet ./...
+```
+
+`nyro server` alone is a complete, usable nyro: the management API and WebUI on
+`127.0.0.1:19531`, plus an embedded data plane on `127.0.0.1:19530`. The
+embedded data plane subscribes to config over an in-process pipe — the same
+config-sync client, cache and router a remote node uses, so there is no second
+config path that can drift. No config-sync TCP port is opened for it.
+
+The two roles can also be split, for horizontal scaling or to keep the node
+holding credentials out of the traffic path:
+
+```bash
+go run . server --proxy-listen= --sync-listen 127.0.0.1:19532   # control plane only
+go run . proxy --server 127.0.0.1:19532                         # extra data plane node
+go run . proxy --config ./nyro.yaml                             # standalone: no server, no DB
 ```
 
 ## Go WebUI

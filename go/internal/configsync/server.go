@@ -108,6 +108,13 @@ func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreami
 	if p, ok := peer.FromContext(ctx); ok {
 		if p.Addr != nil {
 			remoteAddr = p.Addr.String()
+			// An in-process (bufconn) subscriber is the embedded data plane of
+			// this same process. It carries no TLS state, but calling that
+			// "plaintext" would misreport an in-memory pipe as an unencrypted
+			// network connection.
+			if p.Addr.Network() == inProcessNetwork {
+				connMode = ConnModeInProcess
+			}
 		}
 		// Under mTLS, the peer's verified client certificate is the
 		// authoritative source of node identity — it overrides whatever the

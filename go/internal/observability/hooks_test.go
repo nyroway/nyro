@@ -428,3 +428,46 @@ var _ log.Logger = (*captureLogger)(nil)
 
 // keep imports referenced for the assert helpers above.
 var _ attribute.KeyValue = attribute.KeyValue{}
+
+// TestRegisterHooksIsIdempotentAndRepoints pins the contract that makes an
+// embedded data plane safe: a process may call RegisterHooks more than once
+// (`nyro server` assembles a data plane alongside the control plane, tests
+// assemble many), and doing so must neither double-emit nor keep an old
+// provider alive.
+//
+// Before this contract the plugin registry simply appended, so the second
+// registration meant every request produced two spans and two log records —
+// one into each registered provider — enforced only by a doc comment.
+func TestRegisterHooksIsIdempotentAndRepoints(t *testing.T) {
+	newRecorder := func() (*tracetest.SpanRecorder, trace.Tracer, func()) {
+		rec := tracetest.NewSpanRecorder()
+		tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+		return rec, tp.Tracer("nyro-test"), func() { _ = tp.Shutdown(context.Background()) }
+	}
+
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	handles := NewHandles(meterProvider.Meter("nyro-test"))
+	t.Cleanup(func() { _ = meterProvider.Shutdown(context.Background()) })
+
+	firstRec, firstTracer, stopFirst := newRecorder()
+	t.Cleanup(stopFirst)
+	secondRec, secondTracer, stopSecond := newRecorder()
+	t.Cleanup(stopSecond)
+
+	RegisterHooks(newSwappableFromParts(firstTracer, &captureLogger{}, handles))
+	RegisterHooks(newSwappableFromParts(secondTracer, &captureLogger{}, handles))
+
+	if out := runPhase(t, plugin.PhaseOnRequest, plugin.NewContextBag()); out != plugin.OutcomeContinue {
+		t.Fatalf("OnRequest: want OutcomeContinue, got %v", out)
+	}
+
+	// Exactly one span, and it belongs to the most recently registered
+	// provider: registering twice must not stack two live hooks.
+	if got := len(secondRec.Started()); got != 1 {
+		t.Errorf("spans started on the current provider = %d; want 1", got)
+	}
+	if got := len(firstRec.Started()); got != 0 {
+		t.Errorf("spans started on the displaced provider = %d; want 0 (it should no longer be wired)", got)
+	}
+}

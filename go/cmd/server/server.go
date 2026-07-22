@@ -16,13 +16,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 
 	"github.com/nyroway/nyro/go/internal/admin"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
+	"github.com/nyroway/nyro/go/internal/dataplane"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
+	"github.com/nyroway/nyro/go/internal/proxy"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/webui"
 )
@@ -46,22 +49,37 @@ func defaultDSN() string {
 	return "sqlite://" + filepath.Join(nyroHomeDir(), "nyro.db")
 }
 
-// NewCmd builds the admin (control-plane) subcommand.
+// NewCmd builds the server (control-plane) subcommand.
 //
-// In addition to the REST API + WebUI, the admin optionally runs a gRPC
-// ConfigService server (--sync-listen) that pushes the full config snapshot
-// to every connected gateway. When enabled, every config write (providers,
-// models, api keys, settings) triggers an immediate push to all gateways.
+// `nyro server` is the single-command deployment: the REST API + WebUI on
+// --listen, and — unless --proxy-listen is empty — an embedded data plane on
+// --proxy-listen, so one process is a complete, usable nyro. The embedded data
+// plane is assembled by internal/dataplane over an in-process config-sync
+// channel, i.e. the exact code path a remote `nyro proxy` uses; it never reads
+// storage directly.
+//
+// It optionally also serves config-sync over TCP (--sync-listen) so additional
+// `nyro proxy` nodes can subscribe. Every config write (providers, models, api
+// keys, settings) triggers an immediate push to all connected data planes,
+// embedded and remote alike.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "server",
-		Short: "Run the control plane (management API + WebUI)",
+		Short: "Run the control plane, with an embedded data plane by default",
 	}
 	cmd.Flags().String("listen", "127.0.0.1:19531", "listen address for the control plane")
-	// Bound to loopback by default. This stream carries every upstream's
-	// credentials_json, so plaintext mode logs a security warning; operators
-	// can configure mTLS with --sync-tls-ca/-cert/-key.
-	cmd.Flags().String("sync-listen", "127.0.0.1:19532", "listen address for the config-sync gRPC server (empty disables it)")
+	// Loopback, unlike a standalone `nyro proxy` (0.0.0.0): the single-binary
+	// default is a local-first workstation install, so the embedded data plane
+	// should not be reachable off-host until an operator says so. A deployment
+	// that fronts nyro with nginx/envoy sets this explicitly, and a container
+	// deployment must (loopback inside a container is unreachable from outside).
+	cmd.Flags().String("proxy-listen", "127.0.0.1:19530", "listen address for the embedded data plane (empty disables it, leaving a control-plane-only node)")
+	// Empty by default: with an embedded data plane the single-node deployment
+	// needs no config-sync port at all, so opening one is an opt-in taken only
+	// when additional `nyro proxy` nodes must subscribe. This stream carries
+	// every upstream's credentials_json, so plaintext mode logs a security
+	// warning; operators can configure mTLS with --sync-tls-ca/-cert/-key.
+	cmd.Flags().String("sync-listen", "", "listen address for the config-sync gRPC server so remote `nyro proxy` nodes can subscribe (empty disables it)")
 	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro ca`); must be set together with --sync-tls-cert/-key")
 	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to the server's config-sync server certificate")
 	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to the server's config-sync server private key")
@@ -71,9 +89,9 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().Bool("auto-migrate", false, "let nyro create/alter the schema itself via GORM AutoMigrate (requires DDL rights on --dsn); default false regardless of backend — without it, nyro only verifies the canonical tables exist, and a DBA applies the DDL from `nyro migrate dump`/`diff` (see go/docs/schema/migrations.md)")
 	cmd.Flags().Bool("raw-api-keys", false, "store API keys in a recoverable form so they can be re-copied from the WebUI after creation. The raw key is written to the database in plaintext: anyone with read access to the DB obtains working credentials. Default false (hash-only; keys are shown once at creation). Never affects inbound auth (always hash-compared) and is never sent to proxies over config-sync")
 	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for control-plane-local observability parquet data (logs/metrics/traces)")
-	cmd.Flags().Duration("config-poll-interval", 0, "how often to poll the shared config_epoch setting for changes made by other server replicas (0 disables polling)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("listen")
+		proxyAddr, _ := cmd.Flags().GetString("proxy-listen")
 		grpcAddr, _ := cmd.Flags().GetString("sync-listen")
 		tlsCA, _ := cmd.Flags().GetString("sync-tls-ca")
 		tlsCert, _ := cmd.Flags().GetString("sync-tls-cert")
@@ -84,14 +102,7 @@ func NewCmd() *cobra.Command {
 		autoMigrate, _ := cmd.Flags().GetBool("auto-migrate")
 		plaintextKeys, _ := cmd.Flags().GetBool("raw-api-keys")
 		obsDataDir, _ := cmd.Flags().GetString("obs-data-dir")
-		configPollInterval, _ := cmd.Flags().GetDuration("config-poll-interval")
-		if configPollInterval < 0 {
-			return fmt.Errorf("--config-poll-interval must not be negative")
-		}
 		if grpcAddr == "" {
-			if cmd.Flags().Changed("config-poll-interval") {
-				return fmt.Errorf("--config-poll-interval requires --sync-listen")
-			}
 			for _, name := range []string{"sync-tls-ca", "sync-tls-cert", "sync-tls-key"} {
 				if cmd.Flags().Changed(name) {
 					return fmt.Errorf("--%s requires --sync-listen", name)
@@ -206,26 +217,43 @@ func NewCmd() *cobra.Command {
 			Traces:  obsCfg.TracesRetentionDays,
 		}, time.Hour)
 
-		// Optionally start the config-sync gRPC server and wire it as the
-		// config-push target so every admin config write reaches connected
-		// gateways.
-		if grpcAddr != "" {
+		// The config-sync server is needed whenever anything subscribes: a
+		// remote proxy over TCP (--sync-listen), the embedded data plane over
+		// the in-process pipe (--proxy-listen), or both. It is the single
+		// config-push target, so a write reaches embedded and remote data
+		// planes through exactly the same broadcast.
+		var inProcDialOpts []grpc.DialOption
+		if grpcAddr != "" || proxyAddr != "" {
 			srv := configsync.NewConfigServer(st)
-			watcher, shutdown, err := startConfigSync(ctx, configPollInterval, st.Settings(), srv, func() (func(), error) {
-				return configsync.ServeGRPC(ctx, grpcAddr, srv, configTLS)
-			})
+			admin.SetBroadcaster(srv)
+			admin.SetNodeLister(srv)
+
+			// Cross-replica epoch polling is only meaningful when another
+			// replica can write to the same database, which the DSN scheme
+			// already tells us — see epochPollInterval.
+			watcher, err := startEpochWatcher(ctx, epochPollInterval(backend), st.Settings(), srv)
 			if err != nil {
 				return err
 			}
-			defer shutdown()
-			admin.SetBroadcaster(srv)
-			admin.SetNodeLister(srv)
-			pki.WatchExpiry(ctx, configTLS, configExpiryCheckInterval, func(notAfter time.Time) {
-				slog.Warn("config-sync server certificate expiring soon — run `nyro ca sign-server` and redistribute before it lapses",
-					"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
-			})
-
 			admin.SetEpochWatcher(watcher)
+
+			if grpcAddr != "" {
+				shutdown, err := configsync.ServeGRPC(ctx, grpcAddr, srv, configTLS)
+				if err != nil {
+					return err
+				}
+				defer shutdown()
+				pki.WatchExpiry(ctx, configTLS, configExpiryCheckInterval, func(notAfter time.Time) {
+					slog.Warn("config-sync server certificate expiring soon — run `nyro ca sign-server` and redistribute before it lapses",
+						"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
+				})
+			}
+
+			if proxyAddr != "" {
+				var shutdown func()
+				inProcDialOpts, shutdown = configsync.ServeInProcess(ctx, srv)
+				defer shutdown()
+			}
 		}
 
 		engine := chi.NewRouter()
@@ -249,7 +277,42 @@ func NewCmd() *cobra.Command {
 		// shutdown — the sinks' own rotation already bounds data loss.
 		defer rcv.Flush(ctx)
 
-		return bootstrap.RunServer(engine, addr)
+		servers := []bootstrap.HTTPServer{{Role: "control plane", Addr: addr, Handler: engine}}
+
+		// ── Embedded data plane ──
+		// Assembled through internal/dataplane over the in-process config-sync
+		// pipe, so it runs the same client/cache/router path as a remote proxy.
+		// The pipe has no listening socket, so the config-sync transport rules
+		// (TLS, non-loopback plaintext) do not apply to it.
+		if proxyAddr != "" {
+			gw, obsMgr, err := dataplane.Build(ctx, dataplane.Options{
+				SyncTarget:   configsync.InProcessTarget,
+				SyncDialOpts: inProcDialOpts,
+				ListenAddr:   proxyAddr,
+			})
+			if err != nil {
+				return fmt.Errorf("embedded data plane: %w", err)
+			}
+			servers = append(servers, bootstrap.HTTPServer{
+				Role:    "data plane",
+				Addr:    proxyAddr,
+				Handler: proxy.NewRouter(gw),
+				// Flush telemetry while the control plane is still listening:
+				// by default the embedded data plane exports OTLP to this same
+				// process's receiver (see seedDefaultObsEndpoint), so a flush
+				// after the control plane stops would fail connection-refused
+				// on every clean shutdown.
+				AfterShutdown: func() {
+					shutCtx, shutCancel := context.WithTimeout(context.Background(), dataplane.ShutdownTimeout)
+					defer shutCancel()
+					if err := obsMgr.Shutdown(shutCtx); err != nil {
+						slog.Warn("embedded data plane observability shutdown failed", "error", err)
+					}
+				},
+			})
+		}
+
+		return bootstrap.RunServers(servers...)
 	}
 	return cmd
 }
@@ -272,34 +335,40 @@ func isLoopbackListenAddress(addr string) bool {
 // 30 days — see pki.WatchExpiry.
 const configExpiryCheckInterval = 24 * time.Hour
 
-func startConfigSync(
-	ctx context.Context,
-	interval time.Duration,
-	store configsync.EpochStore,
-	notifier configsync.Notifier,
-	serve func() (func(), error),
-) (admin.EpochObserver, func(), error) {
-	watcher, err := startEpochWatcher(ctx, interval, store, notifier)
-	if err != nil {
-		return nil, nil, err
+// postgresEpochPollInterval is how often a server replica re-reads the shared
+// config_epoch setting to notice writes handled by a sibling replica. It bounds
+// cross-replica config propagation; a control plane runs a handful of replicas
+// at most, so one indexed single-row read every 5s is not a meaningful load.
+const postgresEpochPollInterval = 5 * time.Second
+
+// epochPollInterval derives the cross-replica poll cadence from the storage
+// backend instead of exposing it as a flag.
+//
+// The epoch watcher only exists to notice writes made by ANOTHER replica
+// sharing the same database. Whether that is possible is already stated by the
+// DSN: sqlite is a single-node file, so there is no sibling to hear from and
+// polling is pure waste; postgres is the multi-replica backend. A flag whose
+// only correct value is a deterministic function of another flag is not a knob,
+// it is an opportunity to get it wrong — so the former --config-poll-interval
+// was removed rather than kept as an override. If this cadence is ever wrong,
+// the derivation is wrong and belongs fixed here, not guessed per deployment.
+func epochPollInterval(backend string) time.Duration {
+	if backend == "postgres" {
+		return postgresEpochPollInterval
 	}
-	shutdown, err := serve()
-	if err != nil {
-		return nil, nil, err
-	}
-	return watcher, shutdown, nil
+	return 0
 }
 
+// startEpochWatcher seeds and runs the cross-replica epoch watcher. A
+// non-positive interval disables polling and yields a nil observer, which the
+// admin layer treats as "this replica is the only writer".
 func startEpochWatcher(
 	ctx context.Context,
 	interval time.Duration,
 	store configsync.EpochStore,
 	notifier configsync.Notifier,
 ) (admin.EpochObserver, error) {
-	if interval < 0 {
-		return nil, fmt.Errorf("--config-poll-interval must not be negative")
-	}
-	if interval == 0 {
+	if interval <= 0 {
 		return nil, nil
 	}
 

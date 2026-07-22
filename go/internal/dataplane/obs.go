@@ -1,4 +1,4 @@
-package proxy
+package dataplane
 
 import (
 	"context"
@@ -21,14 +21,14 @@ import (
 // event of an operator changing observability config mid-flight.
 const obsReloadGrace = 30 * time.Second
 
-// obsManager owns the gateway's hot-reloadable observability pipeline. The OTel
+// ObsManager owns the data plane's hot-reloadable observability pipeline. The OTel
 // provider is built once at startup (in --server mode, from the still-empty
 // cache, so it resolves to the fixed stdout default) and rebuilt whenever a
 // config-sync snapshot changes the resolved ObsConfig — this is what lets the
 // control-plane-seeded otlp settings, which only arrive AFTER startup over the
 // config stream, actually take effect. The phase hooks read the current pipeline
 // through sp (SwappableProvider) so a rebuild never re-registers them.
-type obsManager struct {
+type ObsManager struct {
 	ctx   context.Context
 	cache *configsync.ConfigCache
 	sp    *observability.SwappableProvider
@@ -44,8 +44,8 @@ type obsManager struct {
 // config selected the prometheus metrics exporter. It does NOT register the
 // SetOnSwap callback — the caller does that (only --server mode needs it),
 // after ensuring no snapshot can be published before the callback is in place.
-func newObsManager(ctx context.Context, cache *configsync.ConfigCache, sp *observability.SwappableProvider, initial *observability.ObsProvider, initialCfg observability.ObsConfig) *obsManager {
-	m := &obsManager{
+func newObsManager(ctx context.Context, cache *configsync.ConfigCache, sp *observability.SwappableProvider, initial *observability.ObsProvider, initialCfg observability.ObsConfig) *ObsManager {
+	m := &ObsManager{
 		ctx:     ctx,
 		cache:   cache,
 		sp:      sp,
@@ -67,7 +67,7 @@ func newObsManager(ctx context.Context, cache *configsync.ConfigCache, sp *obser
 // A build failure is non-fatal: the current provider keeps serving and the error
 // is logged, so a malformed obs setting pushed by the control plane never breaks
 // telemetry (or, worse, request serving) on the data plane.
-func (m *obsManager) rebuild() {
+func (m *ObsManager) rebuild() {
 	newCfg := resolveObsConfig(m.cache)
 
 	m.mu.Lock()
@@ -97,7 +97,7 @@ func (m *obsManager) rebuild() {
 	// or old is nil.
 	if old != nil && old != newProv {
 		time.AfterFunc(obsReloadGrace, func() {
-			shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			shutCtx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 			defer cancel()
 			if err := old.Shutdown(shutCtx); err != nil {
 				slog.Warn("observability hot-reload: displaced provider shutdown failed", "error", err)
@@ -110,7 +110,7 @@ func (m *obsManager) rebuild() {
 // metrics exporter is prometheus (PromHandler != nil); a no-op otherwise. The
 // caller must hold m.mu. Best-effort: a bind/serve failure is logged but never
 // fatal, matching the original startMetricsServer contract.
-func (m *obsManager) startMetricsLocked(prov *observability.ObsProvider, path string) {
+func (m *ObsManager) startMetricsLocked(prov *observability.ObsProvider, path string) {
 	if prov == nil || prov.PromHandler == nil {
 		return
 	}
@@ -128,11 +128,11 @@ func (m *obsManager) startMetricsLocked(prov *observability.ObsProvider, path st
 // Synchronous (rather than ctx-cancel + async) so a same-address restart during
 // reconciliation cannot race the old server for the port. The caller must hold
 // m.mu.
-func (m *obsManager) stopMetricsLocked() {
+func (m *ObsManager) stopMetricsLocked() {
 	if m.metricsSrv == nil {
 		return
 	}
-	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutCtx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
 	defer cancel()
 	if err := m.metricsSrv.Shutdown(shutCtx); err != nil {
 		slog.Warn("prometheus metrics server shutdown failed", "error", err)
@@ -141,9 +141,9 @@ func (m *obsManager) stopMetricsLocked() {
 }
 
 // Shutdown stops the scrape server and flushes the current provider. Called via
-// the gateway's graceful-exit defer. Displaced providers scheduled by a prior
+// the data plane's graceful-exit defer. Displaced providers scheduled by a prior
 // rebuild are torn down by process exit if their grace timer has not yet fired.
-func (m *obsManager) Shutdown(ctx context.Context) error {
+func (m *ObsManager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stopMetricsLocked()
@@ -152,3 +152,7 @@ func (m *obsManager) Shutdown(ctx context.Context) error {
 	}
 	return nil
 }
+
+// ShutdownTimeout bounds the OTel provider flush on graceful exit. Exported so
+// the commands that own the process lifetime can budget the same window.
+const ShutdownTimeout = 5 * time.Second

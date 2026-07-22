@@ -107,23 +107,71 @@ func bootstrapSQL(st storage.Storage, autoMigrate bool) (storage.Storage, error)
 
 // RunServer serves handler on addr until SIGINT/SIGTERM, then graceful-shutdown.
 func RunServer(handler http.Handler, addr string) error {
-	srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
-	errCh := make(chan error, 1)
-	go func() {
-		slog.Info("nyro starting", "addr", addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
+	return RunServers(HTTPServer{Role: "nyro", Addr: addr, Handler: handler})
+}
+
+// HTTPServer pairs a handler with the address it listens on and the role name
+// used in its startup log line.
+type HTTPServer struct {
+	Role    string
+	Addr    string
+	Handler http.Handler
+
+	// AfterShutdown, if set, runs once this server has stopped accepting but
+	// before any earlier-registered server is shut down. Use it for drain work
+	// that still needs an earlier server to be up — see RunServers.
+	AfterShutdown func()
+}
+
+// RunServers starts every server and blocks until SIGINT/SIGTERM or the first
+// listen error, then gracefully shuts all of them down. It exists because
+// `nyro server` listens twice — the control plane on --listen and, unless
+// disabled, an embedded data plane on --proxy-listen — and both must share one
+// signal handler so a single Ctrl-C drains both rather than leaving one
+// serving.
+//
+// Shutdown runs in REVERSE registration order, each server's AfterShutdown
+// firing before the next one is stopped. Register dependencies first: in `nyro
+// server` the control plane is also the embedded data plane's OTLP sink, so
+// stopping it first would make the data plane's final telemetry flush fail with
+// connection-refused on every clean exit.
+//
+// A listen error on ANY server aborts the whole process: a half-up `nyro
+// server` (management API reachable, data plane port already taken) is a
+// confusing state to debug, and failing fast surfaces the port conflict
+// immediately.
+func RunServers(servers ...HTTPServer) error {
+	srvs := make([]*http.Server, 0, len(servers))
+	errCh := make(chan error, len(servers))
+	for _, s := range servers {
+		srv := &http.Server{Addr: s.Addr, Handler: s.Handler, ReadHeaderTimeout: 10 * time.Second}
+		srvs = append(srvs, srv)
+		go func(role string) {
+			slog.Info("nyro starting", "role", role, "addr", srv.Addr)
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("%s listener: %w", role, err)
+			}
+		}(s.Role)
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	var runErr error
 	select {
-	case err := <-errCh:
-		return err
+	case runErr = <-errCh:
 	case <-stop:
 		slog.Info("shutdown signal received")
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return srv.Shutdown(ctx)
+	for i := len(srvs) - 1; i >= 0; i-- {
+		if err := srvs[i].Shutdown(ctx); err != nil && runErr == nil {
+			runErr = err
+		}
+		if fn := servers[i].AfterShutdown; fn != nil {
+			fn()
+		}
+	}
+	return runErr
 }
