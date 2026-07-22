@@ -26,7 +26,7 @@ type Backend struct {
 }
 
 // SetPlaintextKeys toggles recoverable plaintext key storage. It is set once
-// at startup (from the admin's --plaintext-keys flag) before the backend
+// at startup (from the admin's --raw-api-keys flag) before the backend
 // serves any request.
 func (b *Backend) SetPlaintextKeys(v bool) { b.plaintextKeys = v }
 

@@ -29,7 +29,7 @@ until parity is reached (P0–P6 migration plan).
 | `internal/auth/` | `auth/` + `admin/oauth.rs` | inbound API key + quotas; outbound OAuth drivers (Claude/Codex/Vertex) |
 | `internal/storage/` | `db/` + `storage/` | `Storage` interface, idempotent migrations, sqlite/pg/memory |
 | `internal/logging/` | `logging/` | async request-log collector + retention |
-| `nyro.go` | `src-server/` + `crates/nyro-tools/` | unified CLI: `nyro gateway` (data plane) / `nyro admin` (control plane) / `nyro tool` (utilities) |
+| `nyro.go` | `src-server/` + `crates/nyro-tools/` | unified CLI: `nyro proxy` (data plane) / `nyro server` (control plane) / `nyro tool` (utilities) |
 
 ## Library mapping (Rust → Go)
 

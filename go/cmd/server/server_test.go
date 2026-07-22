@@ -1,4 +1,4 @@
-package admin
+package server
 
 import (
 	"bytes"
@@ -21,8 +21,14 @@ func TestNewCmdFlags(t *testing.T) {
 	if addr, _ := cmd.Flags().GetString("listen"); addr != "127.0.0.1:19531" {
 		t.Errorf("default listen = %q, want 127.0.0.1:19531", addr)
 	}
-	if cmd.Use != "admin" {
-		t.Errorf("Use = %q, want admin", cmd.Use)
+	if cmd.Use != "server" {
+		t.Errorf("Use = %q, want server", cmd.Use)
+	}
+	// Pre-rename flag names must be gone (no compatibility period).
+	for _, old := range []string{"config-listen", "config-tls-ca", "config-tls-cert", "config-tls-key", "plaintext-keys"} {
+		if cmd.Flags().Lookup(old) != nil {
+			t.Errorf("--%s should have been renamed", old)
+		}
 	}
 }
 
@@ -65,7 +71,7 @@ func TestNewCmdObsDataDirFlagDefault(t *testing.T) {
 
 func TestNewCmdConfigListenFlagDefault(t *testing.T) {
 	cmd := NewCmd()
-	if v, _ := cmd.Flags().GetString("config-listen"); v != "127.0.0.1:19532" {
+	if v, _ := cmd.Flags().GetString("sync-listen"); v != "127.0.0.1:19532" {
 		t.Errorf("default config-listen = %q, want 127.0.0.1:19532", v)
 	}
 }
@@ -206,7 +212,7 @@ func TestStartConfigSyncSeedsEpochWatcherBeforeServing(t *testing.T) {
 func TestRunE_RejectsNegativeConfigPollIntervalWhenConfigSyncDisabled(t *testing.T) {
 	cmd := NewCmd()
 	if err := cmd.ParseFlags([]string{
-		"--config-listen=",
+		"--sync-listen=",
 		"--config-poll-interval=-1s",
 		"--dsn=memory://",
 	}); err != nil {
@@ -229,15 +235,15 @@ func TestRunE_RejectsConfigSyncFlagsWhenConfigListenerDisabled(t *testing.T) {
 	}{
 		{name: "positive poll interval", flag: "--config-poll-interval=1s"},
 		{name: "explicit zero poll interval", flag: "--config-poll-interval=0"},
-		{name: "TLS CA", flag: "--config-tls-ca=ca.pem"},
-		{name: "TLS certificate", flag: "--config-tls-cert=cert.pem"},
-		{name: "TLS key", flag: "--config-tls-key=key.pem"},
+		{name: "TLS CA", flag: "--sync-tls-ca=ca.pem"},
+		{name: "TLS certificate", flag: "--sync-tls-cert=cert.pem"},
+		{name: "TLS key", flag: "--sync-tls-key=key.pem"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := NewCmd()
 			if err := cmd.ParseFlags([]string{
-				"--config-listen=",
+				"--sync-listen=",
 				tt.flag,
 				"--dsn=memory://",
 			}); err != nil {
@@ -248,8 +254,8 @@ func TestRunE_RejectsConfigSyncFlagsWhenConfigListenerDisabled(t *testing.T) {
 			if err == nil {
 				t.Fatal("RunE returned nil error, want disabled config-listen validation error")
 			}
-			if !strings.Contains(err.Error(), "--config-listen") {
-				t.Fatalf("RunE error = %q, want disabled --config-listen validation error", err)
+			if !strings.Contains(err.Error(), "--sync-listen") {
+				t.Fatalf("RunE error = %q, want disabled --sync-listen validation error", err)
 			}
 		})
 	}
@@ -280,7 +286,7 @@ func TestRunE_WarnsForUnauthenticatedNonLoopbackAdminListen(t *testing.T) {
 			if err := cmd.ParseFlags([]string{
 				"--listen=" + tt.listen,
 				"--token=" + tt.token,
-				"--config-listen=",
+				"--sync-listen=",
 				"--dsn=memory://",
 			}); err != nil {
 				t.Fatalf("parse flags: %v", err)
@@ -289,7 +295,7 @@ func TestRunE_WarnsForUnauthenticatedNonLoopbackAdminListen(t *testing.T) {
 				t.Fatal("RunE returned nil error, want memory DSN rejection after exposure check")
 			}
 
-			gotWarn := strings.Contains(logs.String(), "admin API is exposed without --token")
+			gotWarn := strings.Contains(logs.String(), "management API is exposed without --token")
 			if gotWarn != tt.wantWarn {
 				t.Fatalf("warning present = %v, want %v; logs: %q", gotWarn, tt.wantWarn, logs.String())
 			}

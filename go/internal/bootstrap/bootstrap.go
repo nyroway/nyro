@@ -1,4 +1,4 @@
-// Package bootstrap holds the shared startup wiring used by the nyro gateway
+// Package bootstrap holds the shared startup wiring used by the nyro data plane
 // and admin commands: storage backend selection, OAuth driver registration,
 // and the signal-driven HTTP server runner.
 package bootstrap

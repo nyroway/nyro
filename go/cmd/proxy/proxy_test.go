@@ -1,4 +1,4 @@
-package gateway
+package proxy
 
 import (
 	"context"
@@ -17,25 +17,31 @@ func TestNewCmdFlags(t *testing.T) {
 	if addr, _ := cmd.Flags().GetString("listen"); addr != "0.0.0.0:19530" {
 		t.Errorf("default listen = %q; want 0.0.0.0:19530", addr)
 	}
-	if cfg, _ := cmd.Flags().GetString("config-file"); cfg != "" {
-		t.Errorf("default config-file = %q; want empty", cfg)
+	if cfg, _ := cmd.Flags().GetString("config"); cfg != "" {
+		t.Errorf("default config = %q; want empty", cfg)
 	}
-	if cs, _ := cmd.Flags().GetString("config-server"); cs != "" {
-		t.Errorf("default config-server = %q; want empty", cs)
+	if cs, _ := cmd.Flags().GetString("server"); cs != "" {
+		t.Errorf("default server = %q; want empty", cs)
 	}
-	if cmd.Use != "gateway" {
-		t.Errorf("Use = %q; want gateway", cmd.Use)
+	if cmd.Use != "proxy" {
+		t.Errorf("Use = %q; want proxy", cmd.Use)
+	}
+	// Pre-rename flag names must be gone (no compatibility period).
+	for _, old := range []string{"config-file", "config-server", "config-tls-ca", "config-tls-cert", "config-tls-key"} {
+		if cmd.Flags().Lookup(old) != nil {
+			t.Errorf("--%s should have been renamed", old)
+		}
 	}
 }
 
 func TestBuildGateway_ConfigAndConfigSyncAreMutuallyExclusive(t *testing.T) {
-	// NOTE: buildGateway itself does NOT enforce XOR (it picks --config-file when both
+	// NOTE: buildGateway itself does NOT enforce XOR (it picks --config when both
 	// are set). The XOR is enforced in the cobra RunE. We exercise it via RunE
 	// below. This test documents that buildGateway picks config when both given.
 	_, _, _, err := buildGateway(context.Background(), "missing.yaml", "localhost:9999", "127.0.0.1:19530", nil)
 	// missing.yaml → file error, proving the config branch was selected.
 	if err == nil {
-		t.Error("expected error selecting config branch with both flags; buildGateway must prefer --config-file")
+		t.Error("expected error selecting config branch with both flags; buildGateway must prefer --config")
 	}
 }
 
@@ -45,7 +51,7 @@ func TestRunE_RequiresExactlyOneConfigSource(t *testing.T) {
 		args []string
 	}{
 		{name: "neither source", args: nil},
-		{name: "both sources", args: []string{"--config-file", "a.yaml", "--config-server", "host:1234"}},
+		{name: "both sources", args: []string{"--config", "a.yaml", "--server", "host:1234"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -69,15 +75,15 @@ func TestRunE_RejectsConfigTLSFlagsWithConfigFile(t *testing.T) {
 		name string
 		flag string
 	}{
-		{name: "TLS CA", flag: "--config-tls-ca=ca.pem"},
-		{name: "TLS certificate", flag: "--config-tls-cert=cert.pem"},
-		{name: "TLS key", flag: "--config-tls-key=key.pem"},
+		{name: "TLS CA", flag: "--sync-tls-ca=ca.pem"},
+		{name: "TLS certificate", flag: "--sync-tls-cert=cert.pem"},
+		{name: "TLS key", flag: "--sync-tls-key=key.pem"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := NewCmd()
 			if err := cmd.ParseFlags([]string{
-				"--config-file=missing.yaml",
+				"--config=missing.yaml",
 				tt.flag,
 			}); err != nil {
 				t.Fatalf("parse flags: %v", err)
@@ -87,8 +93,8 @@ func TestRunE_RejectsConfigTLSFlagsWithConfigFile(t *testing.T) {
 			if err == nil {
 				t.Fatal("RunE returned nil error, want config-file/TLS validation error")
 			}
-			if !strings.Contains(err.Error(), "--config-server") {
-				t.Fatalf("RunE error = %q, want TLS flags require --config-server", err)
+			if !strings.Contains(err.Error(), "--server") {
+				t.Fatalf("RunE error = %q, want TLS flags require --server", err)
 			}
 		})
 	}

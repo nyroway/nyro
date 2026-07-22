@@ -1,4 +1,4 @@
-package gateway
+package server
 
 import (
 	"bytes"
@@ -10,15 +10,15 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 )
 
-func TestResolveConfigSyncClientTLS_NoFlagsUsesPlaintextAndWarns(t *testing.T) {
+func TestResolveConfigSyncServerTLS_NoFlagsUsesPlaintextAndWarns(t *testing.T) {
 	var logs bytes.Buffer
 	previousLogger := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
-	cfg, err := resolveConfigSyncClientTLS("", "", "")
+	cfg, err := resolveConfigSyncServerTLS("", "", "")
 	if err != nil {
-		t.Fatalf("resolveConfigSyncClientTLS: %v", err)
+		t.Fatalf("resolveConfigSyncServerTLS: %v", err)
 	}
 	if cfg != nil {
 		t.Fatal("expected a nil *tls.Config for plaintext config-sync")
@@ -28,39 +28,39 @@ func TestResolveConfigSyncClientTLS_NoFlagsUsesPlaintextAndWarns(t *testing.T) {
 	}
 }
 
-func TestResolveConfigSyncClientTLS_AllThreeLoadsMTLS(t *testing.T) {
+func TestResolveConfigSyncServerTLS_AllThreeLoadsMTLS(t *testing.T) {
 	dir := t.TempDir()
 	ca, err := pki.EnsureCA(dir, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPath, keyPath, err := ca.SignClient(dir, "gateway", "node-1", time.Hour)
+	certPath, keyPath, err := ca.SignServer(dir, "admin", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	caPath := dir + "/ca.pem"
 
-	cfg, err := resolveConfigSyncClientTLS(caPath, certPath, keyPath)
+	cfg, err := resolveConfigSyncServerTLS(caPath, certPath, keyPath)
 	if err != nil {
-		t.Fatalf("resolveConfigSyncClientTLS: %v", err)
+		t.Fatalf("resolveConfigSyncServerTLS: %v", err)
 	}
 	if cfg == nil {
 		t.Fatal("expected a non-nil *tls.Config when all three cert paths are given")
 	}
 }
 
-func TestResolveConfigSyncClientTLS_PartialFlagsRejected(t *testing.T) {
-	if _, err := resolveConfigSyncClientTLS("ca.pem", "", ""); err == nil {
-		t.Fatal("expected an error when only --config-tls-ca is set")
+func TestResolveConfigSyncServerTLS_PartialFlagsRejected(t *testing.T) {
+	if _, err := resolveConfigSyncServerTLS("ca.pem", "", ""); err == nil {
+		t.Fatal("expected an error when only --sync-tls-ca is set")
 	}
-	if _, err := resolveConfigSyncClientTLS("ca.pem", "cert.pem", ""); err == nil {
-		t.Fatal("expected an error when --config-tls-key is missing")
+	if _, err := resolveConfigSyncServerTLS("ca.pem", "cert.pem", ""); err == nil {
+		t.Fatal("expected an error when --sync-tls-key is missing")
 	}
 }
 
-func TestResolveConfigSyncClientTLS_LoadFailure(t *testing.T) {
+func TestResolveConfigSyncServerTLS_LoadFailure(t *testing.T) {
 	dir := t.TempDir()
-	_, err := resolveConfigSyncClientTLS(
+	_, err := resolveConfigSyncServerTLS(
 		dir+"/missing-ca.pem",
 		dir+"/missing-cert.pem",
 		dir+"/missing-key.pem",

@@ -1,5 +1,5 @@
-// Command nyro is the unified gateway CLI: `nyro gateway` (data plane),
-// `nyro admin` (control plane).
+// Command nyro is the unified gateway CLI: `nyro proxy` (data plane),
+// `nyro server` (control plane).
 package main
 
 import (
@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/nyroway/nyro/go/cmd/admin"
+	"github.com/nyroway/nyro/go/cmd/server"
 	"github.com/nyroway/nyro/go/cmd/ca"
-	"github.com/nyroway/nyro/go/cmd/gateway"
+	"github.com/nyroway/nyro/go/cmd/proxy"
 	"github.com/nyroway/nyro/go/cmd/migrate"
 	"github.com/nyroway/nyro/go/internal/envflag"
 	"github.com/nyroway/nyro/go/internal/version"
@@ -21,7 +21,7 @@ import (
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "nyro",
-		Short: "Nyro gateway",
+		Short: "Nyro AI gateway",
 	}
 	// nyro is not meant to be introspected via shell-completion scripts today;
 	// disable cobra's auto-added `completion` subcommand rather than ship an
@@ -33,8 +33,8 @@ func newRootCmd() *cobra.Command {
 	// var in --help. Both derive NYRO_<SUB>_<FLAG> names from the command path,
 	// so no subcommand code needs to know about env binding.
 	root.PersistentPreRunE = envflag.Bind
-	root.AddCommand(gateway.NewCmd())
-	root.AddCommand(admin.NewCmd())
+	root.AddCommand(proxy.NewCmd())
+	root.AddCommand(server.NewCmd())
 	root.AddCommand(ca.NewCmd())
 	root.AddCommand(migrate.NewCmd())
 	root.AddCommand(newVersionCmd())

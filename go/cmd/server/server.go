@@ -1,6 +1,6 @@
-// Package admin implements the `nyro admin` subcommand: the control plane
+// Package server implements the `nyro server` subcommand: the control plane
 // (management API + WebUI + OAuth session lifecycle + config-sync push).
-package admin
+package server
 
 import (
 	"context"
@@ -49,40 +49,40 @@ func defaultDSN() string {
 // NewCmd builds the admin (control-plane) subcommand.
 //
 // In addition to the REST API + WebUI, the admin optionally runs a gRPC
-// ConfigService server (--config-listen) that pushes the full config snapshot
+// ConfigService server (--sync-listen) that pushes the full config snapshot
 // to every connected gateway. When enabled, every config write (providers,
 // models, api keys, settings) triggers an immediate push to all gateways.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "admin",
+		Use:   "server",
 		Short: "Run the control plane (management API + WebUI)",
 	}
 	cmd.Flags().String("listen", "127.0.0.1:19531", "listen address for the control plane")
 	// Bound to loopback by default. This stream carries every upstream's
 	// credentials_json, so plaintext mode logs a security warning; operators
-	// can configure mTLS with --config-tls-ca/-cert/-key.
-	cmd.Flags().String("config-listen", "127.0.0.1:19532", "listen address for the config-sync gRPC server (empty disables it)")
-	cmd.Flags().String("config-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs admin/gateway leaf certs (see `nyro ca`); must be set together with --config-tls-cert/-key")
-	cmd.Flags().String("config-tls-cert", "", "config-sync mTLS: path to admin's server certificate")
-	cmd.Flags().String("config-tls-key", "", "config-sync mTLS: path to admin's server private key")
-	cmd.Flags().String("token", "", "Bearer token protecting /api/v1 admin routes")
+	// can configure mTLS with --sync-tls-ca/-cert/-key.
+	cmd.Flags().String("sync-listen", "127.0.0.1:19532", "listen address for the config-sync gRPC server (empty disables it)")
+	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro ca`); must be set together with --sync-tls-cert/-key")
+	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to the server's config-sync server certificate")
+	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to the server's config-sync server private key")
+	cmd.Flags().String("token", "", "Bearer token protecting the /api/v1 management routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s) or postgres://...", defaultDSN()))
 	cmd.Flags().Bool("auto-migrate", false, "let nyro create/alter the schema itself via GORM AutoMigrate (requires DDL rights on --dsn); default false regardless of backend — without it, nyro only verifies the canonical tables exist, and a DBA applies the DDL from `nyro migrate dump`/`diff` (see go/docs/schema/migrations.md)")
-	cmd.Flags().Bool("plaintext-keys", false, "store the recoverable raw API key alongside its hash so full keys can be retrieved/copied after creation; default false (hash-only, keys shown once at creation). Never affects inbound auth (always hash-compared) and is never sent to gateways over config-sync")
-	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for admin-local observability parquet data (logs/metrics/traces)")
-	cmd.Flags().Duration("config-poll-interval", 0, "how often to poll the shared config_epoch setting for changes made by other admin replicas (0 disables polling)")
+	cmd.Flags().Bool("raw-api-keys", false, "store API keys in a recoverable form so they can be re-copied from the WebUI after creation. The raw key is written to the database in plaintext: anyone with read access to the DB obtains working credentials. Default false (hash-only; keys are shown once at creation). Never affects inbound auth (always hash-compared) and is never sent to proxies over config-sync")
+	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for control-plane-local observability parquet data (logs/metrics/traces)")
+	cmd.Flags().Duration("config-poll-interval", 0, "how often to poll the shared config_epoch setting for changes made by other server replicas (0 disables polling)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("listen")
-		grpcAddr, _ := cmd.Flags().GetString("config-listen")
-		tlsCA, _ := cmd.Flags().GetString("config-tls-ca")
-		tlsCert, _ := cmd.Flags().GetString("config-tls-cert")
-		tlsKey, _ := cmd.Flags().GetString("config-tls-key")
+		grpcAddr, _ := cmd.Flags().GetString("sync-listen")
+		tlsCA, _ := cmd.Flags().GetString("sync-tls-ca")
+		tlsCert, _ := cmd.Flags().GetString("sync-tls-cert")
+		tlsKey, _ := cmd.Flags().GetString("sync-tls-key")
 		adminToken, _ := cmd.Flags().GetString("token")
 		webuiDir, _ := cmd.Flags().GetString("webui-dir")
 		dsn, _ := cmd.Flags().GetString("dsn")
 		autoMigrate, _ := cmd.Flags().GetBool("auto-migrate")
-		plaintextKeys, _ := cmd.Flags().GetBool("plaintext-keys")
+		plaintextKeys, _ := cmd.Flags().GetBool("raw-api-keys")
 		obsDataDir, _ := cmd.Flags().GetString("obs-data-dir")
 		configPollInterval, _ := cmd.Flags().GetDuration("config-poll-interval")
 		if configPollInterval < 0 {
@@ -90,16 +90,16 @@ func NewCmd() *cobra.Command {
 		}
 		if grpcAddr == "" {
 			if cmd.Flags().Changed("config-poll-interval") {
-				return fmt.Errorf("--config-poll-interval requires --config-listen")
+				return fmt.Errorf("--config-poll-interval requires --sync-listen")
 			}
-			for _, name := range []string{"config-tls-ca", "config-tls-cert", "config-tls-key"} {
+			for _, name := range []string{"sync-tls-ca", "sync-tls-cert", "sync-tls-key"} {
 				if cmd.Flags().Changed(name) {
-					return fmt.Errorf("--%s requires --config-listen", name)
+					return fmt.Errorf("--%s requires --sync-listen", name)
 				}
 			}
 		}
 		if adminToken == "" && !isLoopbackListenAddress(addr) {
-			slog.Warn("admin API is exposed without --token; unauthenticated clients can access control-plane routes", "listen", addr)
+			slog.Warn("management API is exposed without --token; unauthenticated clients can access control-plane routes", "listen", addr)
 		}
 
 		var configTLS *tls.Config
@@ -221,7 +221,7 @@ func NewCmd() *cobra.Command {
 			admin.SetBroadcaster(srv)
 			admin.SetNodeLister(srv)
 			pki.WatchExpiry(ctx, configTLS, configExpiryCheckInterval, func(notAfter time.Time) {
-				slog.Warn("config-sync server certificate expiring soon — run `nyro ca sign-admin` and redistribute before it lapses",
+				slog.Warn("config-sync server certificate expiring soon — run `nyro ca sign-server` and redistribute before it lapses",
 					"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
 			})
 
@@ -311,7 +311,7 @@ func startEpochWatcher(
 	return watcher, nil
 }
 
-// resolveConfigSyncServerTLS turns the --config-tls-ca/-cert/-key flags into
+// resolveConfigSyncServerTLS turns the --sync-tls-ca/-cert/-key flags into
 // a *tls.Config for the config-sync gRPC server, or nil for plaintext.
 //
 //   - All three tls paths set: mTLS is used.
@@ -330,7 +330,7 @@ func resolveConfigSyncServerTLS(caPath, certPath, keyPath string) (*tls.Config, 
 	case set == 3:
 		return pki.LoadServerTLS(caPath, certPath, keyPath)
 	case set > 0:
-		return nil, fmt.Errorf("--config-tls-ca, --config-tls-cert, and --config-tls-key must be set together (got %d of 3)", set)
+		return nil, fmt.Errorf("--sync-tls-ca, --sync-tls-cert, and --sync-tls-key must be set together (got %d of 3)", set)
 	default:
 		slog.Warn("config-sync gRPC server running in plaintext: no transport encryption or client authentication — the stream carries upstream credentials in the clear to any client that connects")
 		return nil, nil

@@ -74,17 +74,17 @@ func TestInit_Force(t *testing.T) {
 	}
 }
 
-func TestSignAdmin_WritesCertWithAdminIdentity(t *testing.T) {
+func TestSignServer_WritesCertWithAdminIdentity(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := runCmd(t, "init", "--dir", dir); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, err := runCmd(t, "sign-admin", "--dir", dir)
+	stdout, _, err := runCmd(t, "sign-server", "--dir", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stdout == "" {
-		t.Fatal("expected sign-admin to report the identity it signed")
+		t.Fatal("expected sign-server to report the identity it signed")
 	}
 	certPath := filepath.Join(dir, "admin.pem")
 	if _, err := os.Stat(certPath); err != nil {
@@ -104,24 +104,24 @@ func TestSignAdmin_WritesCertWithAdminIdentity(t *testing.T) {
 	}
 }
 
-func TestSignAdmin_RequiresExistingCA(t *testing.T) {
+func TestSignServer_RequiresExistingCA(t *testing.T) {
 	dir := t.TempDir()
-	if _, _, err := runCmd(t, "sign-admin", "--dir", dir); err == nil {
+	if _, _, err := runCmd(t, "sign-server", "--dir", dir); err == nil {
 		t.Fatal("expected error signing without a CA present")
 	}
 }
 
-func TestSignGateway_RandomNodeIDWhenUnset(t *testing.T) {
+func TestSignProxy_RandomNodeIDWhenUnset(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := runCmd(t, "init", "--dir", dir); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, err := runCmd(t, "sign-gateway", "--dir", dir)
+	stdout, _, err := runCmd(t, "sign-proxy", "--dir", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stdout == "" {
-		t.Fatal("expected sign-gateway to report the generated node-id")
+		t.Fatal("expected sign-proxy to report the generated node-id")
 	}
 	certPath := filepath.Join(dir, "gateway.pem")
 	if _, err := os.Stat(certPath); err != nil {
@@ -129,12 +129,12 @@ func TestSignGateway_RandomNodeIDWhenUnset(t *testing.T) {
 	}
 }
 
-func TestSignGateway_CustomOutName(t *testing.T) {
+func TestSignProxy_CustomOutName(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := runCmd(t, "init", "--dir", dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := runCmd(t, "sign-gateway", "--dir", dir, "--node-id", "node-a", "--out", "node-a"); err != nil {
+	if _, _, err := runCmd(t, "sign-proxy", "--dir", dir, "--node-id", "node-a", "--out", "node-a"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "node-a.pem")); err != nil {

@@ -8,22 +8,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newTestCmd builds a leaf command "nyro admin" carrying string/bool/duration
-// flags, so Bind sees a realistic CommandPath ("nyro admin") and prefix
-// ("ADMIN"). The returned command is not executed; tests call Bind directly.
+// newTestCmd builds a leaf command "nyro server" carrying string/bool/duration
+// flags, so Bind sees a realistic CommandPath ("nyro server") and prefix
+// ("SERVER"). The returned command is not executed; tests call Bind directly.
 func newTestCmd() *cobra.Command {
 	root := &cobra.Command{Use: "nyro"}
-	admin := &cobra.Command{Use: "admin", RunE: func(*cobra.Command, []string) error { return nil }}
-	admin.Flags().String("listen", "127.0.0.1:19531", "listen addr")
-	admin.Flags().Bool("auto-migrate", false, "auto migrate")
-	admin.Flags().Duration("config-poll-interval", 0, "poll interval")
-	root.AddCommand(admin)
-	return admin
+	server := &cobra.Command{Use: "server", RunE: func(*cobra.Command, []string) error { return nil }}
+	server.Flags().String("listen", "127.0.0.1:19531", "listen addr")
+	server.Flags().Bool("auto-migrate", false, "auto migrate")
+	server.Flags().Duration("config-poll-interval", 0, "poll interval")
+	root.AddCommand(server)
+	return server
 }
 
 func TestBindAppliesEnvWhenFlagUnset(t *testing.T) {
 	cmd := newTestCmd()
-	t.Setenv("NYRO_ADMIN_LISTEN", "0.0.0.0:29530")
+	t.Setenv("NYRO_SERVER_LISTEN", "0.0.0.0:29530")
 
 	if err := Bind(cmd, nil); err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -43,7 +43,7 @@ func TestExplicitFlagBeatsEnv(t *testing.T) {
 	if err := cmd.Flags().Set("listen", "1.2.3.4:1111"); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NYRO_ADMIN_LISTEN", "0.0.0.0:29530")
+	t.Setenv("NYRO_SERVER_LISTEN", "0.0.0.0:29530")
 
 	if err := Bind(cmd, nil); err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -70,8 +70,8 @@ func TestDefaultWhenNoEnvNoFlag(t *testing.T) {
 
 func TestBindTypedFlagsFromEnv(t *testing.T) {
 	cmd := newTestCmd()
-	t.Setenv("NYRO_ADMIN_AUTO_MIGRATE", "true")
-	t.Setenv("NYRO_ADMIN_CONFIG_POLL_INTERVAL", "5s")
+	t.Setenv("NYRO_SERVER_AUTO_MIGRATE", "true")
+	t.Setenv("NYRO_SERVER_CONFIG_POLL_INTERVAL", "5s")
 
 	if err := Bind(cmd, nil); err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -86,7 +86,7 @@ func TestBindTypedFlagsFromEnv(t *testing.T) {
 
 func TestBindInvalidEnvValueErrors(t *testing.T) {
 	cmd := newTestCmd()
-	t.Setenv("NYRO_ADMIN_CONFIG_POLL_INTERVAL", "not-a-duration")
+	t.Setenv("NYRO_SERVER_CONFIG_POLL_INTERVAL", "not-a-duration")
 
 	err := Bind(cmd, nil)
 	if err == nil {
@@ -96,9 +96,9 @@ func TestBindInvalidEnvValueErrors(t *testing.T) {
 
 func TestEnvKey(t *testing.T) {
 	cases := []struct{ prefix, flag, want string }{
-		{"ADMIN", "listen", "NYRO_ADMIN_LISTEN"},
-		{"ADMIN", "config-poll-interval", "NYRO_ADMIN_CONFIG_POLL_INTERVAL"},
-		{"GATEWAY", "config-file", "NYRO_GATEWAY_CONFIG_FILE"},
+		{"SERVER", "listen", "NYRO_SERVER_LISTEN"},
+		{"SERVER", "obs-data-dir", "NYRO_SERVER_OBS_DATA_DIR"},
+		{"PROXY", "sync-tls-ca", "NYRO_PROXY_SYNC_TLS_CA"},
 	}
 	for _, c := range cases {
 		if got := EnvKey(c.prefix, c.flag); got != c.want {
@@ -110,12 +110,12 @@ func TestEnvKey(t *testing.T) {
 func TestPrefixFromCommand(t *testing.T) {
 	root := &cobra.Command{Use: "nyro"}
 	ca := &cobra.Command{Use: "ca"}
-	signAdmin := &cobra.Command{Use: "sign-admin"}
-	ca.AddCommand(signAdmin)
+	signServer := &cobra.Command{Use: "sign-server"}
+	ca.AddCommand(signServer)
 	root.AddCommand(ca)
 
-	if got := prefixFromCommand(signAdmin); got != "CA_SIGN_ADMIN" {
-		t.Errorf("prefixFromCommand(nyro ca sign-admin) = %q, want CA_SIGN_ADMIN", got)
+	if got := prefixFromCommand(signServer); got != "CA_SIGN_SERVER" {
+		t.Errorf("prefixFromCommand(nyro ca sign-server) = %q, want CA_SIGN_SERVER", got)
 	}
 	if got := prefixFromCommand(root); got != "" {
 		t.Errorf("prefixFromCommand(root) = %q, want empty", got)
@@ -128,7 +128,7 @@ func TestDecorateAppendsEnvHint(t *testing.T) {
 	Decorate(root)
 
 	usage := cmd.Flags().Lookup("listen").Usage
-	if want := "(env NYRO_ADMIN_LISTEN)"; !strings.Contains(usage, want) {
+	if want := "(env NYRO_SERVER_LISTEN)"; !strings.Contains(usage, want) {
 		t.Errorf("listen usage = %q, want it to contain %q", usage, want)
 	}
 }

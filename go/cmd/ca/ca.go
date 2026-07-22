@@ -42,8 +42,8 @@ func NewCmd() *cobra.Command {
 		Short: "Offline certificate authority for config-sync mTLS",
 	}
 	cmd.AddCommand(newInitCmd())
-	cmd.AddCommand(newSignAdminCmd())
-	cmd.AddCommand(newSignGatewayCmd())
+	cmd.AddCommand(newSignServerCmd())
+	cmd.AddCommand(newSignProxyCmd())
 	return cmd
 }
 
@@ -78,10 +78,17 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
-func newSignAdminCmd() *cobra.Command {
+// newSignServerCmd issues the control plane's config-sync server certificate.
+//
+// The subcommand is named after the `nyro server` deployment role, but the
+// certificate it writes keeps the historical "admin" identity: the SPIFFE SAN
+// (spiffe://nyro/admin, see pki.AdminSPIFFEID) and the default --out basename
+// are a wire/on-disk compatibility surface, so renaming them would invalidate
+// every already-issued certificate. See the CLI rename plan for the rationale.
+func newSignServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sign-admin",
-		Short: "Sign admin's config-sync server certificate",
+		Use:   "sign-server",
+		Short: "Sign the server's config-sync server certificate",
 	}
 	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro ca init`)")
 	valid := cmd.Flags().Duration("valid", defaultLeafValid, "leaf certificate validity period")
@@ -99,10 +106,14 @@ func newSignAdminCmd() *cobra.Command {
 	return cmd
 }
 
-func newSignGatewayCmd() *cobra.Command {
+// newSignProxyCmd issues a data-plane node's config-sync client certificate.
+// Like sign-server, the certificate keeps the historical "gateway" identity
+// (spiffe://nyro/gateway/<node-id>) and --out basename for compatibility with
+// already-issued certificates; only the subcommand name follows the new CLI.
+func newSignProxyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sign-gateway",
-		Short: "Sign a gateway node's config-sync client certificate",
+		Use:   "sign-proxy",
+		Short: "Sign a proxy node's config-sync client certificate",
 	}
 	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro ca init`)")
 	nodeID := cmd.Flags().String("node-id", "", "node identity for the SPIFFE SAN (spiffe://nyro/gateway/<node-id>); random if unset")
