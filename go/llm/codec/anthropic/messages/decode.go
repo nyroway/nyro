@@ -18,7 +18,7 @@ func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
 	}
 
 	req := ir.NewAiRequest(w.Model, nil)
-	req.Meta.SourceProtocol = &spec.AnthropicMessages20230601
+	req.Meta.SourceProtocol = &spec.AnthropicMessagesV1
 	req.System = decodeSystem(w.System)
 
 	for _, m := range w.Messages {

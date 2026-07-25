@@ -12,11 +12,11 @@ import (
 
 func TestRegistryHasAnthropic(t *testing.T) {
 	t.Parallel()
-	h, ok := codec.Get(spec.AnthropicMessages20230601)
+	h, ok := codec.Get(spec.AnthropicMessagesV1)
 	if !ok {
 		t.Fatal("Anthropic messages handler not registered")
 	}
-	if h.Endpoint() != spec.AnthropicMessages20230601 {
+	if h.Endpoint() != spec.AnthropicMessagesV1 {
 		t.Errorf("endpoint mismatch: %v", h.Endpoint())
 	}
 }

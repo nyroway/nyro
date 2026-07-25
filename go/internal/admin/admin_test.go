@@ -79,7 +79,7 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 	r, _ := newEngine(t, "secret")
 
 	rec := do(r, "POST", "/api/v1/upstreams", "secret",
-		[]byte(`{"name":"OpenAI","provider":"openai","protocol":"openai-chat","base_url":"https://api.openai.com","credentials":{"api_key":"sk-1"}}`))
+		[]byte(`{"name":"OpenAI","provider":"openai","protocol":"openai-chatcompletions","base_url":"https://api.openai.com","credentials":{"api_key":"sk-1"}}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
 	}
@@ -100,7 +100,7 @@ func TestAdminUpstreamCRUD(t *testing.T) {
 func TestAdminRouteAndSettings(t *testing.T) {
 	r, st := newEngine(t, "") // empty token disables auth
 	up, _ := st.Storage().Upstreams().Create(storage.CreateUpstream{
-		Name: "P", Protocol: "openai-chat", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
+		Name: "P", Protocol: "openai-chatcompletions", BaseURL: "u", CredentialsJSON: []byte(`{"api_key":"k"}`),
 	})
 
 	rec := do(r, "POST", "/api/v1/routes", "",
@@ -196,7 +196,7 @@ func TestImportUpstreamRoutesStreamCreatesMissingAndSkipsExisting(t *testing.T) 
 	up, err := core.Upstreams().Create(storage.CreateUpstream{
 		Name:            "P",
 		Provider:        "custom",
-		Protocol:        "openai-chat",
+		Protocol:        "openai-chatcompletions",
 		BaseURL:         "https://example.com/v1",
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
 		ModelsJSON:      []byte(`["m-new","m-existing","m-new"," "]`),
@@ -270,7 +270,7 @@ func TestPreviewUpstreamRouteImportPlansWithoutCreatingRoutes(t *testing.T) {
 	up, err := core.Upstreams().Create(storage.CreateUpstream{
 		Name:            "P",
 		Provider:        "custom",
-		Protocol:        "openai-chat",
+		Protocol:        "openai-chatcompletions",
 		BaseURL:         "https://example.com/v1",
 		CredentialsJSON: []byte(`{"api_key":"k"}`),
 		ModelsJSON:      []byte(`["m-new","m-existing","m-new"]`),
@@ -474,7 +474,7 @@ func TestMutationsBumpEpoch(t *testing.T) {
 		return v
 	}
 
-	up, err := core.Upstreams().Create(storage.CreateUpstream{Name: "u1", Protocol: "openai-chat", BaseURL: "https://api.openai.com/v1", CredentialsJSON: []byte(`{"api_key":"k"}`)})
+	up, err := core.Upstreams().Create(storage.CreateUpstream{Name: "u1", Protocol: "openai-chatcompletions", BaseURL: "https://api.openai.com/v1", CredentialsJSON: []byte(`{"api_key":"k"}`)})
 	if err != nil {
 		t.Fatalf("seed upstream: %v", err)
 	}
@@ -767,7 +767,7 @@ func TestUpstreamMutationsNormalizeProtocolAliases(t *testing.T) {
 	r, _ := newEngine(t, "")
 
 	rec := do(r, "POST", "/api/v1/upstreams", "",
-		[]byte(`{"name":"legacy","provider":"openai","protocol":"openai-resp","credentials":{"api_key":"k"}}`))
+		[]byte(`{"name":"legacy","provider":"openai","protocol":"codex","credentials":{"api_key":"k"}}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
 	}
@@ -786,8 +786,8 @@ func TestUpstreamMutationsNormalizeProtocolAliases(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &u); err != nil {
 		t.Fatal(err)
 	}
-	if u.Protocol != "google-gemini" {
-		t.Errorf("updated Protocol = %q, want google-gemini", u.Protocol)
+	if u.Protocol != "gemini-generatecontent" {
+		t.Errorf("updated Protocol = %q, want gemini-generatecontent", u.Protocol)
 	}
 }
 
@@ -885,7 +885,7 @@ func TestUpstreamDraftHealthStreamRunsModelTestWithoutPersisting(t *testing.T) {
 
 	r, st := newEngine(t, "")
 	rec := do(r, "POST", "/api/v1/upstreams/test-draft/stream", "",
-		[]byte(`{"name":"draft","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+		[]byte(`{"name":"draft","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("draft health stream → %d %s", rec.Code, rec.Body.String())
 	}
@@ -947,7 +947,7 @@ func TestUpstreamHealthStreamRunsModelTestForSavedProvider(t *testing.T) {
 
 	r, _ := newEngine(t, "")
 	rec := do(r, "POST", "/api/v1/upstreams", "",
-		[]byte(`{"name":"saved","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+		[]byte(`{"name":"saved","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
 	}
@@ -996,7 +996,7 @@ func TestUpstreamEditDraftHealthStreamExcludesOwnName(t *testing.T) {
 
 	r, _ := newEngine(t, "")
 	rec := do(r, "POST", "/api/v1/upstreams", "",
-		[]byte(`{"name":"saved","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+		[]byte(`{"name":"saved","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create → %d %s", rec.Code, rec.Body.String())
 	}
@@ -1008,7 +1008,7 @@ func TestUpstreamEditDraftHealthStreamExcludesOwnName(t *testing.T) {
 	// Re-submitting the provider's own unchanged name through the edit-draft
 	// endpoint must not be treated as a name conflict with itself.
 	rec = do(r, "POST", "/api/v1/upstreams/"+u.ID+"/test-draft/stream", "",
-		[]byte(`{"name":"saved","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+		[]byte(`{"name":"saved","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("edit draft health stream → %d %s", rec.Code, rec.Body.String())
 	}
@@ -1022,12 +1022,12 @@ func TestUpstreamEditDraftHealthStreamExcludesOwnName(t *testing.T) {
 
 	// A name that collides with a different existing upstream must still fail.
 	rec = do(r, "POST", "/api/v1/upstreams", "",
-		[]byte(`{"name":"other","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+		[]byte(`{"name":"other","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create other → %d %s", rec.Code, rec.Body.String())
 	}
 	rec = do(r, "POST", "/api/v1/upstreams/"+u.ID+"/test-draft/stream", "",
-		[]byte(`{"name":"other","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+		[]byte(`{"name":"other","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("edit draft health stream → %d %s", rec.Code, rec.Body.String())
 	}
@@ -1040,7 +1040,7 @@ func TestUpstreamEditDraftHealthStreamExcludesOwnName(t *testing.T) {
 func TestUpstreamDraftHealthStreamRequiresModelSource(t *testing.T) {
 	r, _ := newEngine(t, "")
 	rec := do(r, "POST", "/api/v1/upstreams/test-draft/stream", "",
-		[]byte(`{"name":"draft","provider":"custom","protocol":"openai-chat","base_url":"https://example.test","credentials":{"api_key":"k"}}`))
+		[]byte(`{"name":"draft","provider":"custom","protocol":"openai-chatcompletions","base_url":"https://example.test","credentials":{"api_key":"k"}}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("draft health stream → %d %s", rec.Code, rec.Body.String())
 	}
@@ -1062,7 +1062,7 @@ func TestUpstreamDraftHealthStreamRejectsInvalidModelResponse(t *testing.T) {
 
 	r, _ := newEngine(t, "")
 	rec := do(r, "POST", "/api/v1/upstreams/test-draft/stream", "",
-		[]byte(`{"name":"draft","provider":"custom","protocol":"openai-chat","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
+		[]byte(`{"name":"draft","provider":"custom","protocol":"openai-chatcompletions","base_url":"`+ts.URL+`","credentials":{"api_key":"k"},"models":["gpt-test"]}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("draft health stream → %d %s", rec.Code, rec.Body.String())
 	}

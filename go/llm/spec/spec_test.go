@@ -8,10 +8,10 @@ func TestProtocolEndpointString(t *testing.T) {
 		ep   ProtocolEndpoint
 		want string
 	}{
-		{OpenAIChatCompletionsV1, "openai-chat/v1"},
+		{OpenAIChatCompletionsV1, "openai-chatcompletions/v1"},
 		{OpenAIResponsesV1, "openai-responses/v1"},
-		{AnthropicMessages20230601, "anthropic-messages/2023-06-01"},
-		{GeminiGenerateContentV1Beta, "google-gemini/v1beta"},
+		{AnthropicMessagesV1, "anthropic-messages/v1"},
+		{GeminiGenerateContentV1Beta, "gemini-generatecontent/v1beta"},
 		{OpenAIEmbeddingsV1, "openai-embeddings/v1"},
 	}
 	for _, c := range cases {
@@ -23,19 +23,20 @@ func TestProtocolEndpointString(t *testing.T) {
 
 func TestParseProtocolAliases(t *testing.T) {
 	t.Parallel()
+	// Canonical identifier plus the ONE frozen alias per protocol. This table
+	// may gain rows but must not change existing ones — an alias is bound for
+	// good, so editing a row is a breaking change to every user's config.
 	cases := map[string]Protocol{
-		"anthropic-messages": ProtocolAnthropicMessages,
-		"claude":             ProtocolAnthropicMessages,
-		"openai-chat":        ProtocolOpenAIChatCompletions,
-		"openai":             ProtocolOpenAIChatCompletions,
-		"openai-embeddings":  ProtocolOpenAIEmbeddings,
-		"embed":              ProtocolOpenAIEmbeddings,
-		"openai-embed":       ProtocolOpenAIEmbeddings,
-		"openai-responses":   ProtocolOpenAIResponses,
-		"codex":              ProtocolOpenAIResponses,
-		"openai-resp":        ProtocolOpenAIResponses,
-		"google-gemini":      ProtocolGeminiGenerateContent,
-		"gemini":             ProtocolGeminiGenerateContent,
+		"anthropic-messages":     ProtocolAnthropicMessages,
+		"claude":                 ProtocolAnthropicMessages,
+		"openai-chatcompletions": ProtocolOpenAIChatCompletions,
+		"openai":                 ProtocolOpenAIChatCompletions,
+		"openai-embeddings":      ProtocolOpenAIEmbeddings,
+		"embed":                  ProtocolOpenAIEmbeddings,
+		"openai-responses":       ProtocolOpenAIResponses,
+		"codex":                  ProtocolOpenAIResponses,
+		"gemini-generatecontent": ProtocolGeminiGenerateContent,
+		"gemini":                 ProtocolGeminiGenerateContent,
 	}
 	for in, want := range cases {
 		got, err := ParseProtocol(in)
@@ -44,9 +45,16 @@ func TestParseProtocolAliases(t *testing.T) {
 		}
 	}
 	// This is an unreleased schema with no consumers yet, so there is no
-	// back-compat alias set — old/dropped identifiers must not resolve.
+	// back-compat alias set — old/dropped identifiers must not resolve. This
+	// guards against silently re-accepting a retired spelling as well as
+	// against typo tolerance.
 	for _, dropped := range []string{
-		"openai-chatcompletions", "responses", "gemini-generatecontent", "embeddings",
+		// retired in the family/api rename
+		"openai-chat", "google-gemini",
+		// retired mechanically-derived aliases (one alias per protocol now)
+		"openai-resp", "openai-embed",
+		// never valid
+		"responses", "embeddings", "chatcompletions", "generatecontent",
 		"openai-compatible", "openai-compat", "openai-resps", "openaix", "geminix",
 		"gemini-content", "azure-inference", "anthropic-msgs", "anthropic",
 		"google-genai", "google-generative-ai", "google",
@@ -63,11 +71,11 @@ func TestParseProtocolAliases(t *testing.T) {
 func TestDisplayNameCoversAllProtocols(t *testing.T) {
 	t.Parallel()
 	cases := map[Protocol]string{
-		ProtocolAnthropicMessages:     "Anthropic Messages API",
-		ProtocolOpenAIChatCompletions: "OpenAI Compatible API",
-		ProtocolOpenAIEmbeddings:      "OpenAI Embeddings API",
-		ProtocolOpenAIResponses:       "OpenAI Responses API",
-		ProtocolGeminiGenerateContent: "Google Gemini API",
+		ProtocolAnthropicMessages:     "Anthropic Messages",
+		ProtocolOpenAIChatCompletions: "OpenAI Chat Completions",
+		ProtocolOpenAIEmbeddings:      "OpenAI Embeddings",
+		ProtocolOpenAIResponses:       "OpenAI Responses",
+		ProtocolGeminiGenerateContent: "Gemini generateContent",
 	}
 	for p, want := range cases {
 		if got := p.DisplayName(); got == "Unknown" || got == "" {

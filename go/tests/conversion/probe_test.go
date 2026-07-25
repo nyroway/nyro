@@ -56,11 +56,11 @@ func TestProbeCapabilities(t *testing.T) {
 		},
 	}
 
-	// Each MiMo endpoint. openai-chat/responses take Bearer auth (provider
+	// Each MiMo endpoint. openai-chatcompletions/responses take Bearer auth (provider
 	// "openrouter" is a convenient Bearer preset); the anthropic-compatible
 	// endpoint lives under /anthropic and takes x-api-key (provider "anthropic").
 	backends := []struct{ provider, protocol, baseURL string }{
-		{"openrouter", "openai-chat", host},
+		{"openrouter", "openai-chatcompletions", host},
 		{"openrouter", "openai-responses", host},
 		{"anthropic", "anthropic-messages", host + "/anthropic"},
 	}

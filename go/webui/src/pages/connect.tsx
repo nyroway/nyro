@@ -23,7 +23,7 @@ const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:19530";
 const API_KEY_ENV = "NYRO_API_KEY";
 
 type CodeLanguage = "python" | "typescript" | "curl";
-type CodeProtocol = "openai-compatible" | "openai-responses" | "anthropic-messages" | "google-gemini";
+type CodeProtocol = "openai-compatible" | "openai-responses" | "anthropic-messages" | "gemini-generatecontent";
 
 type CodeProtocolOption = {
   id: CodeProtocol;
@@ -37,7 +37,7 @@ const CODE_PROTOCOLS: CodeProtocolOption[] = [
   { id: "openai-compatible", name: "OpenAI Compatible", iconKey: "openai", apiPath: "/v1/chat/completions" },
   { id: "openai-responses", name: "OpenAI Responses", iconKey: "openai", apiPath: "/v1/responses" },
   { id: "anthropic-messages", name: "Anthropic Messages", iconKey: "anthropic", apiPath: "/v1/messages" },
-  { id: "google-gemini", name: "Google Gemini", iconKey: "gemini", apiPath: "/v1beta/models/{model}:generateContent" },
+  { id: "gemini-generatecontent", name: "Google Gemini", iconKey: "gemini", apiPath: "/v1beta/models/{model}:generateContent" },
 ];
 
 // A consumer key flattened with its owning consumer's route grants, so the

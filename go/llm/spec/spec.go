@@ -2,7 +2,8 @@
 // Protocol (a single concrete wire-format API surface) and ProtocolEndpoint
 // (that protocol at a specific version).
 //
-// Canonical string form: "{protocol}/{version}" (e.g. "openai-chat/v1").
+// Canonical string form: "{protocol}/{version}" (e.g.
+// "openai-chatcompletions/v1").
 //
 // spec has no dependencies beyond fmt, and that is deliberate: config,
 // provider, admin and storage all need to name and parse protocols without
@@ -22,13 +23,37 @@ import "fmt"
 // query parameters), which is owned by the provider's Authenticator and URL
 // construction.
 //
+// # Naming rule
+//
+//	Protocol ID  = {family}-{api}
+//	package path = strings.ReplaceAll(id, "-", "/")
+//
+// family is the brand that owns the wire format's naming — openai, anthropic,
+// gemini, and in future bedrock / azure. Note that family is not the vendor:
+// Gemini is a protocol family with more than one API under it (generateContent
+// and Interactions), and Bedrock Converse / Azure AI Model Inference are
+// platform-branded rather than company-branded. api is the vendor's own API
+// name, lowercased with all separators removed.
+//
+// There is exactly one "-", and the api segment must not contain another —
+// the ID↔path bijection depends on it. Enforced by codec/layout_test.go.
+//
+// # Alias rule
+//
+// Each protocol has at most ONE alias: the single word users actually say,
+// never a mechanical abbreviation of the full name. An alias is permanently
+// bound to the protocol it was introduced for and does NOT follow the vendor's
+// recommended default API — e.g. "gemini" stays on generateContent even after
+// Google steers new projects to Interactions. New protocols get no alias by
+// default.
+//
 // Identifier | Display Name | Alias:
 //
-//	anthropic-messages   | Anthropic Messages API        | claude
-//	openai-chat          | OpenAI Compatible API         | openai
-//	openai-responses     | OpenAI Responses API          | codex, openai-resp
-//	openai-embeddings    | OpenAI Embeddings API         | embed, openai-embed
-//	google-gemini        | Google Gemini API             | gemini
+//	anthropic-messages      | Anthropic Messages       | claude
+//	openai-chatcompletions  | OpenAI Chat Completions  | openai
+//	openai-responses        | OpenAI Responses         | codex
+//	openai-embeddings       | OpenAI Embeddings        | embed
+//	gemini-generatecontent  | Gemini generateContent   | gemini
 //
 // Cloud protocol routing — which protocol to use for a given model on each cloud:
 //
@@ -39,12 +64,12 @@ import "fmt"
 //	Azure (api-key header or Azure AD):
 //	  - OpenAI GPT/o (Azure OpenAI Service) → AI Model Inference API (deployment in path, api-version query; no protocol declared yet)
 //	  - Claude (AI Foundry serverless)      → anthropic-messages     (Foundry anthropic endpoint)
-//	  - Foundry non-Claude (Llama/Mistral)  → openai-chat (AI Model Inference API)
+//	  - Foundry non-Claude (Llama/Mistral)  → openai-chatcompletions (AI Model Inference API)
 //
 //	GCP Vertex AI (OAuth / service-account):
-//	  - Gemini            → google-gemini  (generateContent)
+//	  - Gemini            → gemini-generatecontent
 //	  - Claude            → anthropic-messages       (rawPredict; model in path)
-//	  - some 3rd-party    → openai-chat   (/endpoints/openapi; partial coverage)
+//	  - some 3rd-party    → openai-chatcompletions   (/endpoints/openapi; partial coverage)
 //	  - other 3rd-party   → publisher-native via rawPredict (no unified layer)
 //
 // anthropic-messages is the common denominator: Claude on all three clouds
@@ -53,47 +78,49 @@ type Protocol string
 
 const (
 	ProtocolAnthropicMessages     Protocol = "anthropic-messages"
-	ProtocolOpenAIChatCompletions Protocol = "openai-chat"
+	ProtocolOpenAIChatCompletions Protocol = "openai-chatcompletions"
 	// ProtocolOpenAIEmbeddings is split out of the old openai-compatible
 	// family; not exposed as a selectable protocol yet.
 	ProtocolOpenAIEmbeddings      Protocol = "openai-embeddings"
 	ProtocolOpenAIResponses       Protocol = "openai-responses"
-	ProtocolGeminiGenerateContent Protocol = "google-gemini"
+	ProtocolGeminiGenerateContent Protocol = "gemini-generatecontent"
 )
 
 // String returns the canonical kebab-case identifier.
 func (p Protocol) String() string { return string(p) }
 
-// DisplayName returns the display label for a protocol (e.g. "Anthropic Messages
-// API").
+// DisplayName returns the display label for a protocol (e.g. "Anthropic
+// Messages"). Labels name the API, without an "API" suffix — the suffix was
+// true of every entry and so distinguished none of them.
 func (p Protocol) DisplayName() string {
 	switch p {
 	case ProtocolAnthropicMessages:
-		return "Anthropic Messages API"
+		return "Anthropic Messages"
 	case ProtocolOpenAIChatCompletions:
-		return "OpenAI Compatible API"
+		return "OpenAI Chat Completions"
 	case ProtocolOpenAIEmbeddings:
-		return "OpenAI Embeddings API"
+		return "OpenAI Embeddings"
 	case ProtocolOpenAIResponses:
-		return "OpenAI Responses API"
+		return "OpenAI Responses"
 	case ProtocolGeminiGenerateContent:
-		return "Google Gemini API"
+		return "Gemini generateContent"
 	}
 	return "Unknown"
 }
 
-// ParseProtocol resolves a canonical string or its short alias to a Protocol.
+// ParseProtocol resolves a canonical string or its single alias to a Protocol.
+// See the alias rule on Protocol: one alias per protocol, permanently bound.
 func ParseProtocol(s string) (Protocol, error) {
 	switch s {
 	case "anthropic-messages", "claude":
 		return ProtocolAnthropicMessages, nil
-	case "openai-chat", "openai":
+	case "openai-chatcompletions", "openai":
 		return ProtocolOpenAIChatCompletions, nil
-	case "openai-embeddings", "embed", "openai-embed":
+	case "openai-embeddings", "embed":
 		return ProtocolOpenAIEmbeddings, nil
-	case "openai-responses", "codex", "openai-resp":
+	case "openai-responses", "codex":
 		return ProtocolOpenAIResponses, nil
-	case "google-gemini", "gemini":
+	case "gemini-generatecontent", "gemini":
 		return ProtocolGeminiGenerateContent, nil
 	}
 	return "", fmt.Errorf("unknown protocol: %s", s)
@@ -104,7 +131,21 @@ func ParseProtocol(s string) (Protocol, error) {
 // Canonical display: "{protocol}/{version}".
 type ProtocolEndpoint struct {
 	Protocol Protocol
-	// Version is the wire-format version string as the vendor labels it.
+	// Version is the version segment of the vendor's URL path — "v1" from
+	// /v1/chat/completions, "v1beta" from /v1beta/models/{model}:...
+	//
+	// When a vendor's wire-format version lives on some other axis, that axis
+	// belongs to the codec and the Authenticator, not here. Anthropic is the
+	// case in point: its anthropic-version: 2023-06-01 header is written by
+	// the codec and by provider.anthropicAuthenticator, while its endpoint is
+	// anthropic-messages/v1 after the URL.
+	//
+	// Trade-off, so it does not read as an oversight: if Anthropic ever ships
+	// an incompatible anthropic-version, two coexisting endpoints would both
+	// carry URL segment v1 and Version could not tell them apart. Consistency
+	// wins for now — /v1/ has not moved in three years and new capabilities
+	// (thinking, cache_control) arrived additively under 2023-06-01. Revisit
+	// the key if that day comes.
 	Version string
 }
 
@@ -118,7 +159,7 @@ var (
 	OpenAIChatCompletionsV1     = ProtocolEndpoint{ProtocolOpenAIChatCompletions, "v1"}
 	OpenAIEmbeddingsV1          = ProtocolEndpoint{ProtocolOpenAIEmbeddings, "v1"}
 	OpenAIResponsesV1           = ProtocolEndpoint{ProtocolOpenAIResponses, "v1"}
-	AnthropicMessages20230601   = ProtocolEndpoint{ProtocolAnthropicMessages, "2023-06-01"}
+	AnthropicMessagesV1         = ProtocolEndpoint{ProtocolAnthropicMessages, "v1"}
 	GeminiGenerateContentV1Beta = ProtocolEndpoint{ProtocolGeminiGenerateContent, "v1beta"}
 )
 
@@ -132,7 +173,7 @@ func ChatEndpointFor(p Protocol) (ProtocolEndpoint, bool) {
 	case ProtocolOpenAIResponses:
 		return OpenAIResponsesV1, true
 	case ProtocolAnthropicMessages:
-		return AnthropicMessages20230601, true
+		return AnthropicMessagesV1, true
 	case ProtocolGeminiGenerateContent:
 		return GeminiGenerateContentV1Beta, true
 	}

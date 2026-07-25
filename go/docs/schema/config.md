@@ -83,7 +83,7 @@ consumers:
         expires_at: null
     access:
       models: ["gpt-4o"]             # empty/omitted = allow all models
-      protocols: ["openai-chat"]     # empty/omitted = allow all protocols
+      protocols: ["openai-chatcompletions"]     # empty/omitted = allow all protocols
       ip_allowlist: ["10.0.0.0/8"]   # empty/omitted = allow all source IPs
     quotas:
       concurrency:
