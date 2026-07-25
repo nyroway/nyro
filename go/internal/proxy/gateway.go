@@ -37,7 +37,7 @@ type Gateway struct {
 	// UpstreamTransport, when non-nil, replaces the RoundTripper of every
 	// outbound upstream client. Production leaves it nil (real *http.Transport
 	// is built per proxySettings). It exists purely as a test seam: the
-	// protocol-conversion harness (internal/protocoltest) injects a go-vcr
+	// protocol-conversion harness (tests/conversion) injects a go-vcr
 	// recorder here to record/replay real provider interactions offline. Since
 	// nil is the production default, behaviour is unchanged when unset.
 	UpstreamTransport http.RoundTripper

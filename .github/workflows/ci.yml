@@ -105,7 +105,7 @@ jobs:
       - name: Go test
         run: make go-test
 
-      # Protocol-conversion matrix (internal/protocoltest): offline cassette
+      # Protocol-conversion matrix (tests/conversion): offline cassette
       # replay with -race. No keys/network — cassettes are recorded locally via
       # `make go-conversion-update` and committed. See go/docs/superpowers/specs.
       - name: Go conversion tests

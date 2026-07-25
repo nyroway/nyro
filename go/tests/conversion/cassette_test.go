@@ -1,4 +1,4 @@
-// Package protocoltest is the test-only harness for nyro's protocol-conversion
+// Package conversion is the test-only harness for nyro's protocol-conversion
 // matrix: it drives the real proxy router for a given inbound×outbound protocol
 // pair, feeds the upstream from a recorded cassette, and asserts the two
 // translation directions (client→upstream request, upstream→client response)
@@ -6,7 +6,7 @@
 //
 // It is imported only by *_test.go files, so it never enters a production
 // binary. See docs/superpowers/specs/2026-07-14-go-protocol-testing-strategy-design.md.
-package protocoltest
+package conversion
 
 import (
 	"bufio"
