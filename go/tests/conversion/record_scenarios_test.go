@@ -13,8 +13,8 @@ import (
 
 // TestRecordScenarios is a gated one-off that records real cassettes for the
 // new matrix scenarios (multi-turn tool, multimodal, reasoning) through fixed
-// backends: Xiaomi MiMo for openai-chat/openai-responses/anthropic-messages and
-// Google (gemini-3.1-flash-lite) for google-gemini. It drives an Anthropic
+// backends: Xiaomi MiMo for openai-chatcompletions/openai-responses/anthropic-messages and
+// Google (gemini-3.1-flash-lite) for gemini-generatecontent. It drives an Anthropic
 // inbound request per outbound protocol; cassettes are keyed by outbound and
 // reused across inbounds. Run with NYRO_TEST_RECORD_NEW=1 + the keys below.
 func TestRecordScenarios(t *testing.T) {
@@ -48,10 +48,10 @@ func TestRecordScenarios(t *testing.T) {
 	}
 
 	targets := []struct{ protocol, provider, baseURL, key, model, mmModel string }{
-		{"openai-chat", "openrouter", mimoHost, mimoKey, "mimo-v2.5-pro", "mimo-v2.5"},
+		{"openai-chatcompletions", "openrouter", mimoHost, mimoKey, "mimo-v2.5-pro", "mimo-v2.5"},
 		{"openai-responses", "openrouter", mimoHost, mimoKey, "mimo-v2.5-pro", "mimo-v2.5"},
 		{"anthropic-messages", "anthropic", mimoHost + "/anthropic", mimoKey, "mimo-v2.5-pro", "mimo-v2.5"},
-		{"google-gemini", "gemini", gemHost, gemKey, "gemini-3.1-flash-lite", "gemini-3.1-flash-lite"},
+		{"gemini-generatecontent", "gemini", gemHost, gemKey, "gemini-3.1-flash-lite", "gemini-3.1-flash-lite"},
 	}
 
 	for _, tg := range targets {

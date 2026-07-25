@@ -377,9 +377,9 @@ export interface ModelCapabilities {
 
 export type ProviderProtocol =
   | "anthropic-messages"
-  | "openai-chat"
+  | "openai-chatcompletions"
   | "openai-responses"
-  | "google-gemini";
+  | "gemini-generatecontent";
 
 export interface ProviderChannelPreset {
   id: string;

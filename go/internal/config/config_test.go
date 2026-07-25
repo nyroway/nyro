@@ -25,7 +25,7 @@ settings:
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chat
+    protocol: openai-chatcompletions
     base_url: https://api.openai.com
     credentials:
       api_key: sk-***
@@ -146,8 +146,8 @@ func TestApplyTo_ProviderTemplateExpansion(t *testing.T) {
 	if u.Provider != "openai" {
 		t.Errorf("Provider = %q, want openai to be persisted", u.Provider)
 	}
-	if u.Protocol != "openai-chat" {
-		t.Errorf("Protocol = %q, want openai-chat (from provider default)", u.Protocol)
+	if u.Protocol != "openai-chatcompletions" {
+		t.Errorf("Protocol = %q, want openai-chatcompletions (from provider default)", u.Protocol)
 	}
 	if u.BaseURL != "https://api.openai.com/v1" {
 		t.Errorf("BaseURL = %q, want https://api.openai.com/v1 (from provider default)", u.BaseURL)
@@ -186,7 +186,7 @@ func TestApplyTo_ProviderTemplateExplicitProtocolWins(t *testing.T) {
 func TestApplyTo_NormalizesProtocolAlias(t *testing.T) {
 	cfg := &Config{
 		Upstreams: []UpstreamSpec{{
-			Name: "openai", Provider: "openai", Protocol: "openai-resp",
+			Name: "openai", Provider: "openai", Protocol: "codex",
 			Credentials: map[string]string{"api_key": "sk-x"},
 		}},
 	}
@@ -303,7 +303,7 @@ func TestApplyToUnknownRoute(t *testing.T) {
 func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
 	cfg := &Config{
 		Upstreams: []UpstreamSpec{{
-			Name: "openai", Provider: "openai", Protocol: "openai-chat",
+			Name: "openai", Provider: "openai", Protocol: "openai-chatcompletions",
 			BaseURL: "https://api.openai.com", Credentials: map[string]string{"api_key": "sk-x"},
 		}},
 		Routes: []RouteSpec{{
@@ -611,7 +611,7 @@ version: 1
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chat
+    protocol: openai-chatcompletions
     base_url: https://api.openai.com
     credentials:
       api_key: "${NYRO_TEST_API_KEY}"
@@ -642,7 +642,7 @@ version: 1
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chat
+    protocol: openai-chatcompletions
     base_url: https://api.openai.com
     credentials:
       api_key: "${NYRO_TEST_DEFINITELY_UNSET_VAR}"

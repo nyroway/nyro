@@ -214,7 +214,7 @@ function providerPresetFromDTO(preset: ProviderPresetDTO): ProviderPreset {
 const emptyCreate: ProviderFormState = {
   name: "",
   provider: "custom",
-  protocol: "openai-chat",
+  protocol: "openai-chatcompletions",
   base_url: "https://api.openai.com/v1",
   proxy_url: "",
   models_url: "",
@@ -223,11 +223,13 @@ const emptyCreate: ProviderFormState = {
   credentials: {},
 };
 const PAGE_SIZE = 7;
+// Labels mirror go/llm/spec's Protocol.DisplayName(). TODO: fold into
+// PROTOCOL_TABLE once the protocol table is served by the admin API.
 const protocolOptions = [
-  { label: "Anthropic Messages API", value: "anthropic-messages" },
-  { label: "OpenAI Compatible API", value: "openai-chat" },
-  { label: "OpenAI Responses API", value: "openai-responses" },
-  { label: "Google Gemini API", value: "google-gemini" },
+  { label: "Anthropic Messages", value: "anthropic-messages" },
+  { label: "OpenAI Chat Completions", value: "openai-chatcompletions" },
+  { label: "OpenAI Responses", value: "openai-responses" },
+  { label: "Gemini generateContent", value: "gemini-generatecontent" },
 ] as const satisfies ReadonlyArray<{ label: string; value: ProviderProtocol }>;
 
 function validateProviderEndpoint(
@@ -275,7 +277,7 @@ function resolvePresetProtocol(
   preferred?: ProviderProtocol,
 ): ProviderProtocol {
   const available = availableProtocolsForPreset(preset);
-  const canonicalDefault = (resolveProtocol(preset.defaultProtocol) ?? "openai-chat") as ProviderProtocol;
+  const canonicalDefault = (resolveProtocol(preset.defaultProtocol) ?? "openai-chatcompletions") as ProviderProtocol;
   if (preferred && available.includes(preferred)) return preferred;
   if (available.includes(canonicalDefault)) return canonicalDefault;
   return available[0] ?? canonicalDefault;
@@ -1062,7 +1064,7 @@ export default function ProvidersPage() {
   function startEdit(p: Upstream) {
     setEditingId(p.id);
     setEditError(null);
-    const protocol = (resolveProtocol(p.protocol) ?? "openai-chat") as ProviderProtocol;
+    const protocol = (resolveProtocol(p.protocol) ?? "openai-chatcompletions") as ProviderProtocol;
     const presetForEdit = p.provider
       ? providerPresets.find((item) => item.id === p.provider) ?? null
       : null;
@@ -1174,7 +1176,7 @@ export default function ProvidersPage() {
   const createCredentialFields = credentialFieldsForPreset(selectedPreset);
   const createCredentialLayout = splitApiKeyCredentialField(createCredentialFields);
   const createPresetBaseUrl = selectedPreset
-    ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-chat").baseUrl
+    ? resolvePresetConfig(selectedPreset, (form.protocol as ProviderProtocol) || "openai-chatcompletions").baseUrl
     : "";
   const createBaseUrlMissing = !createPresetBaseUrl && !form.base_url?.trim();
   const createProtocolOptions = availableProtocolsForPreset(selectedPreset);
@@ -1419,7 +1421,7 @@ export default function ProvidersPage() {
               <div className="flex gap-3">
                 <Button
                   onClick={() => {
-                    const protocol = form.protocol || "openai-chat";
+                    const protocol = form.protocol || "openai-chatcompletions";
                     const baseUrl = toGatewayBaseUrl(form.base_url ?? "");
                     const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                     if (validation) {
@@ -1476,7 +1478,7 @@ export default function ProvidersPage() {
             const tr = testResult[p.id];
             const status = tr ? (tr.success ? "success" : "failed") : null;
             const isEditing = editingId === p.id;
-            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-chat") as ProviderProtocol];
+            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-chatcompletions") as ProviderProtocol];
             const selectedPreset = providerPresets.find((preset) => preset.id === (p.provider || ""));
             const selectedProviderName = selectedPreset
               ? presetLabel(selectedPreset)
@@ -1490,7 +1492,7 @@ export default function ProvidersPage() {
               const editCredentialFields = credentialFieldsForPreset(editingPreset);
               const editCredentialLayout = splitApiKeyCredentialField(editCredentialFields);
               const editPresetBaseUrl = editingPreset
-                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-chat").baseUrl
+                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-chatcompletions").baseUrl
                 : "";
               const editBaseUrlMissing = !editPresetBaseUrl && !editForm.base_url?.trim();
               const editProtocolOptions = availableProtocolsForPreset(editingPreset);
@@ -1672,7 +1674,7 @@ export default function ProvidersPage() {
                     <Button
                       onClick={() => {
                         setEditError(null);
-                        const protocol = editForm.protocol || "openai-chat";
+                        const protocol = editForm.protocol || "openai-chatcompletions";
                         const baseUrl = toGatewayBaseUrl(editForm.base_url ?? "");
                         const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                         if (validation) {
@@ -1766,11 +1768,11 @@ export default function ProvidersPage() {
                             variant={
                               protocol === "anthropic-messages"
                                 ? "warning"
-                                : protocol === "google-gemini"
+                                : protocol === "gemini-generatecontent"
                                   ? "secondary"
                                   : "success"
                             }
-                            className={`connect-label-badge ${protocol === "google-gemini" ? "bg-violet-50 text-violet-700" : ""}`}
+                            className={`connect-label-badge ${protocol === "gemini-generatecontent" ? "bg-violet-50 text-violet-700" : ""}`}
                           >
                             {PROTOCOL_TABLE.find((pt) => pt.id === protocol)?.displayName ?? protocol}
                           </Badge>

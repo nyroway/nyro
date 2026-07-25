@@ -35,7 +35,7 @@ type Inbound struct {
 // outbound request path.
 type Outbound struct {
 	Provider string // provider id, e.g. "openai"
-	Protocol string // upstream protocol id, e.g. "openai-chat"
+	Protocol string // upstream protocol id, e.g. "openai-chatcompletions"
 	Path     string // expected outbound request path, e.g. "/v1/chat/completions"
 }
 
@@ -46,7 +46,7 @@ type Cell struct {
 }
 
 // dir is the golden-directory label, using full protocol ids on both sides
-// (e.g. "anthropic-messages__openai-chat") so it is unambiguous and matches the
+// (e.g. "anthropic-messages__openai-chatcompletions") so it is unambiguous and matches the
 // cassette tree, which is keyed by protocol id.
 func (c Cell) dir() string { return c.In.Name + "__" + c.Out.Protocol }
 
@@ -63,7 +63,7 @@ func recording() bool { return os.Getenv("NYRO_TEST_RECORD") != "" }
 // recordProvider is the provider id (auth scheme + preset) to record against.
 // NYRO_TEST_PROVIDER overrides the cell's nominal provider so a cell can be
 // recorded through an aggregator that speaks the same wire protocol — e.g.
-// recording openai-chat / openai-responses / anthropic-messages cassettes all
+// recording openai-chatcompletions / openai-responses / anthropic-messages cassettes all
 // through OpenRouter (Bearer auth). Outside record mode it is the cell's own
 // provider (auth is irrelevant on replay anyway).
 func recordProvider(cell Cell) string {

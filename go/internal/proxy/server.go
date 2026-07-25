@@ -23,7 +23,7 @@ import (
 // NewRouter builds the chi router with the proxy routes wired. Referencing the
 // codec packages forces their init() to run, registering each EndpointHandler.
 func NewRouter(gw *Gateway) chi.Router {
-	_ = chatcompletions.ChatCompletionsHandler{} // ensure openai-chat init() ran
+	_ = chatcompletions.ChatCompletionsHandler{} // ensure openai-chatcompletions init() ran
 	_ = messages.MessagesHandler{}               // ensure anthropic init() ran
 	_ = generatecontent.GenerateContentHandler{} // ensure gemini init() ran
 	_ = responses.ResponsesHandler{}             // ensure responses init() ran
@@ -53,7 +53,7 @@ func NewRouter(gw *Gateway) chi.Router {
 		handleProxy(w, r, gw, spec.OpenAIChatCompletionsV1, "", false)
 	})
 	r.Post("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, spec.AnthropicMessages20230601, "", false)
+		handleProxy(w, r, gw, spec.AnthropicMessagesV1, "", false)
 	})
 	r.Post("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
 		handleProxy(w, r, gw, spec.OpenAIResponsesV1, "", false)

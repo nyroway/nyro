@@ -11,22 +11,22 @@ import "testing"
 // a distinct streaming path; the others stream via a body flag.
 var (
 	inAnthropic  = Inbound{Name: "anthropic-messages", Path: "/v1/messages"}
-	inOpenAIChat = Inbound{Name: "openai-chat", Path: "/v1/chat/completions"}
+	inOpenAIChat = Inbound{Name: "openai-chatcompletions", Path: "/v1/chat/completions"}
 	inResponses  = Inbound{Name: "openai-responses", Path: "/v1/responses"}
 	inGemini     = Inbound{
-		Name:       "google-gemini",
+		Name:       "gemini-generatecontent",
 		Path:       "/v1beta/models/" + routeModel + ":generateContent",
 		StreamPath: "/v1beta/models/" + routeModel + ":streamGenerateContent",
 	}
 )
 
-// Outbound protocols. google-gemini leaves Path empty (the codec embeds the
+// Outbound protocols. gemini-generatecontent leaves Path empty (the codec embeds the
 // model in the path, so the harness skips the path assertion).
 var (
-	outOpenAIChat = Outbound{Provider: "openai", Protocol: "openai-chat", Path: "/v1/chat/completions"}
+	outOpenAIChat = Outbound{Provider: "openai", Protocol: "openai-chatcompletions", Path: "/v1/chat/completions"}
 	outResponses  = Outbound{Provider: "openai", Protocol: "openai-responses", Path: "/v1/responses"}
 	outAnthropic  = Outbound{Provider: "anthropic", Protocol: "anthropic-messages", Path: "/v1/messages"}
-	outGemini     = Outbound{Provider: "gemini", Protocol: "google-gemini", Path: ""}
+	outGemini     = Outbound{Provider: "gemini", Protocol: "gemini-generatecontent", Path: ""}
 )
 
 var (
@@ -71,7 +71,7 @@ var scenarioBodies = map[string]map[string]string{
 		"reasoning": `{"model":"conversion-test-model","max_tokens":2000,"thinking":{"type":"enabled","budget_tokens":1024},` +
 			`"messages":[{"role":"user","content":"What is 17*23? Think step by step."}]}`,
 	},
-	"openai-chat": {
+	"openai-chatcompletions": {
 		"text":        `{"model":"conversion-test-model","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}`,
 		"text_stream": `{"model":"conversion-test-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"Hello"}]}`,
 		"tool": `{"model":"conversion-test-model","max_tokens":100,` +
@@ -109,7 +109,7 @@ var scenarioBodies = map[string]map[string]string{
 		"reasoning": `{"model":"conversion-test-model","max_output_tokens":2000,"reasoning":{"effort":"medium"},` +
 			`"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"What is 17*23? Think step by step."}]}]}`,
 	},
-	"google-gemini": {
+	"gemini-generatecontent": {
 		"text":        `{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":100}}`,
 		"text_stream": `{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":100}}`,
 		"tool": `{"contents":[{"role":"user","parts":[{"text":"What is the weather in Paris?"}]}],` +

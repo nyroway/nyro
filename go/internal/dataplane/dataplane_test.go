@@ -30,7 +30,7 @@ version: 1
 upstreams:
   - name: openai
     provider: openai
-    protocol: openai-chat
+    protocol: openai-chatcompletions
     base_url: https://api.openai.com
     credentials:
       api_key: sk-***

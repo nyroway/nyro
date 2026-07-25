@@ -8,7 +8,7 @@ import (
 // MessagesHandler is the Anthropic /v1/messages codec.EndpointHandler.
 type MessagesHandler struct{}
 
-func (MessagesHandler) Endpoint() spec.ProtocolEndpoint { return spec.AnthropicMessages20230601 }
+func (MessagesHandler) Endpoint() spec.ProtocolEndpoint { return spec.AnthropicMessagesV1 }
 
 func (MessagesHandler) MakeRequestDecoder() codec.RequestDecoder   { return requestDecoder{} }
 func (MessagesHandler) MakeRequestEncoder() codec.RequestEncoder   { return requestEncoder{} }

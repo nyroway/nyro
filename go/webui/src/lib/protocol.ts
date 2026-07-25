@@ -1,30 +1,32 @@
 /**
  * Protocol utilities — mirrors the backend protocol identity model
- * (go/internal/protocol/ids).
+ * (go/llm/spec).
  *
  * A Protocol identifies one concrete wire-format API surface (an
- * "interface"), vendor-prefixed but vendor-orthogonal in use. The canonical
- * endpoint form is `{protocol}/{version}` (e.g. "openai-chat/v1")
- * — there is no separate "endpoint name" layer.
+ * "interface"), family-prefixed but vendor-orthogonal in use. IDs are
+ * `{family}-{api}`, where family is the brand that owns the wire format's
+ * naming (gemini, not google — Gemini is a family with more than one API).
+ * The canonical endpoint form is `{protocol}/{version}` (e.g.
+ * "openai-chatcompletions/v1") — there is no separate "endpoint name" layer.
  *
  * UI only surfaces the Protocol display name; the version is an internal
  * implementation detail not shown to users.
  *
- * Keep this table in sync with go/internal/protocol/ids/ids.go's
- * ParseProtocol and DisplayName.
+ * Keep this table in sync with go/llm/spec/spec.go's ParseProtocol and
+ * DisplayName. Each protocol has at most ONE alias, permanently bound.
  */
 
 // ── Protocol enum (canonical identifiers) ──────────────────────────────────
 
 export type Protocol =
   | "anthropic-messages"
-  | "openai-chat"
+  | "openai-chatcompletions"
   | "openai-responses"
-  | "google-gemini";
+  | "gemini-generatecontent";
 
 export interface ProtocolMeta {
   id: Protocol;
-  /** Display label (e.g. "Anthropic Messages API") — mirrors Go's Protocol.DisplayName(). */
+  /** Display label (e.g. "Anthropic Messages") — mirrors Go's Protocol.DisplayName(). */
   displayName: string;
   /** Default base URL shown as placeholder in the provider form. */
   defaultBaseUrl: string;
@@ -33,22 +35,22 @@ export interface ProtocolMeta {
 export const PROTOCOL_TABLE: ProtocolMeta[] = [
   {
     id: "anthropic-messages",
-    displayName: "Anthropic Messages API",
+    displayName: "Anthropic Messages",
     defaultBaseUrl: "https://api.anthropic.com",
   },
   {
-    id: "openai-chat",
-    displayName: "OpenAI Compatible API",
+    id: "openai-chatcompletions",
+    displayName: "OpenAI Chat Completions",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
     id: "openai-responses",
-    displayName: "OpenAI Responses API",
+    displayName: "OpenAI Responses",
     defaultBaseUrl: "https://api.openai.com/v1",
   },
   {
-    id: "google-gemini",
-    displayName: "Google Gemini API",
+    id: "gemini-generatecontent",
+    displayName: "Gemini generateContent",
     defaultBaseUrl: "https://generativelanguage.googleapis.com",
   },
 ];
@@ -60,21 +62,20 @@ const PROTOCOL_ALIASES: Record<string, Protocol> = {
   "anthropic-messages": "anthropic-messages",
   claude: "anthropic-messages",
 
-  "openai-chat": "openai-chat",
-  openai: "openai-chat",
+  "openai-chatcompletions": "openai-chatcompletions",
+  openai: "openai-chatcompletions",
 
   "openai-responses": "openai-responses",
   codex: "openai-responses",
-  "openai-resp": "openai-responses",
 
-  "google-gemini": "google-gemini",
-  gemini: "google-gemini",
+  "gemini-generatecontent": "gemini-generatecontent",
+  gemini: "gemini-generatecontent",
 };
 
 /**
  * Resolve any raw protocol string to a canonical `Protocol`, or `null` if unknown.
  *
- * Accepts the canonical identifier (`"openai-chat"`) or its single
+ * Accepts the canonical identifier (`"openai-chatcompletions"`) or its single
  * short alias (`"openai"`).
  */
 export function resolveProtocol(raw: string | null | undefined): Protocol | null {
@@ -125,7 +126,7 @@ export function parseProtocolEndpoint(raw: string | null | undefined): ProtocolE
 /** Returns true when the raw string resolves to an OpenAI-family protocol. */
 export function isOpenAiProtocol(raw: string | null | undefined): boolean {
   const p = resolveProtocol(raw);
-  return p === "openai-chat" || p === "openai-responses";
+  return p === "openai-chatcompletions" || p === "openai-responses";
 }
 
 /**

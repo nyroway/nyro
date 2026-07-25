@@ -7,7 +7,7 @@ function preset(id: string): ProviderPreset {
   return {
     id,
     name: id,
-    defaultProtocol: "openai-chat",
+    defaultProtocol: "openai-chatcompletions",
     channels: [],
   };
 }
@@ -32,6 +32,6 @@ describe("withCustomProviderPreset", () => {
 
     expect(out.map((item) => item.id)).toEqual(["openai", CUSTOM_PROVIDER_PRESET_ID]);
     expect(out[out.length - 1]?.name).toBe("Custom");
-    expect(out[out.length - 1]?.defaultProtocol).toBe("openai-chat");
+    expect(out[out.length - 1]?.defaultProtocol).toBe("openai-chatcompletions");
   });
 });
