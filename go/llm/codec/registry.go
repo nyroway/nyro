@@ -1,6 +1,10 @@
 package codec
 
-import "github.com/nyroway/nyro/go/llm/spec"
+import (
+	"sort"
+
+	"github.com/nyroway/nyro/go/llm/spec"
+)
 
 // registry maps each ProtocolEndpoint to its EndpointHandler.
 //
@@ -19,4 +23,30 @@ func Register(h EndpointHandler) {
 func Get(ep spec.ProtocolEndpoint) (EndpointHandler, bool) {
 	h, ok := registry[ep]
 	return h, ok
+}
+
+// All returns every registered handler, ordered by endpoint string so callers
+// that build routes or render lists are deterministic across runs.
+func All() []EndpointHandler {
+	out := make([]EndpointHandler, 0, len(registry))
+	for _, h := range registry {
+		out = append(out, h)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Endpoint().String() < out[j].Endpoint().String()
+	})
+	return out
+}
+
+// EndpointFor returns the registered endpoint for a protocol — the replacement
+// for a hand-written protocol→endpoint switch. If a protocol ever registers
+// more than one version, the lowest endpoint string wins; make that explicit
+// here rather than at the call site when it happens.
+func EndpointFor(p spec.Protocol) (spec.ProtocolEndpoint, bool) {
+	for _, h := range All() {
+		if ep := h.Endpoint(); ep.Protocol == p {
+			return ep, true
+		}
+	}
+	return spec.ProtocolEndpoint{}, false
 }

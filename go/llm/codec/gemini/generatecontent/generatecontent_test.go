@@ -27,7 +27,9 @@ func TestRequestRoundTrip(t *testing.T) {
 		`"systemInstruction":{"parts":[{"text":"be brief"}]},` +
 		`"generationConfig":{"temperature":0.5,"maxOutputTokens":100}}`
 
-	req, err := requestDecoder{}.DecodeWithModel([]byte(in), "gemini-2.0-flash", true)
+	req, err := requestDecoder{}.DecodeWithPath([]byte(in), map[string]string{
+		"resource": "gemini-2.0-flash:streamGenerateContent",
+	})
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}

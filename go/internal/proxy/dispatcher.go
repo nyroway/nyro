@@ -126,7 +126,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		// the ingress codec (cross-protocol transform).
 		egressHandler := ingress
 		if proto, parseErr := spec.ParseProtocol(p.Protocol); parseErr == nil {
-			if ep, ok := spec.ChatEndpointFor(proto); ok && ep != ingress.Endpoint() {
+			if ep, ok := codec.EndpointFor(proto); ok && ep != ingress.Endpoint() {
 				if h, found := codec.Get(ep); found {
 					egressHandler = h
 				}
@@ -205,7 +205,9 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		switch {
 		case resp.StatusCode >= 400:
 			forwardError(rec, resp)
-		case ingress.Endpoint() == spec.OpenAIEmbeddingsV1:
+		case !ingress.Capabilities().Streaming:
+			// Non-streaming endpoints (embeddings) return one JSON body with no
+			// IR representation to round-trip, so forward it verbatim.
 			copyResponse(rec, resp)
 		case req.Stream.Enabled:
 			g.serveStream(r.Context(), rec, resp.Body, egressHandler, ingress, &usage, bag)

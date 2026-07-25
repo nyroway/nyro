@@ -37,7 +37,14 @@
 // gemini — note gemini, not google: Gemini is the protocol family and it has
 // more than one API under it). api is the vendor's own API name, lowercased
 // with all separators removed. There is exactly one "-", and the api segment
-// must not contain another, or the ID↔path bijection breaks.
+// must not contain another, or the ID↔path bijection breaks. Enforced by
+// codec/layout_test.go.
+//
+// # Adding an ingress protocol
+//
+// Create the leaf package, declare its ingress routes in Capabilities(), and
+// blank-import it from internal/proxy. There is no route table to edit: the
+// proxy builds one by walking codec.All().
 //
 // # Stability
 //

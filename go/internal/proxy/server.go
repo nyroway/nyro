@@ -4,31 +4,26 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/nyroway/nyro/go/internal/webutil"
 	"github.com/nyroway/nyro/go/llm/codec"
-	"github.com/nyroway/nyro/go/llm/codec/anthropic/messages"
-	"github.com/nyroway/nyro/go/llm/codec/gemini/generatecontent"
-	"github.com/nyroway/nyro/go/llm/codec/openai/chatcompletions"
-	"github.com/nyroway/nyro/go/llm/codec/openai/embeddings"
-	"github.com/nyroway/nyro/go/llm/codec/openai/responses"
+
+	// Blank imports run each codec's init(), which registers its
+	// EndpointHandler. Adding an ingress protocol is a line here and nothing
+	// else: the routes come from the handler's own Capabilities().
+	_ "github.com/nyroway/nyro/go/llm/codec/anthropic/messages"
+	_ "github.com/nyroway/nyro/go/llm/codec/gemini/generatecontent"
+	_ "github.com/nyroway/nyro/go/llm/codec/openai/chatcompletions"
+	_ "github.com/nyroway/nyro/go/llm/codec/openai/embeddings"
+	_ "github.com/nyroway/nyro/go/llm/codec/openai/responses"
 	"github.com/nyroway/nyro/go/llm/ir"
-	"github.com/nyroway/nyro/go/llm/spec"
 )
 
-// NewRouter builds the chi router with the proxy routes wired. Referencing the
-// codec packages forces their init() to run, registering each EndpointHandler.
+// NewRouter builds the chi router with the proxy routes wired.
 func NewRouter(gw *Gateway) chi.Router {
-	_ = chatcompletions.ChatCompletionsHandler{} // ensure openai-chatcompletions init() ran
-	_ = messages.MessagesHandler{}               // ensure anthropic init() ran
-	_ = generatecontent.GenerateContentHandler{} // ensure gemini init() ran
-	_ = responses.ResponsesHandler{}             // ensure responses init() ran
-	_ = embeddings.EmbeddingsHandler{}           // ensure embeddings init() ran
-
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 
@@ -49,38 +44,40 @@ func NewRouter(gw *Gateway) chi.Router {
 	// GET /v1/models — OpenAI-compatible client discovery (API-key-aware).
 	r.Get("/v1/models", func(w http.ResponseWriter, r *http.Request) { handleModelsList(w, r, gw) })
 
-	r.Post("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, spec.OpenAIChatCompletionsV1, "", false)
-	})
-	r.Post("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, spec.AnthropicMessagesV1, "", false)
-	})
-	r.Post("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, spec.OpenAIResponsesV1, "", false)
-	})
-	r.Post("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, spec.OpenAIEmbeddingsV1, "", false)
-	})
-	// Gemini embeds the model + action in the path: /v1beta/models/{model}:{action}
-	r.Post("/v1beta/models/{resource}", func(w http.ResponseWriter, r *http.Request) {
-		model, action, ok := strings.Cut(chi.URLParam(r, "resource"), ":")
-		if !ok {
-			webutil.Error(w, http.StatusNotFound, "malformed Gemini path, expected models/{model}:{action}", "GATEWAY_ERROR")
-			return
+	// Ingress routes are declared by the codecs themselves, so this loop is the
+	// whole route table: every registered handler gets the (method, pattern)
+	// pairs from its Capabilities().
+	for _, h := range codec.All() {
+		h := h
+		for _, route := range h.Capabilities().IngressRoutes {
+			r.MethodFunc(route.Method, route.Pattern, func(w http.ResponseWriter, r *http.Request) {
+				handleProxy(w, r, gw, h)
+			})
 		}
-		handleProxy(w, r, gw, spec.GeminiGenerateContentV1Beta, model, action == "streamGenerateContent")
-	})
+	}
 	return r
 }
 
-// handleProxy is the ingress shell: it resolves the codec, decodes the wire
-// body into IR (using the path model for Gemini), then hands off to Dispatch.
-func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep spec.ProtocolEndpoint, pathModel string, pathStream bool) {
-	h, ok := codec.Get(ep)
-	if !ok {
-		webutil.Error(w, http.StatusNotImplemented, "no codec registered for endpoint", "GATEWAY_ERROR")
-		return
+// routeParams collects the parameters chi matched for the current route, so a
+// PathDecoder can read the parts of the URL its protocol puts there.
+func routeParams(r *http.Request) map[string]string {
+	rctx := chi.RouteContext(r.Context())
+	if rctx == nil {
+		return nil
 	}
+	params := make(map[string]string, len(rctx.URLParams.Keys))
+	for i, k := range rctx.URLParams.Keys {
+		if i < len(rctx.URLParams.Values) {
+			params[k] = rctx.URLParams.Values[i]
+		}
+	}
+	return params
+}
+
+// handleProxy is the ingress shell: it decodes the wire body into IR (letting
+// the codec read the URL when its protocol puts the model there), then hands
+// off to Dispatch.
+func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, h codec.EndpointHandler) {
 	limit := resolveProxySettings(gw.snapshot()).MaxBodyBytes
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	body, err := io.ReadAll(r.Body)
@@ -95,15 +92,11 @@ func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep spec.Pr
 	}
 
 	var req *ir.AiRequest
-	if pathModel != "" {
-		md, ok := h.MakeRequestDecoder().(codec.PathModelDecoder)
-		if !ok {
-			webutil.Error(w, http.StatusInternalServerError, "codec does not support path-model decode", "GATEWAY_ERROR")
-			return
-		}
-		req, err = md.DecodeWithModel(body, pathModel, pathStream)
+	dec := h.MakeRequestDecoder()
+	if pd, ok := dec.(codec.PathDecoder); ok {
+		req, err = pd.DecodeWithPath(body, routeParams(r))
 	} else {
-		req, err = h.MakeRequestDecoder().Decode(body)
+		req, err = dec.Decode(body)
 	}
 	if err != nil {
 		webutil.Error(w, http.StatusBadRequest, "decode request: "+err.Error(), "GATEWAY_ERROR")

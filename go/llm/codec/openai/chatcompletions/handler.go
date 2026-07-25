@@ -14,6 +14,13 @@ func (ChatCompletionsHandler) Endpoint() spec.ProtocolEndpoint {
 	return spec.OpenAIChatCompletionsV1
 }
 
+func (ChatCompletionsHandler) Capabilities() spec.EndpointCapabilities {
+	return spec.EndpointCapabilities{
+		IngressRoutes: []spec.IngressRoute{{Method: "POST", Pattern: "/v1/chat/completions"}},
+		Streaming:     true,
+	}
+}
+
 func (ChatCompletionsHandler) MakeRequestDecoder() codec.RequestDecoder   { return requestDecoder{} }
 func (ChatCompletionsHandler) MakeRequestEncoder() codec.RequestEncoder   { return requestEncoder{} }
 func (ChatCompletionsHandler) MakeResponseDecoder() codec.ResponseDecoder { return responseDecoder{} }
