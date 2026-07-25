@@ -163,19 +163,32 @@ var (
 	GeminiGenerateContentV1Beta = ProtocolEndpoint{ProtocolGeminiGenerateContent, "v1beta"}
 )
 
-// ChatEndpointFor returns the default chat/generate endpoint for a protocol
-// suite. Used by the dispatcher to resolve the egress codec for cross-protocol
-// routing (e.g. an Anthropic client hitting an OpenAI-compatible provider).
-func ChatEndpointFor(p Protocol) (ProtocolEndpoint, bool) {
-	switch p {
-	case ProtocolOpenAIChatCompletions:
-		return OpenAIChatCompletionsV1, true
-	case ProtocolOpenAIResponses:
-		return OpenAIResponsesV1, true
-	case ProtocolAnthropicMessages:
-		return AnthropicMessagesV1, true
-	case ProtocolGeminiGenerateContent:
-		return GeminiGenerateContentV1Beta, true
-	}
-	return ProtocolEndpoint{}, false
+// IngressRoute is one HTTP route a codec claims on the client-facing side.
+//
+// Pattern is a chi pattern, so it may contain path parameters — Gemini claims
+// /v1beta/models/{resource} and splits {resource} into model:action itself.
+type IngressRoute struct {
+	Method  string
+	Pattern string
 }
+
+// EndpointCapabilities is the static description of one ProtocolEndpoint:
+// what it can do and how the gateway should wire it up.
+//
+// Values are declared by each codec leaf package, not here — spec owns the
+// type so that packages which never import codec can still refer to it. Only
+// fields with a live consumer belong in this struct; a descriptor nobody reads
+// is worse than no descriptor at all. Add to it when something needs to branch
+// on it, not in anticipation.
+type EndpointCapabilities struct {
+	// IngressRoutes are the client-facing routes this codec claims.
+	// Consumer: proxy route assembly, which walks codec.All().
+	IngressRoutes []IngressRoute
+	// Streaming reports whether the endpoint produces incremental responses.
+	// Consumer: the dispatcher, to decide whether an upstream body is streamed
+	// through the IR or copied verbatim.
+	Streaming bool
+}
+
+// Resolving a Protocol to its ProtocolEndpoint is codec.EndpointFor: it reads
+// the registry, so it needs no per-protocol switch here.

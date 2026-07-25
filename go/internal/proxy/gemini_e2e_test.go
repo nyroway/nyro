@@ -72,3 +72,25 @@ func TestDispatchGeminiModelNotFound(t *testing.T) {
 		t.Fatalf("status=%d, want 404, body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// The Gemini codec claims /v1beta/models/{resource:.+:.+}, so a resource with
+// no "{model}:{action}" colon never matches the route and the router answers
+// 404 — the codec does not have to reject it downstream.
+func TestDispatchGeminiMalformedResourcePathIs404(t *testing.T) {
+	upstream := geminiStreamUpstream(t)
+	defer upstream.Close()
+
+	engine := NewRouter(newTestGatewayProviderProto(t, upstream.URL, "gemini", "gemini-generatecontent"))
+	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
+	for _, path := range []string{
+		"/v1beta/models/nocolon",
+		"/v1beta/models/",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST %s: status=%d, want 404, body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+}

@@ -13,6 +13,19 @@ func (GenerateContentHandler) Endpoint() spec.ProtocolEndpoint {
 	return spec.GeminiGenerateContentV1Beta
 }
 
+// Capabilities claims Gemini's single ingress route. The {resource} parameter
+// carries "{model}:{action}" in one path segment; the `.+:.+` constraint means
+// a resource without a colon simply does not match, so the router answers 404
+// instead of the codec having to reject it downstream.
+func (GenerateContentHandler) Capabilities() spec.EndpointCapabilities {
+	return spec.EndpointCapabilities{
+		IngressRoutes: []spec.IngressRoute{
+			{Method: "POST", Pattern: "/v1beta/models/{resource:.+:.+}"},
+		},
+		Streaming: true,
+	}
+}
+
 func (GenerateContentHandler) MakeRequestDecoder() codec.RequestDecoder { return requestDecoder{} }
 
 func (GenerateContentHandler) MakeRequestEncoder() codec.RequestEncoder { return requestEncoder{} }

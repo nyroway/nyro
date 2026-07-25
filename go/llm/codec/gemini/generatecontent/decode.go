@@ -2,20 +2,32 @@ package generatecontent
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/nyroway/nyro/go/llm/ir"
 	"github.com/nyroway/nyro/go/llm/spec"
 )
 
-// requestDecoder implements codec.RequestDecoder and codec.PathModelDecoder.
+// requestDecoder implements codec.RequestDecoder and codec.PathDecoder.
 type requestDecoder struct{}
 
 func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
-	return requestDecoder{}.DecodeWithModel(body, "gemini-2.0-flash", false)
+	return requestDecoder{}.decode(body, "gemini-2.0-flash", false)
 }
 
-func (requestDecoder) DecodeWithModel(body []byte, model string, stream bool) (*ir.AiRequest, error) {
+// DecodeWithPath reads the model and stream flag out of Gemini's single-segment
+// {resource} parameter, which carries "{model}:{action}" — e.g.
+// "gemini-3.1-flash:streamGenerateContent".
+func (d requestDecoder) DecodeWithPath(body []byte, params map[string]string) (*ir.AiRequest, error) {
+	model, action, ok := strings.Cut(params["resource"], ":")
+	if !ok || model == "" {
+		return nil, fmt.Errorf("malformed Gemini path, expected models/{model}:{action}")
+	}
+	return d.decode(body, model, action == "streamGenerateContent")
+}
+
+func (requestDecoder) decode(body []byte, model string, stream bool) (*ir.AiRequest, error) {
 	var w request
 	if err := json.Unmarshal(body, &w); err != nil {
 		return nil, err

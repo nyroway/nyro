@@ -205,9 +205,9 @@ func testDraftModelRequest(r *http.Request, u storage.Upstream, model string, au
 	if err != nil {
 		return 0, 0, err
 	}
-	ep, ok := spec.ChatEndpointFor(proto)
+	ep, ok := codec.EndpointFor(proto)
 	if !ok {
-		return 0, 0, fmt.Errorf("protocol %q does not support model test requests", u.Protocol)
+		return 0, 0, fmt.Errorf("no codec registered for protocol %q", u.Protocol)
 	}
 	handler, ok := codec.Get(ep)
 	if !ok {

@@ -25,12 +25,16 @@ type RequestDecoder interface {
 	Decode(body []byte) (*ir.AiRequest, error)
 }
 
-// PathModelDecoder is implemented by codecs whose model and stream flag come
-// from the URL path rather than the request body (Google Gemini embeds the
-// model in the path: /v1beta/models/{model}:generateContent). The ingress
-// shell extracts them and calls DecodeWithModel instead of Decode.
-type PathModelDecoder interface {
-	DecodeWithModel(body []byte, model string, stream bool) (*ir.AiRequest, error)
+// PathDecoder is implemented by codecs whose model and/or stream flag live in
+// the URL rather than the request body — Gemini embeds both in
+// /v1beta/models/{model}:{action}.
+//
+// The ingress shell hands over the matched route parameters verbatim and calls
+// DecodeWithPath instead of Decode. Interpreting them is the codec's job: the
+// URL shape is part of the wire protocol, so it belongs to the package that
+// defines the protocol rather than to the proxy.
+type PathDecoder interface {
+	DecodeWithPath(body []byte, params map[string]string) (*ir.AiRequest, error)
 }
 
 // RequestEncoder encodes canonical IR into the upstream wire request.
@@ -99,6 +103,11 @@ func (s SSE) Bytes() []byte {
 type EndpointHandler interface {
 	// Endpoint identifies which protocol endpoint this handler serves.
 	Endpoint() spec.ProtocolEndpoint
+	// Capabilities describes the endpoint statically: the ingress routes it
+	// claims and what the gateway may assume about it. Declaring this here
+	// rather than in spec keeps everything about one protocol — wire types,
+	// codecs, routes, capabilities — inside its own leaf package.
+	Capabilities() spec.EndpointCapabilities
 	MakeRequestDecoder() RequestDecoder
 	MakeRequestEncoder() RequestEncoder
 	MakeResponseDecoder() ResponseDecoder
