@@ -10,10 +10,10 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/observability"
-	"github.com/nyroway/nyro/go/internal/protocol/ids"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
+	"github.com/nyroway/nyro/go/llm/spec"
 )
 
 // ── settings ──
@@ -314,7 +314,7 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 		}
 		protocolVal, baseURL := strings.TrimSpace(u.Protocol), u.BaseURL
 		if protocolVal != "" {
-			proto, err := ids.ParseProtocol(protocolVal)
+			proto, err := spec.ParseProtocol(protocolVal)
 			if err != nil {
 				return fmt.Errorf("upstream %q: %w", u.Name, err)
 			}

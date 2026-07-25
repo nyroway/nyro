@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/nyroway/nyro/go/internal/protocol/ir"
+	"github.com/nyroway/nyro/go/llm/ir"
 )
 
 // Phase is a fixed request-lifecycle phase — a closed set. New behaviour is

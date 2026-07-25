@@ -8,15 +8,15 @@ import (
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/plugin"
-	"github.com/nyroway/nyro/go/internal/protocol/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/ids"
-	"github.com/nyroway/nyro/go/internal/protocol/ir"
+	"github.com/nyroway/nyro/go/llm/codec"
+	"github.com/nyroway/nyro/go/llm/ir"
+	"github.com/nyroway/nyro/go/llm/spec"
 )
 
 // TestServeStreamHugeSSELine verifies SSE lines larger than bufio.Scanner's
 // 1MiB default cap still stream through (truncation regression).
 func TestServeStreamHugeSSELine(t *testing.T) {
-	h, ok := codec.Get(ids.OpenAIChatCompletionsV1)
+	h, ok := codec.Get(spec.OpenAIChatCompletionsV1)
 	if !ok {
 		t.Fatal("openai codec not registered")
 	}

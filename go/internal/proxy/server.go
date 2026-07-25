@@ -9,25 +9,25 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/nyroway/nyro/go/internal/protocol/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/codec/anthropic"  // register Anthropic codec
-	"github.com/nyroway/nyro/go/internal/protocol/codec/embeddings" // register Embeddings codec
-	"github.com/nyroway/nyro/go/internal/protocol/codec/gemini"     // register Gemini codec
-	"github.com/nyroway/nyro/go/internal/protocol/codec/openai"
-	"github.com/nyroway/nyro/go/internal/protocol/codec/responses" // register Responses codec
-	"github.com/nyroway/nyro/go/internal/protocol/ids"
-	"github.com/nyroway/nyro/go/internal/protocol/ir"
 	"github.com/nyroway/nyro/go/internal/webutil"
+	"github.com/nyroway/nyro/go/llm/codec"
+	"github.com/nyroway/nyro/go/llm/codec/anthropic/messages"
+	"github.com/nyroway/nyro/go/llm/codec/gemini/generatecontent"
+	"github.com/nyroway/nyro/go/llm/codec/openai/chatcompletions"
+	"github.com/nyroway/nyro/go/llm/codec/openai/embeddings"
+	"github.com/nyroway/nyro/go/llm/codec/openai/responses"
+	"github.com/nyroway/nyro/go/llm/ir"
+	"github.com/nyroway/nyro/go/llm/spec"
 )
 
 // NewRouter builds the chi router with the proxy routes wired. Referencing the
 // codec packages forces their init() to run, registering each EndpointHandler.
 func NewRouter(gw *Gateway) chi.Router {
-	_ = openai.ChatCompletionsHandler{} // ensure openai init() ran
-	_ = anthropic.MessagesHandler{}     // ensure anthropic init() ran
-	_ = gemini.GenerateContentHandler{} // ensure gemini init() ran
-	_ = responses.ResponsesHandler{}    // ensure responses init() ran
-	_ = embeddings.EmbeddingsHandler{}  // ensure embeddings init() ran
+	_ = chatcompletions.ChatCompletionsHandler{} // ensure openai-chat init() ran
+	_ = messages.MessagesHandler{}               // ensure anthropic init() ran
+	_ = generatecontent.GenerateContentHandler{} // ensure gemini init() ran
+	_ = responses.ResponsesHandler{}             // ensure responses init() ran
+	_ = embeddings.EmbeddingsHandler{}           // ensure embeddings init() ran
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
@@ -50,16 +50,16 @@ func NewRouter(gw *Gateway) chi.Router {
 	r.Get("/v1/models", func(w http.ResponseWriter, r *http.Request) { handleModelsList(w, r, gw) })
 
 	r.Post("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, ids.OpenAIChatCompletionsV1, "", false)
+		handleProxy(w, r, gw, spec.OpenAIChatCompletionsV1, "", false)
 	})
 	r.Post("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, ids.AnthropicMessages20230601, "", false)
+		handleProxy(w, r, gw, spec.AnthropicMessages20230601, "", false)
 	})
 	r.Post("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, ids.OpenAIResponsesV1, "", false)
+		handleProxy(w, r, gw, spec.OpenAIResponsesV1, "", false)
 	})
 	r.Post("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
-		handleProxy(w, r, gw, ids.OpenAIEmbeddingsV1, "", false)
+		handleProxy(w, r, gw, spec.OpenAIEmbeddingsV1, "", false)
 	})
 	// Gemini embeds the model + action in the path: /v1beta/models/{model}:{action}
 	r.Post("/v1beta/models/{resource}", func(w http.ResponseWriter, r *http.Request) {
@@ -68,14 +68,14 @@ func NewRouter(gw *Gateway) chi.Router {
 			webutil.Error(w, http.StatusNotFound, "malformed Gemini path, expected models/{model}:{action}", "GATEWAY_ERROR")
 			return
 		}
-		handleProxy(w, r, gw, ids.GeminiGenerateContentV1Beta, model, action == "streamGenerateContent")
+		handleProxy(w, r, gw, spec.GeminiGenerateContentV1Beta, model, action == "streamGenerateContent")
 	})
 	return r
 }
 
 // handleProxy is the ingress shell: it resolves the codec, decodes the wire
 // body into IR (using the path model for Gemini), then hands off to Dispatch.
-func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep ids.ProtocolEndpoint, pathModel string, pathStream bool) {
+func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, ep spec.ProtocolEndpoint, pathModel string, pathStream bool) {
 	h, ok := codec.Get(ep)
 	if !ok {
 		webutil.Error(w, http.StatusNotImplemented, "no codec registered for endpoint", "GATEWAY_ERROR")

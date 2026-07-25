@@ -13,8 +13,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/nyroway/nyro/go/internal/plugin"
-	"github.com/nyroway/nyro/go/internal/protocol/ir"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/llm/ir"
 )
 
 // Bag key contract. Exported (plain strings) so the proxy dispatcher can set

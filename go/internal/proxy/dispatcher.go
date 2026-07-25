@@ -12,12 +12,12 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/plugin"
-	"github.com/nyroway/nyro/go/internal/protocol/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/ids"
-	"github.com/nyroway/nyro/go/internal/protocol/ir"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/router"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/llm/codec"
+	"github.com/nyroway/nyro/go/llm/ir"
+	"github.com/nyroway/nyro/go/llm/spec"
 )
 
 // Dispatch is the single orchestration entry point. The ingress shell
@@ -125,8 +125,8 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		// decode upstream responses with it, then format for the client with
 		// the ingress codec (cross-protocol transform).
 		egressHandler := ingress
-		if proto, parseErr := ids.ParseProtocol(p.Protocol); parseErr == nil {
-			if ep, ok := ids.ChatEndpointFor(proto); ok && ep != ingress.Endpoint() {
+		if proto, parseErr := spec.ParseProtocol(p.Protocol); parseErr == nil {
+			if ep, ok := spec.ChatEndpointFor(proto); ok && ep != ingress.Endpoint() {
 				if h, found := codec.Get(ep); found {
 					egressHandler = h
 				}
@@ -205,7 +205,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		switch {
 		case resp.StatusCode >= 400:
 			forwardError(rec, resp)
-		case ingress.Endpoint() == ids.OpenAIEmbeddingsV1:
+		case ingress.Endpoint() == spec.OpenAIEmbeddingsV1:
 			copyResponse(rec, resp)
 		case req.Stream.Enabled:
 			g.serveStream(r.Context(), rec, resp.Body, egressHandler, ingress, &usage, bag)
