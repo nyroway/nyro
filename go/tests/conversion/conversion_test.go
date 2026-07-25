@@ -1,4 +1,4 @@
-package protocoltest
+package conversion
 
 import "testing"
 

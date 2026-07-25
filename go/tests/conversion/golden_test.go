@@ -1,4 +1,4 @@
-package protocoltest
+package conversion
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 )
 
 // updateGolden regenerates golden files (and, in record mode, is paired with
-// re-recording cassettes). Run: `go test ./internal/protocoltest/... -update`.
+// re-recording cassettes). Run: `go test ./tests/conversion/... -update`.
 var updateGolden = flag.Bool("update", false, "rewrite golden files from current output")
 
 // canonJSON normalizes a JSON body for stable comparison: parity.NormalizeJSON

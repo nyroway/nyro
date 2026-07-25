@@ -77,10 +77,10 @@ go-build:
 go-test:
 	cd go && go test ./...
 
-# Protocol-conversion matrix tests (internal/protocoltest): offline cassette
+# Protocol-conversion matrix tests (tests/conversion): offline cassette
 # replay, race-enabled. This is the every-PR gate — no keys, no network.
 go-conversion-tests:
-	cd go && go test -race ./internal/protocoltest/...
+	cd go && go test -race ./tests/conversion/...
 
 # Re-record cassettes from live providers and regenerate golden files. LOCAL
 # ONLY — needs real credentials and hits real providers. Reads
@@ -89,7 +89,7 @@ go-conversion-tests:
 # one provider at a time via RUN, e.g.:
 #   make go-conversion-update RUN=anthropic__openai
 go-conversion-update:
-	cd go && NYRO_TEST_RECORD=1 go test ./internal/protocoltest/... -count=1 -update \
+	cd go && NYRO_TEST_RECORD=1 go test ./tests/conversion/... -count=1 -update \
 		-run 'TestConversionMatrix/$(RUN)'
 
 # Vet Go code
