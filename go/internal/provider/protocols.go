@@ -1,14 +1,14 @@
 package provider
 
-import "github.com/nyroway/nyro/go/internal/protocol/ids"
+import "github.com/nyroway/nyro/go/llm/spec"
 
 // Protocol IDs are owned by protocol/ids (see the cloud-routing notes there).
 // These untyped aliases exist so provider code and storage rows, which carry
 // protocols as plain strings, can compare without conversions.
 const (
-	ProtocolOpenAIChatCompletions = string(ids.ProtocolOpenAIChatCompletions)
-	ProtocolOpenAIEmbeddings      = string(ids.ProtocolOpenAIEmbeddings)
-	ProtocolOpenAIResponses       = string(ids.ProtocolOpenAIResponses)
-	ProtocolAnthropicMessages     = string(ids.ProtocolAnthropicMessages)
-	ProtocolGeminiGenerateContent = string(ids.ProtocolGeminiGenerateContent)
+	ProtocolOpenAIChatCompletions = string(spec.ProtocolOpenAIChatCompletions)
+	ProtocolOpenAIEmbeddings      = string(spec.ProtocolOpenAIEmbeddings)
+	ProtocolOpenAIResponses       = string(spec.ProtocolOpenAIResponses)
+	ProtocolAnthropicMessages     = string(spec.ProtocolAnthropicMessages)
+	ProtocolGeminiGenerateContent = string(spec.ProtocolGeminiGenerateContent)
 )

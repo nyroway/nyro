@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nyroway/nyro/go/internal/protocol/ids"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/llm/spec"
 )
 
 // normalizeEmptyModelsJSON collapses a models_json update payload that
@@ -34,7 +34,7 @@ func normalizeCreateUpstreamProtocol(in *storage.CreateUpstream) error {
 	if protocol == "" {
 		return nil
 	}
-	parsed, err := ids.ParseProtocol(protocol)
+	parsed, err := spec.ParseProtocol(protocol)
 	if err != nil {
 		return err
 	}
@@ -50,7 +50,7 @@ func normalizeUpdateUpstreamProtocol(in *storage.UpdateUpstream) error {
 	if protocol == "" {
 		return nil
 	}
-	parsed, err := ids.ParseProtocol(protocol)
+	parsed, err := spec.ParseProtocol(protocol)
 	if err != nil {
 		return err
 	}

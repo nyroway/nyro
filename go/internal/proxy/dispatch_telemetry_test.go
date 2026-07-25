@@ -11,8 +11,8 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/plugin"
-	"github.com/nyroway/nyro/go/internal/protocol/ir"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/llm/ir"
 )
 
 // bagCapture is a test-only OnLog hook that stashes the per-request ContextBag

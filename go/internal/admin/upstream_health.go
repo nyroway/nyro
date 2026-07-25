@@ -10,15 +10,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/protocol/codec"
-	_ "github.com/nyroway/nyro/go/internal/protocol/codec/anthropic"
-	_ "github.com/nyroway/nyro/go/internal/protocol/codec/gemini"
-	_ "github.com/nyroway/nyro/go/internal/protocol/codec/openai"
-	_ "github.com/nyroway/nyro/go/internal/protocol/codec/responses"
-	"github.com/nyroway/nyro/go/internal/protocol/ids"
-	"github.com/nyroway/nyro/go/internal/protocol/ir"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/llm/codec"
+	_ "github.com/nyroway/nyro/go/llm/codec/anthropic/messages"
+	_ "github.com/nyroway/nyro/go/llm/codec/gemini/generatecontent"
+	_ "github.com/nyroway/nyro/go/llm/codec/openai/chatcompletions"
+	_ "github.com/nyroway/nyro/go/llm/codec/openai/responses"
+	"github.com/nyroway/nyro/go/llm/ir"
+	"github.com/nyroway/nyro/go/llm/spec"
 )
 
 type upstreamHealthEvent struct {
@@ -201,11 +201,11 @@ func firstModelForDraft(ctx context.Context, u storage.Upstream) (string, []stri
 }
 
 func testDraftModelRequest(r *http.Request, u storage.Upstream, model string, auth provider.Authenticator) (int64, int, error) {
-	proto, err := ids.ParseProtocol(u.Protocol)
+	proto, err := spec.ParseProtocol(u.Protocol)
 	if err != nil {
 		return 0, 0, err
 	}
-	ep, ok := ids.ChatEndpointFor(proto)
+	ep, ok := spec.ChatEndpointFor(proto)
 	if !ok {
 		return 0, 0, fmt.Errorf("protocol %q does not support model test requests", u.Protocol)
 	}
