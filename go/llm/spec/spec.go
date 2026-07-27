@@ -89,39 +89,73 @@ const (
 // String returns the canonical kebab-case identifier.
 func (p Protocol) String() string { return string(p) }
 
+// ProtocolInfo is everything user-facing about one protocol.
+type ProtocolInfo struct {
+	ID Protocol `json:"id"`
+	// DisplayName labels the API. No "API" suffix: it was true of every entry
+	// and so distinguished none of them.
+	DisplayName string `json:"displayName"`
+	// Alias is the single frozen short name, or "" if the protocol has none.
+	Alias string `json:"alias"`
+	// DefaultBaseURL is the reference host for this API, offered as the
+	// placeholder when configuring an upstream. It is a fact about the API
+	// family, not a constraint: any provider speaking the wire format works.
+	DefaultBaseURL string `json:"defaultBaseUrl"`
+	// Selectable reports whether the protocol is offered in config and the
+	// WebUI. A protocol can be fully implemented and still not selectable.
+	Selectable bool `json:"selectable"`
+}
+
+// catalog is the single Go-side source for protocol metadata: DisplayName and
+// ParseProtocol both read it, so there is one list to edit rather than three
+// parallel switches that can disagree.
+//
+// llm/spec/protocols.json mirrors this list and is asserted against it by
+// contract_test.go, while the WebUI asserts its own table against the same
+// file. That keeps the two hand-maintained copies honest without a codegen
+// step or a runtime dependency between them.
+var catalog = []ProtocolInfo{
+	{ProtocolAnthropicMessages, "Anthropic Messages", "claude", "https://api.anthropic.com", true},
+	{ProtocolGeminiGenerateContent, "Gemini generateContent", "gemini", "https://generativelanguage.googleapis.com", true},
+	{ProtocolOpenAIChatCompletions, "OpenAI Chat Completions", "openai", "https://api.openai.com/v1", true},
+	{ProtocolOpenAIEmbeddings, "OpenAI Embeddings", "embed", "https://api.openai.com/v1", false},
+	{ProtocolOpenAIResponses, "OpenAI Responses", "codex", "https://api.openai.com/v1", true},
+}
+
+// Protocols returns the full catalog, ordered by identifier.
+func Protocols() []ProtocolInfo {
+	out := make([]ProtocolInfo, len(catalog))
+	copy(out, catalog)
+	return out
+}
+
+// Lookup returns the catalog entry for a protocol.
+func Lookup(p Protocol) (ProtocolInfo, bool) {
+	for _, info := range catalog {
+		if info.ID == p {
+			return info, true
+		}
+	}
+	return ProtocolInfo{}, false
+}
+
 // DisplayName returns the display label for a protocol (e.g. "Anthropic
-// Messages"). Labels name the API, without an "API" suffix — the suffix was
-// true of every entry and so distinguished none of them.
+// Messages"), or "Unknown" for an unrecognised one.
 func (p Protocol) DisplayName() string {
-	switch p {
-	case ProtocolAnthropicMessages:
-		return "Anthropic Messages"
-	case ProtocolOpenAIChatCompletions:
-		return "OpenAI Chat Completions"
-	case ProtocolOpenAIEmbeddings:
-		return "OpenAI Embeddings"
-	case ProtocolOpenAIResponses:
-		return "OpenAI Responses"
-	case ProtocolGeminiGenerateContent:
-		return "Gemini generateContent"
+	if info, ok := Lookup(p); ok {
+		return info.DisplayName
 	}
 	return "Unknown"
 }
 
-// ParseProtocol resolves a canonical string or its single alias to a Protocol.
-// See the alias rule on Protocol: one alias per protocol, permanently bound.
+// ParseProtocol resolves a canonical identifier or its single alias to a
+// Protocol. See the alias rule on Protocol: one alias per protocol, bound for
+// good.
 func ParseProtocol(s string) (Protocol, error) {
-	switch s {
-	case "anthropic-messages", "claude":
-		return ProtocolAnthropicMessages, nil
-	case "openai-chatcompletions", "openai":
-		return ProtocolOpenAIChatCompletions, nil
-	case "openai-embeddings", "embed":
-		return ProtocolOpenAIEmbeddings, nil
-	case "openai-responses", "codex":
-		return ProtocolOpenAIResponses, nil
-	case "gemini-generatecontent", "gemini":
-		return ProtocolGeminiGenerateContent, nil
+	for _, info := range catalog {
+		if s == string(info.ID) || (info.Alias != "" && s == info.Alias) {
+			return info.ID, nil
+		}
 	}
 	return "", fmt.Errorf("unknown protocol: %s", s)
 }
