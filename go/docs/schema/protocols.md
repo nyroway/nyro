@@ -77,9 +77,11 @@ selectable protocols in config and the WebUI.
   the OpenAI family prefix.
 - This schema has no released consumers yet, so there is no back-compat alias
   set: each protocol has exactly the alias listed above, and dropped identifiers
-  (`openai-chat`, `google-gemini`, `openai-resp`, `openai-embed`, `responses`,
-  `embeddings`) are rejected as unknown protocols. `llm/spec/spec_test.go` keeps
-  that list and asserts none of them resolve.
+  are rejected as unknown protocols. The authoritative list of protocols and
+  rejected identifiers is `llm/spec/protocols.json` — the contract shared with
+  the WebUI; both `llm/spec/contract_test.go` and
+  `webui/src/lib/protocol.contract.test.ts` assert their tables match it, so the
+  two hand-maintained copies cannot drift.
 - The former `openai-compatible` "family" (which grouped chat-completions and
   embeddings) is removed; every protocol is now interface-level, unifying the
   concept across the whole set.

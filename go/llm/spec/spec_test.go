@@ -2,6 +2,10 @@ package spec
 
 import "testing"
 
+// The protocol tables themselves are asserted in contract_test.go against
+// protocols.json. What is left here is the behaviour around them: the endpoint
+// string form, and how the accessors treat input that is not in the catalog.
+
 func TestProtocolEndpointString(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -10,9 +14,11 @@ func TestProtocolEndpointString(t *testing.T) {
 	}{
 		{OpenAIChatCompletionsV1, "openai-chatcompletions/v1"},
 		{OpenAIResponsesV1, "openai-responses/v1"},
+		{OpenAIEmbeddingsV1, "openai-embeddings/v1"},
+		// v1 from Anthropic's /v1/messages URL, not its anthropic-version
+		// header date — see the Version field comment.
 		{AnthropicMessagesV1, "anthropic-messages/v1"},
 		{GeminiGenerateContentV1Beta, "gemini-generatecontent/v1beta"},
-		{OpenAIEmbeddingsV1, "openai-embeddings/v1"},
 	}
 	for _, c := range cases {
 		if got := c.ep.String(); got != c.want {
@@ -21,67 +27,30 @@ func TestProtocolEndpointString(t *testing.T) {
 	}
 }
 
-func TestParseProtocolAliases(t *testing.T) {
+func TestEveryEndpointHasACatalogEntry(t *testing.T) {
 	t.Parallel()
-	// Canonical identifier plus the ONE frozen alias per protocol. This table
-	// may gain rows but must not change existing ones — an alias is bound for
-	// good, so editing a row is a breaking change to every user's config.
-	cases := map[string]Protocol{
-		"anthropic-messages":     ProtocolAnthropicMessages,
-		"claude":                 ProtocolAnthropicMessages,
-		"openai-chatcompletions": ProtocolOpenAIChatCompletions,
-		"openai":                 ProtocolOpenAIChatCompletions,
-		"openai-embeddings":      ProtocolOpenAIEmbeddings,
-		"embed":                  ProtocolOpenAIEmbeddings,
-		"openai-responses":       ProtocolOpenAIResponses,
-		"codex":                  ProtocolOpenAIResponses,
-		"gemini-generatecontent": ProtocolGeminiGenerateContent,
-		"gemini":                 ProtocolGeminiGenerateContent,
-	}
-	for in, want := range cases {
-		got, err := ParseProtocol(in)
-		if err != nil || got != want {
-			t.Errorf("ParseProtocol(%q) = %v, %v; want %v", in, got, err, want)
-		}
-	}
-	// This is an unreleased schema with no consumers yet, so there is no
-	// back-compat alias set — old/dropped identifiers must not resolve. This
-	// guards against silently re-accepting a retired spelling as well as
-	// against typo tolerance.
-	for _, dropped := range []string{
-		// retired in the family/api rename
-		"openai-chat", "google-gemini",
-		// retired mechanically-derived aliases (one alias per protocol now)
-		"openai-resp", "openai-embed",
-		// never valid
-		"responses", "embeddings", "chatcompletions", "generatecontent",
-		"openai-compatible", "openai-compat", "openai-resps", "openaix", "geminix",
-		"gemini-content", "azure-inference", "anthropic-msgs", "anthropic",
-		"google-genai", "google-generative-ai", "google",
+	for _, ep := range []ProtocolEndpoint{
+		OpenAIChatCompletionsV1, OpenAIResponsesV1, OpenAIEmbeddingsV1,
+		AnthropicMessagesV1, GeminiGenerateContentV1Beta,
 	} {
-		if _, err := ParseProtocol(dropped); err == nil {
-			t.Errorf("ParseProtocol(%q) = nil error, want unknown-protocol error (alias was dropped)", dropped)
+		if _, ok := Lookup(ep.Protocol); !ok {
+			t.Errorf("endpoint %s names protocol %q, which is not in the catalog", ep, ep.Protocol)
 		}
-	}
-	if _, err := ParseProtocol("nope"); err == nil {
-		t.Error("expected error for unknown protocol")
 	}
 }
 
-func TestDisplayNameCoversAllProtocols(t *testing.T) {
+func TestUnknownProtocol(t *testing.T) {
 	t.Parallel()
-	cases := map[Protocol]string{
-		ProtocolAnthropicMessages:     "Anthropic Messages",
-		ProtocolOpenAIChatCompletions: "OpenAI Chat Completions",
-		ProtocolOpenAIEmbeddings:      "OpenAI Embeddings",
-		ProtocolOpenAIResponses:       "OpenAI Responses",
-		ProtocolGeminiGenerateContent: "Gemini generateContent",
+	if _, err := ParseProtocol("nope"); err == nil {
+		t.Error("ParseProtocol(\"nope\") = nil error, want unknown-protocol error")
 	}
-	for p, want := range cases {
-		if got := p.DisplayName(); got == "Unknown" || got == "" {
-			t.Errorf("%q.DisplayName() = %q, want a real display name", p, got)
-		} else if got != want {
-			t.Errorf("%q.DisplayName() = %q, want %q", p, got, want)
-		}
+	if _, err := ParseProtocol(""); err == nil {
+		t.Error("ParseProtocol(\"\") = nil error, want unknown-protocol error")
+	}
+	if got := Protocol("nope").DisplayName(); got != "Unknown" {
+		t.Errorf("Protocol(\"nope\").DisplayName() = %q, want \"Unknown\"", got)
+	}
+	if _, ok := Lookup("nope"); ok {
+		t.Error("Lookup(\"nope\") = _, true; want false")
 	}
 }

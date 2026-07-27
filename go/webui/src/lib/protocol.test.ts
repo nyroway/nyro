@@ -1,44 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { PROTOCOL_TABLE, protocolDisplayName, resolveProtocol } from "./protocol";
+import { protocolDisplayName, resolveProtocol } from "./protocol";
 
-describe("protocol identity metadata", () => {
-  it("uses the canonical three-column protocol identity table", () => {
-    expect(PROTOCOL_TABLE).toEqual([
-      {
-        id: "anthropic-messages",
-        displayName: "Anthropic Messages",
-        defaultBaseUrl: "https://api.anthropic.com",
-      },
-      {
-        id: "openai-chatcompletions",
-        displayName: "OpenAI Chat Completions",
-        defaultBaseUrl: "https://api.openai.com/v1",
-      },
-      {
-        id: "openai-responses",
-        displayName: "OpenAI Responses",
-        defaultBaseUrl: "https://api.openai.com/v1",
-      },
-      {
-        id: "gemini-generatecontent",
-        displayName: "Gemini generateContent",
-        defaultBaseUrl: "https://generativelanguage.googleapis.com",
-      },
-    ]);
-    expect(PROTOCOL_TABLE.some((item) => "name" in item)).toBe(false);
+// The protocol table, the alias set, and the rejected-identifier list are all
+// asserted against llm/spec/protocols.json in protocol.contract.test.ts. What
+// is left here is the behaviour around them: how resolveProtocol normalises its
+// input, and what the accessors return for input that is not a protocol at all.
+
+describe("resolveProtocol normalisation", () => {
+  it.each([null, undefined, "", "   "])("returns null for empty input %p", (raw) => {
+    expect(resolveProtocol(raw)).toBeNull();
   });
 
-  it("resolves the one frozen alias per protocol and rejects dropped IDs", () => {
-    expect(resolveProtocol("openai")).toBe("openai-chatcompletions");
-    expect(resolveProtocol("codex")).toBe("openai-responses");
-    expect(resolveProtocol("claude")).toBe("anthropic-messages");
-    expect(resolveProtocol("gemini")).toBe("gemini-generatecontent");
-    expect(protocolDisplayName("codex")).toBe("OpenAI Responses");
-    // Retired in the family/api rename.
-    expect(resolveProtocol("openai-chat")).toBeNull();
-    expect(resolveProtocol("google-gemini")).toBeNull();
-    // Retired mechanically-derived aliases — one alias per protocol now.
-    expect(resolveProtocol("openai-resp")).toBeNull();
-    expect(resolveProtocol("openai-embed")).toBeNull();
+  it("trims and lowercases before resolving", () => {
+    expect(resolveProtocol("  OpenAI  ")).toBe("openai-chatcompletions");
+  });
+});
+
+describe("protocolDisplayName", () => {
+  it("returns null for an unrecognised or empty string", () => {
+    expect(protocolDisplayName("not-a-protocol")).toBeNull();
+    expect(protocolDisplayName(null)).toBeNull();
+    expect(protocolDisplayName("")).toBeNull();
   });
 });
