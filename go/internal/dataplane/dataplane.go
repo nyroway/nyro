@@ -176,16 +176,16 @@ func servicePort(addr string) string {
 }
 
 // attachObservability wires the initial ObsProvider into the Gateway and points
-// the OTel phase hooks at the SwappableProvider. gw.Obs/gw.Handles are
+// the telemetry Stage at the SwappableProvider. gw.Obs/gw.Handles are
 // informational only (the proxy dispatch path does not read them — telemetry
-// flows entirely through the sp-backed hooks) and reflect the initial provider.
+// flows entirely through the sp-backed Stage) and reflect the initial provider.
 //
-// RegisterHooks is idempotent and re-pointable, which is what makes it safe for
-// one process to assemble more than one data plane over its lifetime.
+// RegisterObservability is idempotent and re-pointable, which is what makes it
+// safe for one process to assemble more than one data plane over its lifetime.
 func attachObservability(gw *proxy.Gateway, prov *observability.ObsProvider, sp *observability.SwappableProvider) {
 	gw.Obs = prov
 	gw.Handles = observability.NewHandles(prov.Meter)
-	observability.RegisterHooks(sp)
+	observability.RegisterObservability(sp)
 }
 
 // cacheObsGet returns a get-func that reads obs_* settings from the

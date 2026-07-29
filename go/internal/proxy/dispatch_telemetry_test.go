@@ -5,74 +5,57 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/observability"
-	"github.com/nyroway/nyro/go/internal/plugin"
+	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/llm/ir"
 )
 
-// bagCapture is a test-only OnLog hook that stashes the per-request ContextBag
-// so a test can assert the dispatcher populated it fully BEFORE the hook ran.
-// Registered once (sync.Once); the latest bag is kept in lastBag. Other proxy
-// tests also Dispatch (re-firing this hook), which only overwrites lastBag —
-// harmless, since only the assertion test reads it.
-var (
-	bagOnce    sync.Once
-	lastBagMu  sync.Mutex
-	lastBag    *plugin.ContextBag
-	bagCapture = bagCaptureHook{}
-)
+// captureStage records the Exchange as the chain unwinds, standing in for the
+// telemetry Stage so a test can assert what telemetry would have seen.
+//
+// It captures after next returns, which is the same position the real
+// telemetry Stage emits from. Placed first in the chain (see
+// newCapturingGateway), that also means it observes exchanges a later Stage
+// short-circuited.
+type captureStage struct{ got **pipeline.Exchange }
 
-type bagCaptureHook struct{}
+func (captureStage) Name() string { return "test.capture" }
 
-func (bagCaptureHook) Name() string        { return "test.bag_capture" }
-func (bagCaptureHook) Phase() plugin.Phase { return plugin.PhaseOnLog }
-func (bagCaptureHook) Run(pctx *plugin.PhaseContext) plugin.PhaseOutcome {
-	lastBagMu.Lock()
-	lastBag = pctx.Bag
-	lastBagMu.Unlock()
-	return plugin.OutcomeContinue
+func (c captureStage) Handle(ex *pipeline.Exchange, next func() error) error {
+	defer func() { *c.got = ex }()
+	return next()
 }
 
-func registerBagCaptureOnce() {
-	bagOnce.Do(func() { plugin.Register(bagCapture) })
-}
-
-// bagGet reads a key off the captured bag and returns its typed value (or the
-// zero value if absent / wrong type).
-func bagGet[T any](t *testing.T, key string) T {
+// newCapturingGateway builds a test gateway whose chain starts with a
+// captureStage, and returns a func yielding the captured Exchange.
+func newCapturingGateway(t *testing.T, upstreamURL string) (*Gateway, func(*testing.T) *pipeline.Exchange) {
 	t.Helper()
-	lastBagMu.Lock()
-	b := lastBag
-	lastBagMu.Unlock()
-	if b == nil {
-		t.Fatalf("no bag captured: OnLog hook never ran (dispatcher didn't reach the terminal defer?)")
+	gw := newTestGateway(t, upstreamURL)
+	var captured *pipeline.Exchange
+	gw.OuterStages = []pipeline.Stage{captureStage{got: &captured}}
+	return gw, func(t *testing.T) *pipeline.Exchange {
+		t.Helper()
+		if captured == nil {
+			t.Fatal("no Exchange captured: the chain never ran")
+		}
+		return captured
 	}
-	v, ok := b.Get(key)
-	if !ok {
-		t.Fatalf("bag key %q not set before OnLog", key)
-	}
-	tv, _ := v.(T)
-	return tv
 }
 
-// TestDispatchPopulatesBagBeforeOnLog is the core ordering invariant: by the
-// time the OnLog phase hook runs, the per-request ContextBag must hold model,
-// provider, usage, status, apiKeyID, started, and the LogCtx. The dispatcher
-// populates the bag in the terminal LIFO defer (registered after the OnLog
-// defer), guaranteeing this. (Per the controller's guidance, this is the one
-// place proxy tests touch hook wiring; the hook emit itself is tested in
-// internal/observability/hooks_test.go.)
-func TestDispatchPopulatesBagBeforeOnLog(t *testing.T) {
-	registerBagCaptureOnce()
-
+// TestDispatchPopulatesExchangeBeforeTelemetry is the core ordering invariant:
+// by the time the chain unwinds to the telemetry Stage, the Exchange must hold
+// route, upstream, usage, status, consumer, started, and the LogCtx. The
+// dispatcher fills these in as they become known and the telemetry Stage emits
+// from a defer, guaranteeing it sees the finished picture. (The emit itself is
+// tested in internal/observability/stage_test.go.)
+func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	upstream := nonStreamUpstream(t)
 	defer upstream.Close()
-	gw := newTestGateway(t, upstream.URL)
+	gw, captured := newCapturingGateway(t, upstream.URL)
 	r := NewRouter(gw)
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -85,49 +68,44 @@ func TestDispatchPopulatesBagBeforeOnLog(t *testing.T) {
 		t.Fatalf("dispatch → %d %s", rec.Code, rec.Body.String())
 	}
 
-	// Bag fully populated before the OnLog hook read it.
-	route := bagGet[storage.Route](t, string(observability.BagModel))
+	ex := captured(t)
+	route, _ := ex.GetExt(observability.ExtRoute).(storage.Route)
 	if route.Model != "gpt-4o" {
-		t.Errorf("bag route = %+v; want model gpt-4o", route)
+		t.Errorf("exchange route = %+v; want model gpt-4o", route)
 	}
-	up := bagGet[storage.Upstream](t, string(observability.BagProvider))
+	up, _ := ex.GetExt(observability.ExtUpstream).(storage.Upstream)
 	if up.Name != "test" {
-		t.Errorf("bag upstream = %+v; want name test", up)
+		t.Errorf("exchange upstream = %+v; want name test", up)
 	}
-	status := bagGet[int](t, string(observability.BagStatus))
-	if status != http.StatusOK {
-		t.Errorf("bag status = %d; want 200", status)
+	if ex.Usage.PromptTokens != 3 || ex.Usage.CompletionTokens != 2 {
+		t.Errorf("exchange usage = %+v; want prompt=3 completion=2 (from nonStreamUpstream fixture)", ex.Usage)
 	}
-	usage := bagGet[ir.Usage](t, string(observability.BagUsage))
-	if usage.PromptTokens != 3 || usage.CompletionTokens != 2 {
-		t.Errorf("bag usage = %+v; want prompt=3 completion=2 (from nonStreamUpstream fixture)", usage)
+	if ex.Started.Before(startWall) {
+		t.Errorf("exchange started %v before dispatch entry %v", ex.Started, startWall)
 	}
-	started := bagGet[time.Time](t, string(observability.BagStarted))
-	if started.Before(startWall) {
-		t.Errorf("bag started %v before dispatch entry %v", started, startWall)
-	}
-	lc := bagGet[observability.LogCtx](t, string(observability.BagLogCtx))
+	lc, _ := ex.GetExt(observability.ExtLogCtx).(observability.LogCtx)
 	if lc.ClientModel != "gpt-4o" || lc.Method != http.MethodPost {
-		t.Errorf("bag logctx = %+v; want ClientModel=gpt-4o Method=POST", lc)
+		t.Errorf("exchange logctx = %+v; want ClientModel=gpt-4o Method=POST", lc)
 	}
-	// apiKeyID empty: the fixture model has EnableAuth=false (open), so no key
-	// resolves. Asserting the empty string documents that the field is set (not
-	// left uninitialized / absent).
-	if apiKeyID := bagGet[string](t, string(observability.BagAPIKeyID)); apiKeyID != "" {
-		t.Errorf("bag apiKeyID = %q; want empty for open model", apiKeyID)
+	// ConsumerID empty: the fixture model has EnableAuth=false (open), so no
+	// key resolves.
+	if ex.ConsumerID != "" {
+		t.Errorf("exchange consumer = %q; want empty for open model", ex.ConsumerID)
+	}
+	// The upstream's response usage must have reached the exchange.
+	if ex.Resp == nil {
+		t.Error("exchange Resp is nil for a non-streaming response")
 	}
 }
 
-// TestDispatchPopulatesBagOnEarlyExit asserts the bag is still fully populated
-// when Dispatch returns BEFORE reaching the upstream (model-not-found path):
-// model stays zero-value, status is the 404, and the OnLog hook still fires
-// with a bag (the LIFO defer runs on every return path).
-func TestDispatchPopulatesBagOnEarlyExit(t *testing.T) {
-	registerBagCaptureOnce()
-
+// TestDispatchPopulatesExchangeOnEarlyExit asserts the Exchange still carries
+// the status when the request is rejected BEFORE reaching an upstream
+// (model-not-found): the route Stage short-circuits, and the outer Stages —
+// telemetry in production, captureStage here — still unwind.
+func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 	upstream := nonStreamUpstream(t) // never hit (model not found)
 	defer upstream.Close()
-	gw := newTestGateway(t, upstream.URL)
+	gw, captured := newCapturingGateway(t, upstream.URL)
 	r := NewRouter(gw)
 
 	body := `{"model":"no-such-model","messages":[{"role":"user","content":"hi"}]}`
@@ -138,8 +116,17 @@ func TestDispatchPopulatesBagOnEarlyExit(t *testing.T) {
 		t.Fatalf("dispatch → %d, want 404", rec.Code)
 	}
 
-	status := bagGet[int](t, string(observability.BagStatus))
-	if status != http.StatusNotFound {
-		t.Errorf("bag status = %d; want 404 (early-exit path must still set status)", status)
+	ex := captured(t)
+	// Dispatch stamps the recorder's status onto the Exchange after the chain
+	// returns, so a Stage reading ex.Status in its own defer sees the code the
+	// client actually got.
+	if ex.Status != http.StatusNotFound {
+		t.Errorf("exchange status = %d; want 404 (early-exit path must still record it)", ex.Status)
+	}
+	if _, ok := ex.GetExt(observability.ExtRoute).(storage.Route); ok {
+		t.Error("exchange carries a route for a model that does not exist")
+	}
+	if ex.Usage != (ir.Usage{}) {
+		t.Errorf("exchange usage = %+v; want zero on the early-exit path", ex.Usage)
 	}
 }

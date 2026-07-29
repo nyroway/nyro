@@ -3,7 +3,6 @@ package proxy
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,7 +10,7 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/observability"
-	"github.com/nyroway/nyro/go/internal/plugin"
+	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/router"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -21,85 +20,52 @@ import (
 )
 
 // Dispatch is the single orchestration entry point. The ingress shell
-// (handleProxy) has already decoded the wire body into IR; Dispatch runs the
-// lifecycle phases, resolves the model→backend→provider from the in-memory
-// cache, forwards to the upstream (Native path, ingress codec for egress), and
-// converts the response back. Ported from dispatch_pipeline.
+// (handleProxy) has already decoded the wire body into IR; Dispatch builds the
+// Exchange, runs it through the Stage chain (telemetry, authn, authz, quota),
+// and the chain's terminal resolves the model→backend→provider from the
+// in-memory cache, forwards to the upstream, and converts the response back.
 //
-// Telemetry (audit log record + metrics + dispatch span) is emitted by the
-// OnLog phase hook, which reads per-request state from a ContextBag populated
-// here as the data becomes known. The hook is registered once at process start
-// (cmd/gateway); in tests no hooks are registered so Dispatch is telemetry-free
-// but otherwise functional.
+// Cross-cutting concerns live in Stages, not here: this function is routing,
+// failover, and codec transformation, and nothing else. See internal/pipeline
+// for the chain contract and internal/observability.Stage for the terminal
+// telemetry Stage.
 func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiRequest, ingress codec.EndpointHandler) {
-	started := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	var consumerID string
-	var usage ir.Usage
-	route := storage.Route{}
-	upstream := storage.Upstream{}
-	lc := observability.LogCtx{
+	ex := &pipeline.Exchange{
+		Ctx:     r.Context(),
+		W:       rec,
+		R:       r,
+		Req:     req,
+		Status:  http.StatusOK,
+		Started: time.Now(),
+		Stream:  req.Stream.Enabled,
+	}
+	// The recorder writes the status onto the exchange as it happens, so a
+	// Stage emitting from a defer sees what the client actually got.
+	rec.ex = ex
+	ex.SetExt(observability.ExtLogCtx, observability.LogCtx{
 		Method:         r.Method,
 		Path:           r.URL.Path,
 		ClientProtocol: string(ingress.Endpoint().Protocol),
 		ClientModel:    req.Model,
 		IsStream:       req.Stream.Enabled,
-	}
-	bag := plugin.NewContextBag()
+	})
 
-	// Defer ordering is LIFO: the bag-populating defer (registered second)
-	// runs FIRST, then the OnLog hook defer (registered first) reads the
-	// fully-populated bag and emits. This guarantees the hook sees usage,
-	// status, provider, etc. even when the request exits early.
-	defer plugin.RunPhaseHooks(plugin.PhaseOnLog, &plugin.PhaseContext{Ctx: r.Context(), Bag: bag})
-	defer func() {
-		bag.Set(string(observability.BagStarted), started)
-		bag.Set(string(observability.BagStatus), rec.status)
-		bag.Set(string(observability.BagModel), route)
-		bag.Set(string(observability.BagProvider), upstream)
-		bag.Set(string(observability.BagAPIKeyID), consumerID)
-		bag.Set(string(observability.BagLogCtx), lc)
-		bag.Set(string(observability.BagUsage), usage)
-		// Record into the in-memory quota sliding window. consumerID is empty
-		// for unauthenticated/open requests — skip those. For requests that
-		// failed before usage was captured, usage is zero so only the request
-		// counts.
-		if consumerID != "" {
-			g.Quota.Record(consumerID, "requests", 1)
-			g.Quota.Record(consumerID, "tokens", int64(usage.PromptTokens+usage.CompletionTokens))
-		}
-	}()
+	// The chain's Stages own auth, quota, and telemetry. Errors are already
+	// written to the client by the Stage that produced them, so the return
+	// value is only for Stages that want to inspect it.
+	_ = g.chain().Run(ex, func() error {
+		g.forward(ex, ingress)
+		return nil
+	})
+}
 
-	plugin.RunPhaseHooks(plugin.PhaseOnRequest, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
-
-	// route: model name → route (with upstream targets) — read from the
-	// in-memory cache.
-	rt := g.snapshot().RouteByModel(req.Model)
-	if rt == nil {
-		writeJSONError(rec, http.StatusNotFound, "model not found: "+req.Model)
-		return
-	}
-	route = *rt
-	bag.Set(string(observability.BagModel), route)
-	if !route.Enabled {
-		writeJSONError(rec, http.StatusServiceUnavailable, "model disabled: "+req.Model)
-		return
-	}
-	if len(route.Upstreams) == 0 {
-		writeJSONError(rec, http.StatusServiceUnavailable, "no backends for model: "+req.Model)
-		return
-	}
-
-	// inbound auth + OnAccess
-	plugin.RunPhaseHooks(plugin.PhaseOnAccess, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
-	status, msg, release := checkAccess(g.snapshot(), g.Quota, route, r, &consumerID, &lc.APIKeyName, &lc.APIKeyPreview)
-	if status != 0 {
-		writeJSONError(rec, status, msg)
-		return
-	}
-	if release != nil {
-		defer release()
-	}
+// forward is the chain's terminal: select a backend, transform, call the
+// upstream, and write the response. It runs only if no Stage short-circuited.
+func (g *Gateway) forward(ex *pipeline.Exchange, ingress codec.EndpointHandler) {
+	rec := ex.W
+	req := ex.Req
+	route, _ := ex.GetExt(observability.ExtRoute).(storage.Route)
 
 	// select + failover: try each backend (ordered by the balance strategy),
 	// retrying the same backend up to settings.proxy.max_retries times on a
@@ -136,14 +102,11 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 		// Build the outbound request: codec-encode the IR, then build the
 		// upstream URL and resolve the provider's outbound authenticator.
 		outbound, err := egressHandler.MakeRequestEncoder().Encode(req)
-		if err == nil {
-			outbound.Path = provider.BuildURL(p.BaseURL, outbound.Path)
-		}
 		if err != nil {
 			writeJSONError(rec, http.StatusInternalServerError, "encode request: "+err.Error())
 			return
 		}
-		plugin.RunPhaseHooks(plugin.PhaseOnUpstream, &plugin.PhaseContext{Ctx: r.Context(), Request: req, Bag: bag})
+		outbound.Path = provider.BuildURL(p.BaseURL, outbound.Path)
 
 		auth, authErr := provider.AuthenticatorFor(p.Provider, p.Protocol, runtimeFromUpstream(*p))
 		if authErr != nil {
@@ -159,15 +122,12 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 
 		// Retry this backend up to MaxRetries times (1 = no retry, just the
 		// initial attempt) on a network error or a retry_on_status code.
-		attempts := ps.MaxRetries
-		if attempts < 1 {
-			attempts = 1
-		}
+		attempts := max(ps.MaxRetries, 1)
 		var resp *http.Response
 		var latencyMs float64
 		for attempt := 1; attempt <= attempts; attempt++ {
 			upStart := time.Now()
-			resp, err = g.callUpstream(client, r, outbound, auth)
+			resp, err = g.callUpstream(client, ex.R, outbound, auth)
 			latencyMs = float64(time.Since(upStart).Microseconds()) / 1000
 			if err != nil {
 				resp = nil
@@ -191,16 +151,17 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 			continue // exhausted retries on this backend → next backend
 		}
 
-		// usable response (2xx, or a non-retried 4xx/5xx) → serve, no more failover.
-		// Populate upstream logCtx fields + bag now that they're known.
-		upstream = *p
+		// usable response (2xx, or a non-retried 4xx/5xx) → serve, no more
+		// failover. Record what the telemetry Stage needs now that it's known.
+		lc, _ := ex.GetExt(observability.ExtLogCtx).(observability.LogCtx)
 		lc.UpstreamModel = actualModel
 		lc.UpstreamProtocol = string(egressHandler.Endpoint().Protocol)
 		us := int32(resp.StatusCode)
 		lc.UpstreamStatus = &us
 		um := int64(latencyMs)
 		lc.LatencyUpstreamMs = &um
-		bag.Set(string(observability.BagProvider), upstream)
+		ex.SetExt(observability.ExtLogCtx, lc)
+		ex.SetExt(observability.ExtUpstream, *p)
 		g.Router.Record(router.KeyOf(target), true, latencyMs)
 		switch {
 		case resp.StatusCode >= 400:
@@ -210,9 +171,9 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 			// IR representation to round-trip, so forward it verbatim.
 			copyResponse(rec, resp)
 		case req.Stream.Enabled:
-			g.serveStream(r.Context(), rec, resp.Body, egressHandler, ingress, &usage, bag)
+			g.serveStream(ex, resp.Body, egressHandler, ingress)
 		default:
-			g.serveNonStream(r.Context(), rec, resp.Body, egressHandler, ingress, req, &usage, bag)
+			g.serveNonStream(ex, resp.Body, egressHandler, ingress)
 		}
 		_ = resp.Body.Close()
 		served = true
@@ -258,8 +219,10 @@ func runtimeFromUpstream(u storage.Upstream) provider.UpstreamRuntime {
 }
 
 // serveStream decodes upstream SSE → IR deltas → re-encodes to client SSE in
-// real time, flushing after each frame.
-func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, upstream io.Reader, decHandler codec.EndpointHandler, encHandler codec.EndpointHandler, outUsage *ir.Usage, bag *plugin.ContextBag) {
+// real time, flushing after each frame. Every delta is also handed to the
+// chain's StreamStages before it is re-encoded.
+func (g *Gateway) serveStream(ex *pipeline.Exchange, upstream io.Reader, decHandler codec.EndpointHandler, encHandler codec.EndpointHandler) {
+	w := ex.W
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -303,8 +266,8 @@ func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, upstre
 			if u, ok := d.(*ir.UsageDelta); ok {
 				usage = u.Usage
 			}
-			// Per-delta OnResponse: run hooks on every delta (not just the first).
-			plugin.RunPhaseHooks(plugin.PhaseOnResponse, &plugin.PhaseContext{Ctx: ctx, Delta: d, Bag: bag})
+			// Per-delta: every StreamStage sees every frame.
+			g.chain().EmitDelta(ex, d)
 		}
 		frames, _ := enc.FormatDeltas(deltas)
 		writeSSE(w, frames, flusher)
@@ -318,11 +281,12 @@ func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, upstre
 	}
 	done, _ := enc.FormatDone(usage)
 	writeSSE(w, done, flusher)
-	*outUsage = usage
+	ex.Usage = usage
 }
 
 // serveNonStream decodes the full upstream body → AiResponse → formats it.
-func (g *Gateway) serveNonStream(ctx context.Context, w http.ResponseWriter, upstream io.Reader, decHandler codec.EndpointHandler, encHandler codec.EndpointHandler, req *ir.AiRequest, outUsage *ir.Usage, bag *plugin.ContextBag) {
+func (g *Gateway) serveNonStream(ex *pipeline.Exchange, upstream io.Reader, decHandler codec.EndpointHandler, encHandler codec.EndpointHandler) {
+	w := ex.W
 	raw, err := io.ReadAll(upstream)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "read upstream: "+err.Error())
@@ -333,7 +297,7 @@ func (g *Gateway) serveNonStream(ctx context.Context, w http.ResponseWriter, ups
 		writeJSONError(w, http.StatusBadGateway, "parse upstream: "+err.Error())
 		return
 	}
-	plugin.RunPhaseHooks(plugin.PhaseOnResponse, &plugin.PhaseContext{Ctx: ctx, Request: req, Response: resp, Bag: bag})
+	ex.Resp = resp
 	out, err := encHandler.MakeResponseEncoder().Format(resp)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "format response: "+err.Error())
@@ -341,7 +305,7 @@ func (g *Gateway) serveNonStream(ctx context.Context, w http.ResponseWriter, ups
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	*outUsage = resp.Usage
+	ex.Usage = resp.Usage
 	_, _ = w.Write(out)
 }
 

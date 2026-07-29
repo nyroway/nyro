@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/nyroway/nyro/go/internal/plugin"
+	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/llm/ir"
 )
@@ -32,18 +32,44 @@ func (c *captureLogger) Emit(ctx context.Context, r log.Record) {
 	c.records = append(c.records, r.Clone())
 }
 
-// runPhase invokes the registered hooks for the given phase with a fresh
-// PhaseContext built from bag (ctx is the background context).
-func runPhase(t *testing.T, phase plugin.Phase, bag *plugin.ContextBag) plugin.PhaseOutcome {
+// runStage drives one exchange through the telemetry Stage: it starts the span
+// on the way in and emits on the way out. Unlike the two-call phase model it
+// replaces, a single Handle covers the whole lifecycle, so a test asserting the
+// emitted record only has to run this once.
+func runStage(t *testing.T, ex *pipeline.Exchange) {
 	t.Helper()
-	pctx := &plugin.PhaseContext{Ctx: context.Background(), Bag: bag}
-	return plugin.RunPhaseHooks(phase, pctx)
+	if ex.Ctx == nil {
+		ex.Ctx = context.Background()
+	}
+	stage := NewRegisteredStage()
+	if err := stage.Handle(ex, func() error { return nil }); err != nil {
+		t.Fatalf("Stage.Handle returned %v, want nil", err)
+	}
 }
 
-func TestHooksOnRequestStoresSpan(t *testing.T) {
+// newExchange builds an Exchange carrying the state the dispatcher publishes.
+func newExchange(route storage.Route, upstream storage.Upstream, consumerID string, usage ir.Usage, started time.Time, status int, lc LogCtx) *pipeline.Exchange {
+	ex := &pipeline.Exchange{
+		Ctx:        context.Background(),
+		Usage:      usage,
+		Status:     status,
+		Started:    started,
+		ConsumerID: consumerID,
+	}
+	ex.SetExt(ExtRoute, route)
+	ex.SetExt(ExtUpstream, upstream)
+	ex.SetExt(ExtLogCtx, lc)
+	return ex
+}
+
+// TestStageDerivesSpanContext pins that the Stage replaces ex.Ctx with the
+// span-derived context on the way in, so later Stages and the upstream call
+// inherit the parent span. The phase model published the context through the
+// bag; the Stage puts it where every consumer already looks.
+func TestStageDerivesSpanContext(t *testing.T) {
 	// Isolated harness: a fresh span recorder + tracer, fresh handles, fresh
-	// logger capture. We register hooks on the global plugin registry, which
-	// is process-wide — but we assert only what THIS invocation produced.
+	// logger capture. The target is process-wide — but we assert only what
+	// THIS invocation produced.
 	spanRecorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
 	tracer := tracerProvider.Tracer("nyro-test")
@@ -53,37 +79,36 @@ func TestHooksOnRequestStoresSpan(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterHooks(newSwappableFromParts(tracer, cl, handles))
+	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
 	})
 
-	bag := plugin.NewContextBag()
-	out := runPhase(t, plugin.PhaseOnRequest, bag)
-	if out != plugin.OutcomeContinue {
-		t.Fatalf("OnRequest: want OutcomeContinue, got %v", out)
+	ex := &pipeline.Exchange{Ctx: context.Background(), Started: time.Now()}
+	root := ex.Ctx
+
+	var innerCtx context.Context
+	stage := NewRegisteredStage()
+	if err := stage.Handle(ex, func() error { innerCtx = ex.Ctx; return nil }); err != nil {
+		t.Fatalf("Stage.Handle returned %v, want nil", err)
 	}
 
-	// OnRequest must stash BOTH the span context and the span in the bag.
-	v, ok := bag.Get(BagSpanCtx)
-	if !ok {
-		t.Fatalf("OnRequest did not set %s", BagSpanCtx)
+	if innerCtx == nil {
+		t.Fatal("the chain never ran")
 	}
-	spanCtx, ok := v.(context.Context)
-	if !ok || spanCtx == nil {
-		t.Fatalf("OnRequest did not set %s as non-nil context.Context", BagSpanCtx)
+	if innerCtx == root {
+		t.Error("Stage did not replace ex.Ctx with the span context")
 	}
-	v, ok = bag.Get(BagSpan)
-	if !ok {
-		t.Fatalf("OnRequest did not set %s", BagSpan)
+	if sc := trace.SpanContextFromContext(innerCtx); !sc.IsValid() {
+		t.Error("ex.Ctx inside the chain carries no valid span context")
 	}
-	if _, ok := v.(trace.Span); !ok {
-		t.Fatalf("OnRequest did not set %s as trace.Span", BagSpan)
+	if got := len(spanRecorder.Ended()); got != 1 {
+		t.Errorf("ended spans = %d, want 1 (the Stage must end the span on the way out)", got)
 	}
 }
 
-func TestHooksOnLogRecordsMetricsTokensAndSpan(t *testing.T) {
+func TestStageRecordsMetricsTokensAndSpan(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
 	tracer := tracerProvider.Tracer("nyro-test")
@@ -93,20 +118,18 @@ func TestHooksOnLogRecordsMetricsTokensAndSpan(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterHooks(newSwappableFromParts(tracer, cl, handles))
+	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
 	})
 
-	// Seed the bag with the request state the dispatcher (T3.3) will set.
-	bag := plugin.NewContextBag()
+	// Seed the exchange with the request state the dispatcher publishes.
 	model := storage.Route{ID: "m1", Model: "gpt-test"}
 	provider := storage.Upstream{ID: "p1", Name: "openai"}
 	cacheRead := uint32(7)
 	usage := ir.Usage{PromptTokens: 100, CompletionTokens: 50, CacheReadTokens: &cacheRead}
 	started := time.Now().Add(-25 * time.Millisecond) // pretend 25ms elapsed upstream
-	status := 200
 	lc := LogCtx{
 		ClientProtocol:   "openai",
 		UpstreamProtocol: "openai",
@@ -117,21 +140,7 @@ func TestHooksOnLogRecordsMetricsTokensAndSpan(t *testing.T) {
 		APIKeyName:       "test-key",
 		IsStream:         true,
 	}
-	bag.Set(BagModel, model)
-	bag.Set(BagProvider, provider)
-	bag.Set(BagAPIKeyID, "ak1")
-	bag.Set(BagUsage, usage)
-	bag.Set(BagStarted, started)
-	bag.Set(BagStatus, status)
-	bag.Set(BagLogCtx, lc)
-
-	// Run the full lifecycle: OnRequest (starts span + stores it) then OnLog.
-	if out := runPhase(t, plugin.PhaseOnRequest, bag); out != plugin.OutcomeContinue {
-		t.Fatalf("OnRequest: want OutcomeContinue, got %v", out)
-	}
-	if out := runPhase(t, plugin.PhaseOnLog, bag); out != plugin.OutcomeContinue {
-		t.Fatalf("OnLog: want OutcomeContinue, got %v", out)
-	}
+	runStage(t, newExchange(model, provider, "ak1", usage, started, 200, lc))
 
 	// --- metrics: collect and assert ---
 	var rm metricdata.ResourceMetrics
@@ -194,12 +203,12 @@ func TestHooksOnLogRecordsMetricsTokensAndSpan(t *testing.T) {
 	}
 }
 
-// TestHooksOnLogEmitsUpstreamAuditAttrs asserts the OnLog hook emits the two
-// optional upstream audit attributes (nyro.upstream_status and
+// TestStageEmitsUpstreamAuditAttrs asserts the Stage emits the two optional
+// upstream audit attributes (nyro.upstream_status and
 // nyro.latency_upstream_ms) when LogCtx carries non-nil, non-zero pointers —
-// closing the data-loss gap vs the legacy audit (T3.2 review finding). Also
-// verifies a nil-pointer LogCtx omits them (parquet optional column stays null).
-func TestHooksOnLogEmitsUpstreamAuditAttrs(t *testing.T) {
+// closing the data-loss gap vs the legacy audit. Also verifies a nil-pointer
+// LogCtx omits them (parquet optional column stays null).
+func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
 	tracer := tracerProvider.Tracer("nyro-test")
@@ -209,12 +218,15 @@ func TestHooksOnLogEmitsUpstreamAuditAttrs(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterHooks(newSwappableFromParts(tracer, cl, handles))
+	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
 	})
 	_ = reader // silence unused; metrics are not the focus of this test
+
+	route := storage.Route{ID: "m", Model: "gpt-test"}
+	upstream := storage.Upstream{ID: "p", Name: "openai"}
 
 	// --- case 1: non-nil upstream status + latency → both attributes emitted. ---
 	upstreamStatus := int32(429)
@@ -223,17 +235,7 @@ func TestHooksOnLogEmitsUpstreamAuditAttrs(t *testing.T) {
 		UpstreamStatus:    &upstreamStatus,
 		LatencyUpstreamMs: &upstreamLatency,
 	}
-	bag := plugin.NewContextBag()
-	bag.Set(BagModel, storage.Route{ID: "m", Model: "gpt-test"})
-	bag.Set(BagProvider, storage.Upstream{ID: "p", Name: "openai"})
-	bag.Set(BagAPIKeyID, "ak")
-	bag.Set(BagUsage, ir.Usage{})
-	bag.Set(BagStarted, time.Now().Add(-5*time.Millisecond))
-	bag.Set(BagStatus, 200)
-	bag.Set(BagLogCtx, lc)
-
-	runPhase(t, plugin.PhaseOnRequest, bag)
-	runPhase(t, plugin.PhaseOnLog, bag)
+	runStage(t, newExchange(route, upstream, "ak", ir.Usage{}, time.Now().Add(-5*time.Millisecond), 200, lc))
 
 	if len(cl.records) != 1 {
 		t.Fatalf("case 1 emitted log records: want 1, got %d", len(cl.records))
@@ -244,17 +246,7 @@ func TestHooksOnLogEmitsUpstreamAuditAttrs(t *testing.T) {
 
 	// --- case 2: nil pointers → attributes must be absent. ---
 	cl.records = nil
-	bag2 := plugin.NewContextBag()
-	bag2.Set(BagModel, storage.Route{ID: "m", Model: "gpt-test"})
-	bag2.Set(BagProvider, storage.Upstream{ID: "p", Name: "openai"})
-	bag2.Set(BagAPIKeyID, "ak")
-	bag2.Set(BagUsage, ir.Usage{})
-	bag2.Set(BagStarted, time.Now().Add(-5*time.Millisecond))
-	bag2.Set(BagStatus, 200)
-	bag2.Set(BagLogCtx, LogCtx{}) // nil UpstreamStatus / LatencyUpstreamMs
-
-	runPhase(t, plugin.PhaseOnRequest, bag2)
-	runPhase(t, plugin.PhaseOnLog, bag2)
+	runStage(t, newExchange(route, upstream, "ak", ir.Usage{}, time.Now().Add(-5*time.Millisecond), 200, LogCtx{}))
 
 	if len(cl.records) != 1 {
 		t.Fatalf("case 2 emitted log records: want 1, got %d", len(cl.records))
@@ -267,7 +259,7 @@ func TestHooksOnLogEmitsUpstreamAuditAttrs(t *testing.T) {
 	}
 }
 
-func TestHooksOnLog5xxMarksSpanError(t *testing.T) {
+func TestStage5xxMarksSpanError(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
 	tracer := tracerProvider.Tracer("nyro-test")
@@ -277,23 +269,17 @@ func TestHooksOnLog5xxMarksSpanError(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterHooks(newSwappableFromParts(tracer, cl, handles))
+	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
 	})
 
-	bag := plugin.NewContextBag()
-	bag.Set(BagModel, storage.Route{ID: "m", Model: "gpt-test"})
-	bag.Set(BagProvider, storage.Upstream{ID: "p", Name: "openai"})
-	bag.Set(BagAPIKeyID, "ak")
-	bag.Set(BagUsage, ir.Usage{})
-	bag.Set(BagStarted, time.Now().Add(-10*time.Millisecond))
-	bag.Set(BagStatus, 503)
-	bag.Set(BagLogCtx, LogCtx{})
-
-	runPhase(t, plugin.PhaseOnRequest, bag)
-	runPhase(t, plugin.PhaseOnLog, bag)
+	runStage(t, newExchange(
+		storage.Route{ID: "m", Model: "gpt-test"},
+		storage.Upstream{ID: "p", Name: "openai"},
+		"ak", ir.Usage{}, time.Now().Add(-10*time.Millisecond), 503, LogCtx{},
+	))
 
 	ended := spanRecorder.Ended()
 	if len(ended) != 1 {
@@ -429,16 +415,18 @@ var _ log.Logger = (*captureLogger)(nil)
 // keep imports referenced for the assert helpers above.
 var _ attribute.KeyValue = attribute.KeyValue{}
 
-// TestRegisterHooksIsIdempotentAndRepoints pins the contract that makes an
-// embedded data plane safe: a process may call RegisterHooks more than once
+// TestRegisterObservabilityIsIdempotentAndRepoints pins the contract that
+// makes an embedded data plane safe: a process may register more than once
 // (`nyro server` assembles a data plane alongside the control plane, tests
 // assemble many), and doing so must neither double-emit nor keep an old
 // provider alive.
 //
-// Before this contract the plugin registry simply appended, so the second
-// registration meant every request produced two spans and two log records —
-// one into each registered provider — enforced only by a doc comment.
-func TestRegisterHooksIsIdempotentAndRepoints(t *testing.T) {
+// Under the phase model this was a real hazard — the registry appended, so a
+// second registration meant every request produced two spans and two log
+// records. The Stage holds a single re-pointable target instead, which makes
+// double-emission structurally impossible; the test stays because the
+// re-pointing half of the contract is still load-bearing.
+func TestRegisterObservabilityIsIdempotentAndRepoints(t *testing.T) {
 	newRecorder := func() (*tracetest.SpanRecorder, trace.Tracer, func()) {
 		rec := tracetest.NewSpanRecorder()
 		tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
@@ -455,19 +443,70 @@ func TestRegisterHooksIsIdempotentAndRepoints(t *testing.T) {
 	secondRec, secondTracer, stopSecond := newRecorder()
 	t.Cleanup(stopSecond)
 
-	RegisterHooks(newSwappableFromParts(firstTracer, &captureLogger{}, handles))
-	RegisterHooks(newSwappableFromParts(secondTracer, &captureLogger{}, handles))
+	RegisterObservability(newSwappableFromParts(firstTracer, &captureLogger{}, handles))
+	RegisterObservability(newSwappableFromParts(secondTracer, &captureLogger{}, handles))
 
-	if out := runPhase(t, plugin.PhaseOnRequest, plugin.NewContextBag()); out != plugin.OutcomeContinue {
-		t.Fatalf("OnRequest: want OutcomeContinue, got %v", out)
-	}
+	runStage(t, &pipeline.Exchange{Ctx: context.Background(), Started: time.Now()})
 
 	// Exactly one span, and it belongs to the most recently registered
-	// provider: registering twice must not stack two live hooks.
+	// provider: registering twice must not leave two live targets.
 	if got := len(secondRec.Started()); got != 1 {
 		t.Errorf("spans started on the current provider = %d; want 1", got)
 	}
 	if got := len(firstRec.Started()); got != 0 {
 		t.Errorf("spans started on the displaced provider = %d; want 0 (it should no longer be wired)", got)
 	}
+}
+
+// TestStageEmitsOnShortCircuit is the contract the deferred emit exists for: a
+// Stage further down the chain can reject a request without ever calling next,
+// and telemetry must still report it. Under the phase model this was the LIFO
+// defer pair in the dispatcher; here it falls out of Handle's defer.
+func TestStageEmitsOnShortCircuit(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	tracer := tracerProvider.Tracer("nyro-test")
+
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	handles := NewHandles(meterProvider.Meter("nyro-test"))
+
+	cl := &captureLogger{}
+	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
+	t.Cleanup(func() {
+		_ = tracerProvider.Shutdown(context.Background())
+		_ = meterProvider.Shutdown(context.Background())
+	})
+
+	// A rejected request: no route, no upstream, no usage — only a status.
+	ex := &pipeline.Exchange{Ctx: context.Background(), Started: time.Now(), Status: 401}
+	stage := NewRegisteredStage()
+	blocked := pipeline.NewChain(stage, shortCircuitStage{})
+	if err := blocked.Run(ex, func() error {
+		t.Error("terminal ran despite the short circuit")
+		return nil
+	}); err != nil {
+		t.Fatalf("Run returned %v, want nil", err)
+	}
+
+	if len(cl.records) != 1 {
+		t.Fatalf("emitted log records = %d, want 1 — a rejected request must still be audited", len(cl.records))
+	}
+	attrs := logRecordAttrs(t, &cl.records[0])
+	assertLogAttrInt64(t, attrs, "nyro.client_status", 401)
+	// Fields the exchange never reached come through as zero values.
+	assertLogAttr(t, attrs, "nyro.model_name", "")
+	assertLogAttrInt64(t, attrs, "nyro.input_tokens", 0)
+
+	if got := len(spanRecorder.Ended()); got != 1 {
+		t.Errorf("ended spans = %d, want 1", got)
+	}
+}
+
+// shortCircuitStage rejects every exchange without calling next.
+type shortCircuitStage struct{}
+
+func (shortCircuitStage) Name() string { return "short-circuit" }
+func (shortCircuitStage) Handle(ex *pipeline.Exchange, next func() error) error {
+	return nil
 }
