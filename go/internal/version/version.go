@@ -3,6 +3,9 @@
 // reporting (e.g. config-sync's Subscribe.app_version) — reading it here
 // beats debug.ReadBuildInfo(), which only carries a real semver for `go
 // install pkg@version` builds and reports "(devel)" for a plain `go build`.
+//
+// Layer: 0 (foundation) — no imports at all. Must not import any other
+// internal package.
 package version
 
 // Version is the Go project's release version, independent of go/webui's own

@@ -11,6 +11,8 @@
 //
 // Both work by capturing the SQL GORM's migrator builds via a logger, then
 // keeping only the DDL statements (CREATE/ALTER/DROP).
+//
+// Layer: 1 (data) — may import storage/model only. Must not import layer 2/3.
 package schemadump
 
 import (

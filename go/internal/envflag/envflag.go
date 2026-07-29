@@ -15,6 +15,9 @@
 //	nyro proxy       --config               -> NYRO_PROXY_CONFIG
 //	nyro ca init     --dir                  -> NYRO_CA_INIT_DIR
 //	nyro ca sign-server --out               -> NYRO_CA_SIGN_SERVER_OUT
+//
+// Layer: 0 (foundation) — cobra/pflag and stdlib only. Must not import any
+// other internal package.
 package envflag
 
 import (

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/nyroway/nyro/go/internal/proxy/quota"
+	"github.com/nyroway/nyro/go/internal/quota"
 )
 
 // Consumer is an API consumer that owns keys, route grants, and quotas
