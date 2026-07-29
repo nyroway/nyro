@@ -76,7 +76,7 @@ type Options struct {
 // (always non-nil on success — telemetry is wired in every mode).
 //
 // It constructs the initial ObsProvider, wraps it in a SwappableProvider, and
-// points the OTel phase hooks at it. In config-sync mode it registers the
+// points the OTel telemetry Stage at it. In config-sync mode it registers the
 // manager's hot-reload callback on the cache BEFORE starting the config
 // stream, so the control-plane-seeded obs settings — which arrive with the
 // first snapshot, after this initial build — are applied instead of being

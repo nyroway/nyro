@@ -26,8 +26,8 @@ const obsReloadGrace = 30 * time.Second
 // cache, so it resolves to the fixed stdout default) and rebuilt whenever a
 // config-sync snapshot changes the resolved ObsConfig — this is what lets the
 // control-plane-seeded otlp settings, which only arrive AFTER startup over the
-// config stream, actually take effect. The phase hooks read the current pipeline
-// through sp (SwappableProvider) so a rebuild never re-registers them.
+// config stream, actually take effect. The telemetry Stage reads the current
+// pipeline through sp (SwappableProvider) so a rebuild never re-registers it.
 type ObsManager struct {
 	ctx   context.Context
 	cache *configsync.ConfigCache
