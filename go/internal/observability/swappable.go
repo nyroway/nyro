@@ -7,9 +7,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// activeSet is the immutable bundle of signal handles the phase hooks read on
-// every request: the tracer that starts the per-request span, the logger that
-// emits the audit record, and the metric instruments. prov is the ObsProvider
+// activeSet is the immutable bundle of signal handles the telemetry Stage
+// reads on every request: the tracer that starts the per-request span, the
+// logger that emits the audit record, and the metric instruments. prov is the ObsProvider
 // these were derived from (nil when the set was assembled from raw parts, e.g.
 // in tests) — retained so a Swap can hand the displaced provider back to the
 // caller for a graceful Shutdown.
@@ -21,13 +21,12 @@ type activeSet struct {
 }
 
 // SwappableProvider is the indirection that makes observability hot-reloadable.
-// The phase hooks are registered into the process-wide plugin registry exactly
-// once (RegisterHooks) and hold a *SwappableProvider rather than a concrete
+// The telemetry Stage holds a *SwappableProvider rather than a concrete
 // tracer/logger/handles; each request reads the current activeSet via load().
 // A config-sync push that changes the resolved ObsConfig calls Swap to install
 // a freshly built ObsProvider atomically, so in-flight requests keep using the
 // set they already loaded while new requests pick up the new pipeline — no
-// re-registration (which would double-emit) and no lock on the hot path.
+// rebuild of the Stage chain and no lock on the hot path.
 type SwappableProvider struct {
 	cur atomic.Pointer[activeSet]
 }

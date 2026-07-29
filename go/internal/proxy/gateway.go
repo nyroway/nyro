@@ -21,17 +21,18 @@ import (
 // (upstreams, routes, consumer keys, proxy settings) go through Cache, an
 // in-memory snapshot published by config-sync or built once from YAML; Quota is the
 // in-memory consumer-quota sliding window. The gateway holds NO storage handle:
-// per-request telemetry flows through the OTel phase hooks (Obs/Handles,
-// registered once at startup) → configured sink (none/stdout/otlp). Router
-// selects among a route's upstreams and tracks failover.
+// per-request telemetry flows through the OTel telemetry Stage (Obs/Handles,
+// pointed at a provider once at startup) → configured sink
+// (none/stdout/otlp). Router selects among a route's upstreams and tracks
+// failover.
 type Gateway struct {
 	Cache  *configsync.ConfigCache
 	Quota  *quota.Counter
 	Router *router.Router
 
-	// Obs is the OTel provider (logger/meter/tracer). Populated by cmd/gateway
-	// once at startup; nil in unit tests (the dispatcher still works, the
-	// phase hooks simply aren't registered so no telemetry is emitted).
+	// Obs is the OTel provider (logger/meter/tracer). Populated by the data
+	// plane once at startup; nil in unit tests (the dispatcher still works,
+	// the telemetry Stage simply stays inert so nothing is emitted).
 	Obs     *observability.ObsProvider
 	Handles *observability.Handles
 
