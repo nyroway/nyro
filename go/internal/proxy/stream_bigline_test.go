@@ -7,9 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/plugin"
+	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/llm/codec"
-	"github.com/nyroway/nyro/go/llm/ir"
 	"github.com/nyroway/nyro/go/llm/spec"
 )
 
@@ -29,8 +28,8 @@ func TestServeStreamHugeSSELine(t *testing.T) {
 
 	g := NewGateway()
 	rec := httptest.NewRecorder()
-	var usage ir.Usage
-	g.serveStream(context.Background(), rec, upstream, h, h, &usage, plugin.NewContextBag())
+	ex := &pipeline.Exchange{Ctx: context.Background(), W: rec}
+	g.serveStream(ex, upstream, h, h)
 
 	if !strings.Contains(rec.Body.String(), big[:64]) {
 		t.Errorf("streamed body lost the oversized chunk content; got %d bytes", rec.Body.Len())
