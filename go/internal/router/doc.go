@@ -5,4 +5,7 @@
 // backends resolution lives in storage; this package owns the SELECTION of
 // one backend among many (weighted / priority / cooldown / latency) plus the
 // HealthRegistry that drives failover.
+//
+// Layer: 3 (serve) — may import any lower layer. Nothing below layer 3 may
+// import it.
 package router

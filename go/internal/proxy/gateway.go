@@ -12,7 +12,7 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/observability"
-	"github.com/nyroway/nyro/go/internal/proxy/quota"
+	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/router"
 )
 

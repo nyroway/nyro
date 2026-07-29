@@ -16,4 +16,13 @@
 // receives a full snapshot on connect and on every config change. The admin
 // tracks connected gateways in memory (see ConfigServer.Nodes) for
 // operational visibility — this registry is not persisted.
+//
+// Layer: 1 (data) — may import llm/, layer 0, and storage.
+//
+// It also imports observability (layer 2) for a single config-contract call
+// (IsExporterSettingKey), not for instrumentation — the same layer-0 metadata
+// that happens to live in a layer-2 package as config does. See the layering
+// test's KnownUpwardEdges for the tracking note.
+//
+// Must not import layer 3 (proxy, router, admin, dataplane, bootstrap).
 package configsync

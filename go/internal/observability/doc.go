@@ -5,4 +5,9 @@
 // (admin) is the self-hosted backend: it receives OTLP/HTTP, writes parquet,
 // and serves /logs + /stats queries. parquet sinks are therefore instantiated
 // only in the admin process.
+//
+// Layer: 2 (observability) — may import llm/, layer 0, and storage. Sits
+// between data and serve: layer-1 config/configsync import it for their own
+// instrumentation, and layer 3 imports it freely. Must not import layer 3
+// (proxy, router, admin, dataplane, bootstrap).
 package observability

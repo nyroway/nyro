@@ -9,6 +9,10 @@
 // wiring as a remote one. Reading storage directly in the embedded case would
 // have been shorter but would have created a second config path free to drift
 // from the distributed one.
+//
+// Layer: 3 (serve) — assembles the data plane for both `nyro proxy` and the
+// embedded plane inside `nyro server`; may import any lower layer. Nothing
+// below layer 3 may import it.
 package dataplane
 
 import (
