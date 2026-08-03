@@ -152,7 +152,7 @@ go-webui-embed-build: go-webui-embed-assets
 # schema; it's off by default regardless of backend (see
 # go/docs/schema/database.md).
 go-webui-embed-run: go-webui-embed-build
-	cd go && ./bin/nyro server --auto-migrate
+	cd go && ./bin/nyro serve --auto-migrate
 
 # Run a standalone Go proxy (data plane) locally against a running server
 go-run:

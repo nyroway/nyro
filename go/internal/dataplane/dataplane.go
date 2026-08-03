@@ -1,7 +1,7 @@
 // Package dataplane assembles a ready-to-serve proxy.Gateway from one of the
 // two config sources, together with its observability pipeline.
 //
-// It exists so that `nyro proxy` (standalone data plane) and `nyro server`
+// It exists so that `nyro proxy` (standalone data plane) and `nyro serve`
 // (control plane with an embedded data plane) share ONE assembly path. The
 // embedded case differs only in how its config-sync client dials — over an
 // in-process pipe (configsync.ServeInProcess) instead of TCP — so an embedded
@@ -11,7 +11,7 @@
 // from the distributed one.
 //
 // Layer: 3 (serve) — assembles the data plane for both `nyro proxy` and the
-// embedded plane inside `nyro server`; may import any lower layer. Nothing
+// embedded plane inside `nyro serve`; may import any lower layer. Nothing
 // below layer 3 may import it.
 package dataplane
 

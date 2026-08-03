@@ -30,9 +30,9 @@ go build -o /tmp/nyro .
 /tmp/nyro proxy --listen 127.0.0.1:19529 \
   --config ./config.yaml
 # control plane (management API + WebUI):
-/tmp/nyro server --listen 127.0.0.1:19531 \
+/tmp/nyro serve --listen 127.0.0.1:19531 \
   --sync-listen= --webui-dir ./webui/dist \
-  --token "$NYRO_SERVER_TOKEN" --auto-migrate
+  --token "$NYRO_SERVE_TOKEN" --auto-migrate
 ```
 
 `--auto-migrate` above lets this first-boot server create its own (default
@@ -58,8 +58,8 @@ fastest path — and the only one that needs no token:
 
 ```bash
 # control plane, with config-sync enabled (loopback plaintext, no token needed):
-/tmp/nyro server --listen 127.0.0.1:19531 \
-  --sync-listen 127.0.0.1:19532 --token "$NYRO_SERVER_TOKEN" --auto-migrate
+/tmp/nyro serve --listen 127.0.0.1:19531 \
+  --sync-listen 127.0.0.1:19532 --token "$NYRO_SERVE_TOKEN" --auto-migrate
 # data plane, subscribing to config-sync instead of --config:
 /tmp/nyro proxy --listen 127.0.0.1:19529 \
   --server 127.0.0.1:19532
@@ -75,12 +75,12 @@ certificates and configure a complete TLS path set on both processes:
 ```bash
 /tmp/nyro ca init
 /tmp/nyro ca sign-server
-/tmp/nyro ca sign-proxy --node-id gw-1
-# distribute ca.pem + admin.{pem,key.pem} / gateway.{pem,key.pem}, then:
-/tmp/nyro server --sync-listen 0.0.0.0:19532 --auto-migrate \
-  --sync-tls-ca ~/.nyro/pki/ca.pem --sync-tls-cert ~/.nyro/pki/admin.pem --sync-tls-key ~/.nyro/pki/admin-key.pem
+/tmp/nyro ca sign-proxy --node-id proxy-1
+# distribute ca.pem + server.{pem,key.pem} / proxy.{pem,key.pem}, then:
+/tmp/nyro serve --sync-listen 0.0.0.0:19532 --auto-migrate \
+  --sync-tls-ca ~/.nyro/pki/ca.pem --sync-tls-cert ~/.nyro/pki/server.pem --sync-tls-key ~/.nyro/pki/server-key.pem
 /tmp/nyro proxy --server server.internal:19532 \
-  --sync-tls-ca ~/.nyro/pki/ca.pem --sync-tls-cert ~/.nyro/pki/gateway.pem --sync-tls-key ~/.nyro/pki/gateway-key.pem
+  --sync-tls-ca ~/.nyro/pki/ca.pem --sync-tls-cert ~/.nyro/pki/proxy.pem --sync-tls-key ~/.nyro/pki/proxy-key.pem
 ```
 
 `--config` and `--server` are mutually exclusive — exactly one must
@@ -100,10 +100,10 @@ DDL a DBA reviews (print it with `nyro migrate dump`/`diff`; see
 
 ```bash
 # Run on each server host, with a distinct --listen/--sync-listen address.
-/tmp/nyro server --listen 10.0.0.11:19531 \
+/tmp/nyro serve --listen 10.0.0.11:19531 \
   --sync-listen 10.0.0.11:19532 \
   --dsn "$NYRO_SHARED_DSN" \
-  --token "$NYRO_SERVER_TOKEN"
+  --token "$NYRO_SERVE_TOKEN"
 ```
 
 The polling default is `0` (disabled); a single server still pushes its own

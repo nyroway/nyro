@@ -16,8 +16,8 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 )
 
-// mtlsFixture is a self-signed CA plus an admin server leaf cert and a
-// gateway client leaf cert (identity "cert-node"), all issued for these
+// mtlsFixture is a self-signed CA plus a server leaf cert and a proxy client
+// leaf cert (identity "cert-node"), all issued for these
 // mTLS-focused tests.
 type mtlsFixture struct {
 	caPath                        string
@@ -32,11 +32,11 @@ func newMTLSFixture(t *testing.T) mtlsFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverCert, serverKey, err := ca.SignServer(dir, "admin", time.Hour)
+	serverCert, serverKey, err := ca.SignServer(dir, "server", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientCert, clientKey, err := ca.SignClient(dir, "gateway", "cert-node", time.Hour)
+	clientCert, clientKey, err := ca.SignClient(dir, "proxy", "cert-node", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestStreamConfig_MTLS_RejectsWrongCACert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherCertPath, otherKeyPath, err := otherCA.SignClient(otherDir, "gateway", "cert-node", time.Hour)
+	otherCertPath, otherKeyPath, err := otherCA.SignClient(otherDir, "proxy", "cert-node", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

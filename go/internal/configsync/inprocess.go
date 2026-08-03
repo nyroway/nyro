@@ -38,7 +38,7 @@ const ConnModeInProcess = "inprocess"
 // ServeInProcess serves srv over an in-memory pipe instead of a network
 // listener, and returns the dial options a ConfigClient needs to reach it.
 //
-// This is what lets `nyro server` run an embedded data plane over the SAME
+// This is what lets `nyro serve` run an embedded data plane over the SAME
 // config-sync code path as a standalone `nyro proxy`: the embedded proxy builds
 // a real ConfigClient, receives real ConfigSnapshot messages, and fills a real
 // ConfigCache. Only the dial target differs. The alternative — having the

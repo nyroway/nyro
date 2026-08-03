@@ -121,8 +121,8 @@ func NewCmd() *cobra.Command {
 // it is acceptable based on whether --server leaves this host.
 //
 // There is deliberately no --server-name-style override here:
-// pki.LoadClientTLS verifies admin's server certificate by SPIFFE identity
-// (spiffe://nyro/admin), not by matching its SAN against the dial address,
+// pki.LoadClientTLS verifies the server certificate by SPIFFE identity
+// (spiffe://nyro/server), not by matching its SAN against the dial address,
 // so the address used in --server (direct, load balancer, k8s
 // Service name, IP) never affects verification.
 func resolveConfigSyncClientTLS(caPath, certPath, keyPath string) (*tls.Config, error) {

@@ -29,7 +29,7 @@ until parity is reached (P0–P6 migration plan).
 | `internal/auth/` | `auth/` + `admin/oauth.rs` | inbound API key + quotas; outbound OAuth drivers (Claude/Codex/Vertex) |
 | `internal/storage/` | `db/` + `storage/` | `Storage` interface, idempotent migrations, sqlite/pg/memory |
 | `internal/logging/` | `logging/` | async request-log collector + retention |
-| `nyro.go` | `src-server/` + `crates/nyro-tools/` | unified CLI: `nyro proxy` (data plane) / `nyro server` (control plane) / `nyro tool` (utilities) |
+| `nyro.go` | `src-server/` + `crates/nyro-tools/` | unified CLI: `nyro proxy` (data plane) / `nyro serve` (control plane) |
 
 ## Library mapping (Rust → Go)
 
@@ -52,12 +52,12 @@ by `modernc.org/sqlite`. Added with the storage layer in P3.
 
 ```bash
 go build ./...
-go run . server --auto-migrate      # everything: control plane + embedded data plane
+go run . serve --auto-migrate       # everything: control plane + embedded data plane
 go test ./...
 go vet ./...
 ```
 
-`nyro server` alone is a complete, usable nyro: the management API and WebUI on
+`nyro serve` alone is a complete, usable nyro: the management API and WebUI on
 `127.0.0.1:19531`, plus an embedded data plane on `127.0.0.1:19530`. The
 embedded data plane subscribes to config over an in-process pipe — the same
 config-sync client, cache and router a remote node uses, so there is no second
@@ -67,7 +67,7 @@ The two roles can also be split, for horizontal scaling or to keep the node
 holding credentials out of the traffic path:
 
 ```bash
-go run . server --proxy-listen= --sync-listen 127.0.0.1:19532   # control plane only
+go run . serve --proxy-listen= --sync-listen 127.0.0.1:19532    # control plane only
 go run . proxy --server 127.0.0.1:19532                         # extra data plane node
 go run . proxy --config ./nyro.yaml                             # standalone: no server, no DB
 ```
@@ -92,7 +92,7 @@ npm install
 npm run lint
 npm run build
 cd ..
-go run . server --webui-dir ./webui/dist
+go run . serve --webui-dir ./webui/dist
 ```
 
 **Release-embedding workflow** — bake the built assets into the `nyro`

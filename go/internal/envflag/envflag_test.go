@@ -8,22 +8,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newTestCmd builds a leaf command "nyro server" carrying string/bool/duration
-// flags, so Bind sees a realistic CommandPath ("nyro server") and prefix
-// ("SERVER"). The returned command is not executed; tests call Bind directly.
+// newTestCmd builds a leaf command "nyro serve" carrying string/bool/duration
+// flags, so Bind sees a realistic CommandPath ("nyro serve") and prefix
+// ("SERVE"). The returned command is not executed; tests call Bind directly.
 func newTestCmd() *cobra.Command {
 	root := &cobra.Command{Use: "nyro"}
-	server := &cobra.Command{Use: "server", RunE: func(*cobra.Command, []string) error { return nil }}
-	server.Flags().String("listen", "127.0.0.1:19531", "listen addr")
-	server.Flags().Bool("auto-migrate", false, "auto migrate")
-	server.Flags().Duration("config-poll-interval", 0, "poll interval")
-	root.AddCommand(server)
-	return server
+	serve := &cobra.Command{Use: "serve", RunE: func(*cobra.Command, []string) error { return nil }}
+	serve.Flags().String("listen", "127.0.0.1:19531", "listen addr")
+	serve.Flags().Bool("auto-migrate", false, "auto migrate")
+	serve.Flags().Duration("config-poll-interval", 0, "poll interval")
+	root.AddCommand(serve)
+	return serve
 }
 
 func TestBindAppliesEnvWhenFlagUnset(t *testing.T) {
 	cmd := newTestCmd()
-	t.Setenv("NYRO_SERVER_LISTEN", "0.0.0.0:29530")
+	t.Setenv("NYRO_SERVE_LISTEN", "0.0.0.0:29530")
 
 	if err := Bind(cmd, nil); err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -43,7 +43,7 @@ func TestExplicitFlagBeatsEnv(t *testing.T) {
 	if err := cmd.Flags().Set("listen", "1.2.3.4:1111"); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NYRO_SERVER_LISTEN", "0.0.0.0:29530")
+	t.Setenv("NYRO_SERVE_LISTEN", "0.0.0.0:29530")
 
 	if err := Bind(cmd, nil); err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -70,8 +70,8 @@ func TestDefaultWhenNoEnvNoFlag(t *testing.T) {
 
 func TestBindTypedFlagsFromEnv(t *testing.T) {
 	cmd := newTestCmd()
-	t.Setenv("NYRO_SERVER_AUTO_MIGRATE", "true")
-	t.Setenv("NYRO_SERVER_CONFIG_POLL_INTERVAL", "5s")
+	t.Setenv("NYRO_SERVE_AUTO_MIGRATE", "true")
+	t.Setenv("NYRO_SERVE_CONFIG_POLL_INTERVAL", "5s")
 
 	if err := Bind(cmd, nil); err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -86,7 +86,7 @@ func TestBindTypedFlagsFromEnv(t *testing.T) {
 
 func TestBindInvalidEnvValueErrors(t *testing.T) {
 	cmd := newTestCmd()
-	t.Setenv("NYRO_SERVER_CONFIG_POLL_INTERVAL", "not-a-duration")
+	t.Setenv("NYRO_SERVE_CONFIG_POLL_INTERVAL", "not-a-duration")
 
 	err := Bind(cmd, nil)
 	if err == nil {
@@ -96,8 +96,8 @@ func TestBindInvalidEnvValueErrors(t *testing.T) {
 
 func TestEnvKey(t *testing.T) {
 	cases := []struct{ prefix, flag, want string }{
-		{"SERVER", "listen", "NYRO_SERVER_LISTEN"},
-		{"SERVER", "obs-data-dir", "NYRO_SERVER_OBS_DATA_DIR"},
+		{"SERVE", "listen", "NYRO_SERVE_LISTEN"},
+		{"SERVE", "obs-data-dir", "NYRO_SERVE_OBS_DATA_DIR"},
 		{"PROXY", "sync-tls-ca", "NYRO_PROXY_SYNC_TLS_CA"},
 	}
 	for _, c := range cases {
@@ -128,7 +128,7 @@ func TestDecorateAppendsEnvHint(t *testing.T) {
 	Decorate(root)
 
 	usage := cmd.Flags().Lookup("listen").Usage
-	if want := "(env NYRO_SERVER_LISTEN)"; !strings.Contains(usage, want) {
+	if want := "(env NYRO_SERVE_LISTEN)"; !strings.Contains(usage, want) {
 		t.Errorf("listen usage = %q, want it to contain %q", usage, want)
 	}
 }

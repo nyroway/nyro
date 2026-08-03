@@ -10,7 +10,7 @@ covered too (it just uses AutoMigrate directly; see [database.md](database.md)).
 
 ### 1. Automatic — `--auto-migrate` (GORM AutoMigrate)
 
-`nyro server`/`nyro proxy --auto-migrate` runs `GORM AutoMigrate` at startup,
+`nyro serve`/`nyro proxy --auto-migrate` runs `GORM AutoMigrate` at startup,
 creating/altering tables to match the models. Requires the connecting account
 to have DDL rights. Off by default (whether the account has DDL rights is a
 deployment decision, not inferred from the engine). Good for local sqlite dev
@@ -100,7 +100,7 @@ in any schema-tool dependency.
 
 ## Runtime behavior
 
-`nyro server`/`nyro proxy`:
+`nyro serve`/`nyro proxy`:
 
 - `--auto-migrate`: run AutoMigrate at startup (see above).
 - unset (default): no DDL. A read-only `CheckSchema` confirms every canonical

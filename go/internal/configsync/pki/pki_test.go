@@ -50,14 +50,14 @@ func TestEnsureCA_IncompletePairErrors(t *testing.T) {
 	}
 }
 
-func TestSignServer_AdminIdentity(t *testing.T) {
+func TestSignServer_ServerIdentity(t *testing.T) {
 	dir := t.TempDir()
 	ca, err := EnsureCA(dir, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	certPath, keyPath, err := ca.SignServer(dir, "admin", time.Hour)
+	certPath, keyPath, err := ca.SignServer(dir, "server", time.Hour)
 	if err != nil {
 		t.Fatalf("SignServer: %v", err)
 	}
@@ -66,8 +66,11 @@ func TestSignServer_AdminIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyAdminIdentity(cert); err != nil {
-		t.Errorf("VerifyAdminIdentity: %v", err)
+	if err := VerifyServerIdentity(cert); err != nil {
+		t.Errorf("VerifyServerIdentity: %v", err)
+	}
+	if len(cert.URIs) != 1 || cert.URIs[0].String() != "spiffe://nyro/server" {
+		t.Errorf("URI SANs = %v, want [spiffe://nyro/server]", cert.URIs)
 	}
 	if got := cert.ExtKeyUsage; len(got) != 1 || got[0] != x509.ExtKeyUsageServerAuth {
 		t.Errorf("ExtKeyUsage = %v, want [ServerAuth]", got)
@@ -78,14 +81,14 @@ func TestSignServer_AdminIdentity(t *testing.T) {
 	}
 }
 
-func TestSignClient_SPIFFESAN(t *testing.T) {
+func TestSignClient_ProxySPIFFESAN(t *testing.T) {
 	dir := t.TempDir()
 	ca, err := EnsureCA(dir, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	certPath, _, err := ca.SignClient(dir, "gateway", "node-abcd", time.Hour)
+	certPath, _, err := ca.SignClient(dir, "proxy", "node-abcd", time.Hour)
 	if err != nil {
 		t.Fatalf("SignClient: %v", err)
 	}
@@ -94,28 +97,31 @@ func TestSignClient_SPIFFESAN(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := GatewayNodeIDFromCert(cert)
+	id, err := ProxyNodeIDFromCert(cert)
 	if err != nil {
-		t.Fatalf("GatewayNodeIDFromCert: %v", err)
+		t.Fatalf("ProxyNodeIDFromCert: %v", err)
 	}
 	if id != "node-abcd" {
 		t.Errorf("identity = %q, want %q", id, "node-abcd")
 	}
+	if len(cert.URIs) != 1 || cert.URIs[0].String() != "spiffe://nyro/proxy/node-abcd" {
+		t.Errorf("URI SANs = %v, want [spiffe://nyro/proxy/node-abcd]", cert.URIs)
+	}
 	if got := cert.ExtKeyUsage; len(got) != 1 || got[0] != x509.ExtKeyUsageClientAuth {
 		t.Errorf("ExtKeyUsage = %v, want [ClientAuth]", got)
 	}
-	if err := VerifyAdminIdentity(cert); err == nil {
-		t.Fatal("expected a gateway client cert to fail VerifyAdminIdentity")
+	if err := VerifyServerIdentity(cert); err == nil {
+		t.Fatal("expected a proxy client cert to fail VerifyServerIdentity")
 	}
 }
 
-func TestGatewayNodeIDFromCert_RejectsAdminCert(t *testing.T) {
+func TestProxyNodeIDFromCert_RejectsServerCert(t *testing.T) {
 	dir := t.TempDir()
 	ca, err := EnsureCA(dir, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPath, _, err := ca.SignServer(dir, "admin", time.Hour)
+	certPath, _, err := ca.SignServer(dir, "server", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,13 +129,13 @@ func TestGatewayNodeIDFromCert_RejectsAdminCert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GatewayNodeIDFromCert(cert); err == nil {
-		t.Fatal("expected error extracting a gateway node-id from admin's own certificate")
+	if _, err := ProxyNodeIDFromCert(cert); err == nil {
+		t.Fatal("expected error extracting a proxy node-id from the server certificate")
 	}
 }
 
 // TestMTLSRoundTrip exercises LoadServerTLS/LoadClientTLS end-to-end over a
-// real TCP loopback listener: a server presenting an admin cert requiring
+// real TCP loopback listener: a server presenting a server cert requiring
 // client certs, and three client dial attempts (matching CA + cert, wrong
 // CA, no cert) to confirm accept/reject behavior.
 func TestMTLSRoundTrip(t *testing.T) {
@@ -138,11 +144,11 @@ func TestMTLSRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverCertPath, serverKeyPath, err := ca.SignServer(dir, "admin", time.Hour)
+	serverCertPath, serverKeyPath, err := ca.SignServer(dir, "server", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientCertPath, clientKeyPath, err := ca.SignClient(dir, "gateway", "node-1", time.Hour)
+	clientCertPath, clientKeyPath, err := ca.SignClient(dir, "proxy", "node-1", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +206,7 @@ func TestMTLSRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		otherCertPath, otherKeyPath, err := otherCA.SignClient(otherDir, "gateway", "node-1", time.Hour)
+		otherCertPath, otherKeyPath, err := otherCA.SignClient(otherDir, "proxy", "node-1", time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -226,7 +232,7 @@ func TestMTLSRoundTrip(t *testing.T) {
 		// handshake actually reaches the point where the server enforces
 		// RequireAndVerifyClientCert — this subtest is specifically about
 		// the server rejecting a missing client cert, not about client-side
-		// verification of admin's identity.
+		// verification of the server's identity.
 		conn, dialErr := tls.Dial("tcp", lis.Addr().String(), &tls.Config{InsecureSkipVerify: true})
 		if dialErr == nil {
 			_ = conn.Close()
@@ -238,25 +244,25 @@ func TestMTLSRoundTrip(t *testing.T) {
 	})
 }
 
-// TestLoadClientTLS_RejectsNonAdminServerIdentity proves LoadClientTLS's
+// TestLoadClientTLS_RejectsNonServerIdentity proves LoadClientTLS's
 // VerifyConnection checks identity, not just chain validity: a certificate
-// signed by the trusted CA but not carrying the AdminSPIFFEID identity (here,
-// a gateway's own client cert, reused as a server cert) must be rejected
+// signed by the trusted CA but not carrying the ServerSPIFFEID identity (here,
+// a proxy's own client cert, reused as a server cert) must be rejected
 // even though the chain itself verifies fine.
-func TestLoadClientTLS_RejectsNonAdminServerIdentity(t *testing.T) {
+func TestLoadClientTLS_RejectsNonServerIdentity(t *testing.T) {
 	dir := t.TempDir()
 	ca, err := EnsureCA(dir, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// SignClient's cert has no ServerAuth EKU and identifies as
-	// "gateway/impersonator", not "admin" — either alone is grounds for
+	// "proxy/impersonator", not "server" — either alone is grounds for
 	// LoadClientTLS to reject it.
-	notAdminCertPath, notAdminKeyPath, err := ca.SignClient(dir, "not-admin", "impersonator", time.Hour)
+	notServerCertPath, notServerKeyPath, err := ca.SignClient(dir, "not-server", "impersonator", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientCertPath, clientKeyPath, err := ca.SignClient(dir, "gateway", "node-1", time.Hour)
+	clientCertPath, clientKeyPath, err := ca.SignClient(dir, "proxy", "node-1", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,9 +270,9 @@ func TestLoadClientTLS_RejectsNonAdminServerIdentity(t *testing.T) {
 
 	// tls.Listen doesn't itself enforce the serving cert's EKU, so this is a
 	// faithful stand-in for "some entity presents a CA-signed cert that
-	// isn't admin's" regardless of which specific property makes it invalid.
+	// isn't the server's" regardless of which specific property makes it invalid.
 	rawServerTLS := &tls.Config{MinVersion: tls.VersionTLS12}
-	tlsCert, err := tls.LoadX509KeyPair(notAdminCertPath, notAdminKeyPath)
+	tlsCert, err := tls.LoadX509KeyPair(notServerCertPath, notServerKeyPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +297,7 @@ func TestLoadClientTLS_RejectsNonAdminServerIdentity(t *testing.T) {
 	conn, dialErr := tls.Dial("tcp", lis.Addr().String(), clientTLS)
 	if dialErr == nil {
 		_ = conn.Close()
-		t.Fatal("expected the client to reject a server certificate that isn't identified as admin")
+		t.Fatal("expected the client to reject a server certificate that isn't identified as server")
 	}
 }
 
@@ -321,7 +327,7 @@ func TestLeafNotAfter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPath, keyPath, err := ca.SignServer(dir, "admin", 2*time.Hour)
+	certPath, keyPath, err := ca.SignServer(dir, "server", 2*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +352,7 @@ func TestWatchExpiry_WarnsImmediatelyForSoonExpiringCert(t *testing.T) {
 	}
 	// Valid for less than the warning window: should trigger a warning on
 	// the very first (synchronous, pre-ticker) check.
-	certPath, keyPath, err := ca.SignServer(dir, "admin", 24*time.Hour)
+	certPath, keyPath, err := ca.SignServer(dir, "server", 24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +378,7 @@ func TestWatchExpiry_NoWarningForFreshCert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPath, keyPath, err := ca.SignServer(dir, "admin", 8760*time.Hour)
+	certPath, keyPath, err := ca.SignServer(dir, "server", 8760*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

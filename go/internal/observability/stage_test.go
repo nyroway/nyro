@@ -417,7 +417,7 @@ var _ attribute.KeyValue = attribute.KeyValue{}
 
 // TestRegisterObservabilityIsIdempotentAndRepoints pins the contract that
 // makes an embedded data plane safe: a process may register more than once
-// (`nyro server` assembles a data plane alongside the control plane, tests
+// (`nyro serve` assembles a data plane alongside the control plane, tests
 // assemble many), and doing so must neither double-emit nor keep an old
 // provider alive.
 //

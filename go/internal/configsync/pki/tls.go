@@ -7,11 +7,11 @@ import (
 	"os"
 )
 
-// LoadServerTLS builds the *tls.Config for admin's config-sync gRPC listener:
+// LoadServerTLS builds the *tls.Config for the config-sync gRPC listener:
 // it presents (certPath, keyPath) as its server certificate and requires +
 // verifies every client certificate against caPath. All three paths are
-// mandatory — callers (the admin CLI) are responsible for enforcing that
-// --config-tls-ca/-cert/-key are given all together or not at all; this
+// mandatory — callers (the serve CLI) are responsible for enforcing that
+// --sync-tls-ca/-cert/-key are given all together or not at all; this
 // function has no directory-scanning fallback.
 func LoadServerTLS(caPath, certPath, keyPath string) (*tls.Config, error) {
 	pool, err := loadCertPool(caPath)
@@ -30,18 +30,18 @@ func LoadServerTLS(caPath, certPath, keyPath string) (*tls.Config, error) {
 	}, nil
 }
 
-// LoadClientTLS builds the *tls.Config for a gateway's config-sync client: it
-// trusts caPath as the root for verifying admin's server certificate and
+// LoadClientTLS builds the *tls.Config for a proxy's config-sync client: it
+// trusts caPath as the root for verifying the server certificate and
 // presents (certPath, keyPath) as its own client certificate.
 //
 // Verification is identity-based, not hostname-based: the default Go TLS
 // client behavior (matching the server cert's DNS/IP SANs against the dial
 // address) is replaced with VerifyConnection checking that the presented
 // server certificate is signed by caPath, carries the ServerAuth extended
-// key usage, and identifies as AdminSPIFFEID (see VerifyAdminIdentity) — the
+// key usage, and identifies as ServerSPIFFEID (see VerifyServerIdentity) — the
 // same check regardless of what address/hostname was dialed (direct, load
 // balancer, k8s Service name, IP). This is why there is no
-// --config-server-name-style override flag: identity verification is fully
+// TLS server-name override flag: identity verification is fully
 // decoupled from network topology by design.
 func LoadClientTLS(caPath, certPath, keyPath string) (*tls.Config, error) {
 	pool, err := loadCertPool(caPath)
@@ -77,7 +77,7 @@ func LoadClientTLS(caPath, certPath, keyPath string) (*tls.Config, error) {
 			if _, err := leaf.Verify(opts); err != nil {
 				return fmt.Errorf("pki: verify server certificate chain: %w", err)
 			}
-			return VerifyAdminIdentity(leaf)
+			return VerifyServerIdentity(leaf)
 		},
 	}, nil
 }
