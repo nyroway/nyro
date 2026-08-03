@@ -1,9 +1,9 @@
 // Package ca implements the `nyro ca` subcommand group: an offline
-// certificate authority for the config-sync mTLS channel between admin
-// (control plane) and gateway (data plane). It never runs online — it's a
+// certificate authority for the config-sync mTLS channel between the server
+// (control plane) and proxy (data plane). It never runs online — it's a
 // one-shot CLI for generating a CA and signing leaf certificates that get
-// distributed to admin/gateway hosts and loaded via their
-// --config-tls-ca/-cert/-key flags.
+// distributed to server/proxy hosts and loaded via their
+// --sync-tls-ca/-cert/-key flags.
 package ca
 
 import (
@@ -19,8 +19,8 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 )
 
-// defaultDir is ~/.nyro/pki, matching the admin control plane's ~/.nyro home
-// convention (see cmd/admin's nyroHomeDir). Falls back to ./.nyro/pki if the
+// defaultDir is ~/.nyro/pki, matching the server control plane's ~/.nyro home
+// convention (see cmd/server's nyroHomeDir). Falls back to ./.nyro/pki if the
 // OS user home directory can't be resolved.
 func defaultDir() string {
 	home, err := os.UserHomeDir()
@@ -80,11 +80,8 @@ func newInitCmd() *cobra.Command {
 
 // newSignServerCmd issues the control plane's config-sync server certificate.
 //
-// The subcommand is named after the `nyro server` deployment role, but the
-// certificate it writes keeps the historical "admin" identity: the SPIFFE SAN
-// (spiffe://nyro/admin, see pki.AdminSPIFFEID) and the default --out basename
-// are a wire/on-disk compatibility surface, so renaming them would invalidate
-// every already-issued certificate. See the CLI rename plan for the rationale.
+// The certificate carries the fixed spiffe://nyro/server workload identity;
+// --out controls only the output file basename.
 func newSignServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sign-server",
@@ -92,7 +89,7 @@ func newSignServerCmd() *cobra.Command {
 	}
 	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro ca init`)")
 	valid := cmd.Flags().Duration("valid", defaultLeafValid, "leaf certificate validity period")
-	out := cmd.Flags().String("out", "admin", "output file basename (writes <dir>/<out>.pem and <dir>/<out>-key.pem)")
+	out := cmd.Flags().String("out", "server", "output file basename (writes <dir>/<out>.pem and <dir>/<out>-key.pem)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		certPath, keyPath, err := signWithCA(*dir, func(c *pki.CA) (string, string, error) {
 			return c.SignServer(*dir, *out, *valid)
@@ -100,25 +97,24 @@ func newSignServerCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s and %s (identity: spiffe://nyro/%s)\n", certPath, keyPath, pki.AdminSPIFFEID)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s and %s (identity: spiffe://nyro/%s)\n", certPath, keyPath, pki.ServerSPIFFEID)
 		return nil
 	}
 	return cmd
 }
 
 // newSignProxyCmd issues a data-plane node's config-sync client certificate.
-// Like sign-server, the certificate keeps the historical "gateway" identity
-// (spiffe://nyro/gateway/<node-id>) and --out basename for compatibility with
-// already-issued certificates; only the subcommand name follows the new CLI.
+// The certificate carries a spiffe://nyro/proxy/<node-id> workload identity;
+// --out controls only the output file basename.
 func newSignProxyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sign-proxy",
 		Short: "Sign a proxy node's config-sync client certificate",
 	}
 	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro ca init`)")
-	nodeID := cmd.Flags().String("node-id", "", "node identity for the SPIFFE SAN (spiffe://nyro/gateway/<node-id>); random if unset")
+	nodeID := cmd.Flags().String("node-id", "", "node identity for the SPIFFE SAN (spiffe://nyro/proxy/<node-id>); random if unset")
 	valid := cmd.Flags().Duration("valid", defaultLeafValid, "leaf certificate validity period")
-	out := cmd.Flags().String("out", "gateway", "output file basename (writes <dir>/<out>.pem and <dir>/<out>-key.pem)")
+	out := cmd.Flags().String("out", "proxy", "output file basename (writes <dir>/<out>.pem and <dir>/<out>-key.pem)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		id := *nodeID
 		if id == "" {

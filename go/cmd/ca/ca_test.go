@@ -74,7 +74,7 @@ func TestInit_Force(t *testing.T) {
 	}
 }
 
-func TestSignServer_WritesCertWithAdminIdentity(t *testing.T) {
+func TestSignServer_WritesCertWithServerIdentity(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := runCmd(t, "init", "--dir", dir); err != nil {
 		t.Fatal(err)
@@ -86,9 +86,9 @@ func TestSignServer_WritesCertWithAdminIdentity(t *testing.T) {
 	if stdout == "" {
 		t.Fatal("expected sign-server to report the identity it signed")
 	}
-	certPath := filepath.Join(dir, "admin.pem")
+	certPath := filepath.Join(dir, "server.pem")
 	if _, err := os.Stat(certPath); err != nil {
-		t.Fatalf("admin.pem not written: %v", err)
+		t.Fatalf("server.pem not written: %v", err)
 	}
 	certPEM, err := os.ReadFile(certPath)
 	if err != nil {
@@ -99,8 +99,8 @@ func TestSignServer_WritesCertWithAdminIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pki.VerifyAdminIdentity(cert); err != nil {
-		t.Errorf("VerifyAdminIdentity: %v", err)
+	if err := pki.VerifyServerIdentity(cert); err != nil {
+		t.Errorf("VerifyServerIdentity: %v", err)
 	}
 }
 
@@ -123,9 +123,9 @@ func TestSignProxy_RandomNodeIDWhenUnset(t *testing.T) {
 	if stdout == "" {
 		t.Fatal("expected sign-proxy to report the generated node-id")
 	}
-	certPath := filepath.Join(dir, "gateway.pem")
+	certPath := filepath.Join(dir, "proxy.pem")
 	if _, err := os.Stat(certPath); err != nil {
-		t.Fatalf("gateway.pem not written: %v", err)
+		t.Fatalf("proxy.pem not written: %v", err)
 	}
 }
 

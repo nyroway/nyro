@@ -1,6 +1,6 @@
 # Config-sync transport and mTLS
 
-The config-sync gRPC channel is how `nyro server` (control plane) pushes the
+The config-sync gRPC channel is how `nyro serve` (control plane) pushes the
 live config snapshot — including every upstream's `credentials_json` — to every
 connected `nyro proxy` (data plane). Its transport mode is selected only from
 the three `--sync-tls-*` paths:
@@ -65,11 +65,11 @@ values, so a token can be rotated with no downtime: add the new one, roll the
 proxies onto it, then drop the old one.
 
 ```bash
-nyro server --sync-listen 0.0.0.0:19532 --sync-token "$OLD" --sync-token "$NEW"
+nyro serve --sync-listen 0.0.0.0:19532 --sync-token "$OLD" --sync-token "$NEW"
 nyro proxy --server server.internal:19532 --sync-token "$NEW"
 ```
 
-Prefer the environment (`NYRO_SERVER_SYNC_TOKEN`, `NYRO_PROXY_SYNC_TOKEN`) over
+Prefer the environment (`NYRO_SERVE_SYNC_TOKEN`, `NYRO_PROXY_SYNC_TOKEN`) over
 the flag, which exposes the value in `ps`. The same applies to the management
 API's `--token`.
 
@@ -79,17 +79,8 @@ client that can subscribe can claim any id. The WebUI's node list flags such
 ids as unverified for exactly this reason. Only mTLS yields a per-node identity,
 derived from the client certificate's SPIFFE SAN.
 
-The embedded data plane of `nyro server` needs no token: it subscribes over an
+The embedded data plane of `nyro serve` needs no token: it subscribes over an
 in-memory pipe with no socket, and is reported as `conn_mode: inprocess`.
-
-> **Naming note.** The subcommands are `server` / `proxy`, but the PKI layer
-> still uses the historical identifiers `admin` / `gateway`: the SPIFFE SANs
-> (`spiffe://nyro/admin`, `spiffe://nyro/gateway/<node-id>`) and the default
-> certificate basenames (`admin.pem`, `gateway.pem`). Those are a
-> compatibility surface — renaming them would invalidate every certificate
-> already issued — so they were deliberately left alone when the CLI was
-> renamed. Read `admin` as "the control plane's identity" and `gateway` as
-> "a data plane node's identity" throughout this document.
 
 ## The three commands
 
@@ -99,21 +90,21 @@ Ansible, a Secret, a Docker volume, whatever fits your deployment).
 
 ```bash
 nyro ca init [--dir ~/.nyro/pki] [--valid 87600h] [--force]
-nyro ca sign-server [--dir ~/.nyro/pki] [--valid 8760h] [--out admin]
-nyro ca sign-proxy [--dir ~/.nyro/pki] [--node-id <id>] [--valid 8760h] [--out gateway]
+nyro ca sign-server [--dir ~/.nyro/pki] [--valid 8760h] [--out server]
+nyro ca sign-proxy [--dir ~/.nyro/pki] [--node-id <id>] [--valid 8760h] [--out proxy]
 ```
 
 - `init` creates (or, without `--force`, reuses) the CA: `ca.pem` +
   `ca-key.pem` in `--dir`.
 - `sign-server` issues the server's config-sync certificate, with a **fixed
-  identity** encoded as a SPIFFE URI SAN (`spiffe://nyro/admin`) — not a DNS/IP
+  identity** encoded as a SPIFFE URI SAN (`spiffe://nyro/server`) — not a DNS/IP
   SAN list. There is no `--advertise`-style flag: the proxy verifies this
   certificate by identity, not by matching a hostname it dialed against a SAN
   list, so the same certificate is valid no matter what address a proxy uses
   to reach the server (direct, load balancer, Kubernetes Service name, IP —
   see "Why identity, not hostname" below).
 - `sign-proxy` issues one proxy node's client certificate, with its identity
-  encoded as a SPIFFE URI SAN (`spiffe://nyro/gateway/<node-id>`). Run once
+  encoded as a SPIFFE URI SAN (`spiffe://nyro/proxy/<node-id>`). Run once
   per proxy node (or once per shared cert if you're intentionally pooling
   identity across a fleet — see "elastic scaling" below). `--node-id`
   defaults to a random value if omitted.
@@ -128,14 +119,14 @@ proxy never read it directly (see below).
 They only ever load three explicit file paths:
 
 ```bash
-nyro server --sync-tls-ca ~/.nyro/pki/ca.pem \
-            --sync-tls-cert ~/.nyro/pki/admin.pem \
-            --sync-tls-key ~/.nyro/pki/admin-key.pem
+nyro serve --sync-tls-ca ~/.nyro/pki/ca.pem \
+            --sync-tls-cert ~/.nyro/pki/server.pem \
+            --sync-tls-key ~/.nyro/pki/server-key.pem
 
 nyro proxy --server 127.0.0.1:19532 \
            --sync-tls-ca ~/.nyro/pki/ca.pem \
-           --sync-tls-cert ~/.nyro/pki/gateway.pem \
-           --sync-tls-key ~/.nyro/pki/gateway-key.pem
+           --sync-tls-cert ~/.nyro/pki/proxy.pem \
+           --sync-tls-key ~/.nyro/pki/proxy-key.pem
 ```
 
 All three flags must be given together, or not at all — a partial set (e.g.
@@ -153,7 +144,7 @@ docker-compose, Helm values), not on every interactive invocation.
 ### Why identity, not hostname
 
 The proxy's config-sync client verifies the server's certificate by SPIFFE
-identity (`spiffe://nyro/admin`), not by matching a hostname/IP SAN against
+identity (`spiffe://nyro/server`), not by matching a hostname/IP SAN against
 the address in `--server` — the classic web-PKI model most CLI tools
 default to. That classic model needs a `--tls-server-name`-style escape
 hatch the moment the dial address and the cert's SAN diverge (a load
@@ -165,7 +156,7 @@ after a rename.
 Identity-based verification sidesteps the whole problem: `--server`
 can be a direct address, a load balancer, or a Kubernetes Service name — none
 of it matters, because the check is "does this certificate say
-`spiffe://nyro/admin`", not "does this certificate's SAN match the string I
+`spiffe://nyro/server`", not "does this certificate's SAN match the string I
 dialed". There is deliberately no override flag for this on the proxy side.
 
 ## BYO external PKI
@@ -183,7 +174,7 @@ One command is a complete, usable nyro — the control plane on
 `127.0.0.1:19531` and an embedded data plane on `127.0.0.1:19530`:
 
 ```bash
-nyro server --auto-migrate
+nyro serve --auto-migrate
 ```
 
 **No config-sync port is opened.** The embedded data plane subscribes over an
@@ -203,7 +194,7 @@ To attach data planes running elsewhere, open the config-sync listener
 (`--sync-listen`, off by default) and point each proxy at it:
 
 ```bash
-nyro server --sync-listen 127.0.0.1:19532 --auto-migrate
+nyro serve --sync-listen 127.0.0.1:19532 --auto-migrate
 nyro proxy --listen 127.0.0.1:19530 --server 127.0.0.1:19532
 ```
 
@@ -238,11 +229,11 @@ by anyone who observes it. Use this only on a tightly controlled network, and
 prefer mTLS below.
 
 ```bash
-export NYRO_SERVER_SYNC_TOKEN=... NYRO_PROXY_SYNC_TOKEN=...   # same value
+export NYRO_SERVE_SYNC_TOKEN=... NYRO_PROXY_SYNC_TOKEN=...   # same value
 
-nyro server --listen 10.0.0.10:19531 \
+nyro serve --listen 10.0.0.10:19531 \
   --sync-listen 10.0.0.10:19532 \
-  --token "$NYRO_SERVER_TOKEN" --auto-migrate
+  --token "$NYRO_SERVE_TOKEN" --auto-migrate
 nyro proxy --server 10.0.0.10:19532
 ```
 
@@ -257,16 +248,16 @@ start both processes with complete TLS path sets:
 ```bash
 nyro ca init
 nyro ca sign-server
-nyro ca sign-proxy --node-id gw-1
+nyro ca sign-proxy --node-id proxy-1
 
-nyro server --sync-listen 0.0.0.0:19532 --auto-migrate \
+nyro serve --sync-listen 0.0.0.0:19532 --auto-migrate \
   --sync-tls-ca ~/.nyro/pki/ca.pem \
-  --sync-tls-cert ~/.nyro/pki/admin.pem \
-  --sync-tls-key ~/.nyro/pki/admin-key.pem
+  --sync-tls-cert ~/.nyro/pki/server.pem \
+  --sync-tls-key ~/.nyro/pki/server-key.pem
 nyro proxy --server server.internal:19532 \
   --sync-tls-ca ~/.nyro/pki/ca.pem \
-  --sync-tls-cert ~/.nyro/pki/gateway.pem \
-  --sync-tls-key ~/.nyro/pki/gateway-key.pem
+  --sync-tls-cert ~/.nyro/pki/proxy.pem \
+  --sync-tls-key ~/.nyro/pki/proxy-key.pem
 ```
 
 ### Multiple server replicas
@@ -285,16 +276,16 @@ case that workflow is for:
 
 ```bash
 # server-1
-nyro server --listen 10.0.0.11:19531 \
+nyro serve --listen 10.0.0.11:19531 \
   --sync-listen 10.0.0.11:19532 \
   --dsn "$NYRO_SHARED_DSN" \
-  --token "$NYRO_SERVER_TOKEN"
+  --token "$NYRO_SERVE_TOKEN"
 
 # server-2
-nyro server --listen 10.0.0.12:19531 \
+nyro serve --listen 10.0.0.12:19531 \
   --sync-listen 10.0.0.12:19532 \
   --dsn "$NYRO_SHARED_DSN" \
-  --token "$NYRO_SERVER_TOKEN"
+  --token "$NYRO_SERVE_TOKEN"
 ```
 
 Use the same shared PostgreSQL DSN on every replica and add complete
@@ -309,7 +300,7 @@ standalone proxy driven by a YAML file is therefore fully independent of the
 control plane:
 
 ```bash
-nyro server --auto-migrate
+nyro serve --auto-migrate
 nyro proxy --config ./config.yaml
 ```
 
@@ -323,7 +314,7 @@ The server's REST/WebUI `--listen` endpoint and the proxy's client API
 HTTPS on either endpoint. Terminate public or cross-host HTTPS in a reverse
 proxy, ingress, load balancer, or service mesh.
 
-`nyro server --token <value>` optionally adds Bearer authentication to
+`nyro serve --token <value>` optionally adds Bearer authentication to
 `/api/v1` routes; it does not authenticate config-sync. Omitting it is allowed,
 but a non-loopback server `--listen` address emits a warning that control-plane
 routes are unauthenticated. Use a token for exposed management APIs, and carry it
@@ -332,7 +323,7 @@ over deployment-layer HTTPS so the token itself is not sent in cleartext.
 ## Elastic scaling
 
 **Elastic scaling (containers/k8s):** `ca.pem` is safe to bake into the image
-(it's a public certificate, not a secret). `gateway.pem`/`gateway-key.pem`
+(it's a public certificate, not a secret). `proxy.pem`/`proxy-key.pem`
 should **not** — mount them via a Kubernetes Secret (`items`/`subPath` to
 rename into whatever path your command line expects), or use cert-manager to
 issue a fresh per-pod certificate on scheduling. Either way, the private key
@@ -341,7 +332,7 @@ never lands in the image layer.
 ## Certificate lifetime and rotation
 
 - CA: 10 years by default (`nyro ca init --valid`).
-- Leaf certificates (`admin`/`gateway` identities): 1 year by default (`--valid` on
+- Leaf certificates (`server`/`proxy` identities): 1 year by default (`--valid` on
   `sign-server`/`sign-proxy`).
 - Rotation is manual and offline: re-run the relevant `sign-*` command,
   redistribute the new cert/key, restart the process. There is no online

@@ -130,19 +130,19 @@ type HTTPServer struct {
 
 // RunServers starts every server and blocks until SIGINT/SIGTERM or the first
 // listen error, then gracefully shuts all of them down. It exists because
-// `nyro server` listens twice — the control plane on --listen and, unless
+// `nyro serve` listens twice — the control plane on --listen and, unless
 // disabled, an embedded data plane on --proxy-listen — and both must share one
 // signal handler so a single Ctrl-C drains both rather than leaving one
 // serving.
 //
 // Shutdown runs in REVERSE registration order, each server's AfterShutdown
 // firing before the next one is stopped. Register dependencies first: in `nyro
-// server` the control plane is also the embedded data plane's OTLP sink, so
+// serve` the control plane is also the embedded data plane's OTLP sink, so
 // stopping it first would make the data plane's final telemetry flush fail with
 // connection-refused on every clean exit.
 //
 // A listen error on ANY server aborts the whole process: a half-up `nyro
-// server` (management API reachable, data plane port already taken) is a
+// serve` (management API reachable, data plane port already taken) is a
 // confusing state to debug, and failing fast surfaces the port conflict
 // immediately.
 func RunServers(servers ...HTTPServer) error {

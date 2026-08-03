@@ -54,7 +54,7 @@ func TestGuardPlaintextListen_ErrorNamesEveryWayOut(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	for _, want := range []string{"--sync-token", "NYRO_SERVER_SYNC_TOKEN", "--sync-tls-ca", "nyro ca", "loopback", "0.0.0.0:19532"} {
+	for _, want := range []string{"--sync-token", "NYRO_SERVE_SYNC_TOKEN", "--sync-tls-ca", "nyro ca", "loopback", "0.0.0.0:19532"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error message is missing %q:\n%s", want, err)
 		}

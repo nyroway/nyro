@@ -216,7 +216,7 @@ var stageTarget atomic.Pointer[SwappableProvider]
 //
 // Calling it more than once per process is safe and idempotent: it simply
 // re-points the target. This matters because a single process can assemble more
-// than one data plane over its lifetime — `nyro server` embeds one alongside
+// than one data plane over its lifetime — `nyro serve` embeds one alongside
 // the control plane, and tests build many.
 //
 // This is distinct from hot-reload: an obs config change swaps the pipeline

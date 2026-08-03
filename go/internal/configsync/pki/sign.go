@@ -19,20 +19,20 @@ import (
 // identities within it; it does not need to vary per deployment.
 const spiffeTrustDomain = "nyro"
 
-// SignServer issues admin's server leaf certificate (ExtKeyUsage:
-// ServerAuth), carrying the fixed identity AdminSPIFFEID as a SPIFFE URI SAN
-// (spiffe://nyro/admin) — the same identity-based verification model as
-// SignClient, so gateway's config-sync client checks "is this cert admin?"
+// SignServer issues the config-sync server leaf certificate (ExtKeyUsage:
+// ServerAuth), carrying the fixed identity ServerSPIFFEID as a SPIFFE URI SAN
+// (spiffe://nyro/server) — the same identity-based verification model as
+// SignClient, so each proxy's config-sync client checks "is this cert server?"
 // rather than "does this cert's SAN match the hostname I dialed?". That
-// means admin's certificate stays valid no matter what address/hostname a
-// gateway uses to reach it (direct, load balancer, k8s Service name, IP —
+// means the server certificate stays valid no matter what address/hostname a
+// proxy uses to reach it (direct, load balancer, k8s Service name, IP —
 // all of it), with no per-deployment DNS/IP SAN list to maintain and no
-// --config-server-name-style override needed on the client side.
+// TLS server-name override needed on the client side.
 //
 // The resulting cert/key are written to <dir>/<name>.pem and
 // <dir>/<name>-key.pem (0600) and their paths are returned. name is only the
 // output file basename (see --out) — it does not affect the identity baked
-// into the certificate, which is always AdminSPIFFEID.
+// into the certificate, which is always ServerSPIFFEID.
 func (ca *CA) SignServer(dir, name string, ttl time.Duration) (certPath, keyPath string, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -43,12 +43,12 @@ func (ca *CA) SignServer(dir, name string, ttl time.Duration) (certPath, keyPath
 		return "", "", err
 	}
 
-	spiffeURI := &url.URL{Scheme: "spiffe", Host: spiffeTrustDomain, Path: "/" + AdminSPIFFEID}
+	spiffeURI := &url.URL{Scheme: "spiffe", Host: spiffeTrustDomain, Path: "/" + ServerSPIFFEID}
 
 	now := time.Now()
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: AdminSPIFFEID},
+		Subject:      pkix.Name{CommonName: ServerSPIFFEID},
 		NotBefore:    now.Add(-5 * time.Minute),
 		NotAfter:     now.Add(ttl),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
@@ -60,8 +60,8 @@ func (ca *CA) SignServer(dir, name string, ttl time.Duration) (certPath, keyPath
 }
 
 // SignClient issues a client leaf certificate (ExtKeyUsage: ClientAuth) for
-// a gateway node, carrying its identity as a SPIFFE URI SAN
-// (spiffe://nyro/gateway/<nodeID>). The resulting cert/key are written to
+// a proxy node, carrying its identity as a SPIFFE URI SAN
+// (spiffe://nyro/proxy/<nodeID>). The resulting cert/key are written to
 // <dir>/<name>.pem and <dir>/<name>-key.pem (0600) and their paths are
 // returned.
 func (ca *CA) SignClient(dir, name, nodeID string, ttl time.Duration) (certPath, keyPath string, err error) {
@@ -78,7 +78,7 @@ func (ca *CA) SignClient(dir, name, nodeID string, ttl time.Duration) (certPath,
 		return "", "", err
 	}
 
-	spiffeURI := &url.URL{Scheme: "spiffe", Host: spiffeTrustDomain, Path: "/gateway/" + nodeID}
+	spiffeURI := &url.URL{Scheme: "spiffe", Host: spiffeTrustDomain, Path: "/proxy/" + nodeID}
 
 	now := time.Now()
 	tmpl := &x509.Certificate{

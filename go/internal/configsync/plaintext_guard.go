@@ -41,7 +41,7 @@ encryption nor authentication. The stream carries upstream API credentials in
 the clear to any client that connects.
 
 Fix by either:
-  - set --sync-token (or NYRO_SERVER_SYNC_TOKEN) to require a join credential, or
+  - set --sync-token (or NYRO_SERVE_SYNC_TOKEN) to require a join credential, or
   - configure mTLS with --sync-tls-ca/-cert/-key (see `+"`nyro ca`"+`)
 Or bind --sync-listen to a loopback address`, addr)
 }

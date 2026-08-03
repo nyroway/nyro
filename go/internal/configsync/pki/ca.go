@@ -26,7 +26,7 @@ const (
 // CA is a loaded (or freshly generated) certificate authority: its
 // certificate (used to build trust chains / ClientCAs / RootCAs pools) and
 // private key (used to sign leaf certificates). The private key is only ever
-// needed by the offline `nyro ca sign-*` commands, never by admin/gateway at
+// needed by the offline `nyro ca sign-*` commands, never by server/proxy at
 // runtime.
 type CA struct {
 	Cert *x509.Certificate

@@ -1,5 +1,5 @@
 // Command nyro is the unified gateway CLI: `nyro proxy` (data plane),
-// `nyro server` (control plane).
+// `nyro serve` (control plane).
 package main
 
 import (

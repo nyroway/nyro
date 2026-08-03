@@ -37,7 +37,7 @@ func TestResolveConfigSyncClientTLS_AllThreeLoadsMTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPath, keyPath, err := ca.SignClient(dir, "gateway", "node-1", time.Hour)
+	certPath, keyPath, err := ca.SignClient(dir, "proxy", "node-1", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

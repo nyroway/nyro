@@ -11,7 +11,7 @@
 //
 // The env var name for a flag is derived from the command path and flag name:
 //
-//	nyro server      --listen               -> NYRO_SERVER_LISTEN
+//	nyro serve       --listen               -> NYRO_SERVE_LISTEN
 //	nyro proxy       --config               -> NYRO_PROXY_CONFIG
 //	nyro ca init     --dir                  -> NYRO_CA_INIT_DIR
 //	nyro ca sign-server --out               -> NYRO_CA_SIGN_SERVER_OUT
@@ -35,8 +35,8 @@ import (
 const envPrefix = "NYRO"
 
 // EnvKey builds the environment variable name for a flag under the given
-// per-command prefix (e.g. prefix "SERVER", flag "obs-data-dir" ->
-// "NYRO_SERVER_OBS_DATA_DIR"). The flag name's dashes become
+// per-command prefix (e.g. prefix "SERVE", flag "obs-data-dir" ->
+// "NYRO_SERVE_OBS_DATA_DIR"). The flag name's dashes become
 // underscores and everything is upper-cased.
 func EnvKey(prefix, flagName string) string {
 	return envPrefix + "_" + prefix + "_" + normalize(flagName)

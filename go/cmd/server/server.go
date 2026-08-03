@@ -1,4 +1,4 @@
-// Package server implements the `nyro server` subcommand: the control plane
+// Package server implements the `nyro serve` subcommand: the control plane
 // (management API + WebUI + OAuth session lifecycle + config-sync push).
 package server
 
@@ -50,7 +50,7 @@ func defaultDSN() string {
 
 // NewCmd builds the server (control-plane) subcommand.
 //
-// `nyro server` is the single-command deployment: the REST API + WebUI on
+// `nyro serve` is the single-command deployment: the REST API + WebUI on
 // --listen, and — unless --proxy-listen is empty — an embedded data plane on
 // --proxy-listen, so one process is a complete, usable nyro. The embedded data
 // plane is assembled by internal/dataplane over an in-process config-sync
@@ -63,7 +63,7 @@ func defaultDSN() string {
 // embedded and remote alike.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "server",
+		Use:   "serve",
 		Short: "Run the control plane, with an embedded data plane by default",
 	}
 	cmd.Flags().String("listen", "127.0.0.1:19531", "listen address for the control plane")
@@ -82,7 +82,7 @@ func NewCmd() *cobra.Command {
 	// Repeatable so a token can be rotated without downtime: add the new one,
 	// roll the proxies onto it, then drop the old one. Prefer the env var —
 	// a token passed as a flag is visible in `ps`.
-	cmd.Flags().StringArray("sync-token", nil, "join token a remote `nyro proxy` must present to subscribe to config-sync; repeatable so tokens can be rotated without downtime. A join credential, NOT an identity: mTLS is what gives each node a verifiable identity. Prefer NYRO_SERVER_SYNC_TOKEN over the flag, which exposes the value in `ps`")
+	cmd.Flags().StringArray("sync-token", nil, "join token a remote `nyro proxy` must present to subscribe to config-sync; repeatable so tokens can be rotated without downtime. A join credential, NOT an identity: mTLS is what gives each node a verifiable identity. Prefer NYRO_SERVE_SYNC_TOKEN over the flag, which exposes the value in `ps`")
 	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro ca`); must be set together with --sync-tls-cert/-key")
 	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to the server's config-sync server certificate")
 	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to the server's config-sync server private key")

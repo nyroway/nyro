@@ -129,7 +129,7 @@ func (s *ConfigServer) StreamConfig(req *pb.Subscribe, stream grpc.ServerStreami
 			if len(tlsInfo.State.VerifiedChains) > 0 && len(tlsInfo.State.VerifiedChains[0]) > 0 {
 				connMode = "mtls"
 				leaf := tlsInfo.State.VerifiedChains[0][0]
-				if id, err := pki.GatewayNodeIDFromCert(leaf); err == nil {
+				if id, err := pki.ProxyNodeIDFromCert(leaf); err == nil {
 					nodeID = id
 				} else {
 					log.Printf("configsync: client cert has no usable identity, keeping self-reported node_id: %v", err)

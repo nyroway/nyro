@@ -9,7 +9,7 @@ import (
 )
 
 // ExpiryWarningWindow is how far ahead of a leaf certificate's expiry
-// admin/gateway should start logging a renewal warning. Certificates here
+// server/proxy should start logging a renewal warning. Certificates here
 // are offline-signed and manually rotated (see nyro ca sign-*); nothing
 // renews them automatically, so operators need advance notice before the
 // config-sync channel silently stops working.

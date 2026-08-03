@@ -21,8 +21,8 @@ func TestNewCmdFlags(t *testing.T) {
 	if addr, _ := cmd.Flags().GetString("listen"); addr != "127.0.0.1:19531" {
 		t.Errorf("default listen = %q, want 127.0.0.1:19531", addr)
 	}
-	if cmd.Use != "server" {
-		t.Errorf("Use = %q, want server", cmd.Use)
+	if cmd.Use != "serve" {
+		t.Errorf("Use = %q, want serve", cmd.Use)
 	}
 	// Pre-rename flag names must be gone (no compatibility period).
 	for _, old := range []string{"config-listen", "config-tls-ca", "config-tls-cert", "config-tls-key", "plaintext-keys"} {

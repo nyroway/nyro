@@ -1,12 +1,12 @@
 // Package pki provides the offline certificate authority and TLS config
-// construction used to secure the config-sync gRPC channel between admin
-// (control plane) and gateway (data plane) nodes.
+// construction used to secure the config-sync gRPC channel between the server
+// (control plane) and proxy (data plane) nodes.
 //
 // The trust model is a single self-signed CA per deployment (or an external
 // BYO PKI producing files in the same shape): the CA signs a server leaf
-// certificate for admin (DNS/IP SANs from --advertise) and a client leaf
-// certificate per gateway (a SPIFFE URI SAN carrying the node identity,
-// spiffe://nyro/gateway/<node-id>). admin/gateway load these at runtime via
+// certificate for the server (a fixed SPIFFE URI SAN) and a client leaf
+// certificate per proxy (a SPIFFE URI SAN carrying the node identity,
+// spiffe://nyro/proxy/<node-id>). Server and proxy load these at runtime via
 // LoadServerTLS/LoadClientTLS from three explicit file paths — there is no
 // directory-scanning or auto-discovery at runtime; only the offline `nyro ca`
 // commands write to a conventional directory.
