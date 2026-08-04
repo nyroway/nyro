@@ -7,8 +7,8 @@
 //   - `nyro tool migrate diff`: incremental DDL to bring an existing schema up to
 //     the models.
 //
-// Automatic migration (GORM AutoMigrate) is the other path — `nyro
-// admin`/`gateway --auto-migrate`; these subcommands are for the manual path.
+// Automatic migration (GORM AutoMigrate) is the other path — `nyro serve
+// --auto-migrate`; these subcommands are for the manual path.
 package migrate
 
 import (

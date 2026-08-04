@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
 
 func TestRootCmdSubcommands(t *testing.T) {
 	root := newRootCmd()
@@ -61,6 +65,56 @@ func TestRootCmdSubcommands(t *testing.T) {
 func TestRootCmdNoGlobalStorageFlags(t *testing.T) {
 	root := newRootCmd()
 	if f := root.PersistentFlags().Lookup("dsn"); f != nil {
-		t.Error("--dsn must not be a global/root flag (it belongs to admin only)")
+		t.Error("--dsn must not be a global/root flag (it belongs to serve only)")
+	}
+}
+
+func TestRootCmdToolCommandsExecuteOnlyUnderTool(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantErr    bool
+		wantOutput string
+	}{
+		{
+			name:    "direct ca is rejected",
+			args:    []string{"ca"},
+			wantErr: true,
+		},
+		{
+			name:    "direct migrate is rejected",
+			args:    []string{"migrate"},
+			wantErr: true,
+		},
+		{
+			name:       "tool ca help resolves",
+			args:       []string{"tool", "ca", "--help"},
+			wantOutput: "Usage:\n  nyro tool ca",
+		},
+		{
+			name:       "tool migrate help resolves",
+			args:       []string{"tool", "migrate", "--help"},
+			wantOutput: "Usage:\n  nyro tool migrate",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := newRootCmd()
+			var output bytes.Buffer
+			root.SetOut(&output)
+			root.SetErr(&output)
+			root.SetArgs(tt.args)
+			root.SilenceUsage = true
+			root.SilenceErrors = true
+
+			err := root.Execute()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Execute(%q) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+			}
+			if tt.wantOutput != "" && !strings.Contains(output.String(), tt.wantOutput) {
+				t.Errorf("Execute(%q) output = %q, want substring %q", tt.args, output.String(), tt.wantOutput)
+			}
+		})
 	}
 }
