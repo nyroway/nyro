@@ -15,8 +15,8 @@ func TestRootCmdSubcommands(t *testing.T) {
 	if names["completion"] {
 		t.Error("completion subcommand should be disabled")
 	}
-	if names["tool"] {
-		t.Error("tool subcommand should be removed")
+	if !names["tool"] {
+		t.Error("tool subcommand missing")
 	}
 	if !names["proxy"] {
 		t.Error("proxy subcommand missing")
@@ -34,6 +34,27 @@ func TestRootCmdSubcommands(t *testing.T) {
 	}
 	if names["admin"] {
 		t.Error("admin subcommand should have been renamed to serve")
+	}
+	if names["ca"] || aliases["ca"] {
+		t.Error("ca must be available only under tool")
+	}
+	if names["migrate"] || aliases["migrate"] {
+		t.Error("migrate must be available only under tool")
+	}
+
+	tool, _, err := root.Find([]string{"tool"})
+	if err != nil {
+		t.Fatalf("find tool command: %v", err)
+	}
+	toolNames := map[string]bool{}
+	for _, c := range tool.Commands() {
+		toolNames[c.Name()] = true
+	}
+	if !toolNames["ca"] {
+		t.Error("tool ca subcommand missing")
+	}
+	if !toolNames["migrate"] {
+		t.Error("tool migrate subcommand missing")
 	}
 }
 

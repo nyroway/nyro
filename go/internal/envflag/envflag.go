@@ -13,8 +13,8 @@
 //
 //	nyro serve       --listen               -> NYRO_SERVE_LISTEN
 //	nyro proxy       --config               -> NYRO_PROXY_CONFIG
-//	nyro ca init     --dir                  -> NYRO_CA_INIT_DIR
-//	nyro ca sign-server --out               -> NYRO_CA_SIGN_SERVER_OUT
+//	nyro tool ca init        --dir          -> NYRO_TOOL_CA_INIT_DIR
+//	nyro tool ca sign-server --out          -> NYRO_TOOL_CA_SIGN_SERVER_OUT
 //
 // Layer: 0 (foundation) — cobra/pflag and stdlib only. Must not import any
 // other internal package.
@@ -52,8 +52,8 @@ func normalize(s string) string {
 
 // prefixFromCommand derives the per-command env prefix from a command's full
 // path by dropping the leading root segment ("nyro") and joining the rest with
-// underscores, upper-cased. "nyro ca sign-server" -> "CA_SIGN_SERVER". Returns ""
-// for the bare root command (which carries no flags of its own).
+// underscores, upper-cased. "nyro tool ca sign-server" -> "TOOL_CA_SIGN_SERVER".
+// Returns "" for the bare root command (which carries no flags of its own).
 func prefixFromCommand(cmd *cobra.Command) string {
 	path := strings.Fields(cmd.CommandPath())
 	if len(path) <= 1 {
