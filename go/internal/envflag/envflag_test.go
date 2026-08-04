@@ -109,13 +109,15 @@ func TestEnvKey(t *testing.T) {
 
 func TestPrefixFromCommand(t *testing.T) {
 	root := &cobra.Command{Use: "nyro"}
+	tool := &cobra.Command{Use: "tool"}
 	ca := &cobra.Command{Use: "ca"}
 	signServer := &cobra.Command{Use: "sign-server"}
 	ca.AddCommand(signServer)
-	root.AddCommand(ca)
+	tool.AddCommand(ca)
+	root.AddCommand(tool)
 
-	if got := prefixFromCommand(signServer); got != "CA_SIGN_SERVER" {
-		t.Errorf("prefixFromCommand(nyro ca sign-server) = %q, want CA_SIGN_SERVER", got)
+	if got := prefixFromCommand(signServer); got != "TOOL_CA_SIGN_SERVER" {
+		t.Errorf("prefixFromCommand(nyro tool ca sign-server) = %q, want TOOL_CA_SIGN_SERVER", got)
 	}
 	if got := prefixFromCommand(root); got != "" {
 		t.Errorf("prefixFromCommand(root) = %q, want empty", got)

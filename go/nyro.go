@@ -8,10 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/nyroway/nyro/go/cmd/ca"
-	"github.com/nyroway/nyro/go/cmd/migrate"
 	"github.com/nyroway/nyro/go/cmd/proxy"
 	"github.com/nyroway/nyro/go/cmd/server"
+	"github.com/nyroway/nyro/go/cmd/tool"
 	"github.com/nyroway/nyro/go/internal/envflag"
 	"github.com/nyroway/nyro/go/internal/version"
 )
@@ -35,8 +34,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentPreRunE = envflag.Bind
 	root.AddCommand(proxy.NewCmd())
 	root.AddCommand(server.NewCmd())
-	root.AddCommand(ca.NewCmd())
-	root.AddCommand(migrate.NewCmd())
+	root.AddCommand(tool.NewCmd())
 	root.AddCommand(newVersionCmd())
 	envflag.Decorate(root)
 	return root
