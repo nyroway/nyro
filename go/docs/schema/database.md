@@ -7,7 +7,7 @@ post-migration state with SQLite-flavored types. GORM entities in
 them for readability — it is illustrative, not applied to any database.
 
 For postgres, the SQL that actually gets run is rendered on demand by `nyro
-migrate dump` / `nyro migrate diff` from these same models — see
+tool migrate dump` / `nyro tool migrate diff` from these same models — see
 [migrations.md](migrations.md) for the full workflow (how the DDL is
 generated, how a DBA reviews and applies it, and the `--auto-migrate` flag).
 sqlite has no manual step and keeps using GORM AutoMigrate.

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// run executes `nyro migrate <args...>` against an isolated command tree and
+// run executes `nyro tool migrate <args...>` against an isolated command tree and
 // returns combined stdout and any error.
 func run(t *testing.T, args ...string) (string, error) {
 	t.Helper()

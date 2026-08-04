@@ -21,17 +21,17 @@ never drops a column or table, and it can misread a column *rename* as a new
 column (leaving the old one). Destructive or rename changes need a hand-written
 one-off SQL statement.
 
-### 2. Manual — `nyro migrate dump` / `diff`
+### 2. Manual — `nyro tool migrate dump` / `diff`
 
 For deployments where the application account has **no DDL rights** (schema
 changes go through a DBA who applies reviewed SQL by hand, often importing a
 `.sql` through a company Web platform), the binary prints the SQL for you:
 
 ```
-nyro migrate dump  --dsn <dialect-dsn, read-only>  [--output f.sql]
+nyro tool migrate dump  --dsn <dialect-dsn, read-only>  [--output f.sql]
     # Full CREATE DDL for a fresh database, in --dsn's dialect.
 
-nyro migrate diff  --shadow-dsn <ddl-dsn>  ( --target-dsn <ro-dsn> | --target-file <schema.sql> )  [--output f.sql]
+nyro tool migrate diff  --shadow-dsn <ddl-dsn>  ( --target-dsn <ro-dsn> | --target-file <schema.sql> )  [--output f.sql]
     # Incremental DDL to bring an existing schema up to the models.
 ```
 
@@ -42,7 +42,7 @@ Startup then uses a read-only check (no `--auto-migrate`): `CheckSchema`
 confirms every canonical table exists and fails fast if the schema was never
 applied.
 
-## `nyro migrate dump`
+## `nyro tool migrate dump`
 
 Renders `model.All()` to `CREATE TABLE`/index DDL in the target dialect. It runs
 in a GORM **DryRun** session — nothing is executed — so `--dsn` may point at a
@@ -54,7 +54,7 @@ Because rendering needs a live dialect connection, a fresh postgres
 deployment points `--dsn` at the (empty) target server — nothing is written to
 it.
 
-## `nyro migrate diff`
+## `nyro tool migrate diff`
 
 Prints the incremental DDL to evolve a **current** schema to the models. It
 works by loading the current schema onto a throwaway **shadow** database
@@ -64,7 +64,7 @@ run on a throwaway is used deliberately — it's exactly what a real apply does.
 
 The "current schema" comes from exactly one source:
 
-- `--target-file <schema.sql>` — an exact schema dump: a previous `nyro migrate
+- `--target-file <schema.sql>` — an exact schema dump: a previous `nyro tool migrate
   dump` output, or a `pg_dump --schema-only` of the live
   database (session `SET`s and psql `\` meta-commands are ignored; only the DDL
   is replayed). **Precise, recommended.**
@@ -84,9 +84,9 @@ against it — no live database needed:
 
 ```
 # release N: snapshot the schema (store it anywhere; it need not be committed)
-nyro migrate dump --dsn postgres://ro@host/anydb > schema_vN.sql
+nyro tool migrate dump --dsn postgres://ro@host/anydb > schema_vN.sql
 # release N+1: incremental DDL from N to the new models
-nyro migrate diff --target-file schema_vN.sql --shadow-dsn postgres://ddl@host/scratch
+nyro tool migrate diff --target-file schema_vN.sql --shadow-dsn postgres://ddl@host/scratch
 ```
 
 ## How it works (GORM only)
@@ -95,7 +95,7 @@ Both commands capture the SQL GORM's migrator builds via a logger, then keep
 only DDL statements (`CREATE`/`ALTER`/`DROP`). `dump` captures a DryRun
 `CreateTable` (no execution); `diff` captures a real `AutoMigrate` on the
 shadow. All of this lives in `go/internal/schemadump` and uses nothing beyond
-`gorm` and the models — so `nyro migrate` ships in the binary without pulling
+`gorm` and the models — so `nyro tool migrate` ships in the binary without pulling
 in any schema-tool dependency.
 
 ## Runtime behavior
@@ -105,7 +105,7 @@ in any schema-tool dependency.
 - `--auto-migrate`: run AutoMigrate at startup (see above).
 - unset (default): no DDL. A read-only `CheckSchema` confirms every canonical
   table (`model.All()`) exists; a missing table fails fast with a message
-  pointing at `--auto-migrate` or `nyro migrate`. It does not check
+  pointing at `--auto-migrate` or `nyro tool migrate`. It does not check
   column-level drift — keeping the schema current is the operator's job.
 
 ## Accepted trade-offs

@@ -73,11 +73,11 @@ func (b *Backend) Migrate() error {
 // (model.All()) exists — a lightweight existence check for all backends. It
 // does not verify column-level drift; keeping the schema in sync with the
 // models is the operator's job (run with --auto-migrate, or apply the DDL from
-// `nyro migrate dump`/`diff`).
+// `nyro tool migrate dump`/`diff`).
 func (b *Backend) CheckSchema() error {
 	for _, m := range model.All() {
 		if !b.db.Migrator().HasTable(m) {
-			return fmt.Errorf("%s database has no schema yet (missing table for %T) — initialize it with --auto-migrate, or apply the DDL from `nyro migrate dump`/`diff`", b.backend, m)
+			return fmt.Errorf("%s database has no schema yet (missing table for %T) — initialize it with --auto-migrate, or apply the DDL from `nyro tool migrate dump`/`diff`", b.backend, m)
 		}
 	}
 	return nil

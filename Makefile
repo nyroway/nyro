@@ -126,7 +126,7 @@ go-gen-storage:
 
 # ── Go schema migrations (postgres only) ──
 # No Makefile targets: schema is GORM AutoMigrate; to preview/apply DDL for a
-# DDL-less deployment use the `nyro migrate dump`/`diff` subcommands (they only
+# DDL-less deployment use the `nyro tool migrate dump`/`diff` subcommands (they only
 # depend on GORM). See go/docs/schema/migrations.md.
 
 # Build the Go WebUI bundle only
@@ -195,7 +195,7 @@ help:
 	@echo "  make go-check     go-fmt-check + go-vet + go-lint + go-test"
 	@echo "  make go-tidy      Tidy go.mod/go.sum"
 	@echo "  make go-gen-storage Generate Go storage query code"
-	@echo "  (schema: GORM AutoMigrate; preview/apply DDL via 'nyro migrate dump|diff')"
+	@echo "  (schema: GORM AutoMigrate; preview/apply DDL via 'nyro tool migrate dump|diff')"
 	@echo "  make go-webui-build Build Go WebUI frontend only"
 	@echo "  make go-webui-embed-build Build Go nyro CLI with embedded Go WebUI"
 	@echo "  make go-webui-embed-run Build and run Go admin with embedded Go WebUI"

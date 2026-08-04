@@ -84,14 +84,14 @@ in-memory pipe with no socket, and is reported as `conn_mode: inprocess`.
 
 ## The three commands
 
-`nyro ca` is an **offline** certificate authority — it never runs as a
+`nyro tool ca` is an **offline** certificate authority — it never runs as a
 service. Everything it produces is a plain file you distribute yourself (scp,
 Ansible, a Secret, a Docker volume, whatever fits your deployment).
 
 ```bash
-nyro ca init [--dir ~/.nyro/pki] [--valid 87600h] [--force]
-nyro ca sign-server [--dir ~/.nyro/pki] [--valid 8760h] [--out server]
-nyro ca sign-proxy [--dir ~/.nyro/pki] [--node-id <id>] [--valid 8760h] [--out proxy]
+nyro tool ca init [--dir ~/.nyro/pki] [--valid 87600h] [--force]
+nyro tool ca sign-server [--dir ~/.nyro/pki] [--valid 8760h] [--out server]
+nyro tool ca sign-proxy [--dir ~/.nyro/pki] [--node-id <id>] [--valid 8760h] [--out proxy]
 ```
 
 - `init` creates (or, without `--force`, reuses) the CA: `ca.pem` +
@@ -110,12 +110,12 @@ nyro ca sign-proxy [--dir ~/.nyro/pki] [--node-id <id>] [--valid 8760h] [--out p
   defaults to a random value if omitted.
 
 All three write fixed filenames — `<out>.pem` / `<out>-key.pem` — into
-`--dir`. That directory is purely `nyro ca`'s own bookkeeping; server and
+`--dir`. That directory is purely `nyro tool ca`'s own bookkeeping; server and
 proxy never read it directly (see below).
 
 ## Runtime: explicit paths only, no directory auto-discovery
 
-`server` and `proxy` do **not** know about `nyro ca`'s output directory.
+`server` and `proxy` do **not** know about `nyro tool ca`'s output directory.
 They only ever load three explicit file paths:
 
 ```bash
@@ -136,7 +136,7 @@ plaintext. This keeps the loading logic to a single path with no precedence
 rules to reason about, and it means a certificate and its CA can never be
 silently mismatched from two different sources.
 
-The two lifecycles — `nyro ca`'s offline, one-shot signing and the server/proxy's
+The two lifecycles — `nyro tool ca`'s offline, one-shot signing and the server/proxy's
 long-running runtime load — are deliberately decoupled. In practice you write
 the three paths once into whatever starts the process (systemd unit,
 docker-compose, Helm values), not on every interactive invocation.
@@ -162,7 +162,7 @@ dialed". There is deliberately no override flag for this on the proxy side.
 ## BYO external PKI
 
 `--sync-tls-ca/-cert/-key` accept any PEM files — certificates from
-cert-manager, Vault, or another external PKI work identically to `nyro ca`'s
+cert-manager, Vault, or another external PKI work identically to `nyro tool ca`'s
 own output. Server and proxy have no notion of "self-signed vs. external"; it's
 just three file paths either way.
 
@@ -241,14 +241,14 @@ Both processes log a warning that the token is unencrypted on the wire.
 
 ### Cross-host mTLS
 
-Run the three `nyro ca` commands once (from CI or an operator's machine),
+Run the three `nyro tool ca` commands once (from CI or an operator's machine),
 distribute `ca.pem` plus the relevant leaf cert/key pair to each host, then
 start both processes with complete TLS path sets:
 
 ```bash
-nyro ca init
-nyro ca sign-server
-nyro ca sign-proxy --node-id proxy-1
+nyro tool ca init
+nyro tool ca sign-server
+nyro tool ca sign-proxy --node-id proxy-1
 
 nyro serve --sync-listen 0.0.0.0:19532 --auto-migrate \
   --sync-tls-ca ~/.nyro/pki/ca.pem \
@@ -269,7 +269,7 @@ writer — so the cadence is derived from the backend rather than configured.
 There is no poll-interval flag: on postgres, replicas poll automatically; on
 sqlite, polling is skipped because no sibling exists.
 
-Apply the schema with DDL a DBA reviews (print it with `nyro migrate
+Apply the schema with DDL a DBA reviews (print it with `nyro tool migrate
 dump`/`diff`, see `go/docs/schema/migrations.md`) before first boot instead of
 passing `--auto-migrate` here — this is exactly the shared-database production
 case that workflow is for:
@@ -331,7 +331,7 @@ never lands in the image layer.
 
 ## Certificate lifetime and rotation
 
-- CA: 10 years by default (`nyro ca init --valid`).
+- CA: 10 years by default (`nyro tool ca init --valid`).
 - Leaf certificates (`server`/`proxy` identities): 1 year by default (`--valid` on
   `sign-server`/`sign-proxy`).
 - Rotation is manual and offline: re-run the relevant `sign-*` command,
@@ -352,7 +352,7 @@ never lands in the image layer.
 - **No online enrollment service.** Provisioning new proxy certs at scale
   is cert-manager's/SPIRE's job, not something nyro re-implements.
 - **No CRL/OCSP revocation.** If a certificate needs to be revoked before its
-  natural expiry, rotate the CA (`nyro ca init --force`) and re-sign
+  natural expiry, rotate the CA (`nyro tool ca init --force`) and re-sign
   everything — there's no partial-revocation mechanism. Short leaf TTLs (the
   1-year default, or shorter if you set `--valid` tighter) are the mitigation
   for a lost/compromised leaf key.

@@ -4,10 +4,10 @@
 //
 //   - Dump renders the full CREATE DDL for model.All() in a connection's
 //     dialect, via a DryRun session so nothing is executed (the connection may
-//     be read-only). Used by `nyro migrate dump`.
+//     be read-only). Used by `nyro tool migrate dump`.
 //   - Diff replays a "current" schema onto a writable shadow database, runs
 //     AutoMigrate(model.All()) for real, and captures the incremental DDL it
-//     issues. Used by `nyro migrate diff`.
+//     issues. Used by `nyro tool migrate diff`.
 //
 // Both work by capturing the SQL GORM's migrator builds via a logger, then
 // keeping only the DDL statements (CREATE/ALTER/DROP).
@@ -92,7 +92,7 @@ func Diff(shadow *gorm.DB, currentSchemaSQL string) (string, error) {
 
 // IntrospectSchema builds a best-effort CREATE TABLE script for the
 // model.All() tables that currently exist on target, from GORM column
-// introspection. Used by `nyro migrate diff --target-dsn` to seed the shadow
+// introspection. Used by `nyro tool migrate diff --target-dsn` to seed the shadow
 // with the target's current state.
 //
 // It reconstructs tables, columns (name, type, nullability, default), primary
@@ -200,7 +200,7 @@ func ResetShadow(db *gorm.DB) error {
 // full-line "--" comments and psql "\" meta-commands (e.g. the \restrict /
 // \unrestrict markers pg_dump emits), then splits on ";". Sufficient for schema
 // DDL from a dump/export (no semicolons inside string literals, no procedure
-// bodies) — it accepts both `nyro migrate dump` output and a real
+// bodies) — it accepts both `nyro tool migrate dump` output and a real
 // pg_dump schema-only dump.
 func SplitStatements(sqlScript string) []string {
 	var b strings.Builder

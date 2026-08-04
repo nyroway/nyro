@@ -1,4 +1,4 @@
-// Package ca implements the `nyro ca` subcommand group: an offline
+// Package ca implements the `nyro tool ca` subcommand group: an offline
 // certificate authority for the config-sync mTLS channel between the server
 // (control plane) and proxy (data plane). It never runs online — it's a
 // one-shot CLI for generating a CA and signing leaf certificates that get
@@ -35,7 +35,7 @@ const (
 	defaultLeafValid = 8760 * time.Hour  // 1y
 )
 
-// NewCmd builds the `nyro ca` command group.
+// NewCmd builds the `nyro tool ca` command group.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ca",
@@ -87,7 +87,7 @@ func newSignServerCmd() *cobra.Command {
 		Use:   "sign-server",
 		Short: "Sign the server's config-sync server certificate",
 	}
-	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro ca init`)")
+	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro tool ca init`)")
 	valid := cmd.Flags().Duration("valid", defaultLeafValid, "leaf certificate validity period")
 	out := cmd.Flags().String("out", "server", "output file basename (writes <dir>/<out>.pem and <dir>/<out>-key.pem)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -111,7 +111,7 @@ func newSignProxyCmd() *cobra.Command {
 		Use:   "sign-proxy",
 		Short: "Sign a proxy node's config-sync client certificate",
 	}
-	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro ca init`)")
+	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro tool ca init`)")
 	nodeID := cmd.Flags().String("node-id", "", "node identity for the SPIFFE SAN (spiffe://nyro/proxy/<node-id>); random if unset")
 	valid := cmd.Flags().Duration("valid", defaultLeafValid, "leaf certificate validity period")
 	out := cmd.Flags().String("out", "proxy", "output file basename (writes <dir>/<out>.pem and <dir>/<out>-key.pem)")
@@ -136,11 +136,11 @@ func newSignProxyCmd() *cobra.Command {
 	return cmd
 }
 
-// signWithCA loads the CA at dir (must already exist — created via `nyro ca
+// signWithCA loads the CA at dir (must already exist — created via `nyro tool ca
 // init`) and runs sign against it.
 func signWithCA(dir string, sign func(*pki.CA) (certPath, keyPath string, err error)) (certPath, keyPath string, err error) {
 	if !caExists(dir) {
-		return "", "", fmt.Errorf("no CA found in %s — run `nyro ca init --dir %s` first", dir, dir)
+		return "", "", fmt.Errorf("no CA found in %s — run `nyro tool ca init --dir %s` first", dir, dir)
 	}
 	c, err := pki.LoadCA(dir)
 	if err != nil {
