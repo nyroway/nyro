@@ -53,7 +53,7 @@ no TLS paths select plaintext, while all three `--sync-tls-ca/-cert/-key` paths
 select mTLS. A partial set or a certificate load failure stops startup; there
 is no downgrade to plaintext. See
 [config-sync transport and mTLS](security/config-sync-mtls.md) for the full
-`nyro ca` workflow. For same-host shadow testing, plaintext + loopback is the
+`nyro tool ca` workflow. For same-host shadow testing, plaintext + loopback is the
 fastest path — and the only one that needs no token:
 
 ```bash
@@ -73,9 +73,9 @@ replayable by an observer, so for normal cross-host deployments sign
 certificates and configure a complete TLS path set on both processes:
 
 ```bash
-/tmp/nyro ca init
-/tmp/nyro ca sign-server
-/tmp/nyro ca sign-proxy --node-id proxy-1
+/tmp/nyro tool ca init
+/tmp/nyro tool ca sign-server
+/tmp/nyro tool ca sign-proxy --node-id proxy-1
 # distribute ca.pem + server.{pem,key.pem} / proxy.{pem,key.pem}, then:
 /tmp/nyro serve --sync-listen 0.0.0.0:19532 --auto-migrate \
   --sync-tls-ca ~/.nyro/pki/ca.pem --sync-tls-cert ~/.nyro/pki/server.pem --sync-tls-key ~/.nyro/pki/server-key.pem
@@ -94,7 +94,7 @@ For multiple server replicas sharing one database (typically PostgreSQL), set a
 positive polling interval on every replica so a write handled by one is noticed
 and pushed by the others. Since this is exactly the shared postgres case
 `go/docs/schema/database.md` covers, apply the schema with
-DDL a DBA reviews (print it with `nyro migrate dump`/`diff`; see
+DDL a DBA reviews (print it with `nyro tool migrate dump`/`diff`; see
 `go/docs/schema/migrations.md`) before first boot instead of passing
 `--auto-migrate` here:
 

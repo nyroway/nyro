@@ -10,7 +10,7 @@ import (
 
 // ExpiryWarningWindow is how far ahead of a leaf certificate's expiry
 // server/proxy should start logging a renewal warning. Certificates here
-// are offline-signed and manually rotated (see nyro ca sign-*); nothing
+// are offline-signed and manually rotated (see nyro tool ca sign-*); nothing
 // renews them automatically, so operators need advance notice before the
 // config-sync channel silently stops working.
 const ExpiryWarningWindow = 30 * 24 * time.Hour
@@ -38,7 +38,7 @@ func ExpiringSoon(notAfter, now time.Time) bool {
 // WatchExpiry checks every leaf certificate in cfg immediately, then again
 // every interval until ctx is cancelled, invoking warn(notAfter) for each one
 // that's within ExpiryWarningWindow of expiring. These certificates are
-// offline-signed and manually rotated (see nyro ca sign-*) — nothing renews
+// offline-signed and manually rotated (see nyro tool ca sign-*) — nothing renews
 // them — so this is the only mechanism that gives an operator advance notice
 // before expired certificates prevent new config-sync handshakes. A nil cfg
 // means plaintext mode and is a no-op: there's nothing to expire.

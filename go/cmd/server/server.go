@@ -83,13 +83,13 @@ func NewCmd() *cobra.Command {
 	// roll the proxies onto it, then drop the old one. Prefer the env var —
 	// a token passed as a flag is visible in `ps`.
 	cmd.Flags().StringArray("sync-token", nil, "join token a remote `nyro proxy` must present to subscribe to config-sync; repeatable so tokens can be rotated without downtime. A join credential, NOT an identity: mTLS is what gives each node a verifiable identity. Prefer NYRO_SERVE_SYNC_TOKEN over the flag, which exposes the value in `ps`")
-	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro ca`); must be set together with --sync-tls-cert/-key")
+	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro tool ca`); must be set together with --sync-tls-cert/-key")
 	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to the server's config-sync server certificate")
 	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to the server's config-sync server private key")
 	cmd.Flags().String("token", "", "Bearer token protecting the /api/v1 management routes")
 	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
 	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s) or postgres://...", defaultDSN()))
-	cmd.Flags().Bool("auto-migrate", false, "let nyro create/alter the schema itself via GORM AutoMigrate (requires DDL rights on --dsn); default false regardless of backend — without it, nyro only verifies the canonical tables exist, and a DBA applies the DDL from `nyro migrate dump`/`diff` (see go/docs/schema/migrations.md)")
+	cmd.Flags().Bool("auto-migrate", false, "let nyro create/alter the schema itself via GORM AutoMigrate (requires DDL rights on --dsn); default false regardless of backend — without it, nyro only verifies the canonical tables exist, and a DBA applies the DDL from `nyro tool migrate dump`/`diff` (see go/docs/schema/migrations.md)")
 	cmd.Flags().Bool("raw-api-keys", false, "store API keys in a recoverable form so they can be re-copied from the WebUI after creation. The raw key is written to the database in plaintext: anyone with read access to the DB obtains working credentials. Default false (hash-only; keys are shown once at creation). Never affects inbound auth (always hash-compared) and is never sent to proxies over config-sync")
 	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for control-plane-local observability parquet data (logs/metrics/traces)")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -133,7 +133,7 @@ func NewCmd() *cobra.Command {
 				return err
 			}
 			if configTLS == nil && len(syncTokens) > 0 {
-				slog.Warn("config-sync is authenticated by join token over an unencrypted connection; the token crosses the network in the clear and can be replayed — prefer mTLS (`nyro ca`) off-host",
+				slog.Warn("config-sync is authenticated by join token over an unencrypted connection; the token crosses the network in the clear and can be replayed — prefer mTLS (`nyro tool ca`) off-host",
 					"listen", grpcAddr)
 			}
 		}
@@ -260,7 +260,7 @@ func NewCmd() *cobra.Command {
 				}
 				defer shutdown()
 				pki.WatchExpiry(ctx, configTLS, configExpiryCheckInterval, func(notAfter time.Time) {
-					slog.Warn("config-sync server certificate expiring soon — run `nyro ca sign-server` and redistribute before it lapses",
+					slog.Warn("config-sync server certificate expiring soon — run `nyro tool ca sign-server` and redistribute before it lapses",
 						"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
 				})
 			}

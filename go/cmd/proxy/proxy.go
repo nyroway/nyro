@@ -41,7 +41,7 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("config", "", "standalone YAML config file (no server/DB needed)")
 	cmd.Flags().String("server", "", "the server's gRPC config-sync endpoint (host:port) for config hot-reload")
 	cmd.Flags().String("sync-token", "", "join token presented to the server when subscribing to config-sync (must match one of the server's --sync-token values). Prefer NYRO_PROXY_SYNC_TOKEN over the flag, which exposes the value in `ps`")
-	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro ca`); must be set together with --sync-tls-cert/-key")
+	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro tool ca`); must be set together with --sync-tls-cert/-key")
 	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to this proxy's client certificate")
 	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to this proxy's client private key")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -81,7 +81,7 @@ func NewCmd() *cobra.Command {
 				return err
 			}
 			if configTLS == nil && syncToken != "" {
-				slog.Warn("config-sync join token is sent over an unencrypted connection; it crosses the network in the clear and can be replayed — prefer mTLS (`nyro ca`) off-host",
+				slog.Warn("config-sync join token is sent over an unencrypted connection; it crosses the network in the clear and can be replayed — prefer mTLS (`nyro tool ca`) off-host",
 					"server", configSyncAddr)
 			}
 		}

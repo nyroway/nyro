@@ -153,7 +153,7 @@ func Build(ctx context.Context, opts Options) (*proxy.Gateway, *ObsManager, erro
 		// Only meaningful for a real TLS dial; WatchExpiry no-ops on a nil
 		// config, which is what the in-process channel always passes.
 		pki.WatchExpiry(ctx, opts.SyncTLS, certExpiryCheckInterval, func(notAfter time.Time) {
-			slog.Warn("config-sync client certificate expiring soon — run `nyro ca sign-proxy` and redistribute before it lapses",
+			slog.Warn("config-sync client certificate expiring soon — run `nyro tool ca sign-proxy` and redistribute before it lapses",
 				"not_after", notAfter, "remaining", time.Until(notAfter).Round(time.Hour))
 		})
 		return gw, mgr, nil

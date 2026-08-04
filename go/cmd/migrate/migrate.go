@@ -1,10 +1,10 @@
-// Package migrate implements the `nyro migrate` subcommand group: render and
+// Package migrate implements the `nyro tool migrate` subcommand group: render and
 // diff the canonical GORM schema (internal/storage/model) into plain SQL, for
 // operators who apply schema changes by hand (no runtime DDL rights). It only
 // depends on GORM — see internal/schemadump.
 //
-//   - `nyro migrate dump`: full CREATE DDL for a fresh database.
-//   - `nyro migrate diff`: incremental DDL to bring an existing schema up to
+//   - `nyro tool migrate dump`: full CREATE DDL for a fresh database.
+//   - `nyro tool migrate diff`: incremental DDL to bring an existing schema up to
 //     the models.
 //
 // Automatic migration (GORM AutoMigrate) is the other path — `nyro
@@ -24,7 +24,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/storage/database"
 )
 
-// NewCmd builds the `nyro migrate` command group.
+// NewCmd builds the `nyro tool migrate` command group.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate",

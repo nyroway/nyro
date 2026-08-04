@@ -42,7 +42,7 @@ the clear to any client that connects.
 
 Fix by either:
   - set --sync-token (or NYRO_SERVE_SYNC_TOKEN) to require a join credential, or
-  - configure mTLS with --sync-tls-ca/-cert/-key (see `+"`nyro ca`"+`)
+  - configure mTLS with --sync-tls-ca/-cert/-key (see `+"`nyro tool ca`"+`)
 Or bind --sync-listen to a loopback address`, addr)
 }
 
@@ -63,7 +63,7 @@ credentials in the clear over this network path.
 
 Fix by either:
   - set --sync-token (or NYRO_PROXY_SYNC_TOKEN) to match the server's join credential, or
-  - configure mTLS with --sync-tls-ca/-cert/-key (see `+"`nyro ca`"+`)
+  - configure mTLS with --sync-tls-ca/-cert/-key (see `+"`nyro tool ca`"+`)
 Or point --server at a loopback address`, target)
 }
 

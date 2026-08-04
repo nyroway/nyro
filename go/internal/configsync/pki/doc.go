@@ -8,7 +8,7 @@
 // certificate per proxy (a SPIFFE URI SAN carrying the node identity,
 // spiffe://nyro/proxy/<node-id>). Server and proxy load these at runtime via
 // LoadServerTLS/LoadClientTLS from three explicit file paths — there is no
-// directory-scanning or auto-discovery at runtime; only the offline `nyro ca`
+// directory-scanning or auto-discovery at runtime; only the offline `nyro tool ca`
 // commands write to a conventional directory.
 //
 // Everything in this package is pure (reads/writes only the paths passed in)
