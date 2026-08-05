@@ -198,6 +198,152 @@ func TestLogQueryUsesEffectiveTimeFallbackAndKeysetCursor(t *testing.T) {
 	}
 }
 
+func TestLogQueryFiltersIndexedAttributesWithOffsetAndTotal(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t, observesqlite.Options{
+		RetentionInterval: -1,
+		IndexedLogAttributes: []observe.AttributeIndex{
+			{Key: "nyro.upstream.id", Type: observe.AttributeString},
+			{Key: "nyro.route.model", Type: observe.AttributeString},
+			{Key: "http.response.status_code", Type: observe.AttributeInt64},
+		},
+	})
+	receivedAt := time.Unix(1_800_000_400, 0)
+	request := &collectlogs.ExportLogsServiceRequest{ResourceLogs: []*logsv1.ResourceLogs{{
+		ScopeLogs: []*logsv1.ScopeLogs{{LogRecords: []*logsv1.LogRecord{
+			indexedLog(receivedAt.Add(-time.Second), "newest", "upstream-a", "route-a", 500),
+			indexedLog(receivedAt.Add(-2*time.Second), "middle", "upstream-b", "route-a", 429),
+			indexedLog(receivedAt.Add(-3*time.Second), "oldest", "upstream-a", "route-a", 404),
+		}}},
+	}}}
+	if err := store.Append(ctx, []observe.ExportRequest{{ReceivedAt: receivedAt, Logs: request}}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	upstream := "upstream-a"
+	model := "route-a"
+	statusMin := int64(400)
+	page, err := store.QueryLogs(ctx, observe.LogQuery{
+		Attributes: []observe.AttributeFilter{
+			{Key: "nyro.upstream.id", StringEquals: &upstream},
+			{Key: "nyro.route.model", StringEquals: &model},
+			{Key: "http.response.status_code", IntMin: &statusMin},
+		},
+		Limit:        1,
+		Offset:       1,
+		IncludeTotal: true,
+	})
+	if err != nil {
+		t.Fatalf("QueryLogs() error = %v", err)
+	}
+	if page.Total != 2 {
+		t.Fatalf("QueryLogs() total = %d, want 2", page.Total)
+	}
+	if len(page.Records) != 1 || page.Records[0].Record.GetBody().GetStringValue() != "oldest" {
+		t.Fatalf("QueryLogs() records = %#v, want oldest", page.Records)
+	}
+
+	statusMax := int64(499)
+	rangePage, err := store.QueryLogs(ctx, observe.LogQuery{Attributes: []observe.AttributeFilter{{
+		Key: "http.response.status_code", IntMin: &statusMin, IntMax: &statusMax,
+	}}})
+	if err != nil {
+		t.Fatalf("range QueryLogs() error = %v", err)
+	}
+	if len(rangePage.Records) != 2 {
+		t.Fatalf("range QueryLogs() record count = %d, want 2", len(rangePage.Records))
+	}
+}
+
+func TestLogQueryRejectsUnindexedAttributeAndCursorOffsetCombination(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t, observesqlite.Options{RetentionInterval: -1})
+	value := "upstream-a"
+	_, err := store.QueryLogs(ctx, observe.LogQuery{Attributes: []observe.AttributeFilter{{
+		Key: "nyro.upstream.id", StringEquals: &value,
+	}}})
+	if !errors.Is(err, observe.ErrUnindexedAttribute) {
+		t.Fatalf("QueryLogs() error = %v, want ErrUnindexedAttribute", err)
+	}
+	_, err = store.QueryLogs(ctx, observe.LogQuery{Cursor: "cursor", Offset: 1})
+	if !errors.Is(err, observe.ErrInvalidQuery) {
+		t.Fatalf("QueryLogs() cursor+offset error = %v, want ErrInvalidQuery", err)
+	}
+}
+
+func TestNewLogAttributeIndexBackfillsAndPersistsAcrossRestarts(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbsqlite.Open(ctx, dbsqlite.Options{Path: filepath.Join(t.TempDir(), "observe.db")})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	receivedAt := time.Unix(1_800_000_500, 0)
+
+	first, err := observesqlite.New(ctx, db, observesqlite.Options{RetentionInterval: -1})
+	if err != nil {
+		t.Fatalf("new first store: %v", err)
+	}
+	if err := first.Append(ctx, []observe.ExportRequest{{ReceivedAt: receivedAt, Logs: logsWithIndexedID(receivedAt, "before", "log-1")}}); err != nil {
+		t.Fatalf("append before index: %v", err)
+	}
+	if err := first.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown first store: %v", err)
+	}
+
+	second, err := observesqlite.New(ctx, db, observesqlite.Options{
+		RetentionInterval:    -1,
+		IndexedLogAttributes: []observe.AttributeIndex{{Key: "nyro.log.id", Type: observe.AttributeString}},
+	})
+	if err != nil {
+		t.Fatalf("new second store: %v", err)
+	}
+	id := "log-1"
+	page, err := second.QueryLogs(ctx, observe.LogQuery{Attributes: []observe.AttributeFilter{{Key: "nyro.log.id", StringEquals: &id}}})
+	if err != nil || len(page.Records) != 1 || page.Records[0].Record.GetBody().GetStringValue() != "before" {
+		t.Fatalf("backfilled query = %#v, err = %v", page, err)
+	}
+	if err := second.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown second store: %v", err)
+	}
+
+	third, err := observesqlite.New(ctx, db, observesqlite.Options{RetentionInterval: -1})
+	if err != nil {
+		t.Fatalf("new third store: %v", err)
+	}
+	t.Cleanup(func() { _ = third.Shutdown(context.Background()) })
+	if err := third.Append(ctx, []observe.ExportRequest{{ReceivedAt: receivedAt.Add(time.Second), Logs: logsWithIndexedID(receivedAt.Add(time.Second), "after", "log-2")}}); err != nil {
+		t.Fatalf("append after restart: %v", err)
+	}
+	id = "log-2"
+	page, err = third.QueryLogs(ctx, observe.LogQuery{Attributes: []observe.AttributeFilter{{Key: "nyro.log.id", StringEquals: &id}}})
+	if err != nil || len(page.Records) != 1 || page.Records[0].Record.GetBody().GetStringValue() != "after" {
+		t.Fatalf("persisted index query = %#v, err = %v", page, err)
+	}
+}
+
+func indexedLog(at time.Time, body, upstream, model string, status int64) *logsv1.LogRecord {
+	return &logsv1.LogRecord{
+		TimeUnixNano: uint64(at.UnixNano()),
+		Body:         stringValue(body),
+		Attributes: []*commonv1.KeyValue{
+			{Key: "nyro.upstream.id", Value: stringValue(upstream)},
+			{Key: "nyro.route.model", Value: stringValue(model)},
+			{Key: "http.response.status_code", Value: &commonv1.AnyValue{Value: &commonv1.AnyValue_IntValue{IntValue: status}}},
+		},
+	}
+}
+
+func logsWithIndexedID(at time.Time, body, id string) *collectlogs.ExportLogsServiceRequest {
+	return &collectlogs.ExportLogsServiceRequest{ResourceLogs: []*logsv1.ResourceLogs{{
+		ScopeLogs: []*logsv1.ScopeLogs{{LogRecords: []*logsv1.LogRecord{{
+			TimeUnixNano: uint64(at.UnixNano()),
+			Body:         stringValue(body),
+			Attributes:   []*commonv1.KeyValue{{Key: "nyro.log.id", Value: stringValue(id)}},
+		}}}},
+	}}}
+}
+
 func stringValue(value string) *commonv1.AnyValue {
 	return &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: value}}
 }

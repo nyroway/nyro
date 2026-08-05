@@ -61,6 +61,12 @@ func decodeCursor(cursor string) (int64, int64, error) {
 
 // QueryLogs returns logs in descending effective-time order.
 func (s *Store) QueryLogs(ctx context.Context, query observe.LogQuery) (observe.LogPage, error) {
+	if query.Offset < 0 {
+		return observe.LogPage{}, fmt.Errorf("%w: log offset cannot be negative", observe.ErrInvalidQuery)
+	}
+	if query.Cursor != "" && query.Offset > 0 {
+		return observe.LogPage{}, fmt.Errorf("%w: log cursor and offset are mutually exclusive", observe.ErrInvalidQuery)
+	}
 	limit := normalizeLimit(query.Limit)
 	var sqlText strings.Builder
 	sqlText.WriteString(`
@@ -94,6 +100,16 @@ WHERE 1 = 1`)
 		sqlText.WriteString(` AND i.span_id = ?`)
 		args = append(args, query.SpanID)
 	}
+	if err := s.appendLogAttributeFilters(&sqlText, &args, query.Attributes); err != nil {
+		return observe.LogPage{}, err
+	}
+	var total int64
+	if query.IncludeTotal {
+		countSQL := `SELECT COUNT(*) FROM (` + sqlText.String() + `) AS matched_logs`
+		if err := s.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
+			return observe.LogPage{}, fmt.Errorf("observe sqlite: count logs: %w", err)
+		}
+	}
 	if query.Cursor != "" {
 		timestamp, id, err := decodeCursor(query.Cursor)
 		if err != nil {
@@ -104,6 +120,10 @@ WHERE 1 = 1`)
 	}
 	sqlText.WriteString(` ORDER BY i.effective_time_ns DESC, i.id DESC LIMIT ?`)
 	args = append(args, limit+1)
+	if query.Offset > 0 {
+		sqlText.WriteString(` OFFSET ?`)
+		args = append(args, query.Offset)
+	}
 
 	rows, err := s.db.QueryContext(ctx, sqlText.String(), args...)
 	if err != nil {
@@ -134,7 +154,7 @@ WHERE 1 = 1`)
 		indexed = indexed[:limit]
 	}
 	decoded := make(map[int64]*collectlogs.ExportLogsServiceRequest)
-	page := observe.LogPage{Records: make([]observe.LogRecord, 0, len(indexed))}
+	page := observe.LogPage{Records: make([]observe.LogRecord, 0, len(indexed)), Total: total}
 	for _, row := range indexed {
 		request := decoded[row.batchID]
 		if request == nil {
@@ -164,6 +184,55 @@ WHERE 1 = 1`)
 		page.NextCursor = page.Records[len(page.Records)-1].Cursor
 	}
 	return page, nil
+}
+
+func (s *Store) appendLogAttributeFilters(
+	sqlText *strings.Builder,
+	args *[]any,
+	filters []observe.AttributeFilter,
+) error {
+	for _, filter := range filters {
+		valueType, ok := s.indexedLogAttributes[filter.Key]
+		if !ok {
+			return fmt.Errorf("%w: %q", observe.ErrUnindexedAttribute, filter.Key)
+		}
+		sqlText.WriteString(` AND EXISTS (
+SELECT 1 FROM otlp_log_attributes attribute
+WHERE attribute.log_id = i.id AND attribute.key = ?`)
+		*args = append(*args, filter.Key)
+		switch valueType {
+		case observe.AttributeString:
+			if filter.StringEquals == nil || filter.IntEquals != nil || filter.IntMin != nil || filter.IntMax != nil {
+				return fmt.Errorf("%w: attribute %q requires one string equality value", observe.ErrInvalidQuery, filter.Key)
+			}
+			sqlText.WriteString(` AND attribute.string_value = ?`)
+			*args = append(*args, *filter.StringEquals)
+		case observe.AttributeInt64:
+			if filter.StringEquals != nil || (filter.IntEquals == nil && filter.IntMin == nil && filter.IntMax == nil) {
+				return fmt.Errorf("%w: attribute %q requires an integer equality or range", observe.ErrInvalidQuery, filter.Key)
+			}
+			if filter.IntEquals != nil && (filter.IntMin != nil || filter.IntMax != nil) {
+				return fmt.Errorf("%w: attribute %q cannot combine equality and range", observe.ErrInvalidQuery, filter.Key)
+			}
+			if filter.IntMin != nil && filter.IntMax != nil && *filter.IntMin > *filter.IntMax {
+				return fmt.Errorf("%w: attribute %q minimum exceeds maximum", observe.ErrInvalidQuery, filter.Key)
+			}
+			if filter.IntEquals != nil {
+				sqlText.WriteString(` AND attribute.int_value = ?`)
+				*args = append(*args, *filter.IntEquals)
+			}
+			if filter.IntMin != nil {
+				sqlText.WriteString(` AND attribute.int_value >= ?`)
+				*args = append(*args, *filter.IntMin)
+			}
+			if filter.IntMax != nil {
+				sqlText.WriteString(` AND attribute.int_value <= ?`)
+				*args = append(*args, *filter.IntMax)
+			}
+		}
+		sqlText.WriteString(`)`)
+	}
+	return nil
 }
 
 // QuerySpans returns spans in descending effective-time order.
