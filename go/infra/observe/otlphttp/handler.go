@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/infra/observe"
-	"github.com/nyroway/nyro/go/infra/observe/internal/queue"
 	collectlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collecttrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -65,11 +64,11 @@ func (r *Receiver) serveHTTP(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	export.ReceivedAt = time.Now()
-	if err := r.queue.Push(queue.Item{Value: export, Bytes: len(payload)}); err != nil {
+	if err := r.queue.push(queuedExport{request: export, bytes: len(payload)}); err != nil {
 		r.rejected.Add(1)
 		writer.Header().Set("Retry-After", "1")
 		message := "OTLP receiver queue is unavailable"
-		if errors.Is(err, queue.ErrFull) {
+		if errors.Is(err, errQueueFull) {
 			message = "OTLP receiver queue is full"
 		}
 		r.writeError(writer, http.StatusServiceUnavailable, codes.Unavailable, message)

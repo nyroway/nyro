@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/infra/observe"
-	"github.com/nyroway/nyro/go/infra/observe/internal/queue"
 )
 
 const (
@@ -44,7 +43,7 @@ type Stats struct {
 // Receiver accepts OTLP/HTTP protobuf requests and asynchronously persists them.
 type Receiver struct {
 	store           observe.Store
-	queue           *queue.Queue
+	queue           *exportQueue
 	maxRequestBytes int64
 	flushInterval   time.Duration
 	flushBatch      int
@@ -81,7 +80,7 @@ func New(opts Options) (*Receiver, error) {
 	if opts.MaxRequestBytes < 0 || opts.QueueMaxBytes < 0 || opts.QueueMaxBatches < 0 || opts.FlushInterval < 0 || opts.FlushBatch < 0 {
 		return nil, errors.New("otlphttp: limits and intervals must be positive")
 	}
-	q, err := queue.New(opts.QueueMaxBatches, opts.QueueMaxBytes)
+	q, err := newExportQueue(opts.QueueMaxBatches, opts.QueueMaxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +99,7 @@ func (r *Receiver) Handler() http.Handler { return http.HandlerFunc(r.serveHTTP)
 
 // Stats returns counters and current queue occupancy.
 func (r *Receiver) Stats() Stats {
-	batches, bytes := r.queue.Size()
+	batches, bytes := r.queue.size()
 	return Stats{
 		AcceptedBatches: r.acceptedBatches.Load(), AcceptedBytes: r.acceptedBytes.Load(),
 		PersistedBatches: r.persisted.Load(), FailedBatches: r.failed.Load(), RejectedBatches: r.rejected.Load(),
@@ -110,7 +109,7 @@ func (r *Receiver) Stats() Stats {
 
 // Shutdown stops accepting work, drains queued exports, and does not close Store.
 func (r *Receiver) Shutdown(ctx context.Context) error {
-	r.stop.Do(r.queue.Close)
+	r.stop.Do(r.queue.close)
 	select {
 	case <-r.done:
 		return nil
