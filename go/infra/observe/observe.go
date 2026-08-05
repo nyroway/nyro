@@ -28,6 +28,8 @@ const (
 
 var (
 	ErrInvalidExport       = errors.New("observe: export request must contain exactly one signal")
+	ErrInvalidQuery        = errors.New("observe: invalid query")
+	ErrUnindexedAttribute  = errors.New("observe: attribute is not indexed")
 	ErrTimestampOutOfRange = errors.New("observe: timestamp exceeds signed nanosecond range")
 )
 
@@ -67,15 +69,41 @@ type TimeRange struct {
 	End   time.Time
 }
 
+// AttributeType is the scalar representation stored in an attribute index.
+type AttributeType string
+
+const (
+	AttributeString AttributeType = "string"
+	AttributeInt64  AttributeType = "int64"
+)
+
+// AttributeIndex registers a log-record attribute for indexed queries.
+type AttributeIndex struct {
+	Key  string
+	Type AttributeType
+}
+
+// AttributeFilter applies one exact string or integer equality/range match.
+type AttributeFilter struct {
+	Key          string
+	StringEquals *string
+	IntEquals    *int64
+	IntMin       *int64
+	IntMax       *int64
+}
+
 // LogQuery filters OTLP log records.
 type LogQuery struct {
 	TimeRange
-	Service     string
-	MinSeverity int32
-	TraceID     []byte
-	SpanID      []byte
-	Limit       int
-	Cursor      string
+	Service      string
+	MinSeverity  int32
+	TraceID      []byte
+	SpanID       []byte
+	Attributes   []AttributeFilter
+	Limit        int
+	Offset       int
+	IncludeTotal bool
+	Cursor       string
 }
 
 // SpanQuery filters OTLP spans.
@@ -128,6 +156,7 @@ type MetricRecord struct {
 type LogPage struct {
 	Records    []LogRecord
 	NextCursor string
+	Total      int64
 }
 
 type SpanPage struct {

@@ -15,7 +15,7 @@ import (
 	"github.com/nyroway/nyro/go/infra/observe"
 )
 
-func indexLogs(ctx context.Context, tx *sql.Tx, batchID, receivedAt int64, request *collectlogs.ExportLogsServiceRequest) error {
+func (s *Store) indexLogs(ctx context.Context, tx *sql.Tx, batchID, receivedAt int64, request *collectlogs.ExportLogsServiceRequest) error {
 	for resourceIndex, resourceLogs := range request.GetResourceLogs() {
 		service := serviceName(resourceLogs.GetResource().GetAttributes())
 		for scopeIndex, scopeLogs := range resourceLogs.GetScopeLogs() {
@@ -33,7 +33,7 @@ func indexLogs(ctx context.Context, tx *sql.Tx, batchID, receivedAt int64, reque
 				if effective == 0 {
 					effective = receivedAt
 				}
-				_, err = tx.ExecContext(ctx, `
+				result, err := tx.ExecContext(ctx, `
 INSERT INTO otlp_log_index(
     batch_id, resource_idx, scope_idx, record_idx, effective_time_ns,
     service_name, severity_number, trace_id, span_id
@@ -41,6 +41,13 @@ INSERT INTO otlp_log_index(
 `, batchID, resourceIndex, scopeIndex, recordIndex, effective, service,
 					int32(record.GetSeverityNumber()), nullBytes(record.GetTraceId()), nullBytes(record.GetSpanId()))
 				if err != nil {
+					return err
+				}
+				logID, err := result.LastInsertId()
+				if err != nil {
+					return fmt.Errorf("observe sqlite: log index id: %w", err)
+				}
+				if err := indexLogAttributes(ctx, tx, logID, record.GetAttributes(), s.indexedLogAttributes); err != nil {
 					return err
 				}
 			}

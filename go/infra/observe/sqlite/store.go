@@ -14,27 +14,29 @@ import (
 	"github.com/nyroway/nyro/go/infra/observe"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 // Options configures retention and time for the Observe SQLite store.
 type Options struct {
-	LogsRetention     time.Duration
-	MetricsRetention  time.Duration
-	TracesRetention   time.Duration
-	RetentionInterval time.Duration
-	RetentionBatch    int
-	Now               func() time.Time
+	LogsRetention        time.Duration
+	MetricsRetention     time.Duration
+	TracesRetention      time.Duration
+	RetentionInterval    time.Duration
+	RetentionBatch       int
+	IndexedLogAttributes []observe.AttributeIndex
+	Now                  func() time.Time
 }
 
 // Store persists OTLP batches and signal-specific indexes.
 type Store struct {
-	db        *sql.DB
-	now       func() time.Time
-	retention retentionOptions
-	write     sync.Mutex
-	cancel    context.CancelFunc
-	done      chan struct{}
-	stop      sync.Once
+	db                   *sql.DB
+	now                  func() time.Time
+	retention            retentionOptions
+	indexedLogAttributes map[string]observe.AttributeType
+	write                sync.Mutex
+	cancel               context.CancelFunc
+	done                 chan struct{}
+	stop                 sync.Once
 }
 
 // New migrates the Observe schema without taking ownership of db.
@@ -49,7 +51,14 @@ func New(ctx context.Context, db *sql.DB, opts Options) (*Store, error) {
 	if now == nil {
 		now = time.Now
 	}
-	s := &Store{db: db, now: now, retention: normalizeRetention(opts), done: make(chan struct{})}
+	indexed, err := registerLogAttributeIndexes(ctx, db, opts.IndexedLogAttributes)
+	if err != nil {
+		return nil, err
+	}
+	s := &Store{
+		db: db, now: now, retention: normalizeRetention(opts),
+		indexedLogAttributes: indexed, done: make(chan struct{}),
+	}
 	if opts.RetentionInterval < 0 {
 		close(s.done)
 	} else {
@@ -88,6 +97,19 @@ CREATE TABLE IF NOT EXISTS otlp_log_index (
 CREATE INDEX IF NOT EXISTS otlp_logs_time ON otlp_log_index(effective_time_ns DESC, id DESC);
 CREATE INDEX IF NOT EXISTS otlp_logs_service_time ON otlp_log_index(service_name, effective_time_ns DESC, id DESC);
 CREATE INDEX IF NOT EXISTS otlp_logs_trace_time ON otlp_log_index(trace_id, effective_time_ns DESC, id DESC);
+CREATE TABLE IF NOT EXISTS otlp_log_attribute_definitions (
+    key TEXT PRIMARY KEY,
+    value_type TEXT NOT NULL CHECK(value_type IN ('string', 'int64'))
+);
+CREATE TABLE IF NOT EXISTS otlp_log_attributes (
+    log_id INTEGER NOT NULL REFERENCES otlp_log_index(id) ON DELETE CASCADE,
+    key TEXT NOT NULL REFERENCES otlp_log_attribute_definitions(key),
+    string_value TEXT,
+    int_value INTEGER,
+    PRIMARY KEY(log_id, key)
+);
+CREATE INDEX IF NOT EXISTS otlp_log_attributes_string ON otlp_log_attributes(key, string_value, log_id);
+CREATE INDEX IF NOT EXISTS otlp_log_attributes_int ON otlp_log_attributes(key, int_value, log_id);
 CREATE TABLE IF NOT EXISTS otlp_span_index (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     batch_id INTEGER NOT NULL REFERENCES otlp_batches(id) ON DELETE CASCADE,
@@ -125,6 +147,8 @@ CREATE INDEX IF NOT EXISTS otlp_metrics_name_time ON otlp_metric_index(metric_na
 CREATE INDEX IF NOT EXISTS otlp_metrics_service_time ON otlp_metric_index(service_name, effective_time_ns DESC, id DESC);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, CAST(strftime('%s','now') AS INTEGER) * 1000);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (2, CAST(strftime('%s','now') AS INTEGER) * 1000);
 `
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("observe sqlite: create migration table: %w", err)
@@ -198,7 +222,7 @@ func (s *Store) appendOne(ctx context.Context, tx *sql.Tx, request observe.Expor
 	}
 	switch signal {
 	case observe.SignalLogs:
-		return indexLogs(ctx, tx, batchID, receivedAtNS, request.Logs)
+		return s.indexLogs(ctx, tx, batchID, receivedAtNS, request.Logs)
 	case observe.SignalMetrics:
 		return indexMetrics(ctx, tx, batchID, receivedAtNS, request.Metrics)
 	case observe.SignalTraces:
