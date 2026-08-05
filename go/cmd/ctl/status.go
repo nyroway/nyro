@@ -11,13 +11,13 @@ import (
 )
 
 type statusResp struct {
-	Status         string `json:"status"`
-	Version        string `json:"version"`
-	UpstreamCount  int    `json:"upstream_count"`
-	RouteCount     int    `json:"route_count"`
-	ConsumerCount  int    `json:"consumer_count"`
-	Backend        string `json:"backend"`
-	Writable       bool   `json:"writable"`
+	Status        string `json:"status"`
+	Version       string `json:"version"`
+	UpstreamCount int    `json:"upstream_count"`
+	RouteCount    int    `json:"route_count"`
+	ConsumerCount int    `json:"consumer_count"`
+	Backend       string `json:"backend"`
+	Writable      bool   `json:"writable"`
 }
 
 // StatusCmd returns the nyro status subcommand.
@@ -42,14 +42,14 @@ func StatusCmd() *cobra.Command {
 				return fmt.Errorf("decode status response: %w", err)
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 4, ' ', 0)
-			fmt.Fprintf(w, "Host\t%s\n", cfg.ServerAddr)
-			fmt.Fprintf(w, "Status\t%s\n", resp.Status)
-			fmt.Fprintf(w, "Version\t%s\n", resp.Version)
-			fmt.Fprintf(w, "Providers\t%d\n", resp.UpstreamCount)
-			fmt.Fprintf(w, "Models\t%d\n", resp.RouteCount)
-			fmt.Fprintf(w, "Consumers\t%d\n", resp.ConsumerCount)
-			fmt.Fprintf(w, "Backend\t%s\n", resp.Backend)
-			fmt.Fprintf(w, "Writable\t%v\n", resp.Writable)
+			_, _ = fmt.Fprintf(w, "Host\t%s\n", cfg.ServerAddr)
+			_, _ = fmt.Fprintf(w, "Status\t%s\n", resp.Status)
+			_, _ = fmt.Fprintf(w, "Version\t%s\n", resp.Version)
+			_, _ = fmt.Fprintf(w, "Providers\t%d\n", resp.UpstreamCount)
+			_, _ = fmt.Fprintf(w, "Models\t%d\n", resp.RouteCount)
+			_, _ = fmt.Fprintf(w, "Consumers\t%d\n", resp.ConsumerCount)
+			_, _ = fmt.Fprintf(w, "Backend\t%s\n", resp.Backend)
+			_, _ = fmt.Fprintf(w, "Writable\t%v\n", resp.Writable)
 			return w.Flush()
 		},
 	}

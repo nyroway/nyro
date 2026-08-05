@@ -80,13 +80,13 @@ func providerLsCmd() *cobra.Command {
 				cols := [5]string{r.name, r.id, r.provider, r.enabled, r.updated}
 				for j, c := range cols {
 					if j == len(cols)-1 {
-						fmt.Fprint(os.Stdout, c)
+						_, _ = fmt.Fprint(os.Stdout, c)
 					} else {
 						w := runewidth.StringWidth(c)
-						fmt.Fprint(os.Stdout, c+strings.Repeat(" ", widths[j]-w+pad))
+						_, _ = fmt.Fprint(os.Stdout, c+strings.Repeat(" ", widths[j]-w+pad))
 					}
 				}
-				fmt.Fprintln(os.Stdout)
+				_, _ = fmt.Fprintln(os.Stdout)
 			}
 			return nil
 		},

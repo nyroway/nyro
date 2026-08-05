@@ -19,10 +19,10 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/admin"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
-	"github.com/nyroway/nyro/go/internal/defaults"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/dataplane"
+	"github.com/nyroway/nyro/go/internal/defaults"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
 	"github.com/nyroway/nyro/go/internal/proxy"
