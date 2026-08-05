@@ -24,7 +24,7 @@ func TestGoRedisConnectsWithRESP2AndRESP3(t *testing.T) {
 
 			ctx := context.Background()
 			client := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: protocol})
-			defer client.Close()
+			t.Cleanup(func() { _ = client.Close() })
 			if got, err := client.Ping(ctx).Result(); err != nil || got != "PONG" {
 				t.Fatalf("Ping() = %q, %v", got, err)
 			}
@@ -63,7 +63,7 @@ func TestGoRedisPasswordAndTransactionPipeline(t *testing.T) {
 		t.Fatalf("ParseURL() error = %v", err)
 	}
 	client := goredis.NewClient(options)
-	defer client.Close()
+	t.Cleanup(func() { _ = client.Close() })
 	pipe := client.TxPipeline()
 	pipe.Set(ctx, "a", "1", 0)
 	pipe.Incr(ctx, "a")
@@ -84,7 +84,7 @@ func TestGoRedisStringAndTTLCommandSubset(t *testing.T) {
 	defer shutdown()
 	ctx := context.Background()
 	client := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: 3})
-	defer client.Close()
+	t.Cleanup(func() { _ = client.Close() })
 
 	if ok, err := client.SetNX(ctx, "a", "1", time.Minute).Result(); err != nil || !ok {
 		t.Fatalf("SetNX() = %v, %v", ok, err)
@@ -121,7 +121,7 @@ func TestRedisRejectsUnsupportedAndInvalidTransactionalCommands(t *testing.T) {
 	defer shutdown()
 	ctx := context.Background()
 	client := goredis.NewClient(&goredis.Options{Addr: addr})
-	defer client.Close()
+	t.Cleanup(func() { _ = client.Close() })
 
 	if err := client.Do(ctx, "HGET", "hash", "field").Err(); err == nil || !strings.Contains(err.Error(), "unknown command") {
 		t.Fatalf("unsupported command error = %v", err)
@@ -150,7 +150,7 @@ func TestRedisRejectsRelativeExpirationThatOverflowsDuration(t *testing.T) {
 	defer shutdown()
 	ctx := context.Background()
 	client := goredis.NewClient(&goredis.Options{Addr: addr})
-	defer client.Close()
+	t.Cleanup(func() { _ = client.Close() })
 
 	const overflowingSeconds = int64(20_000_000_000)
 	if err := client.Do(ctx, "SET", "set-key", "value", "EX", overflowingSeconds).Err(); err == nil {
