@@ -31,6 +31,18 @@ until parity is reached (P0–P6 migration plan).
 | `internal/logging/` | `logging/` | async request-log collector + retention |
 | `nyro.go` | `src-server/` + `crates/nyro-tools/` | unified CLI: `nyro proxy` (data plane), `nyro serve` (control plane), `nyro tool ca`, and `nyro tool migrate` |
 
+Reusable, application-independent infrastructure lives under `infra/`:
+
+| Path | Responsibility |
+|---|---|
+| `infra/database/sqlite/` | caller-owned, pure-Go SQLite connection policy; no application schema or migration ownership |
+| `infra/state/` | binary-safe String/TTL semantic API, SQLite persistence, and a limited RESP2/RESP3 Redis-compatible server |
+| `infra/observe/` | lossless OTLP batch persistence, indexed SQLite queries, retention, and an OTLP/HTTP protobuf receiver |
+
+State and Observe are standalone library modules in this phase. They are not
+wired into Nyro commands or configuration yet, and use separate `state.db` and
+`observe.db` files when embedded.
+
 ## Library mapping (Rust → Go)
 
 | Rust | Go | Notes |
@@ -46,7 +58,9 @@ until parity is reached (P0–P6 migration plan).
 **SQLite without CGO:** GORM's default sqlite driver (`gorm.io/driver/sqlite`)
 pulls `mattn/go-sqlite3` (CGO). To keep the build pure-Go (no C toolchain,
 clean cross-compile), use `github.com/glebarez/sqlite` — a GORM driver backed
-by `modernc.org/sqlite`. Added with the storage layer in P3.
+by `modernc.org/sqlite`. Reusable infra modules use the same pure-Go
+`modernc.org/sqlite` driver directly through `database/sql` and do not depend
+on GORM.
 
 ## Build & run
 
