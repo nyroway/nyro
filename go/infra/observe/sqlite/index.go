@@ -7,11 +7,12 @@ import (
 	"math"
 	"time"
 
-	"github.com/nyroway/nyro/go/infra/observe"
 	collectlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collecttrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	metricsv1 "go.opentelemetry.io/proto/otlp/metrics/v1"
+
+	"github.com/nyroway/nyro/go/infra/observe"
 )
 
 func indexLogs(ctx context.Context, tx *sql.Tx, batchID, receivedAt int64, request *collectlogs.ExportLogsServiceRequest) error {
