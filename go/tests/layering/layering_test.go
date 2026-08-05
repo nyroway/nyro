@@ -32,12 +32,14 @@ const (
 // forces a deliberate layering decision rather than silently defaulting.
 var packageLayer = map[string]int{
 	// Layer 0 — foundation.
+	"internal/defaults": layerFoundation,
 	"internal/pipeline": layerFoundation,
 	"internal/quota":    layerFoundation,
 	"internal/provider": layerFoundation,
 	"internal/version":  layerFoundation,
 	"internal/webutil":  layerFoundation,
 	"internal/envflag":  layerFoundation,
+	"internal/state":    layerFoundation,
 
 	// Layer 1 — data.
 	"internal/storage":                     layerData,

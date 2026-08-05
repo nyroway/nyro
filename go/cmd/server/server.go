@@ -22,9 +22,11 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/dataplane"
+	"github.com/nyroway/nyro/go/internal/defaults"
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/observability/parquet"
 	"github.com/nyroway/nyro/go/internal/proxy"
+	"github.com/nyroway/nyro/go/internal/state"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/webui"
 )
@@ -66,13 +68,13 @@ func NewCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Run the control plane, with an embedded data plane by default",
 	}
-	cmd.Flags().String("listen", "127.0.0.1:19531", "listen address for the control plane")
+	cmd.Flags().String("listen", defaults.ControlPlaneAddr, "listen address for the control plane")
 	// Loopback, unlike a standalone `nyro proxy` (0.0.0.0): the single-binary
 	// default is a local-first workstation install, so the embedded data plane
 	// should not be reachable off-host until an operator says so. A deployment
 	// that fronts nyro with nginx/envoy sets this explicitly, and a container
 	// deployment must (loopback inside a container is unreachable from outside).
-	cmd.Flags().String("proxy-listen", "127.0.0.1:19530", "listen address for the embedded data plane (empty disables it, leaving a control-plane-only node)")
+	cmd.Flags().String("proxy-listen", defaults.DataPlaneAddr, "listen address for the embedded data plane (empty disables it, leaving a control-plane-only node)")
 	// Empty by default: with an embedded data plane the single-node deployment
 	// needs no config-sync port at all, so opening one is an opt-in taken only
 	// when additional `nyro proxy` nodes must subscribe. This stream carries
@@ -118,6 +120,22 @@ func NewCmd() *cobra.Command {
 		if adminToken == "" && !configsync.IsLoopbackListenAddress(addr) {
 			slog.Warn("management API is exposed without --token; unauthenticated clients can access control-plane routes", "listen", addr)
 		}
+
+		// Record resolved listen addresses so CLI commands (nyro status,
+		// nyro provider ls, …) can discover this control plane without a
+		// hard-coded port. Write failures are non-fatal.
+		serverState := state.ServerState{
+			PID:         os.Getpid(),
+			Listen:      addr,
+			ProxyListen: proxyAddr,
+			SyncListen:  grpcAddr,
+			StartedAt:   time.Now(),
+			AdminToken:  adminToken,
+		}
+		if err := state.Write(serverState); err != nil {
+			slog.Warn("failed to write server state", "err", err)
+		}
+		defer state.Remove()
 
 		var configTLS *tls.Config
 		if grpcAddr != "" {
