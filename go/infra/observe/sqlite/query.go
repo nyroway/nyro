@@ -109,7 +109,7 @@ WHERE 1 = 1`)
 	if err != nil {
 		return observe.LogPage{}, fmt.Errorf("observe sqlite: query logs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type indexedLog struct {
 		id, batchID                            int64
@@ -204,7 +204,7 @@ WHERE 1 = 1`)
 	if err != nil {
 		return observe.SpanPage{}, fmt.Errorf("observe sqlite: query spans: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	indexed, err := scanIndexedRecords(rows, limit)
 	if err != nil {
 		return observe.SpanPage{}, fmt.Errorf("observe sqlite: scan spans: %w", err)
@@ -277,7 +277,7 @@ WHERE 1 = 1`)
 	if err != nil {
 		return observe.MetricPage{}, fmt.Errorf("observe sqlite: query metrics: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type indexedMetric struct {
 		id, batchID               int64
 		resourceIndex, scopeIndex int

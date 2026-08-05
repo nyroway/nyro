@@ -39,10 +39,7 @@ func TestJanitorPhysicallyDeletesExpiredRowsInChunks(t *testing.T) {
 	clock.Advance(2 * time.Second)
 
 	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if physicalRowCount(t, db) == 0 {
-			break
-		}
+	for physicalRowCount(t, db) != 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("janitor did not physically remove expired rows")
 		}
