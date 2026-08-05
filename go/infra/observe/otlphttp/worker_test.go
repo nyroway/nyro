@@ -45,15 +45,19 @@ func (s *batchStore) Append(ctx context.Context, requests []observe.ExportReques
 func (s *batchStore) QueryLogs(context.Context, observe.LogQuery) (observe.LogPage, error) {
 	return observe.LogPage{}, nil
 }
+
 func (s *batchStore) QuerySpans(context.Context, observe.SpanQuery) (observe.SpanPage, error) {
 	return observe.SpanPage{}, nil
 }
+
 func (s *batchStore) QueryMetrics(context.Context, observe.MetricQuery) (observe.MetricPage, error) {
 	return observe.MetricPage{}, nil
 }
+
 func (s *batchStore) DeleteBefore(context.Context, observe.Signal, time.Time, int) (int64, error) {
 	return 0, nil
 }
+
 func (s *batchStore) snapshot() []int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

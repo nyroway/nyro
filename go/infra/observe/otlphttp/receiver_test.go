@@ -36,15 +36,19 @@ func (s *recordingStore) Append(_ context.Context, requests []observe.ExportRequ
 func (s *recordingStore) QueryLogs(context.Context, observe.LogQuery) (observe.LogPage, error) {
 	return observe.LogPage{}, nil
 }
+
 func (s *recordingStore) QuerySpans(context.Context, observe.SpanQuery) (observe.SpanPage, error) {
 	return observe.SpanPage{}, nil
 }
+
 func (s *recordingStore) QueryMetrics(context.Context, observe.MetricQuery) (observe.MetricPage, error) {
 	return observe.MetricPage{}, nil
 }
+
 func (s *recordingStore) DeleteBefore(context.Context, observe.Signal, time.Time, int) (int64, error) {
 	return 0, nil
 }
+
 func (s *recordingStore) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

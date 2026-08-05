@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nyroway/nyro/go/infra/observe"
 	collectlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collecttrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/nyroway/nyro/go/infra/observe"
 )
 
 const (

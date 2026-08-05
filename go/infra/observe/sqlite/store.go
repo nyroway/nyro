@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nyroway/nyro/go/infra/observe"
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/nyroway/nyro/go/infra/observe"
 )
 
 const schemaVersion = 1
