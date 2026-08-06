@@ -58,7 +58,7 @@ func (s accessStage) Handle(ex *pipeline.Exchange, next func() error) error {
 	lc, _ := ex.GetExt(observability.ExtLogCtx).(observability.LogCtx)
 	status, msg, release := checkAccess(
 		s.gw.snapshot(), s.gw.Quota, route, ex.R,
-		&ex.ConsumerID, &lc.APIKeyName, &lc.APIKeyPreview,
+		&ex.ConsumerID, &lc.ConsumerKeyName, &lc.ConsumerKeyPreview,
 	)
 	ex.SetExt(observability.ExtLogCtx, lc)
 	if status != 0 {

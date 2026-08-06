@@ -201,7 +201,7 @@ nyro proxy --listen 127.0.0.1:19530 --server 127.0.0.1:19532
 Both ends are on loopback here, so no token is required. Off-host they are —
 see "The non-loopback plaintext gate".
 
-Add `--proxy-listen=` to the server if that node should not serve traffic
+Add `--disable-proxy` to the server if that node should not serve traffic
 itself — a control-plane-only node. The proxy's config source must always be
 selected explicitly (`--server` or `--config`).
 
@@ -291,7 +291,7 @@ nyro serve --listen 10.0.0.12:19531 \
 Use the same shared PostgreSQL DSN on every replica and add complete
 `--sync-tls-*` sets to both replicas and every proxy unless the config-sync
 network is deliberately trusted for plaintext. Each replica also runs its own
-embedded data plane unless given `--proxy-listen=`.
+embedded data plane unless given `--disable-proxy`.
 
 ### Config-sync listener disabled (the default)
 

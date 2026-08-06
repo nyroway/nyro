@@ -1,138 +1,162 @@
 package admin
 
 import (
+	"context"
+	"math"
 	"time"
 
+	"github.com/nyroway/nyro/go/infra/observe"
 	"github.com/nyroway/nyro/go/internal/observability"
-	"github.com/nyroway/nyro/go/internal/observability/parquet"
 )
 
-// parquetLogSource is the LogSource backed by the parquet observability store
-// (observability.Logs). It is the ONLY request-log store after the Phase 4
-// removal of the request_logs table — the dual-write fallback that lived here
-// through Phase 3 is gone.
-type parquetLogSource struct {
-	logs *observability.Logs
+// ObserveSource projects the generic Observe store into Nyro's Admin DTOs.
+type ObserveSource struct {
+	store observe.Store
+	now   func() time.Time
 }
 
-// NewParquetLogSource builds a LogSource that reads parquet files under dir.
-// Exported so cmd/admin can construct the read source.
-func NewParquetLogSource(dir string) LogSource {
-	return &parquetLogSource{logs: observability.NewLogs(dir)}
+// NewObserveSource returns the shared log and stats source for Admin routes.
+func NewObserveSource(store observe.Store) *ObserveSource {
+	return &ObserveSource{store: store, now: time.Now}
 }
 
-func (p *parquetLogSource) Query(q observability.LogQuery) (observability.LogPage, error) {
-	return p.logs.Query(q)
+func stringFilter(key, value string) observe.AttributeFilter {
+	return observe.AttributeFilter{Key: key, StringEquals: &value}
 }
 
-func (p *parquetLogSource) FindByID(id string) (*observability.LogRecord, error) {
-	return p.logs.FindByID(id)
-}
-
-func (p *parquetLogSource) ClearAll() (int64, error) {
-	return p.logs.ClearAll()
-}
-
-// ── /stats/* read source ────────────────────────────────────────────────────
-
-// parquetStatsSource is the StatsSource backed by the metrics parquet store.
-// It is the ONLY stats path after the Phase 4 removal of the request_logs
-// table — the dual-write fallback that lived here through Phase 3 is gone.
-type parquetStatsSource struct {
-	dir string
-}
-
-// NewParquetStatsSource builds a StatsSource that reads metrics parquet under
-// dir. Exported so cmd/admin can construct the read source.
-func NewParquetStatsSource(dir string) StatsSource {
-	return &parquetStatsSource{dir: dir}
-}
-
-// readMetricSamples reads the metrics parquet within the hours window. hours<=0
-// reads everything. The returned cutoff is the per-row nanosecond cutoff (0 when
-// unfiltered) so callers can drop rows whose Ts predates the window (ReadSince
-// only filters at hour-bucket granularity).
-//
-// Unit note: the production receiver writes MetricSample.Ts as unix-nanoseconds
-// (OTLP p.GetTimeUnixNano), so the per-row cutoff MUST be nanoseconds too. A
-// milli cutoff compared against nano Ts is always-true and filters nothing.
-func (p *parquetStatsSource) readMetricSamples(hours int64) ([]observability.MetricSample, int64, error) {
-	var sinceHour int64
-	cutoffNs := int64(0)
-	if hours > 0 {
-		cutoffNs = time.Now().Add(-time.Duration(hours) * time.Hour).UnixNano()
-		// ReadSince compares against the file's hour bucket (the hour's unix-nano,
-		// as parsed from the file name). Align the cutoff down to its hour index
-		// (in nanos) so files whose whole hour is older than the window are
-		// skipped, while the boundary hour (which may contain in-window rows) is
-		// still read.
-		sinceHour = (cutoffNs / int64(time.Hour)) * int64(time.Hour)
+func (s *ObserveSource) Query(ctx context.Context, query observability.LogQuery) (observability.LogPage, error) {
+	limit := int(query.Limit)
+	if limit <= 0 {
+		limit = 50
 	}
-	samples, err := parquet.ReadSince[observability.MetricSample](p.dir, "metrics", sinceHour)
-	if err != nil {
-		return nil, 0, err
+	filters := make([]observe.AttributeFilter, 0, 6)
+	if query.UpstreamID != "" {
+		filters = append(filters, stringFilter("nyro.upstream.id", query.UpstreamID))
 	}
-	if cutoffNs > 0 {
-		filtered := samples[:0]
-		for _, s := range samples {
-			if s.Ts >= cutoffNs {
-				filtered = append(filtered, s)
-			}
+	if query.RouteID != "" {
+		filters = append(filters, stringFilter("nyro.route.id", query.RouteID))
+	}
+	if query.RouteModel != "" {
+		filters = append(filters, stringFilter("nyro.route.model", query.RouteModel))
+	}
+	if query.ConsumerID != "" {
+		filters = append(filters, stringFilter("nyro.consumer.id", query.ConsumerID))
+	}
+	if query.StatusMin != nil || query.StatusMax != nil {
+		filter := observe.AttributeFilter{Key: "http.response.status_code"}
+		if query.StatusMin != nil {
+			value := int64(*query.StatusMin)
+			filter.IntMin = &value
 		}
-		samples = filtered
+		if query.StatusMax != nil {
+			value := int64(*query.StatusMax)
+			filter.IntMax = &value
+		}
+		filters = append(filters, filter)
 	}
-	return samples, cutoffNs, nil
+	page, err := s.store.QueryLogs(ctx, observe.LogQuery{
+		Attributes: filters, Limit: limit, Offset: int(query.Offset), IncludeTotal: true,
+	})
+	if err != nil {
+		return observability.LogPage{}, err
+	}
+	items := make([]observability.LogRecord, 0, len(page.Records))
+	for _, record := range page.Records {
+		items = append(items, observability.LogRecordFromOTLP(record.Record))
+	}
+	return observability.LogPage{Items: items, Total: page.Total}, nil
 }
 
-func (p *parquetStatsSource) StatsOverview(hours int64) (observability.StatsOverview, error) {
-	samples, _, err := p.readMetricSamples(hours)
-	if err != nil {
-		return observability.StatsOverview{}, err
-	}
-	ov, _, _, _, err := observability.AggregateStats(samples, hours)
-	return ov, err
-}
-
-func (p *parquetStatsSource) StatsByModel(hours int64) ([]observability.ModelStats, error) {
-	samples, _, err := p.readMetricSamples(hours)
-	if err != nil {
+func (s *ObserveSource) FindByID(ctx context.Context, id string) (*observability.LogRecord, error) {
+	page, err := s.store.QueryLogs(ctx, observe.LogQuery{
+		Attributes: []observe.AttributeFilter{stringFilter("nyro.log.id", id)}, Limit: 1,
+	})
+	if err != nil || len(page.Records) == 0 {
 		return nil, err
 	}
-	_, models, _, _, err := observability.AggregateStats(samples, hours)
-	return models, err
+	record := observability.LogRecordFromOTLP(page.Records[0].Record)
+	return &record, nil
 }
 
-func (p *parquetStatsSource) StatsByProvider(hours int64) ([]observability.ProviderStats, error) {
-	samples, _, err := p.readMetricSamples(hours)
-	if err != nil {
-		return nil, err
+func (s *ObserveSource) ClearAll(ctx context.Context) (int64, error) {
+	var total int64
+	cutoff := time.Unix(0, math.MaxInt64)
+	for {
+		deleted, err := s.store.DeleteBefore(ctx, observe.SignalLogs, cutoff, 10_000)
+		if err != nil {
+			return total, err
+		}
+		total += deleted
+		if deleted == 0 {
+			return total, nil
+		}
 	}
-	_, _, provs, _, err := observability.AggregateStats(samples, hours)
-	return provs, err
 }
 
-// StatsByApiKey returns per-api-key rollups. The MetricSample.Ts that backs
-// ApiKeyStats.LastUsedAt is unix-nanoseconds (the OTLP write unit), but the
-// WebUI contract for last_used_at is unix-milliseconds (it always was, when the
-// value came from request_logs.created_at = started.UnixMilli()). Normalize at
-// this boundary so the unit the WebUI has always seen is preserved.
-func (p *parquetStatsSource) StatsByApiKey(hours int64) ([]observability.ApiKeyStats, error) {
-	samples, _, err := p.readMetricSamples(hours)
-	if err != nil {
-		return nil, err
+func (s *ObserveSource) readMetricSamples(ctx context.Context, hours int64) ([]observability.MetricSample, error) {
+	query := observe.MetricQuery{Limit: 1000}
+	if hours > 0 {
+		query.Start = s.now().Add(-time.Duration(hours) * time.Hour)
 	}
-	_, _, _, keys, err := observability.AggregateStats(samples, hours)
-	if err != nil {
-		return nil, err
+	names := []string{"nyro_requests_total", "nyro_tokens_total", "nyro_request_latency_ms"}
+	var samples []observability.MetricSample
+	for _, name := range names {
+		query.Name = name
+		query.Cursor = ""
+		for {
+			page, err := s.store.QueryMetrics(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			for _, record := range page.Records {
+				sample, err := observability.MetricSampleFromOTLP(record.Metric, record.PointType, record.DataPointIndex)
+				if err != nil {
+					return nil, err
+				}
+				samples = append(samples, sample)
+			}
+			if page.NextCursor == "" {
+				break
+			}
+			query.Cursor = page.NextCursor
+		}
 	}
-	for i := range keys {
-		keys[i].LastUsedAt /= 1_000_000
-	}
-	return keys, nil
+	return samples, nil
 }
 
-func (p *parquetStatsSource) StatsHourly(hours int64) ([]observability.StatsHourly, error) {
-	samples, _, err := p.readMetricSamples(hours)
+func (s *ObserveSource) aggregate(ctx context.Context, hours int64) (observability.StatsOverview, []observability.RouteStats, []observability.UpstreamStats, []observability.ConsumerStats, error) {
+	samples, err := s.readMetricSamples(ctx, hours)
+	if err != nil {
+		return observability.StatsOverview{}, nil, nil, nil, err
+	}
+	return observability.AggregateStats(samples, hours)
+}
+
+func (s *ObserveSource) StatsOverview(ctx context.Context, hours int64) (observability.StatsOverview, error) {
+	overview, _, _, _, err := s.aggregate(ctx, hours)
+	return overview, err
+}
+
+func (s *ObserveSource) StatsByRoute(ctx context.Context, hours int64) ([]observability.RouteStats, error) {
+	_, routes, _, _, err := s.aggregate(ctx, hours)
+	return routes, err
+}
+
+func (s *ObserveSource) StatsByUpstream(ctx context.Context, hours int64) ([]observability.UpstreamStats, error) {
+	_, _, upstreams, _, err := s.aggregate(ctx, hours)
+	return upstreams, err
+}
+
+func (s *ObserveSource) StatsByConsumer(ctx context.Context, hours int64) ([]observability.ConsumerStats, error) {
+	_, _, _, consumers, err := s.aggregate(ctx, hours)
+	for i := range consumers {
+		consumers[i].LastUsedAt /= int64(time.Millisecond)
+	}
+	return consumers, err
+}
+
+func (s *ObserveSource) StatsHourly(ctx context.Context, hours int64) ([]observability.StatsHourly, error) {
+	samples, err := s.readMetricSamples(ctx, hours)
 	if err != nil {
 		return nil, err
 	}

@@ -97,7 +97,7 @@ func TestBindInvalidEnvValueErrors(t *testing.T) {
 func TestEnvKey(t *testing.T) {
 	cases := []struct{ prefix, flag, want string }{
 		{"SERVE", "listen", "NYRO_SERVE_LISTEN"},
-		{"SERVE", "obs-data-dir", "NYRO_SERVE_OBS_DATA_DIR"},
+		{"SERVE", "observe-data-dir", "NYRO_SERVE_OBSERVE_DATA_DIR"},
 		{"PROXY", "sync-tls-ca", "NYRO_PROXY_SYNC_TLS_CA"},
 	}
 	for _, c := range cases {

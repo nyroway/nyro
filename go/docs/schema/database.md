@@ -1,6 +1,6 @@
 # Database Schema
 
-The normalized relational schema backing the Go gateway's storage layer. It is
+The normalized relational schema backing the Go gateway's Config Engine. It is
 shared by the SQLite and Postgres backends; the SQL below is the final
 post-migration state with SQLite-flavored types. GORM entities in
 `go/internal/storage/model/` are the canonical source; this document mirrors
@@ -147,3 +147,35 @@ CREATE TABLE settings (
 - `consumers[].quotas.concurrency.max_requests` -> `consumer_quotas`
   (`quota_type = 'concurrency'`, `window = NULL`)
 - `settings` nested YAML -> `settings` dot-key rows
+
+## Embedded infrastructure databases
+
+Single-node `nyro serve` keeps its three local databases under
+`~/.nyro/data` by default:
+
+- `config.db` is the SQLite Config Engine described above. A Postgres DSN can
+  replace it.
+- `state.db` backs the embedded Redis-compatible State Engine.
+- `observe.db` stores lossless OTLP batches plus query indexes for the embedded
+  Observe Engine.
+
+State and Observe use independent caller-owned `database/sql` pools. Their
+protocol boundaries are Redis and OTLP, so a clustered deployment can disable
+the embedded listeners and point clients at external components.
+
+`state.db` contains `state_kv(key BLOB PRIMARY KEY, value BLOB NOT NULL,
+expires_at_ms INTEGER NULL)` and a partial expiry index on `expires_at_ms`.
+
+`observe.db` contains:
+
+- `otlp_batches`: the original protobuf payload, signal, and receiver time;
+- `otlp_log_index`, `otlp_span_index`, and `otlp_metric_index`: coordinates and
+  signal-specific fields used to locate records inside each original payload;
+- `otlp_log_attribute_definitions` and `otlp_log_attributes`: registered,
+  typed log-attribute indexes. Nyro registers log id, upstream id, route id,
+  route model, consumer id, and HTTP response status.
+
+Foreign-key cascades remove signal indexes with their source batch. Retention
+deletes old batches in bounded transactions; it does not rewrite OTLP payloads.
+Legacy Parquet observability files are neither imported nor deleted during
+startup; remove or archive them separately after validating the SQLite cutover.

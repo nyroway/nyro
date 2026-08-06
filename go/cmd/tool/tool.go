@@ -12,7 +12,7 @@ import (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tool",
-		Short: "Operational tools",
+		Short: "Run operational tools",
 	}
 	cmd.AddCommand(ca.NewCmd())
 	cmd.AddCommand(migrate.NewCmd())

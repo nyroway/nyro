@@ -85,7 +85,7 @@ func requireOTLPEndpoint(signal Signal, params map[string]string) (string, error
 }
 
 // Per-signal default OTLP/HTTP request paths, matching the OTLP spec (and the
-// paths the admin receiver mounts in internal/observability/receiver.go).
+// paths the embedded receiver mounts in infra/observe/otlphttp.
 const (
 	otlpLogsPath    = "/v1/logs"
 	otlpMetricsPath = "/v1/metrics"
@@ -93,8 +93,8 @@ const (
 )
 
 // otlpSignalURL normalizes a configured OTLP endpoint for a specific signal.
-// The endpoint stored in settings (and seeded by the admin — see
-// cmd/admin.seedDefaultObsEndpoint) is a BASE url like "http://127.0.0.1:19531"
+// The endpoint stored in settings (and seeded by `nyro serve`) is a BASE URL
+// like "http://127.0.0.1:14318"
 // shared across logs/metrics/traces; it carries no per-signal path.
 //
 // This matters because otlploghttp/otlpmetrichttp/otlptracehttp's
@@ -260,9 +260,9 @@ func tracesBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 //
 // Metric temporality: the metric PeriodicReaders use DELTA temporality (not
 // the OTel-default Cumulative). Each ~5s export therefore contains only the
-// increments since the last export. The admin receiver persists every export
-// as a fresh parquet row and AggregateStats/AggregateHourly SUM the
-// Value/hist_sum fields — correct for deltas. (Cumulative would double-count:
+// increments since the last export. Observe persists every OTLP export and
+// AggregateStats/AggregateHourly sum the projected values — correct for
+// deltas. (Cumulative would double-count:
 // R×(N+1)/2.) See also stats_aggregate.go. This is fixed per-engine: otlp and
 // stdout are DELTA; prometheus (Task 5) uses its own pull Reader, which is
 // CUMULATIVE by construction — the two temporalities coexist because they

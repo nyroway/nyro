@@ -45,8 +45,8 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
 
   const method = log?.method ?? "–";
   const path = log?.path ?? "–";
-  const clientStatus = log?.client_status_code;
-  const statusOk = (clientStatus ?? 0) < 400;
+  const responseStatus = log?.response_status_code;
+  const statusOk = (responseStatus ?? 0) < 400;
   // is_stream is the canonical flag (declared by the client). Fall back to
   // stream_chunks_count for older log rows that pre-date the field.
   const isStream = log?.is_stream ?? (log?.stream_chunks_count ?? 0) > 0;
@@ -75,10 +75,10 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
       `# ID: ${log.id}`,
       `# Time: ${ts}`,
       `# Method: ${method}  Path: ${path}`,
-      `# Client Status: ${log.client_status_code ?? "–"}  Upstream Status: ${log.upstream_status_code ?? "–"}`,
+      `# Response Status: ${log.response_status_code ?? "–"}  Upstream Status: ${log.upstream_status_code ?? "–"}`,
       `# Latency Total: ${formatDuration(log.latency_total_ms)}  Upstream: ${formatDuration(log.latency_upstream_ms)}`,
       `# TPS: ${tps != null ? formatTps(tps) : "–"}  (gen ${formatDuration(generationMs)})`,
-      `# Provider: ${log.provider_name ?? log.provider_id ?? "–"}  Model: ${log.model_name ?? log.model_id ?? "–"}  ApiKey: ${log.api_key_name ?? log.api_key_id ?? "–"}`,
+      `# Upstream: ${log.upstream_name ?? log.upstream_id ?? "–"}  Route: ${log.route_model ?? log.route_id ?? "–"}  Consumer: ${log.consumer_key_name ?? log.consumer_id ?? "–"}`,
       `# Client Model: ${log.client_model ?? "–"}  Upstream Model: ${log.upstream_model ?? "–"}`,
       `# Protocol: ${proto}`,
       `# Tokens: IN=${log.input_tokens} OUT=${log.output_tokens}`,
@@ -143,7 +143,7 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
               statusOk ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600",
             )}
           >
-            {clientStatus ?? "–"}
+            {responseStatus ?? "–"}
           </span>
           {isStream ? (
             <Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">SSE</Badge>
@@ -155,14 +155,14 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
               {isZh ? "跨协议" : "Cross-Protocol"}
             </Badge>
           ) : null}
-          {(log?.provider_name ?? log?.provider_id) ? (
-            <Badge variant="outline">{log.provider_name ?? log.provider_id}</Badge>
+          {(log?.upstream_name ?? log?.upstream_id) ? (
+            <Badge variant="outline">{log.upstream_name ?? log.upstream_id}</Badge>
           ) : null}
-          {log?.model_name ? (
-            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">{log.model_name}</Badge>
+          {log?.route_model ? (
+            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">{log.route_model}</Badge>
           ) : null}
-          {log?.api_key_name ? (
-            <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">{log.api_key_name}</Badge>
+          {log?.consumer_key_name ? (
+            <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">{log.consumer_key_name}</Badge>
           ) : null}
           {log?.upstream_model ? (
             <span className="text-slate-500 font-mono">{log.upstream_model}</span>
@@ -365,4 +365,3 @@ function PayloadBlock({ title, content, isZh }: PayloadBlockProps) {
     </div>
   );
 }
-

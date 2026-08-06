@@ -377,25 +377,25 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
       const hours = args?.hours ?? 24;
       return { method: "GET", url: `${base}/stats/hourly?hours=${hours}` };
     }
-    case "get_stats_by_model": {
+	case "get_stats_by_route": {
       const hours = args?.hours;
       return {
         method: "GET",
-        url: `${base}/stats/models${hours != null ? `?hours=${hours}` : ""}`,
+		url: `${base}/stats/routes${hours != null ? `?hours=${hours}` : ""}`,
       };
     }
-    case "get_stats_by_provider": {
+	case "get_stats_by_upstream": {
       const hours = args?.hours;
       return {
         method: "GET",
-        url: `${base}/stats/providers${hours != null ? `?hours=${hours}` : ""}`,
+		url: `${base}/stats/upstreams${hours != null ? `?hours=${hours}` : ""}`,
       };
     }
-    case "get_stats_by_api_key": {
+	case "get_stats_by_consumer": {
       const hours = args?.hours;
       return {
         method: "GET",
-        url: `${base}/stats/api-keys${hours != null ? `?hours=${hours}` : ""}`,
+		url: `${base}/stats/consumers${hours != null ? `?hours=${hours}` : ""}`,
       };
     }
 

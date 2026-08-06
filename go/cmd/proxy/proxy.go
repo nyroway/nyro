@@ -31,19 +31,19 @@ import (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "proxy",
-		Short: "Run the data plane (forwards requests to upstreams)",
+		Short: "Start a standalone data plane",
 	}
 	// 0.0.0.0, not loopback: the standalone proxy's entire job is accepting
 	// traffic from real clients (like nginx/envoy/traefik), often from outside
 	// its own host/container — unlike the control plane, which manages
 	// sensitive credentials and defaults to loopback-only on purpose.
-	cmd.Flags().String("listen", "0.0.0.0:19530", "listen address for the data plane")
-	cmd.Flags().String("config", "", "standalone YAML config file (no server/DB needed)")
-	cmd.Flags().String("server", "", "the server's gRPC config-sync endpoint (host:port) for config hot-reload")
-	cmd.Flags().String("sync-token", "", "join token presented to the server when subscribing to config-sync (must match one of the server's --sync-token values). Prefer NYRO_PROXY_SYNC_TOKEN over the flag, which exposes the value in `ps`")
-	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro tool ca`); must be set together with --sync-tls-cert/-key")
-	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to this proxy's client certificate")
-	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to this proxy's client private key")
+	cmd.Flags().String("listen", "0.0.0.0:19530", "Data plane listen address")
+	cmd.Flags().String("config", "", "Standalone YAML configuration file")
+	cmd.Flags().String("server", "", "Config sync server address")
+	cmd.Flags().String("sync-token", "", "Token used to join config sync")
+	cmd.Flags().String("sync-tls-ca", "", "CA certificate for config sync")
+	cmd.Flags().String("sync-tls-cert", "", "Client certificate for config sync")
+	cmd.Flags().String("sync-tls-key", "", "Client private key for config sync")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("listen")
 		cfgPath, _ := cmd.Flags().GetString("config")

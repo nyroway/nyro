@@ -122,7 +122,11 @@ func TestReceiverReturnsRetryable503WhenQueueIsFull(t *testing.T) {
 
 func TestPersistenceFailureAfterAcknowledgementIsCounted(t *testing.T) {
 	store := &batchStore{err: errors.New("disk full")}
-	receiver, err := otlphttp.New(otlphttp.Options{Store: store, FlushInterval: time.Millisecond})
+	failures := make(chan error, 1)
+	receiver, err := otlphttp.New(otlphttp.Options{
+		Store: store, FlushInterval: time.Millisecond,
+		OnPersistError: func(err error) { failures <- err },
+	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -131,6 +135,14 @@ func TestPersistenceFailureAfterAcknowledgementIsCounted(t *testing.T) {
 		t.Fatalf("status = %d", response.Code)
 	}
 	waitFor(t, time.Second, func() bool { return receiver.Stats().FailedBatches == 1 })
+	select {
+	case got := <-failures:
+		if got.Error() != "disk full" {
+			t.Fatalf("OnPersistError() = %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("OnPersistError was not called")
+	}
 	if err := receiver.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}

@@ -39,7 +39,7 @@ const (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ca",
-		Short: "Offline certificate authority for config-sync mTLS",
+		Short: "Manage config sync certificates",
 	}
 	cmd.AddCommand(newInitCmd())
 	cmd.AddCommand(newSignServerCmd())
@@ -50,11 +50,11 @@ func NewCmd() *cobra.Command {
 func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create (or reuse) the config-sync CA",
+		Short: "Create or reuse the config sync CA",
 	}
-	dir := cmd.Flags().String("dir", defaultDir(), "directory to write ca.pem/ca-key.pem into")
-	valid := cmd.Flags().Duration("valid", defaultCAValid, "CA certificate validity period")
-	force := cmd.Flags().Bool("force", false, "regenerate the CA even if one already exists (invalidates all certs it previously signed)")
+	dir := cmd.Flags().String("dir", defaultDir(), "Output directory")
+	valid := cmd.Flags().Duration("valid", defaultCAValid, "Certificate validity period")
+	force := cmd.Flags().Bool("force", false, "Regenerate the CA")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		if *force {
 			for _, f := range []string{"ca.pem", "ca-key.pem"} {
@@ -85,11 +85,11 @@ func newInitCmd() *cobra.Command {
 func newSignServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sign-server",
-		Short: "Sign the server's config-sync server certificate",
+		Short: "Sign a config sync server certificate",
 	}
-	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro tool ca init`)")
-	valid := cmd.Flags().Duration("valid", defaultLeafValid, "leaf certificate validity period")
-	out := cmd.Flags().String("out", "server", "output file basename (writes <dir>/<out>.pem and <dir>/<out>-key.pem)")
+	dir := cmd.Flags().String("dir", defaultDir(), "CA directory")
+	valid := cmd.Flags().Duration("valid", defaultLeafValid, "Certificate validity period")
+	out := cmd.Flags().String("out", "server", "Output file basename")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		certPath, keyPath, err := signWithCA(*dir, func(c *pki.CA) (string, string, error) {
 			return c.SignServer(*dir, *out, *valid)
@@ -109,12 +109,12 @@ func newSignServerCmd() *cobra.Command {
 func newSignProxyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sign-proxy",
-		Short: "Sign a proxy node's config-sync client certificate",
+		Short: "Sign a config sync client certificate",
 	}
-	dir := cmd.Flags().String("dir", defaultDir(), "directory containing ca.pem/ca-key.pem (from `nyro tool ca init`)")
-	nodeID := cmd.Flags().String("node-id", "", "node identity for the SPIFFE SAN (spiffe://nyro/proxy/<node-id>); random if unset")
-	valid := cmd.Flags().Duration("valid", defaultLeafValid, "leaf certificate validity period")
-	out := cmd.Flags().String("out", "proxy", "output file basename (writes <dir>/<out>.pem and <dir>/<out>-key.pem)")
+	dir := cmd.Flags().String("dir", defaultDir(), "CA directory")
+	nodeID := cmd.Flags().String("node-id", "", "Proxy node identity")
+	valid := cmd.Flags().Duration("valid", defaultLeafValid, "Certificate validity period")
+	out := cmd.Flags().String("out", "proxy", "Output file basename")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		id := *nodeID
 		if id == "" {

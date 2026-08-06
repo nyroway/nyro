@@ -1,6 +1,12 @@
 package bootstrap
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"reflect"
+	"sync"
+	"testing"
+)
 
 func TestParseDSN(t *testing.T) {
 	tests := []struct {
@@ -66,4 +72,52 @@ func TestOpenStorageFromDSN(t *testing.T) {
 			t.Error("expected error for bogus scheme")
 		}
 	})
+}
+
+func TestRunManagedServersShutsDownInReverseDependencyOrder(t *testing.T) {
+	var mu sync.Mutex
+	var events []string
+	appendEvent := func(event string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+	}
+	firstDone := make(chan struct{})
+	secondDone := make(chan struct{})
+	wantErr := errors.New("listener failed")
+
+	err := RunManagedServers(
+		ManagedServer{
+			Role: "observe",
+			Serve: func() error {
+				<-firstDone
+				return nil
+			},
+			Shutdown: func(context.Context) error {
+				appendEvent("shutdown-observe")
+				close(firstDone)
+				return nil
+			},
+			AfterShutdown: func() { appendEvent("after-observe") },
+		},
+		ManagedServer{
+			Role: "data plane",
+			Serve: func() error {
+				close(secondDone)
+				return wantErr
+			},
+			Shutdown: func(context.Context) error {
+				appendEvent("shutdown-data")
+				return nil
+			},
+			AfterShutdown: func() { appendEvent("after-data") },
+		},
+	)
+	<-secondDone
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("RunManagedServers() error = %v, want %v", err, wantErr)
+	}
+	if want := []string{"shutdown-data", "after-data", "shutdown-observe", "after-observe"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
 }

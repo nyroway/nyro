@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func TestRootCmdSubcommands(t *testing.T) {
@@ -116,5 +120,74 @@ func TestRootCmdToolCommandsExecuteOnlyUnderTool(t *testing.T) {
 				t.Errorf("Execute(%q) output = %q, want substring %q", tt.args, output.String(), tt.wantOutput)
 			}
 		})
+	}
+}
+
+func TestPublicHelpCopyIsConcise(t *testing.T) {
+	root := newRootCmd()
+	var visit func(*cobra.Command)
+	visit = func(cmd *cobra.Command) {
+		if cmd.Hidden {
+			return
+		}
+		if strings.Contains(cmd.Short, "`") || strings.Contains(cmd.Long, "`") {
+			t.Errorf("%s command help contains backticks", cmd.CommandPath())
+		}
+		if utf8.RuneCountInString(cmd.Short) > 48 {
+			t.Errorf("%s short help is too long: %q", cmd.CommandPath(), cmd.Short)
+		}
+		if cmd.Long != "" {
+			t.Errorf("%s has long help; keep terminal help concise", cmd.CommandPath())
+		}
+		cmd.LocalNonPersistentFlags().VisitAll(func(flag *pflag.Flag) {
+			usage, _, _ := strings.Cut(flag.Usage, " (env ")
+			if strings.Contains(usage, "`") {
+				t.Errorf("%s --%s help contains backticks", cmd.CommandPath(), flag.Name)
+			}
+			if utf8.RuneCountInString(usage) > 64 {
+				t.Errorf("%s --%s help is too long: %q", cmd.CommandPath(), flag.Name, usage)
+			}
+		})
+		for _, child := range cmd.Commands() {
+			visit(child)
+		}
+	}
+	visit(root)
+}
+
+func TestHelpOutputUsesConciseDescriptions(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"--help"}, want: "serve       Start Nyro with embedded services"},
+		{args: []string{"serve", "--help"}, want: "Create or update database tables on startup"},
+		{args: []string{"proxy", "--help"}, want: "Token used to join config sync"},
+		{args: []string{"tool", "ca", "--help"}, want: "Manage config sync certificates"},
+		{args: []string{"tool", "migrate", "diff", "--help"}, want: "Writable scratch database DSN"},
+	}
+	for _, tt := range tests {
+		root := newRootCmd()
+		var output bytes.Buffer
+		root.SetOut(&output)
+		root.SetErr(&output)
+		root.SetArgs(tt.args)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("Execute(%q): %v", tt.args, err)
+		}
+		got := output.String()
+		if !strings.Contains(got, tt.want) {
+			t.Errorf("help for %q does not contain %q:\n%s", tt.args, tt.want, got)
+		}
+		for _, unwanted := range []string{
+			"--auto-migrate nyro tool migrate dump",
+			"--sync-listen nyro proxy",
+			"--sync-token nyro proxy",
+			"--sync-tls-ca nyro tool ca",
+		} {
+			if strings.Contains(got, unwanted) {
+				t.Errorf("help for %q contains invalid placeholder %q", tt.args, unwanted)
+			}
+		}
 	}
 }

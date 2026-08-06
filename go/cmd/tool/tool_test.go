@@ -7,9 +7,6 @@ func TestNewCmdSubcommands(t *testing.T) {
 	if cmd.Use != "tool" {
 		t.Errorf("Use = %q, want tool", cmd.Use)
 	}
-	if cmd.Short != "Operational tools" {
-		t.Errorf("Short = %q, want Operational tools", cmd.Short)
-	}
 
 	names := map[string]bool{}
 	for _, child := range cmd.Commands() {

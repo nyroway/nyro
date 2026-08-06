@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -17,32 +19,24 @@ import (
 	"github.com/nyroway/nyro/go/internal/webutil"
 )
 
-// LogSource is the read side for /logs. Backed by parquet
-// (observability.Logs) — the only request-log store after the Phase 4 removal
-// of the request_logs table. The types are observability.* (JSON tags are
-// identical to the old storage.* copies, so the WebUI contract is unchanged).
+// LogSource is the read side for /logs.
 type LogSource interface {
-	Query(q observability.LogQuery) (observability.LogPage, error)
-	FindByID(id string) (*observability.LogRecord, error)
-	ClearAll() (int64, error)
+	Query(context.Context, observability.LogQuery) (observability.LogPage, error)
+	FindByID(context.Context, string) (*observability.LogRecord, error)
+	ClearAll(context.Context) (int64, error)
 }
 
-// StatsSource is the read side for /stats/*. Backed by metrics parquet
-// (observability.AggregateStats / AggregateHourly).
+// StatsSource is the read side for /stats/*.
 type StatsSource interface {
-	StatsOverview(hours int64) (observability.StatsOverview, error)
-	StatsByModel(hours int64) ([]observability.ModelStats, error)
-	StatsByProvider(hours int64) ([]observability.ProviderStats, error)
-	StatsByApiKey(hours int64) ([]observability.ApiKeyStats, error)
-	StatsHourly(hours int64) ([]observability.StatsHourly, error)
+	StatsOverview(context.Context, int64) (observability.StatsOverview, error)
+	StatsByRoute(context.Context, int64) ([]observability.RouteStats, error)
+	StatsByUpstream(context.Context, int64) ([]observability.UpstreamStats, error)
+	StatsByConsumer(context.Context, int64) ([]observability.ConsumerStats, error)
+	StatsHourly(context.Context, int64) ([]observability.StatsHourly, error)
 }
 
 // Mount registers the admin REST API under /api/v1 on r. If adminToken is
 // non-empty, every admin route requires Authorization: Bearer <adminToken>.
-//
-// logs/stats are the parquet-backed read sources (the observability store) —
-// the only request-log/metrics path after the Phase 4 removal of the
-// request_logs table. cmd/admin wires the real parquet-backed sources.
 func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, stats StatsSource) {
 	r.Route("/api/v1", func(g chi.Router) {
 		if adminToken != "" {
@@ -350,13 +344,38 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 		})
 
 		// ── logs ──
-		// /logs reads exclusively from the parquet LogSource (the request_logs
-		// table was removed in Phase 4).
 		g.Get("/logs", func(w http.ResponseWriter, r *http.Request) {
-			q := observability.LogQuery{Provider: r.URL.Query().Get("provider"), Model: r.URL.Query().Get("model")}
-			q.Limit, _ = strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64)
-			q.Offset, _ = strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
-			page, err := logs.Query(q)
+			query := r.URL.Query()
+			q := observability.LogQuery{
+				UpstreamID: query.Get("upstream_id"), RouteID: query.Get("route_id"),
+				RouteModel: query.Get("route_model"), ConsumerID: query.Get("consumer_id"),
+			}
+			var err error
+			if q.Limit, err = parseOptionalInt64(query, "limit"); err != nil {
+				badRequest(w, err)
+				return
+			}
+			if q.Offset, err = parseOptionalInt64(query, "offset"); err != nil {
+				badRequest(w, err)
+				return
+			}
+			if q.StatusMin, err = parseOptionalInt32(query, "status_min"); err != nil {
+				badRequest(w, err)
+				return
+			}
+			if q.StatusMax, err = parseOptionalInt32(query, "status_max"); err != nil {
+				badRequest(w, err)
+				return
+			}
+			if q.Limit < 0 || q.Offset < 0 {
+				badRequest(w, errors.New("limit and offset must not be negative"))
+				return
+			}
+			if q.StatusMin != nil && q.StatusMax != nil && *q.StatusMin > *q.StatusMax {
+				badRequest(w, errors.New("status_min must not exceed status_max"))
+				return
+			}
+			page, err := logs.Query(r.Context(), q)
 			if err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -364,7 +383,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			webutil.JSON(w, http.StatusOK, page)
 		})
 		g.Get("/logs/{id}", func(w http.ResponseWriter, r *http.Request) {
-			l, err := logs.FindByID(chi.URLParam(r, "id"))
+			l, err := logs.FindByID(r.Context(), chi.URLParam(r, "id"))
 			if err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -376,7 +395,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			webutil.JSON(w, http.StatusOK, l)
 		})
 		g.Delete("/logs", func(w http.ResponseWriter, r *http.Request) {
-			n, err := logs.ClearAll()
+			n, err := logs.ClearAll(r.Context())
 			if err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -395,31 +414,31 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			return h
 		}
 		g.Get("/stats/overview", func(w http.ResponseWriter, r *http.Request) {
-			st, err := stats.StatsOverview(parseHours(r))
+			st, err := stats.StatsOverview(r.Context(), parseHours(r))
 			if err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			webutil.JSON(w, http.StatusOK, st)
 		})
-		g.Get("/stats/models", func(w http.ResponseWriter, r *http.Request) {
-			st, err := stats.StatsByModel(parseHours(r))
+		g.Get("/stats/routes", func(w http.ResponseWriter, r *http.Request) {
+			st, err := stats.StatsByRoute(r.Context(), parseHours(r))
 			if err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			webutil.JSON(w, http.StatusOK, st)
 		})
-		g.Get("/stats/providers", func(w http.ResponseWriter, r *http.Request) {
-			st, err := stats.StatsByProvider(parseHours(r))
+		g.Get("/stats/upstreams", func(w http.ResponseWriter, r *http.Request) {
+			st, err := stats.StatsByUpstream(r.Context(), parseHours(r))
 			if err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
 			webutil.JSON(w, http.StatusOK, st)
 		})
-		g.Get("/stats/api-keys", func(w http.ResponseWriter, r *http.Request) {
-			st, err := stats.StatsByApiKey(parseHours(r))
+		g.Get("/stats/consumers", func(w http.ResponseWriter, r *http.Request) {
+			st, err := stats.StatsByConsumer(r.Context(), parseHours(r))
 			if err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -435,7 +454,7 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			if hours <= 0 {
 				hours = 24
 			}
-			st, err := stats.StatsHourly(hours)
+			st, err := stats.StatsHourly(r.Context(), hours)
 			if err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
@@ -467,6 +486,27 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 			webutil.JSON(w, http.StatusOK, out)
 		})
 	})
+}
+
+func parseOptionalInt64(values url.Values, key string) (int64, error) {
+	value := values.Get(key)
+	if value == "" {
+		return 0, nil
+	}
+	return strconv.ParseInt(value, 10, 64)
+}
+
+func parseOptionalInt32(values url.Values, key string) (*int32, error) {
+	value := values.Get(key)
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 32)
+	if err != nil {
+		return nil, err
+	}
+	result := int32(parsed)
+	return &result, nil
 }
 
 // testHTTPClient returns the HTTP client used by admin-side upstream discovery

@@ -178,15 +178,3 @@ func TestLoadConfigRetentionDefaultsAndValidation(t *testing.T) {
 		t.Errorf("zero metrics retention should default to 30, got %d", cfg2.MetricsRetentionDays)
 	}
 }
-
-func TestLoadConfigDoesNotReadDataDir(t *testing.T) {
-	cfg, err := LoadConfig(settingsGetter(map[string]string{
-		"obs_data_dir": "/should/be/ignored",
-	}))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.DataDir != "" {
-		t.Errorf("DataDir: want empty (LoadConfig must not read obs_data_dir), got %q", cfg.DataDir)
-	}
-}
