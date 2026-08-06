@@ -87,7 +87,6 @@ func (s Stage) emit(ex *pipeline.Exchange, active *activeSet, span trace.Span) {
 	route, _ := ex.GetExt(ExtRoute).(storage.Route)
 	upstream, _ := ex.GetExt(ExtUpstream).(storage.Upstream)
 
-	statusClass := classify(ex.Status)
 	latencyMs := time.Since(ex.Started).Milliseconds()
 
 	// --- metrics (one request, in/out tokens, latency) ---
@@ -97,29 +96,35 @@ func (s Stage) emit(ex *pipeline.Exchange, active *activeSet, span trace.Span) {
 	// types via the shared attrOpt).
 	if active.handles != nil {
 		reqAttrs := metric.WithAttributes(
-			attribute.String("model", route.Model),
-			attribute.String("provider", upstream.Name),
-			attribute.String("apikey", ex.ConsumerID),
-			attribute.String("status_class", statusClass),
+			attribute.String("nyro.route.id", route.ID),
+			attribute.String("nyro.route.model", route.Model),
+			attribute.String("nyro.upstream.id", upstream.ID),
+			attribute.String("nyro.upstream.name", upstream.Name),
+			attribute.String("nyro.consumer.id", ex.ConsumerID),
+			attribute.Int("http.response.status_code", ex.Status),
 		)
 		active.handles.requests.Add(ex.Ctx, 1, reqAttrs)
 
 		tokenIn := metric.WithAttributes(
-			attribute.String("model", route.Model),
-			attribute.String("apikey", ex.ConsumerID),
+			attribute.String("nyro.route.id", route.ID),
+			attribute.String("nyro.route.model", route.Model),
+			attribute.String("nyro.consumer.id", ex.ConsumerID),
 			attribute.String("direction", "in"),
 		)
 		tokenOut := metric.WithAttributes(
-			attribute.String("model", route.Model),
-			attribute.String("apikey", ex.ConsumerID),
+			attribute.String("nyro.route.id", route.ID),
+			attribute.String("nyro.route.model", route.Model),
+			attribute.String("nyro.consumer.id", ex.ConsumerID),
 			attribute.String("direction", "out"),
 		)
 		active.handles.tokens.Add(ex.Ctx, int64(ex.Usage.PromptTokens), tokenIn)
 		active.handles.tokens.Add(ex.Ctx, int64(ex.Usage.CompletionTokens), tokenOut)
 
 		active.handles.latency.Record(ex.Ctx, float64(latencyMs), metric.WithAttributes(
-			attribute.String("model", route.Model),
-			attribute.String("provider", upstream.Name),
+			attribute.String("nyro.route.id", route.ID),
+			attribute.String("nyro.route.model", route.Model),
+			attribute.String("nyro.upstream.id", upstream.ID),
+			attribute.String("nyro.upstream.name", upstream.Name),
 		))
 	}
 
@@ -135,18 +140,18 @@ func (s Stage) emit(ex *pipeline.Exchange, active *activeSet, span trace.Span) {
 		log.Int64("nyro.log.created_ms", ex.Started.UnixMilli()),
 		log.String("nyro.client_protocol", lc.ClientProtocol),
 		log.String("nyro.upstream_protocol", lc.UpstreamProtocol),
-		log.String("nyro.provider_id", upstream.ID),
-		log.String("nyro.provider_name", upstream.Name),
-		log.String("nyro.model_id", route.ID),
-		log.String("nyro.model_name", route.Model),
+		log.String("nyro.upstream.id", upstream.ID),
+		log.String("nyro.upstream.name", upstream.Name),
+		log.String("nyro.route.id", route.ID),
+		log.String("nyro.route.model", route.Model),
 		log.String("nyro.client_model", lc.ClientModel),
 		log.String("nyro.upstream_model", lc.UpstreamModel),
 		log.String("nyro.method", lc.Method),
 		log.String("nyro.path", lc.Path),
-		log.String("nyro.api_key_id", ex.ConsumerID),
-		log.String("nyro.api_key_name", lc.APIKeyName),
-		log.String("nyro.api_key_preview", lc.APIKeyPreview),
-		log.Int("nyro.client_status", ex.Status),
+		log.String("nyro.consumer.id", ex.ConsumerID),
+		log.String("nyro.consumer_key.name", lc.ConsumerKeyName),
+		log.String("nyro.consumer_key.preview", lc.ConsumerKeyPreview),
+		log.Int("http.response.status_code", ex.Status),
 		log.Int64("nyro.latency_total_ms", latencyMs),
 		log.Int64("nyro.input_tokens", int64(ex.Usage.PromptTokens)),
 		log.Int64("nyro.output_tokens", int64(ex.Usage.CompletionTokens)),
@@ -161,7 +166,7 @@ func (s Stage) emit(ex *pipeline.Exchange, active *activeSet, span trace.Span) {
 		if ex.Status >= 500 {
 			span.SetStatus(codes.Error, "upstream error")
 		}
-		span.SetAttributes(attribute.Int("nyro.client_status", ex.Status))
+		span.SetAttributes(attribute.Int("http.response.status_code", ex.Status))
 		span.End()
 	}
 }
@@ -177,31 +182,16 @@ func cacheRead(u ir.Usage) int64 {
 // upstreamLogAttrs builds the optional upstream audit attributes for the audit
 // LogRecord. nyro.upstream_status and nyro.latency_upstream_ms are emitted only
 // when their LogCtx pointer is non-nil AND the dereferenced value is non-zero —
-// matching the admin receiver's lookupInt contract (a zero int is treated as
-// absent). A nil pointer (no upstream status/latency captured) yields no
-// attribute, so the receiver leaves the parquet optional column null rather
-// than writing a spurious 0.
+// A nil pointer (no upstream status/latency captured) yields no attribute.
 func upstreamLogAttrs(lc LogCtx) []log.KeyValue {
 	var attrs []log.KeyValue
 	if lc.UpstreamStatus != nil && *lc.UpstreamStatus != 0 {
-		attrs = append(attrs, log.Int64("nyro.upstream_status", int64(*lc.UpstreamStatus)))
+		attrs = append(attrs, log.Int64("nyro.upstream.status_code", int64(*lc.UpstreamStatus)))
 	}
 	if lc.LatencyUpstreamMs != nil && *lc.LatencyUpstreamMs != 0 {
 		attrs = append(attrs, log.Int64("nyro.latency_upstream_ms", *lc.LatencyUpstreamMs))
 	}
 	return attrs
-}
-
-// classify maps an HTTP status to its 2xx/4xx/5xx class label.
-func classify(status int) string {
-	switch {
-	case status >= 500:
-		return "5xx"
-	case status >= 400:
-		return "4xx"
-	default:
-		return "2xx"
-	}
 }
 
 // stageTarget is the SwappableProvider the telemetry Stage reads on every

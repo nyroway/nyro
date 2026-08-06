@@ -102,7 +102,3 @@ export function exporterSettingKey(signal: Signal): string {
 export function retentionSettingKey(signal: Signal): string {
   return `obs_${signal}_retention_days`;
 }
-
-export function flushIntervalSettingKey(signal: Signal): string {
-  return `obs_${signal}_flush_interval`;
-}

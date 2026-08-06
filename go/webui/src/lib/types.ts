@@ -202,16 +202,16 @@ export interface RequestLog {
   id: string;
   /** Unix 毫秒时间戳 */
   created_at: number;
-  api_key_id?: string;
-  api_key_name?: string;
-  api_key_preview?: string;
+	consumer_id?: string;
+	consumer_key_name?: string;
+	consumer_key_preview?: string;
 
   client_protocol?: string;
   upstream_protocol?: string;
-  provider_id?: string;
-  provider_name?: string;
-  model_id?: string;
-  model_name?: string;
+	upstream_id?: string;
+	upstream_name?: string;
+	route_id?: string;
+	route_model?: string;
   upstream_url?: string;
   client_model?: string;
   upstream_model?: string;
@@ -230,7 +230,7 @@ export interface RequestLog {
   upstream_response_body?: string;
 
   upstream_status_code?: number;
-  client_status_code?: number;
+	response_status_code?: number;
 
   latency_total_ms?: number;
   latency_upstream_ms?: number;
@@ -296,24 +296,25 @@ export interface StatsHourly {
   avg_duration_ms: number;
 }
 
-export interface ModelStats {
-  model: string;
+export interface RouteStats {
+	route_id: string;
+	route_model: string;
   request_count: number;
   total_input_tokens: number;
   total_output_tokens: number;
   avg_duration_ms: number;
 }
 
-export interface ProviderStats {
-  provider: string;
+export interface UpstreamStats {
+	upstream_id: string;
+	upstream_name: string;
   request_count: number;
   error_count: number;
   avg_duration_ms: number;
 }
 
-export interface ApiKeyStats {
-  api_key_id: string;
-  api_key_name: string;
+export interface ConsumerStats {
+	consumer_id: string;
   request_count: number;
   total_input_tokens: number;
   total_output_tokens: number;
@@ -421,13 +422,14 @@ export interface ProviderPreset {
 }
 
 export interface LogQuery {
-  limit?: number;
-  offset?: number;
-  provider?: string;
-  model?: string;
-  status_min?: number;
-  status_max?: number;
-  api_key?: string;
+	limit?: number;
+	offset?: number;
+	upstream_id?: string;
+	route_id?: string;
+	route_model?: string;
+	consumer_id?: string;
+	status_min?: number;
+	status_max?: number;
 }
 
 export interface ExportData {

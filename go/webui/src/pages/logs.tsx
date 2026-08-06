@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, ScrollText, Trash2 } from "lucide-react";
 
 import { backend } from "@/lib/backend";
-import type { Consumer, LogPage, LogQuery, ModelStats, Upstream, RequestLog } from "@/lib/types";
+import type { Consumer, LogPage, LogQuery, RouteStats, Upstream, RequestLog } from "@/lib/types";
 import { getRouteType } from "@/lib/types";
 import { computeTps, formatDuration, formatKeyPreview, formatLogTime, formatTokenCount, formatTps } from "@/lib/format";
 import { prettyName } from "@/lib/protocol";
@@ -51,16 +51,16 @@ export default function LogsPage() {
     queryFn: () => backend("query_logs", { query }),
     refetchInterval: 5_000,
   });
-  const { data: providers = [] } = useQuery<Upstream[]>({
-    queryKey: ["providers"],
+  const { data: upstreams = [] } = useQuery<Upstream[]>({
+    queryKey: ["upstreams"],
     queryFn: () => backend("list_upstreams"),
   });
-  const { data: modelStats = [] } = useQuery<ModelStats[]>({
-    queryKey: ["stats", "models", "log-filter"],
-    queryFn: () => backend("get_stats_by_model"),
+  const { data: routeStats = [] } = useQuery<RouteStats[]>({
+    queryKey: ["stats", "routes", "log-filter"],
+    queryFn: () => backend("get_stats_by_route"),
   });
-  const { data: apiKeys = [] } = useQuery<Consumer[]>({
-    queryKey: ["api-keys", "log-filter"],
+  const { data: consumers = [] } = useQuery<Consumer[]>({
+    queryKey: ["consumers", "log-filter"],
     queryFn: () => backend("list_consumers"),
   });
 
@@ -68,21 +68,21 @@ export default function LogsPage() {
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const providerOptions = useMemo(
+  const upstreamOptions = useMemo(
     () => [
-      { value: "", label: isZh ? "全部提供商" : "All Providers" },
-      ...providers.map((p) => ({ value: p.id, label: p.name })),
+      { value: "", label: isZh ? "全部上游" : "All Upstreams" },
+      ...upstreams.map((upstream) => ({ value: upstream.id, label: upstream.name })),
     ],
-    [providers, isZh],
+    [upstreams, isZh],
   );
   const modelOptions = useMemo(
     () => [
       { value: "", label: isZh ? "全部模型" : "All Models" },
-      ...modelStats
-        .filter((m) => (m.model ?? "").trim())
-        .map((m) => ({ value: m.model, label: m.model })),
+      ...routeStats
+        .filter((route) => (route.route_model ?? "").trim())
+        .map((route) => ({ value: route.route_id, label: route.route_model })),
     ],
-    [modelStats, isZh],
+    [routeStats, isZh],
   );
   const statusOptions = useMemo(
     () => [
@@ -92,17 +92,17 @@ export default function LogsPage() {
     ],
     [isZh],
   );
-  const apiKeyOptions = useMemo(
+  const consumerOptions = useMemo(
     () => [
-      { value: "", label: isZh ? "全部密钥" : "All API Keys" },
-      ...apiKeys.map((k) => ({ value: k.id, label: k.name })),
+      { value: "", label: isZh ? "全部消费者" : "All Consumers" },
+      ...consumers.map((consumer) => ({ value: consumer.id, label: consumer.name })),
     ],
-    [apiKeys, isZh],
+    [consumers, isZh],
   );
 
-  const providerFilterValue = filter.provider ?? ALL_OPTION;
-  const apiKeyFilterValue = filter.api_key ?? ALL_OPTION;
-  const modelFilterValue = filter.model ?? ALL_OPTION;
+  const upstreamFilterValue = filter.upstream_id ?? ALL_OPTION;
+  const consumerFilterValue = filter.consumer_id ?? ALL_OPTION;
+  const routeFilterValue = filter.route_id ?? ALL_OPTION;
   const statusFilterValue =
     (filter.status_min ?? null) === 200 && (filter.status_max ?? null) === 299
       ? "ok"
@@ -121,45 +121,45 @@ export default function LogsPage() {
         </div>
         <div className="flex gap-2">
           <Select
-            value={apiKeyFilterValue}
+            value={consumerFilterValue}
             onValueChange={(value) => {
-              setFilter({ ...filter, api_key: value === ALL_OPTION ? undefined : value });
+              setFilter({ ...filter, consumer_id: value === ALL_OPTION ? undefined : value });
               setPage(0);
             }}
           >
             <SelectTrigger className="w-48">
-              <SelectValue placeholder={isZh ? "密钥过滤" : "API Key Filter"} />
+              <SelectValue placeholder={isZh ? "消费者过滤" : "Consumer Filter"} />
             </SelectTrigger>
             <SelectContent>
-              {apiKeyOptions.map((option) => (
-                <SelectItem key={`api-key-${option.value || "all"}`} value={option.value || ALL_OPTION}>
+              {consumerOptions.map((option) => (
+				<SelectItem key={`consumer-${option.value || "all"}`} value={option.value || ALL_OPTION}>
                   {option.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           <Select
-            value={providerFilterValue}
+            value={upstreamFilterValue}
             onValueChange={(value) => {
-              setFilter({ ...filter, provider: value === ALL_OPTION ? undefined : value });
+              setFilter({ ...filter, upstream_id: value === ALL_OPTION ? undefined : value });
               setPage(0);
             }}
           >
             <SelectTrigger className="w-48">
-              <SelectValue placeholder={isZh ? "提供商过滤" : "Provider Filter"} />
+              <SelectValue placeholder={isZh ? "上游过滤" : "Upstream Filter"} />
             </SelectTrigger>
             <SelectContent>
-              {providerOptions.map((option) => (
-                <SelectItem key={`provider-${option.value || "all"}`} value={option.value || ALL_OPTION}>
+              {upstreamOptions.map((option) => (
+				<SelectItem key={`upstream-${option.value || "all"}`} value={option.value || ALL_OPTION}>
                   {option.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           <Select
-            value={modelFilterValue}
+            value={routeFilterValue}
             onValueChange={(value) => {
-              setFilter({ ...filter, model: value === ALL_OPTION ? undefined : value });
+              setFilter({ ...filter, route_id: value === ALL_OPTION ? undefined : value });
               setPage(0);
             }}
           >
@@ -254,7 +254,7 @@ export default function LogsPage() {
               <tbody>
                 {items.map((log) => {
                   const routeType = getRouteType(log);
-                  const statusOk = (log.client_status_code ?? 0) < 400;
+                  const statusOk = (log.response_status_code ?? 0) < 400;
                   const isStream = log.is_stream ?? (log.stream_chunks_count ?? 0) > 0;
                   return (
                     <tr
@@ -272,29 +272,29 @@ export default function LogsPage() {
                             statusOk ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600",
                           )}
                         >
-                          {log.client_status_code ?? "–"}
+                          {log.response_status_code ?? "–"}
                         </span>
                       </td>
                       <td className="px-3 py-2 text-xs whitespace-nowrap">
-                        {log.api_key_preview && log.api_key_preview !== log.api_key_name ? (
+                        {log.consumer_key_preview && log.consumer_key_preview !== log.consumer_key_name ? (
                           // Named key: show the name, reveal the masked preview on hover
                           // (same affordance as the nodes list' connection-time tooltip).
                           <TooltipProvider delayDuration={120}>
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className="cursor-help font-medium text-slate-700">
-                                  {log.api_key_name}
+                                  {log.consumer_key_name}
                                 </span>
                               </TooltipTrigger>
                               <TooltipContent className="font-mono">
-                                {formatKeyPreview(log.api_key_preview)}
+                                {formatKeyPreview(log.consumer_key_preview)}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
                         ) : (
                           // Unnamed key (name falls back to the preview) or no key.
                           <span className="font-medium text-slate-700">
-                            {log.api_key_name ? formatKeyPreview(log.api_key_name) : "–"}
+                            {log.consumer_key_name ? formatKeyPreview(log.consumer_key_name) : "–"}
                           </span>
                         )}
                       </td>
@@ -304,7 +304,7 @@ export default function LogsPage() {
                             {log.client_model ?? "–"}
                           </span>
                           <span className="text-[11px] text-slate-500">
-                            {log.provider_name ?? log.provider_id ?? "–"}
+                            {log.upstream_name ?? log.upstream_id ?? "–"}
                             {log.upstream_model ? `: ${log.upstream_model}` : ""}
                           </span>
                         </div>

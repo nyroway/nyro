@@ -32,6 +32,7 @@ type Options struct {
 	QueueMaxBatches int
 	FlushInterval   time.Duration
 	FlushBatch      int
+	OnPersistError  func(error)
 }
 
 // Stats is a point-in-time receiver reliability snapshot.
@@ -52,6 +53,7 @@ type Receiver struct {
 	maxRequestBytes int64
 	flushInterval   time.Duration
 	flushBatch      int
+	onPersistError  func(error)
 	cancel          context.CancelFunc
 	done            chan struct{}
 	stop            sync.Once
@@ -93,7 +95,8 @@ func New(opts Options) (*Receiver, error) {
 	r := &Receiver{
 		store: opts.Store, queue: q, maxRequestBytes: opts.MaxRequestBytes,
 		flushInterval: opts.FlushInterval, flushBatch: opts.FlushBatch,
-		cancel: cancel, done: make(chan struct{}),
+		onPersistError: opts.OnPersistError,
+		cancel:         cancel, done: make(chan struct{}),
 	}
 	go r.run(workerContext)
 	return r, nil

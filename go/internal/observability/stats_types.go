@@ -1,8 +1,5 @@
 package observability
 
-// Stats* types are JSON-compatible copies of storage.Stats* (Phase 4 removes
-// the storage copies). Tag-for-tag identical so the WebUI is unaffected.
-
 type StatsOverview struct {
 	TotalRequests     int64   `json:"total_requests"`
 	TotalInputTokens  int64   `json:"total_input_tokens"`
@@ -11,24 +8,25 @@ type StatsOverview struct {
 	ErrorCount        int64   `json:"error_count"`
 }
 
-type ModelStats struct {
-	Model             string  `json:"model"`
+type RouteStats struct {
+	RouteID           string  `json:"route_id"`
+	RouteModel        string  `json:"route_model"`
 	RequestCount      int64   `json:"request_count"`
 	TotalInputTokens  int64   `json:"total_input_tokens"`
 	TotalOutputTokens int64   `json:"total_output_tokens"`
 	AvgDurationMs     float64 `json:"avg_duration_ms"`
 }
 
-type ProviderStats struct {
-	Provider      string  `json:"provider"`
+type UpstreamStats struct {
+	UpstreamID    string  `json:"upstream_id"`
+	UpstreamName  string  `json:"upstream_name"`
 	RequestCount  int64   `json:"request_count"`
 	ErrorCount    int64   `json:"error_count"`
 	AvgDurationMs float64 `json:"avg_duration_ms"`
 }
 
-type ApiKeyStats struct {
-	APIKeyID          string `json:"api_key_id"`
-	APIKeyName        string `json:"api_key_name"`
+type ConsumerStats struct {
+	ConsumerID        string `json:"consumer_id"`
 	RequestCount      int64  `json:"request_count"`
 	TotalInputTokens  int64  `json:"total_input_tokens"`
 	TotalOutputTokens int64  `json:"total_output_tokens"`

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from "recharts";
 import { backend } from "@/lib/backend";
-import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, ApiKeyStats } from "@/lib/types";
+import type { StatsOverview, StatsHourly, RouteStats, UpstreamStats, ConsumerStats } from "@/lib/types";
 import { Zap, Clock, Activity } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { formatLogTime } from "@/lib/format";
@@ -47,21 +47,21 @@ export default function StatsPage() {
     refetchInterval: 30_000,
   });
 
-  const { data: modelStats = [] } = useQuery<ModelStats[]>({
-    queryKey: ["stats-models", hours],
-    queryFn: () => backend("get_stats_by_model", { hours }),
+	const { data: routeStats = [] } = useQuery<RouteStats[]>({
+		queryKey: ["stats-routes", hours],
+		queryFn: () => backend("get_stats_by_route", { hours }),
     refetchInterval: 30_000,
   });
 
-  const { data: providerStats = [] } = useQuery<ProviderStats[]>({
-    queryKey: ["stats-providers", hours],
-    queryFn: () => backend("get_stats_by_provider", { hours }),
+	const { data: upstreamStats = [] } = useQuery<UpstreamStats[]>({
+		queryKey: ["stats-upstreams", hours],
+		queryFn: () => backend("get_stats_by_upstream", { hours }),
     refetchInterval: 30_000,
   });
 
-  const { data: apiKeyStats = [] } = useQuery<ApiKeyStats[]>({
-    queryKey: ["stats-apikeys", hours],
-    queryFn: () => backend("get_stats_by_api_key", { hours }),
+	const { data: consumerStats = [] } = useQuery<ConsumerStats[]>({
+		queryKey: ["stats-consumers", hours],
+		queryFn: () => backend("get_stats_by_consumer", { hours }),
     refetchInterval: 30_000,
   });
 
@@ -71,9 +71,9 @@ export default function StatsPage() {
     output: h.total_output_tokens,
   }));
 
-  const modelPie = modelStats.slice(0, 6).map((m) => ({
-    name: m.model,
-    value: m.request_count,
+	const modelPie = routeStats.slice(0, 6).map((route) => ({
+		name: route.route_model || route.route_id,
+		value: route.request_count,
   }));
   const modelTotal = modelPie.reduce((acc, m) => acc + m.value, 0);
 
@@ -192,12 +192,12 @@ export default function StatsPage() {
       </div>
 
       <div className="glass rounded-2xl p-6">
-        <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "提供商分布" : "Provider Breakdown"}</h3>
+		<h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "上游分布" : "Upstream Breakdown"}</h3>
         <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
           <table className="w-full text-sm">
             <thead className="bg-white/70 text-slate-500">
               <tr>
-                <th className="px-4 py-2.5 text-left font-medium">{isZh ? "提供商" : "Provider"}</th>
+			<th className="px-4 py-2.5 text-left font-medium">{isZh ? "上游" : "Upstream"}</th>
                 <th className="px-4 py-2.5 text-right font-medium">{isZh ? "请求数" : "Requests"}</th>
                 <th className="px-4 py-2.5 text-right font-medium">{isZh ? "错误数" : "Errors"}</th>
                 <th className="px-4 py-2.5 text-right font-medium">{isZh ? "错误率" : "Error Rate"}</th>
@@ -205,18 +205,18 @@ export default function StatsPage() {
               </tr>
             </thead>
             <tbody>
-              {providerStats.length === 0 && (
+			{upstreamStats.length === 0 && (
                 <tr><td className="px-4 py-6 text-center text-slate-400" colSpan={5}>{isZh ? "暂无数据" : "No data"}</td></tr>
               )}
-              {providerStats.slice(0, 8).map((p) => (
-                <tr key={p.provider} className="border-t border-white/70 text-slate-700">
-                  <td className="px-4 py-2.5 font-medium">{p.provider}</td>
-                  <td className="px-4 py-2.5 text-right">{fmt(p.request_count)}</td>
-                  <td className="px-4 py-2.5 text-right text-red-500">{p.error_count}</td>
+			{upstreamStats.slice(0, 8).map((upstream) => (
+				<tr key={upstream.upstream_id} className="border-t border-white/70 text-slate-700">
+					<td className="px-4 py-2.5 font-medium">{upstream.upstream_name || upstream.upstream_id}</td>
+					<td className="px-4 py-2.5 text-right">{fmt(upstream.request_count)}</td>
+					<td className="px-4 py-2.5 text-right text-red-500">{upstream.error_count}</td>
                   <td className="px-4 py-2.5 text-right">
-                    {p.request_count > 0 ? ((p.error_count / p.request_count) * 100).toFixed(1) : "0"}%
+						{upstream.request_count > 0 ? ((upstream.error_count / upstream.request_count) * 100).toFixed(1) : "0"}%
                   </td>
-                  <td className="px-4 py-2.5 text-right">{fmtLatency(p.avg_duration_ms)}</td>
+					<td className="px-4 py-2.5 text-right">{fmtLatency(upstream.avg_duration_ms)}</td>
                 </tr>
               ))}
             </tbody>
@@ -225,12 +225,12 @@ export default function StatsPage() {
       </div>
 
       <div className="glass rounded-2xl p-6">
-        <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "秘钥调用统计" : "API Key Usage"}</h3>
+		<h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "消费者调用统计" : "Consumer Usage"}</h3>
         <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
           <table className="w-full text-sm">
             <thead className="bg-white/70 text-slate-500">
               <tr>
-                <th className="px-4 py-2.5 text-left font-medium">{isZh ? "密钥" : "API Key"}</th>
+			<th className="px-4 py-2.5 text-left font-medium">{isZh ? "消费者" : "Consumer"}</th>
                 <th className="px-4 py-2.5 text-right font-medium">{isZh ? "请求数" : "Requests"}</th>
                 <th className="px-4 py-2.5 text-right font-medium">{isZh ? "输入 Token" : "Input Tokens"}</th>
                 <th className="px-4 py-2.5 text-right font-medium">{isZh ? "输出 Token" : "Output Tokens"}</th>
@@ -239,23 +239,23 @@ export default function StatsPage() {
               </tr>
             </thead>
             <tbody>
-              {apiKeyStats.length === 0 && (
+			{consumerStats.length === 0 && (
                 <tr><td className="px-4 py-6 text-center text-slate-400" colSpan={6}>{isZh ? "暂无数据" : "No data"}</td></tr>
               )}
-              {apiKeyStats.slice(0, 8).map((k) => {
-                const cacheTotal = k.total_input_tokens + k.cache_read_tokens;
-                const cacheRate = cacheTotal > 0 ? Math.round((k.cache_read_tokens / cacheTotal) * 100) : 0;
+			{consumerStats.slice(0, 8).map((consumer) => {
+				const cacheTotal = consumer.total_input_tokens + consumer.cache_read_tokens;
+				const cacheRate = cacheTotal > 0 ? Math.round((consumer.cache_read_tokens / cacheTotal) * 100) : 0;
                 return (
-                  <tr key={k.api_key_id} className="border-t border-white/70 text-slate-700">
-                    <td className="px-4 py-2.5 font-medium">{k.api_key_name || k.api_key_id}</td>
-                    <td className="px-4 py-2.5 text-right">{fmt(k.request_count)}</td>
-                    <td className="px-4 py-2.5 text-right">{fmt(k.total_input_tokens)}</td>
-                    <td className="px-4 py-2.5 text-right">{fmt(k.total_output_tokens)}</td>
+					<tr key={consumer.consumer_id} className="border-t border-white/70 text-slate-700">
+						<td className="px-4 py-2.5 font-medium">{consumer.consumer_id}</td>
+						<td className="px-4 py-2.5 text-right">{fmt(consumer.request_count)}</td>
+						<td className="px-4 py-2.5 text-right">{fmt(consumer.total_input_tokens)}</td>
+						<td className="px-4 py-2.5 text-right">{fmt(consumer.total_output_tokens)}</td>
                     <td className="px-4 py-2.5 text-right">
-                      <span>{fmt(k.cache_read_tokens)}</span>
+							<span>{fmt(consumer.cache_read_tokens)}</span>
                       {cacheRate > 0 && <span className="ml-1 text-[11px] text-slate-400">{cacheRate}%</span>}
                     </td>
-                    <td className="px-4 py-2.5 text-right text-xs text-slate-500 whitespace-nowrap">{formatLogTime(k.last_used_at)}</td>
+						<td className="px-4 py-2.5 text-right text-xs text-slate-500 whitespace-nowrap">{formatLogTime(consumer.last_used_at)}</td>
                   </tr>
                 );
               })}

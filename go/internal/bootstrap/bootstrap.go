@@ -128,12 +128,20 @@ type HTTPServer struct {
 	AfterShutdown func()
 }
 
+// ManagedServer is a blocking server loop plus its graceful shutdown hook.
+// Register dependencies before their consumers; shutdown runs in reverse.
+type ManagedServer struct {
+	Role          string
+	Serve         func() error
+	Shutdown      func(context.Context) error
+	AfterShutdown func()
+}
+
 // RunServers starts every server and blocks until SIGINT/SIGTERM or the first
-// listen error, then gracefully shuts all of them down. It exists because
-// `nyro serve` listens twice — the control plane on --listen and, unless
-// disabled, an embedded data plane on --proxy-listen — and both must share one
-// signal handler so a single Ctrl-C drains both rather than leaving one
-// serving.
+// listen error, then gracefully shuts all of them down. `nyro serve` uses it
+// for the control plane and its independently enabled data plane, Redis state
+// server, and OTLP receiver. All listeners share one signal handler so a
+// single Ctrl-C drains the process rather than leaving one service running.
 //
 // Shutdown runs in REVERSE registration order, each server's AfterShutdown
 // firing before the next one is stopped. Register dependencies first: in `nyro
@@ -146,21 +154,41 @@ type HTTPServer struct {
 // confusing state to debug, and failing fast surfaces the port conflict
 // immediately.
 func RunServers(servers ...HTTPServer) error {
-	srvs := make([]*http.Server, 0, len(servers))
-	errCh := make(chan error, len(servers))
+	managed := make([]ManagedServer, 0, len(servers))
 	for _, s := range servers {
 		srv := &http.Server{Addr: s.Addr, Handler: s.Handler, ReadHeaderTimeout: 10 * time.Second}
-		srvs = append(srvs, srv)
-		go func(role string) {
-			slog.Info("nyro starting", "role", role, "addr", srv.Addr)
-			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				errCh <- fmt.Errorf("%s listener: %w", role, err)
+		managed = append(managed, ManagedServer{
+			Role: s.Role,
+			Serve: func() error {
+				if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					return err
+				}
+				return nil
+			},
+			Shutdown:      srv.Shutdown,
+			AfterShutdown: s.AfterShutdown,
+		})
+	}
+	return RunManagedServers(managed...)
+}
+
+// RunManagedServers starts all service loops and blocks until a signal or the
+// first service error, then shuts services down in reverse registration order.
+func RunManagedServers(servers ...ManagedServer) error {
+	errCh := make(chan error, len(servers))
+	for _, server := range servers {
+		server := server
+		go func() {
+			slog.Info("nyro starting", "role", server.Role)
+			if err := server.Serve(); err != nil {
+				errCh <- fmt.Errorf("%s listener: %w", server.Role, err)
 			}
-		}(s.Role)
+		}()
 	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
 	var runErr error
 	select {
 	case runErr = <-errCh:
@@ -170,8 +198,8 @@ func RunServers(servers ...HTTPServer) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	for i := len(srvs) - 1; i >= 0; i-- {
-		if err := srvs[i].Shutdown(ctx); err != nil && runErr == nil {
+	for i := len(servers) - 1; i >= 0; i-- {
+		if err := servers[i].Shutdown(ctx); err != nil && runErr == nil {
 			runErr = err
 		}
 		if fn := servers[i].AfterShutdown; fn != nil {

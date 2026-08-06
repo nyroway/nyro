@@ -5,11 +5,15 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,21 +21,25 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 
+	dbsqlite "github.com/nyroway/nyro/go/infra/database/sqlite"
+	infraobserve "github.com/nyroway/nyro/go/infra/observe"
+	"github.com/nyroway/nyro/go/infra/observe/otlphttp"
+	observesqlite "github.com/nyroway/nyro/go/infra/observe/sqlite"
+	stateredis "github.com/nyroway/nyro/go/infra/state/redis"
+	statesqlite "github.com/nyroway/nyro/go/infra/state/sqlite"
 	"github.com/nyroway/nyro/go/internal/admin"
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/dataplane"
 	"github.com/nyroway/nyro/go/internal/observability"
-	"github.com/nyroway/nyro/go/internal/observability/parquet"
 	"github.com/nyroway/nyro/go/internal/proxy"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/webui"
 )
 
-// nyroHomeDir returns ~/.nyro, the default home for admin-local state
-// (sqlite DB, observability parquet data) when the user hasn't pointed
-// --dsn/--obs-data-dir elsewhere. Falls back to "./.nyro" (relative to
+// nyroHomeDir returns ~/.nyro, the default home for local state. Falls back to
+// "./.nyro" (relative to
 // the working directory) if the OS user home directory can't be resolved —
 // best-effort, never fatal, so admin still starts.
 func nyroHomeDir() string {
@@ -42,59 +50,76 @@ func nyroHomeDir() string {
 	return filepath.Join(home, ".nyro")
 }
 
+func defaultDataDir() string { return filepath.Join(nyroHomeDir(), "data") }
+
 // defaultDSN is the --dsn value used when the flag is left empty: a sqlite
 // file under the admin-managed ~/.nyro home.
 func defaultDSN() string {
-	return "sqlite://" + filepath.Join(nyroHomeDir(), "nyro.db")
+	return "sqlite://" + filepath.Join(defaultDataDir(), "config.db")
 }
 
 // NewCmd builds the server (control-plane) subcommand.
 //
 // `nyro serve` is the single-command deployment: the REST API + WebUI on
-// --listen, and — unless --proxy-listen is empty — an embedded data plane on
+// --listen, and — unless --disable-proxy is set — an embedded data plane on
 // --proxy-listen, so one process is a complete, usable nyro. The embedded data
 // plane is assembled by internal/dataplane over an in-process config-sync
 // channel, i.e. the exact code path a remote `nyro proxy` uses; it never reads
 // storage directly.
 //
 // It optionally also serves config-sync over TCP (--sync-listen) so additional
-// `nyro proxy` nodes can subscribe. Every config write (providers, models, api
-// keys, settings) triggers an immediate push to all connected data planes,
+// `nyro proxy` nodes can subscribe. Every config write (upstreams, routes,
+// consumers, settings) triggers an immediate push to all connected data planes,
 // embedded and remote alike.
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the control plane, with an embedded data plane by default",
+		Short: "Start Nyro with embedded services",
 	}
-	cmd.Flags().String("listen", "127.0.0.1:19531", "listen address for the control plane")
+	cmd.Flags().String("listen", "127.0.0.1:19531", "Control plane listen address")
 	// Loopback, unlike a standalone `nyro proxy` (0.0.0.0): the single-binary
 	// default is a local-first workstation install, so the embedded data plane
 	// should not be reachable off-host until an operator says so. A deployment
 	// that fronts nyro with nginx/envoy sets this explicitly, and a container
 	// deployment must (loopback inside a container is unreachable from outside).
-	cmd.Flags().String("proxy-listen", "127.0.0.1:19530", "listen address for the embedded data plane (empty disables it, leaving a control-plane-only node)")
+	cmd.Flags().String("proxy-listen", "127.0.0.1:19530", "Embedded data plane listen address")
+	cmd.Flags().Bool("disable-proxy", false, "Disable the embedded data plane")
+	cmd.Flags().String("redis-listen", "127.0.0.1:16379", "Embedded Redis listen address")
+	cmd.Flags().String("redis-password", "", "Password for the embedded Redis server")
+	cmd.Flags().String("state-data-dir", defaultDataDir(), "Directory containing state.db")
+	cmd.Flags().Bool("disable-redis", false, "Disable the embedded Redis server")
+	cmd.Flags().String("otlp-listen", "127.0.0.1:14318", "Embedded OTLP/HTTP listen address")
+	cmd.Flags().String("observe-data-dir", defaultDataDir(), "Directory containing observe.db")
+	cmd.Flags().Bool("disable-otlp", false, "Disable the embedded OTLP/HTTP receiver")
 	// Empty by default: with an embedded data plane the single-node deployment
 	// needs no config-sync port at all, so opening one is an opt-in taken only
 	// when additional `nyro proxy` nodes must subscribe. This stream carries
 	// every upstream's credentials_json, so plaintext mode logs a security
 	// warning; operators can configure mTLS with --sync-tls-ca/-cert/-key.
-	cmd.Flags().String("sync-listen", "", "listen address for the config-sync gRPC server so remote `nyro proxy` nodes can subscribe (empty disables it)")
+	cmd.Flags().String("sync-listen", "", "Config sync server listen address")
 	// Repeatable so a token can be rotated without downtime: add the new one,
 	// roll the proxies onto it, then drop the old one. Prefer the env var —
 	// a token passed as a flag is visible in `ps`.
-	cmd.Flags().StringArray("sync-token", nil, "join token a remote `nyro proxy` must present to subscribe to config-sync; repeatable so tokens can be rotated without downtime. A join credential, NOT an identity: mTLS is what gives each node a verifiable identity. Prefer NYRO_SERVE_SYNC_TOKEN over the flag, which exposes the value in `ps`")
-	cmd.Flags().String("sync-tls-ca", "", "config-sync mTLS: path to the CA certificate that signs server/proxy leaf certs (see `nyro tool ca`); must be set together with --sync-tls-cert/-key")
-	cmd.Flags().String("sync-tls-cert", "", "config-sync mTLS: path to the server's config-sync server certificate")
-	cmd.Flags().String("sync-tls-key", "", "config-sync mTLS: path to the server's config-sync server private key")
-	cmd.Flags().String("token", "", "Bearer token protecting the /api/v1 management routes")
-	cmd.Flags().String("webui-dir", "", "path to the built WebUI (serves the SPA at /)")
-	cmd.Flags().String("dsn", "", fmt.Sprintf("database DSN: sqlite://<path> (default %s) or postgres://...", defaultDSN()))
-	cmd.Flags().Bool("auto-migrate", false, "let nyro create/alter the schema itself via GORM AutoMigrate (requires DDL rights on --dsn); default false regardless of backend — without it, nyro only verifies the canonical tables exist, and a DBA applies the DDL from `nyro tool migrate dump`/`diff` (see go/docs/schema/migrations.md)")
-	cmd.Flags().Bool("raw-api-keys", false, "store API keys in a recoverable form so they can be re-copied from the WebUI after creation. The raw key is written to the database in plaintext: anyone with read access to the DB obtains working credentials. Default false (hash-only; keys are shown once at creation). Never affects inbound auth (always hash-compared) and is never sent to proxies over config-sync")
-	cmd.Flags().String("obs-data-dir", filepath.Join(nyroHomeDir(), "obs"), "directory for control-plane-local observability parquet data (logs/metrics/traces)")
+	cmd.Flags().StringArray("sync-token", nil, "Token used by proxies to join config sync")
+	cmd.Flags().String("sync-tls-ca", "", "CA certificate for config sync")
+	cmd.Flags().String("sync-tls-cert", "", "Server certificate for config sync")
+	cmd.Flags().String("sync-tls-key", "", "Server private key for config sync")
+	cmd.Flags().String("token", "", "Bearer token for the management API")
+	cmd.Flags().String("webui-dir", "", "Directory containing the built WebUI")
+	cmd.Flags().String("dsn", "", "Configuration database DSN (default ~/.nyro/data/config.db)")
+	cmd.Flags().Bool("auto-migrate", false, "Create or update database tables on startup")
+	cmd.Flags().Bool("raw-api-keys", false, "Store recoverable API keys")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		addr, _ := cmd.Flags().GetString("listen")
 		proxyAddr, _ := cmd.Flags().GetString("proxy-listen")
+		disableProxy, _ := cmd.Flags().GetBool("disable-proxy")
+		redisAddr, _ := cmd.Flags().GetString("redis-listen")
+		redisPassword, _ := cmd.Flags().GetString("redis-password")
+		stateDataDir, _ := cmd.Flags().GetString("state-data-dir")
+		disableRedis, _ := cmd.Flags().GetBool("disable-redis")
+		otlpAddr, _ := cmd.Flags().GetString("otlp-listen")
+		observeDataDir, _ := cmd.Flags().GetString("observe-data-dir")
+		disableOTLP, _ := cmd.Flags().GetBool("disable-otlp")
 		grpcAddr, _ := cmd.Flags().GetString("sync-listen")
 		syncTokens, _ := cmd.Flags().GetStringArray("sync-token")
 		tlsCA, _ := cmd.Flags().GetString("sync-tls-ca")
@@ -105,7 +130,28 @@ func NewCmd() *cobra.Command {
 		dsn, _ := cmd.Flags().GetString("dsn")
 		autoMigrate, _ := cmd.Flags().GetBool("auto-migrate")
 		plaintextKeys, _ := cmd.Flags().GetBool("raw-api-keys")
-		obsDataDir, _ := cmd.Flags().GetString("obs-data-dir")
+		if addr == "" {
+			return errors.New("--listen must not be empty")
+		}
+		if !disableProxy && proxyAddr == "" {
+			return errors.New("--proxy-listen must not be empty unless --disable-proxy is set")
+		}
+		if !disableRedis {
+			if redisAddr == "" {
+				return errors.New("--redis-listen must not be empty unless --disable-redis is set")
+			}
+			if !configsync.IsLoopbackListenAddress(redisAddr) {
+				return fmt.Errorf("--redis-listen must use a loopback address: %q", redisAddr)
+			}
+		}
+		if !disableOTLP {
+			if otlpAddr == "" {
+				return errors.New("--otlp-listen must not be empty unless --disable-otlp is set")
+			}
+			if !configsync.IsLoopbackListenAddress(otlpAddr) {
+				return fmt.Errorf("--otlp-listen must use a loopback address: %q", otlpAddr)
+			}
+		}
 		if grpcAddr == "" {
 			// The in-process channel used by the embedded data plane needs
 			// neither, so these only make sense with a TCP listener.
@@ -167,14 +213,13 @@ func NewCmd() *cobra.Command {
 			}
 		}
 
-		// Same reasoning as --dsn above: the ~/.nyro default is auto-created
-		// (parquet.NewSink MkdirAll's it on demand below), but an explicit
-		// --obs-data-dir naming a missing directory fails loudly instead of
-		// silently starting a fresh, empty observability store there.
-		if cmd.Flags().Changed("obs-data-dir") {
-			if info, err := os.Stat(obsDataDir); err != nil || !info.IsDir() {
-				return fmt.Errorf("--obs-data-dir %q does not exist (create it first, or leave --obs-data-dir unset to use the default under ~/.nyro)", obsDataDir)
+		if !disableRedis {
+			if err := prepareDataDir(cmd, "state-data-dir", stateDataDir); err != nil {
+				return err
 			}
+		}
+		if err := prepareDataDir(cmd, "observe-data-dir", observeDataDir); err != nil {
+			return err
 		}
 
 		st, err := bootstrap.OpenStorageFromDSN(dsn, autoMigrate, plaintextKeys)
@@ -185,53 +230,85 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		// ── First-boot settings seed (best-effort) ──
-		seedDefaultObsEndpoint(st.Settings(), addr)
+		if !disableOTLP {
+			seedDefaultObsEndpoint(st.Settings(), otlpAddr)
+		}
 
-		// ── Observability sinks (admin side) ──
-		// Three parquet sinks (logs/metrics/traces) feed the OTLP/HTTP receiver.
-		// The receiver decodes the official OTLP protobuf and buffers rows; each
-		// sink rotates its parquet file on its own (maxRows) and on Flush below.
 		obsCfg, err := observability.LoadConfig(st.Settings().Get)
 		if err != nil {
 			return fmt.Errorf("load observability config: %w", err)
 		}
-		// obs_data_dir is no longer a setting; DataDir comes from --obs-data-dir.
-		obsCfg.DataDir = obsDataDir
-		logSink, err := parquet.NewSink[observability.LogRecord](obsCfg.DataDir, "logs", 50000)
+		observeDB, err := dbsqlite.Open(ctx, dbsqlite.Options{Path: filepath.Join(observeDataDir, "observe.db")})
 		if err != nil {
-			return err
+			return fmt.Errorf("open observe database: %w", err)
 		}
-		metricSink, err := parquet.NewSink[observability.MetricSample](obsCfg.DataDir, "metrics", 50000)
-		if err != nil {
-			return err
-		}
-		traceSink, err := parquet.NewSink[observability.SpanSnapshot](obsCfg.DataDir, "traces", 50000)
-		if err != nil {
-			return err
-		}
-		rcv := observability.NewReceiver(logSink, metricSink, traceSink)
-
-		// Time-trigger flush: the sinks flush on their size trigger (maxRows) or
-		// on shutdown, so without this a low-traffic deployment would never fill a
-		// buffer and /logs + /stats would stay empty until restart. The cadence is
-		// the per-signal obs_<signal>_flush_interval settings (resolved into obsCfg
-		// by LoadConfig, each defaulting to DefaultFlushInterval) — siblings of the
-		// retention settings, edited in the WebUI's Local Telemetry card and applied
-		// at boot. Whichever trigger fires first wins.
-		rcv.StartFlusher(ctx, observability.SignalFlush{
-			Logs:    obsCfg.LogsFlushInterval,
-			Metrics: obsCfg.MetricsFlushInterval,
-			Traces:  obsCfg.TracesFlushInterval,
+		defer func() { _ = observeDB.Close() }()
+		observeStore, err := observesqlite.New(ctx, observeDB, observesqlite.Options{
+			LogsRetention:    time.Duration(obsCfg.LogsRetentionDays) * 24 * time.Hour,
+			MetricsRetention: time.Duration(obsCfg.MetricsRetentionDays) * 24 * time.Hour,
+			TracesRetention:  time.Duration(obsCfg.TracesRetentionDays) * 24 * time.Hour,
+			IndexedLogAttributes: []infraobserve.AttributeIndex{
+				{Key: "nyro.log.id", Type: infraobserve.AttributeString},
+				{Key: "nyro.upstream.id", Type: infraobserve.AttributeString},
+				{Key: "nyro.route.id", Type: infraobserve.AttributeString},
+				{Key: "nyro.route.model", Type: infraobserve.AttributeString},
+				{Key: "nyro.consumer.id", Type: infraobserve.AttributeString},
+				{Key: "http.response.status_code", Type: infraobserve.AttributeInt64},
+			},
 		})
+		if err != nil {
+			return fmt.Errorf("open observe store: %w", err)
+		}
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+			if err := observeStore.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("observe store shutdown failed", "error", err)
+			}
+		}()
+		var otlpReceiver *otlphttp.Receiver
+		if !disableOTLP {
+			otlpReceiver, err = otlphttp.New(otlphttp.Options{
+				Store: observeStore,
+				OnPersistError: func(err error) {
+					slog.Error("OTLP persistence failed after acknowledgement", "error", err)
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("create OTLP receiver: %w", err)
+			}
+			defer func() {
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer shutdownCancel()
+				if err := otlpReceiver.Shutdown(shutdownCtx); err != nil {
+					slog.Warn("OTLP receiver shutdown failed", "error", err)
+				}
+			}()
+		}
 
-		// Janitor sweeps aged parquet files per signal on an hourly tick; exits
-		// when ctx is cancelled (server shutdown).
-		observability.StartJanitor(ctx, obsCfg.DataDir, observability.SignalRetention{
-			Logs:    obsCfg.LogsRetentionDays,
-			Metrics: obsCfg.MetricsRetentionDays,
-			Traces:  obsCfg.TracesRetentionDays,
-		}, time.Hour)
+		var redisServer *stateredis.Server
+		if !disableRedis {
+			stateDB, err := dbsqlite.Open(ctx, dbsqlite.Options{Path: filepath.Join(stateDataDir, "state.db")})
+			if err != nil {
+				return fmt.Errorf("open state database: %w", err)
+			}
+			defer func() { _ = stateDB.Close() }()
+			stateStore, err := statesqlite.New(ctx, stateDB, statesqlite.Options{})
+			if err != nil {
+				return fmt.Errorf("open state store: %w", err)
+			}
+			defer func() {
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer shutdownCancel()
+				if err := stateStore.Shutdown(shutdownCtx); err != nil {
+					slog.Warn("state store shutdown failed", "error", err)
+				}
+			}()
+			redisServer, err = stateredis.New(stateredis.Options{Store: stateStore, Password: redisPassword})
+			if err != nil {
+				return fmt.Errorf("create Redis server: %w", err)
+			}
+		}
 
 		// The config-sync server is needed whenever anything subscribes: a
 		// remote proxy over TCP (--sync-listen), the embedded data plane over
@@ -239,7 +316,7 @@ func NewCmd() *cobra.Command {
 		// config-push target, so a write reaches embedded and remote data
 		// planes through exactly the same broadcast.
 		var inProcDialOpts []grpc.DialOption
-		if grpcAddr != "" || proxyAddr != "" {
+		if grpcAddr != "" || !disableProxy {
 			srv := configsync.NewConfigServer(st)
 			admin.SetBroadcaster(srv)
 			admin.SetNodeLister(srv)
@@ -265,7 +342,7 @@ func NewCmd() *cobra.Command {
 				})
 			}
 
-			if proxyAddr != "" {
+			if !disableProxy {
 				var shutdown func()
 				inProcDialOpts, shutdown = configsync.ServeInProcess(ctx, srv)
 				defer shutdown()
@@ -274,33 +351,13 @@ func NewCmd() *cobra.Command {
 
 		engine := chi.NewRouter()
 		engine.Use(middleware.Recoverer)
-
-		// Mount the OTLP receiver at the TOP LEVEL (/v1/{logs,metrics,traces})
-		// BEFORE the bearer-protected /api/v1 group — these routes are NOT behind
-		// the admin token (the auth boundary is the network/admin deployment,
-		// matching the gateway→admin push contract).
-		rcv.Mount(engine)
-
-		// admin.Mount wires the parquet-backed read sources:
-		//   - LogSource:   /logs reads the parquet observability store.
-		//   - StatsSource: /stats/* reads the metrics parquet store.
-		// The request_logs table was removed in Phase 4; these are the only
-		// request-log/metrics read paths.
-		admin.Mount(engine, st, adminToken, admin.NewParquetLogSource(obsCfg.DataDir), admin.NewParquetStatsSource(obsCfg.DataDir))
+		observeSource := admin.NewObserveSource(observeStore)
+		admin.Mount(engine, st, adminToken, observeSource, observeSource)
 		webui.Mount(engine, webuiDir)
 
-		// Best-effort flush of buffered OTLP rows on shutdown; do not block
-		// shutdown — the sinks' own rotation already bounds data loss.
-		defer rcv.Flush(ctx)
-
-		servers := []bootstrap.HTTPServer{{Role: "control plane", Addr: addr, Handler: engine}}
-
-		// ── Embedded data plane ──
-		// Assembled through internal/dataplane over the in-process config-sync
-		// pipe, so it runs the same client/cache/router path as a remote proxy.
-		// The pipe has no listening socket, so the config-sync transport rules
-		// (TLS, non-loopback plaintext) do not apply to it.
-		if proxyAddr != "" {
+		var dataPlaneHandler http.Handler
+		var dataPlaneAfterShutdown func()
+		if !disableProxy {
 			gw, obsMgr, err := dataplane.Build(ctx, dataplane.Options{
 				SyncTarget:   configsync.InProcessTarget,
 				SyncDialOpts: inProcDialOpts,
@@ -309,28 +366,95 @@ func NewCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("embedded data plane: %w", err)
 			}
-			servers = append(servers, bootstrap.HTTPServer{
-				Role:    "data plane",
-				Addr:    proxyAddr,
-				Handler: proxy.NewRouter(gw),
-				// Flush telemetry while the control plane is still listening:
-				// by default the embedded data plane exports OTLP to this same
-				// process's receiver (see seedDefaultObsEndpoint), so a flush
-				// after the control plane stops would fail connection-refused
-				// on every clean shutdown.
-				AfterShutdown: func() {
-					shutCtx, shutCancel := context.WithTimeout(context.Background(), dataplane.ShutdownTimeout)
-					defer shutCancel()
-					if err := obsMgr.Shutdown(shutCtx); err != nil {
+			dataPlaneHandler = proxy.NewRouter(gw)
+			var shutdownOnce sync.Once
+			dataPlaneAfterShutdown = func() {
+				shutdownOnce.Do(func() {
+					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), dataplane.ShutdownTimeout)
+					defer shutdownCancel()
+					if err := obsMgr.Shutdown(shutdownCtx); err != nil {
 						slog.Warn("embedded data plane observability shutdown failed", "error", err)
 					}
-				},
-			})
+				})
+			}
+			defer dataPlaneAfterShutdown()
 		}
 
-		return bootstrap.RunServers(servers...)
+		var listeners []net.Listener
+		defer func() {
+			for _, listener := range listeners {
+				_ = listener.Close()
+			}
+		}()
+		managed := make([]bootstrap.ManagedServer, 0, 4)
+		addHTTP := func(role, address string, handler http.Handler, after func()) error {
+			listener, err := net.Listen("tcp", address)
+			if err != nil {
+				return fmt.Errorf("%s listener %q: %w", role, address, err)
+			}
+			listeners = append(listeners, listener)
+			server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+			managed = append(managed, bootstrap.ManagedServer{
+				Role: role,
+				Serve: func() error {
+					if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+						return err
+					}
+					return nil
+				},
+				Shutdown:      server.Shutdown,
+				AfterShutdown: after,
+			})
+			return nil
+		}
+
+		// Dependencies are registered before consumers because shutdown is
+		// reversed: the data plane flushes while OTLP is still accepting work.
+		if otlpReceiver != nil {
+			if err := addHTTP("OTLP receiver", otlpAddr, otlpReceiver.Handler(), func() {
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer shutdownCancel()
+				if err := otlpReceiver.Shutdown(shutdownCtx); err != nil {
+					slog.Warn("OTLP receiver shutdown failed", "error", err)
+				}
+			}); err != nil {
+				return err
+			}
+		}
+		if redisServer != nil {
+			listener, err := net.Listen("tcp", redisAddr)
+			if err != nil {
+				return fmt.Errorf("redis listener %q: %w", redisAddr, err)
+			}
+			listeners = append(listeners, listener)
+			managed = append(managed, bootstrap.ManagedServer{
+				Role: "Redis state server", Serve: func() error { return redisServer.Serve(listener) }, Shutdown: redisServer.Shutdown,
+			})
+		}
+		if err := addHTTP("control plane", addr, engine, nil); err != nil {
+			return err
+		}
+		if dataPlaneHandler != nil {
+			if err := addHTTP("data plane", proxyAddr, dataPlaneHandler, dataPlaneAfterShutdown); err != nil {
+				return err
+			}
+		}
+		return bootstrap.RunManagedServers(managed...)
 	}
 	return cmd
+}
+
+func prepareDataDir(cmd *cobra.Command, flag, dir string) error {
+	if cmd.Flags().Changed(flag) {
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			return fmt.Errorf("--%s %q does not exist (create it first, or leave --%s unset to use the default under ~/.nyro/data)", flag, dir, flag)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create --%s directory %q: %w", flag, dir, err)
+	}
+	return nil
 }
 
 // configExpiryCheckInterval is how often WatchExpiry re-checks the loaded
@@ -420,7 +544,7 @@ var obsSeedSignals = []string{"logs", "metrics", "traces"}
 // seedDefaultObsEndpoint runs after migration and, only if all three signals'
 // obs_<signal>_otlp_endpoint keys are still empty (fresh install, or a
 // migration that found nothing to copy), seeds every signal's OTLP endpoint
-// to point at this admin instance's own --listen, and defaults any still-empty
+// to point at this process's own --otlp-listen, and defaults any still-empty
 // obs_<signal>_exporter to "otlp". This is a real, editable setting written
 // to storage — not an in-memory/runtime override of ObsConfig — so the user
 // can change it later via the WebUI.

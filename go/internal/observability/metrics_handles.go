@@ -11,9 +11,9 @@ import "go.opentelemetry.io/otel/metric"
 // instrumentation is inert until the data plane wires it — no process-wide
 // side effects from importing this package.
 type Handles struct {
-	requests metric.Int64Counter     // nyro_requests_total: +1 per request, attr model/provider/apikey/status_class
-	tokens   metric.Int64Counter     // nyro_tokens_total: prompt+completion, attr model/apikey/direction
-	latency  metric.Float64Histogram // nyro_request_latency_ms: total latency, attr model/provider
+	requests metric.Int64Counter     // nyro_requests_total: +1 per request, route/upstream/consumer/status attributes
+	tokens   metric.Int64Counter     // nyro_tokens_total: prompt+completion, route/consumer/direction attributes
+	latency  metric.Float64Histogram // nyro_request_latency_ms: total latency, route/upstream attributes
 	// nyro_in_flight (Int64UpDownCounter) is intentionally NOT created here:
 	// the telemetry Stage does not yet Inc/Dec a concurrency gauge, so
 	// emitting it would publish a constant 0 (misleading). Reintroduce when

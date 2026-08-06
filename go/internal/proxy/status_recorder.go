@@ -7,7 +7,7 @@ import (
 )
 
 // statusRecorder wraps http.ResponseWriter to capture the response status for
-// telemetry (the observability Stage records it as nyro.client_status). It
+// telemetry (the observability Stage records it as http.response.status_code). It
 // forwards Flush so SSE streaming works through it.
 //
 // It writes the status straight onto the Exchange rather than letting the

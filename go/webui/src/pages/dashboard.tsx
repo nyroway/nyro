@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Line, LineChart } from "recharts";
 import { backend } from "@/lib/backend";
-import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, GatewayStatus, GatewayNode, Upstream, Route } from "@/lib/types";
+import type { StatsOverview, StatsHourly, RouteStats, UpstreamStats, GatewayStatus, GatewayNode, Upstream, Route } from "@/lib/types";
 import { Activity, Zap, Clock, AlertTriangle, Server, Route as RouteIcon, Network } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 
@@ -34,15 +34,15 @@ export default function DashboardPage() {
     refetchInterval: 30_000,
   });
 
-  const { data: modelStats = [] } = useQuery<ModelStats[]>({
-    queryKey: ["stats-models"],
-    queryFn: () => backend("get_stats_by_model"),
+  const { data: routeStats = [] } = useQuery<RouteStats[]>({
+    queryKey: ["stats-routes"],
+    queryFn: () => backend("get_stats_by_route"),
     refetchInterval: 30_000,
   });
 
-  const { data: providerStats = [] } = useQuery<ProviderStats[]>({
-    queryKey: ["stats-providers"],
-    queryFn: () => backend("get_stats_by_provider"),
+  const { data: upstreamStats = [] } = useQuery<UpstreamStats[]>({
+    queryKey: ["stats-upstreams"],
+    queryFn: () => backend("get_stats_by_upstream"),
     refetchInterval: 30_000,
   });
 
@@ -195,15 +195,15 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {modelStats.length === 0 && (
+                {routeStats.length === 0 && (
                   <tr><td className="px-3 py-6 text-center text-slate-400" colSpan={4}>{isZh ? "暂无模型数据" : "No model data"}</td></tr>
                 )}
-                {modelStats.slice(0, 6).map((m) => (
-                  <tr key={m.model} className="border-t border-white/70 text-slate-700">
-                    <td className="px-3 py-2 font-medium">{m.model}</td>
-                    <td className="px-3 py-2 text-right">{fmt(m.request_count)}</td>
-                    <td className="px-3 py-2 text-right">{fmt(m.total_input_tokens + m.total_output_tokens)}</td>
-                    <td className="px-3 py-2 text-right">{fmtLatency(m.avg_duration_ms)}</td>
+                {routeStats.slice(0, 6).map((route) => (
+                  <tr key={route.route_id} className="border-t border-white/70 text-slate-700">
+                    <td className="px-3 py-2 font-medium">{route.route_model || route.route_id}</td>
+                    <td className="px-3 py-2 text-right">{fmt(route.request_count)}</td>
+                    <td className="px-3 py-2 text-right">{fmt(route.total_input_tokens + route.total_output_tokens)}</td>
+                    <td className="px-3 py-2 text-right">{fmtLatency(route.avg_duration_ms)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -212,27 +212,27 @@ export default function DashboardPage() {
         </div>
 
         <div className="glass rounded-2xl p-6">
-          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "提供商概览" : "Provider Overview"}</h3>
+          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "上游概览" : "Upstream Overview"}</h3>
           <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
             <table className="w-full text-sm">
               <thead className="bg-white/70 text-slate-500">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium">{isZh ? "提供商" : "Provider"}</th>
+                  <th className="px-3 py-2 text-left font-medium">{isZh ? "上游" : "Upstream"}</th>
                   <th className="px-3 py-2 text-right font-medium">{isZh ? "请求数" : "Requests"}</th>
                   <th className="px-3 py-2 text-right font-medium">{isZh ? "错误数" : "Errors"}</th>
                   <th className="px-3 py-2 text-right font-medium">{isZh ? "延迟" : "Latency"}</th>
                 </tr>
               </thead>
               <tbody>
-                {providerStats.length === 0 && (
-                  <tr><td className="px-3 py-6 text-center text-slate-400" colSpan={4}>{isZh ? "暂无提供商数据" : "No provider data"}</td></tr>
+                {upstreamStats.length === 0 && (
+                  <tr><td className="px-3 py-6 text-center text-slate-400" colSpan={4}>{isZh ? "暂无上游数据" : "No upstream data"}</td></tr>
                 )}
-                {providerStats.slice(0, 6).map((p) => (
-                  <tr key={p.provider} className="border-t border-white/70 text-slate-700">
-                    <td className="px-3 py-2 font-medium">{p.provider}</td>
-                    <td className="px-3 py-2 text-right">{fmt(p.request_count)}</td>
-                    <td className="px-3 py-2 text-right text-red-500">{p.error_count}</td>
-                    <td className="px-3 py-2 text-right">{fmtLatency(p.avg_duration_ms)}</td>
+                {upstreamStats.slice(0, 6).map((upstream) => (
+                  <tr key={upstream.upstream_id} className="border-t border-white/70 text-slate-700">
+                    <td className="px-3 py-2 font-medium">{upstream.upstream_name || upstream.upstream_id}</td>
+                    <td className="px-3 py-2 text-right">{fmt(upstream.request_count)}</td>
+                    <td className="px-3 py-2 text-right text-red-500">{upstream.error_count}</td>
+                    <td className="px-3 py-2 text-right">{fmtLatency(upstream.avg_duration_ms)}</td>
                   </tr>
                 ))}
               </tbody>

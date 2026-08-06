@@ -137,7 +137,7 @@ func TestStageRecordsMetricsTokensAndSpan(t *testing.T) {
 		UpstreamModel:    "gpt-4o",
 		Method:           "POST",
 		Path:             "/v1/chat/completions",
-		APIKeyName:       "test-key",
+		ConsumerKeyName:  "test-key",
 		IsStream:         true,
 	}
 	runStage(t, newExchange(model, provider, "ak1", usage, started, 200, lc))
@@ -185,14 +185,17 @@ func TestStageRecordsMetricsTokensAndSpan(t *testing.T) {
 	}
 	rec := cl.records[0]
 	attrMap := logRecordAttrs(t, &rec)
-	assertLogAttr(t, attrMap, "nyro.model_name", "gpt-test")
-	assertLogAttr(t, attrMap, "nyro.provider_name", "openai")
+	assertLogAttr(t, attrMap, "nyro.route.id", "m1")
+	assertLogAttr(t, attrMap, "nyro.route.model", "gpt-test")
+	assertLogAttr(t, attrMap, "nyro.upstream.id", "p1")
+	assertLogAttr(t, attrMap, "nyro.upstream.name", "openai")
 	assertLogAttr(t, attrMap, "nyro.client_model", "gpt-test")
 	assertLogAttr(t, attrMap, "nyro.upstream_model", "gpt-4o")
 	assertLogAttr(t, attrMap, "nyro.method", "POST")
 	assertLogAttr(t, attrMap, "nyro.path", "/v1/chat/completions")
-	assertLogAttr(t, attrMap, "nyro.api_key_id", "ak1")
-	assertLogAttr(t, attrMap, "nyro.api_key_name", "test-key")
+	assertLogAttr(t, attrMap, "nyro.consumer.id", "ak1")
+	assertLogAttr(t, attrMap, "nyro.consumer_key.name", "test-key")
+	assertLogAttrInt64(t, attrMap, "http.response.status_code", 200)
 	assertLogAttr(t, attrMap, "nyro.is_stream", true)
 	assertLogAttrInt64(t, attrMap, "nyro.input_tokens", 100)
 	assertLogAttrInt64(t, attrMap, "nyro.output_tokens", 50)
@@ -201,13 +204,18 @@ func TestStageRecordsMetricsTokensAndSpan(t *testing.T) {
 	if id := attrMap["nyro.log.id"].AsString(); id == "" || len(id) < 4 {
 		t.Errorf("nyro.log.id: want non-empty, got %q", id)
 	}
+	for _, oldKey := range []string{"nyro.provider_id", "nyro.model_name", "nyro.api_key_id", "nyro.client_status"} {
+		if _, ok := attrMap[oldKey]; ok {
+			t.Errorf("legacy log attr %q must not be emitted", oldKey)
+		}
+	}
 }
 
 // TestStageEmitsUpstreamAuditAttrs asserts the Stage emits the two optional
 // upstream audit attributes (nyro.upstream_status and
 // nyro.latency_upstream_ms) when LogCtx carries non-nil, non-zero pointers —
 // closing the data-loss gap vs the legacy audit. Also verifies a nil-pointer
-// LogCtx omits them (parquet optional column stays null).
+// LogCtx omits them.
 func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
@@ -241,7 +249,7 @@ func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 		t.Fatalf("case 1 emitted log records: want 1, got %d", len(cl.records))
 	}
 	attrMap := logRecordAttrs(t, &cl.records[0])
-	assertLogAttrInt64(t, attrMap, "nyro.upstream_status", 429)
+	assertLogAttrInt64(t, attrMap, "nyro.upstream.status_code", 429)
 	assertLogAttrInt64(t, attrMap, "nyro.latency_upstream_ms", 312)
 
 	// --- case 2: nil pointers → attributes must be absent. ---
@@ -252,7 +260,7 @@ func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 		t.Fatalf("case 2 emitted log records: want 1, got %d", len(cl.records))
 	}
 	attrMap2 := logRecordAttrs(t, &cl.records[0])
-	for _, key := range []string{"nyro.upstream_status", "nyro.latency_upstream_ms"} {
+	for _, key := range []string{"nyro.upstream.status_code", "nyro.latency_upstream_ms"} {
 		if _, ok := attrMap2[key]; ok {
 			t.Errorf("case 2: nil-pointer LogCtx must omit %q, but it was emitted", key)
 		}
@@ -288,11 +296,11 @@ func TestStage5xxMarksSpanError(t *testing.T) {
 	if st := ended[0].Status(); st.Code != codes.Error {
 		t.Errorf("5xx span status code: want Error, got %d", st.Code)
 	}
-	// status_class label should be "5xx".
+	// The request metric uses the standard exact HTTP response code.
 	var rm metricdata.ResourceMetrics
 	_ = reader.Collect(context.Background(), &rm)
-	if got := counterAttrClass(t, &rm, "nyro_requests_total"); got != "5xx" {
-		t.Errorf("status_class: want 5xx, got %q", got)
+	if got := counterAttrInt64(t, &rm, "nyro_requests_total", "http.response.status_code"); got != 503 {
+		t.Errorf("http.response.status_code: want 503, got %d", got)
 	}
 }
 
@@ -336,9 +344,9 @@ func findHistogram(t *testing.T, rm *metricdata.ResourceMetrics, name string) *m
 	return nil
 }
 
-// counterAttrClass returns the value of the status_class attribute on the first
-// data point of the named int64 counter (empty if absent).
-func counterAttrClass(t *testing.T, rm *metricdata.ResourceMetrics, name string) string {
+// counterAttrInt64 returns one integer attribute from the first data point of
+// the named int64 counter.
+func counterAttrInt64(t *testing.T, rm *metricdata.ResourceMetrics, name, key string) int64 {
 	t.Helper()
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
@@ -346,12 +354,12 @@ func counterAttrClass(t *testing.T, rm *metricdata.ResourceMetrics, name string)
 				continue
 			}
 			if s, ok := m.Data.(metricdata.Sum[int64]); ok && len(s.DataPoints) > 0 {
-				val, _ := s.DataPoints[0].Attributes.Value(attribute.Key("status_class"))
-				return val.AsString()
+				val, _ := s.DataPoints[0].Attributes.Value(attribute.Key(key))
+				return val.AsInt64()
 			}
 		}
 	}
-	return ""
+	return 0
 }
 
 // --- log helpers ---
@@ -493,9 +501,9 @@ func TestStageEmitsOnShortCircuit(t *testing.T) {
 		t.Fatalf("emitted log records = %d, want 1 — a rejected request must still be audited", len(cl.records))
 	}
 	attrs := logRecordAttrs(t, &cl.records[0])
-	assertLogAttrInt64(t, attrs, "nyro.client_status", 401)
+	assertLogAttrInt64(t, attrs, "http.response.status_code", 401)
 	// Fields the exchange never reached come through as zero values.
-	assertLogAttr(t, attrs, "nyro.model_name", "")
+	assertLogAttr(t, attrs, "nyro.route.model", "")
 	assertLogAttrInt64(t, attrs, "nyro.input_tokens", 0)
 
 	if got := len(spanRecorder.Ended()); got != 1 {

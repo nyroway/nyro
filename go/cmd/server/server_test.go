@@ -24,8 +24,25 @@ func TestNewCmdFlags(t *testing.T) {
 	if cmd.Use != "serve" {
 		t.Errorf("Use = %q, want serve", cmd.Use)
 	}
+	wantStrings := map[string]string{
+		"proxy-listen":     "127.0.0.1:19530",
+		"redis-listen":     "127.0.0.1:16379",
+		"otlp-listen":      "127.0.0.1:14318",
+		"state-data-dir":   defaultDataDir(),
+		"observe-data-dir": defaultDataDir(),
+	}
+	for name, want := range wantStrings {
+		if got, _ := cmd.Flags().GetString(name); got != want {
+			t.Errorf("default --%s = %q, want %q", name, got, want)
+		}
+	}
+	for _, name := range []string{"disable-proxy", "disable-redis", "disable-otlp"} {
+		if got, _ := cmd.Flags().GetBool(name); got {
+			t.Errorf("--%s defaults to true, want false", name)
+		}
+	}
 	// Pre-rename flag names must be gone (no compatibility period).
-	for _, old := range []string{"config-listen", "config-tls-ca", "config-tls-cert", "config-tls-key", "plaintext-keys"} {
+	for _, old := range []string{"config-listen", "config-tls-ca", "config-tls-cert", "config-tls-key", "plaintext-keys", "obs-data-dir"} {
 		if cmd.Flags().Lookup(old) != nil {
 			t.Errorf("--%s should have been renamed", old)
 		}
@@ -36,6 +53,13 @@ func TestNewCmdDSNFlagDefault(t *testing.T) {
 	cmd := NewCmd()
 	if v, _ := cmd.Flags().GetString("dsn"); v != "" {
 		t.Errorf("default dsn = %q, want empty (resolved at RunE time)", v)
+	}
+}
+
+func TestDefaultDSNUsesConfigDatabase(t *testing.T) {
+	want := "sqlite://" + filepath.Join(defaultDataDir(), "config.db")
+	if got := defaultDSN(); got != want {
+		t.Fatalf("defaultDSN() = %q, want %q", got, want)
 	}
 }
 
@@ -61,14 +85,6 @@ func TestRunE_RejectsUnknownDSNScheme(t *testing.T) {
 	}
 }
 
-func TestNewCmdObsDataDirFlagDefault(t *testing.T) {
-	cmd := NewCmd()
-	want := filepath.Join(nyroHomeDir(), "obs")
-	if v, _ := cmd.Flags().GetString("obs-data-dir"); v != want {
-		t.Errorf("default obs-data-dir = %q, want %q", v, want)
-	}
-}
-
 // The config-sync TCP listener is opt-in: with an embedded data plane a
 // single-node install needs no config-sync port, so one is not opened unless
 // remote proxies have to subscribe.
@@ -86,6 +102,52 @@ func TestNewCmdProxyListenDefault(t *testing.T) {
 	cmd := NewCmd()
 	if v, _ := cmd.Flags().GetString("proxy-listen"); v != "127.0.0.1:19530" {
 		t.Errorf("default proxy-listen = %q, want 127.0.0.1:19530", v)
+	}
+}
+
+func TestRunERejectsEmptyEnabledListenAddresses(t *testing.T) {
+	for _, name := range []string{"listen", "proxy-listen", "redis-listen", "otlp-listen"} {
+		t.Run(name, func(t *testing.T) {
+			cmd := NewCmd()
+			if err := cmd.ParseFlags([]string{"--" + name + "=", "--dsn=memory://"}); err != nil {
+				t.Fatal(err)
+			}
+			err := cmd.RunE(cmd, nil)
+			if err == nil || !strings.Contains(err.Error(), "--"+name) {
+				t.Fatalf("RunE() error = %v, want --%s validation", err, name)
+			}
+		})
+	}
+}
+
+func TestRunEDisableFlagsAllowUnusedEmptyAddresses(t *testing.T) {
+	cmd := NewCmd()
+	if err := cmd.ParseFlags([]string{
+		"--disable-proxy", "--proxy-listen=",
+		"--disable-redis", "--redis-listen=",
+		"--disable-otlp", "--otlp-listen=",
+		"--dsn=memory://",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := cmd.RunE(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "unrecognized --dsn") {
+		t.Fatalf("RunE() error = %v, want validation to reach DSN", err)
+	}
+}
+
+func TestRunERejectsNonLoopbackEmbeddedInfrastructure(t *testing.T) {
+	for _, flag := range []string{"redis-listen", "otlp-listen"} {
+		t.Run(flag, func(t *testing.T) {
+			cmd := NewCmd()
+			if err := cmd.ParseFlags([]string{"--" + flag + "=0.0.0.0:1234", "--dsn=memory://"}); err != nil {
+				t.Fatal(err)
+			}
+			err := cmd.RunE(cmd, nil)
+			if err == nil || !strings.Contains(err.Error(), "loopback") {
+				t.Fatalf("RunE() error = %v, want loopback validation", err)
+			}
+		})
 	}
 }
 
@@ -319,19 +381,27 @@ func TestRunE_ExplicitDSNMissingDirectoryErrors(t *testing.T) {
 	}
 }
 
-// Same as above, for --obs-data-dir. --dsn is pointed at a valid temp
-// directory so the RunE reaches the obs-data-dir check rather than failing
+// Same as above, for explicit embedded data directories. --dsn is pointed at a valid temp
+// directory so RunE reaches the embedded data-directory check rather than failing
 // there first — and so the test never touches the real ~/.nyro.
-func TestRunE_ExplicitObsDataDirMissingDirectoryErrors(t *testing.T) {
-	cmd := NewCmd()
-	dbDSN := filepath.Join(t.TempDir(), "nyro.db")
-	missing := filepath.Join(t.TempDir(), "does-not-exist")
-	if err := cmd.ParseFlags([]string{"--dsn", "sqlite://" + dbDSN, "--obs-data-dir", missing}); err != nil {
-		t.Fatalf("parse flags: %v", err)
-	}
-	err := cmd.RunE(cmd, nil)
-	if err == nil {
-		t.Fatal("expected an error for a missing explicit --obs-data-dir directory, got nil")
+func TestRunE_ExplicitEmbeddedDataDirMissingDirectoryErrors(t *testing.T) {
+	for _, flag := range []string{"state-data-dir", "observe-data-dir"} {
+		t.Run(flag, func(t *testing.T) {
+			cmd := NewCmd()
+			dbDSN := filepath.Join(t.TempDir(), "config.db")
+			missing := filepath.Join(t.TempDir(), "does-not-exist")
+			args := []string{"--dsn", "sqlite://" + dbDSN, "--" + flag, missing}
+			if flag == "observe-data-dir" {
+				args = append(args, "--disable-redis")
+			}
+			if err := cmd.ParseFlags(args); err != nil {
+				t.Fatalf("parse flags: %v", err)
+			}
+			err := cmd.RunE(cmd, nil)
+			if err == nil || !strings.Contains(err.Error(), "--"+flag) {
+				t.Fatalf("RunE() error = %v, want missing --%s directory error", err, flag)
+			}
+		})
 	}
 }
 

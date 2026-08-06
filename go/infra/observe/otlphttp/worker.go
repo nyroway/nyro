@@ -36,6 +36,9 @@ func (r *Receiver) run(ctx context.Context) {
 		}
 		if err := r.store.Append(ctx, requests); err != nil {
 			r.failed.Add(uint64(len(requests)))
+			if r.onPersistError != nil {
+				r.onPersistError(err)
+			}
 		} else {
 			r.persisted.Add(uint64(len(requests)))
 		}

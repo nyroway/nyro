@@ -28,7 +28,7 @@ import (
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate",
-		Short: "Render and diff the postgres schema DDL (GORM-only)",
+		Short: "Manage database schemas",
 	}
 	cmd.AddCommand(newDumpCmd())
 	cmd.AddCommand(newDiffCmd())
@@ -38,13 +38,10 @@ func NewCmd() *cobra.Command {
 func newDumpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dump",
-		Short: "Print the full CREATE DDL for the models (fresh-database schema)",
-		Long: "Renders model.All() to CREATE DDL in --dsn's dialect via a DryRun " +
-			"session — nothing is executed, so a read-only account is fine. --dsn " +
-			"only selects the dialect (postgres); omit it for sqlite (in-memory).",
+		Short: "Print the complete database schema",
 	}
-	dsn := cmd.Flags().String("dsn", "", "a reachable DB of the target dialect (read-only ok) whose dialect selects the DDL; sqlite in-memory if omitted")
-	output := cmd.Flags().String("output", "", "write SQL to this file instead of stdout")
+	dsn := cmd.Flags().String("dsn", "", "Database DSN used to select SQL dialect")
+	output := cmd.Flags().String("output", "", "Write SQL to a file")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		db, err := openGorm(orSQLiteMem(*dsn))
 		if err != nil {
@@ -62,17 +59,12 @@ func newDumpCmd() *cobra.Command {
 func newDiffCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diff",
-		Short: "Print the incremental DDL to bring a current schema up to the models",
-		Long: "Loads the current schema (from --target-file or --target-dsn) onto the " +
-			"writable --shadow-dsn, runs AutoMigrate for real, and prints the DDL it " +
-			"would issue. --target-file (an exact schema dump, e.g. from `dump`) is " +
-			"precise; --target-dsn introspects a live DB and is lossy (may re-suggest " +
-			"indexes/constraints). The target is only read.",
+		Short: "Print database schema changes",
 	}
-	shadowDSN := cmd.Flags().String("shadow-dsn", "", "writable scratch DB with DDL rights (must differ from --target-dsn); sqlite in-memory if omitted")
-	targetDSN := cmd.Flags().String("target-dsn", "", "current-schema source: a read-only DB to introspect (lossy)")
-	targetFile := cmd.Flags().String("target-file", "", "current-schema source: a schema .sql file (precise, recommended)")
-	output := cmd.Flags().String("output", "", "write SQL to this file instead of stdout")
+	shadowDSN := cmd.Flags().String("shadow-dsn", "", "Writable scratch database DSN")
+	targetDSN := cmd.Flags().String("target-dsn", "", "Database DSN to inspect")
+	targetFile := cmd.Flags().String("target-file", "", "Schema SQL file to compare")
+	output := cmd.Flags().String("output", "", "Write SQL to a file")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		if (*targetDSN == "") == (*targetFile == "") {
 			return fmt.Errorf("exactly one of --target-file or --target-dsn is required")

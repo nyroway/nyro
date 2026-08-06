@@ -35,8 +35,8 @@ import (
 const envPrefix = "NYRO"
 
 // EnvKey builds the environment variable name for a flag under the given
-// per-command prefix (e.g. prefix "SERVE", flag "obs-data-dir" ->
-// "NYRO_SERVE_OBS_DATA_DIR"). The flag name's dashes become
+// per-command prefix (e.g. prefix "SERVE", flag "observe-data-dir" ->
+// "NYRO_SERVE_OBSERVE_DATA_DIR"). The flag name's dashes become
 // underscores and everything is upper-cased.
 func EnvKey(prefix, flagName string) string {
 	return envPrefix + "_" + prefix + "_" + normalize(flagName)

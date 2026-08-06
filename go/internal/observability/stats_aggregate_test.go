@@ -3,186 +3,82 @@ package observability
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
-func sampleReq(model, provider, apikey, status string, n int) []MetricSample {
-	var out []MetricSample
-	for i := 0; i < n; i++ {
-		out = append(out, MetricSample{
-			Ts: 1, Name: "nyro_requests_total", Kind: "counter", Value: 1,
-			LabelsJSON: labels(model, provider, apikey, status),
-		})
-	}
-	return out
+func metricLabelJSON(routeID, routeModel, upstreamID, upstreamName, consumerID, direction string, status int64) string {
+	value, _ := json.Marshal(map[string]any{
+		"nyro.route.id":             routeID,
+		"nyro.route.model":          routeModel,
+		"nyro.upstream.id":          upstreamID,
+		"nyro.upstream.name":        upstreamName,
+		"nyro.consumer.id":          consumerID,
+		"http.response.status_code": status,
+		"direction":                 direction,
+	})
+	return string(value)
 }
 
-func labels(model, provider, apikey, status string) string {
-	b, _ := json.Marshal(map[string]string{"model": model, "provider": provider, "apikey": apikey, "status_class": status})
-	return string(b)
-}
-
-func labelsDir(model, provider, apikey, direction string) string {
-	b, _ := json.Marshal(map[string]string{"model": model, "provider": provider, "apikey": apikey, "direction": direction})
-	return string(b)
-}
-
-// sampleTok returns n token samples of the given direction (in/out/cache_read).
-func sampleTok(model, provider, apikey, direction string, val float64) MetricSample {
-	return MetricSample{
-		Ts: 1, Name: "nyro_tokens_total", Kind: "counter", Value: val,
-		LabelsJSON: labelsDir(model, provider, apikey, direction),
-	}
-}
-
-// sampleLat returns one latency histogram sample: histSum ms over histCount reqs.
-func sampleLat(model, provider string, histSum float64, histCount int64) MetricSample {
-	return MetricSample{
-		Ts: 1, Name: "nyro_request_latency_ms", Kind: "histogram",
-		HistSum: histSum, HistCount: histCount,
-		LabelsJSON: labels(model, provider, "", ""),
-	}
-}
-
-func TestAggregateStatsOverview(t *testing.T) {
-	samples := append(sampleReq("gpt", "openai", "k1", "2xx", 5),
-		sampleReq("gpt", "openai", "k1", "5xx", 2)...) // 7 requests, 2 errors
-	ov, _, _, _, err := AggregateStats(samples, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ov.TotalRequests != 7 {
-		t.Errorf("TotalRequests=%d want 7", ov.TotalRequests)
-	}
-	if ov.ErrorCount != 2 {
-		t.Errorf("ErrorCount=%d want 2", ov.ErrorCount)
-	}
-}
-
-func TestAggregateStatsByModel(t *testing.T) {
-	samples := append(sampleReq("gpt", "openai", "k1", "2xx", 3),
-		sampleReq("claude", "anthropic", "k1", "2xx", 4)...)
-	_, models, _, _, err := AggregateStats(samples, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(models) != 2 {
-		t.Fatalf("want 2 model rows, got %d", len(models))
-	}
-}
-
-// TestAggregateStatsTokens feeds nyro_tokens_total (in/out/cache_read) and
-// asserts the sums appear in Overview, ApiKeyStats, and ModelStats.
-func TestAggregateStatsTokens(t *testing.T) {
+func TestAggregateStatsUsesRouteUpstreamAndConsumerDimensions(t *testing.T) {
+	now := time.Now().UnixNano()
+	labels := metricLabelJSON("route-1", "gpt-4o", "upstream-1", "OpenAI", "consumer-1", "", 200)
+	errorLabels := metricLabelJSON("route-1", "gpt-4o", "upstream-1", "OpenAI", "consumer-1", "", 503)
 	samples := []MetricSample{
-		// 3 requests so model/provider/key rows exist.
-		{
-			Ts: 1, Name: "nyro_requests_total", Kind: "counter", Value: 1,
-			LabelsJSON: labels("gpt", "openai", "k1", "2xx"),
-		},
-		{
-			Ts: 1, Name: "nyro_requests_total", Kind: "counter", Value: 1,
-			LabelsJSON: labels("gpt", "openai", "k1", "2xx"),
-		},
-		{
-			Ts: 1, Name: "nyro_requests_total", Kind: "counter", Value: 1,
-			LabelsJSON: labels("gpt", "openai", "k1", "2xx"),
-		},
-		sampleTok("gpt", "openai", "k1", "in", 100),
-		sampleTok("gpt", "openai", "k1", "out", 200),
-		sampleTok("gpt", "openai", "k1", "cache_read", 50),
+		{Ts: now, Name: "nyro_requests_total", Kind: "counter", Value: 2, LabelsJSON: labels},
+		{Ts: now, Name: "nyro_requests_total", Kind: "counter", Value: 1, LabelsJSON: errorLabels},
+		{Ts: now, Name: "nyro_tokens_total", Kind: "counter", Value: 100, LabelsJSON: metricLabelJSON("route-1", "gpt-4o", "", "", "consumer-1", "in", 0)},
+		{Ts: now, Name: "nyro_tokens_total", Kind: "counter", Value: 200, LabelsJSON: metricLabelJSON("route-1", "gpt-4o", "", "", "consumer-1", "out", 0)},
+		{Ts: now, Name: "nyro_request_latency_ms", Kind: "histogram", HistSum: 750, HistCount: 3, LabelsJSON: labels},
 	}
-	ov, models, _, keys, err := AggregateStats(samples, 0)
+
+	overview, routes, upstreams, consumers, err := AggregateStats(samples, 0)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("AggregateStats() error = %v", err)
 	}
-	if ov.TotalInputTokens != 100 {
-		t.Errorf("Overview TotalInputTokens=%d want 100", ov.TotalInputTokens)
+	if overview.TotalRequests != 3 || overview.ErrorCount != 1 || overview.TotalInputTokens != 100 || overview.TotalOutputTokens != 200 || overview.AvgDurationMs != 250 {
+		t.Fatalf("overview = %+v", overview)
 	}
-	if ov.TotalOutputTokens != 200 {
-		t.Errorf("Overview TotalOutputTokens=%d want 200", ov.TotalOutputTokens)
+	if len(routes) != 1 || routes[0].RouteID != "route-1" || routes[0].RouteModel != "gpt-4o" || routes[0].RequestCount != 3 || routes[0].TotalInputTokens != 100 || routes[0].TotalOutputTokens != 200 || routes[0].AvgDurationMs != 250 {
+		t.Fatalf("route stats = %+v", routes)
 	}
-	if len(keys) != 1 || keys[0].TotalInputTokens != 100 || keys[0].TotalOutputTokens != 200 || keys[0].CacheReadTokens != 50 {
-		t.Errorf("ApiKeyStats unexpected: %+v", keys)
+	if len(upstreams) != 1 || upstreams[0].UpstreamID != "upstream-1" || upstreams[0].UpstreamName != "OpenAI" || upstreams[0].RequestCount != 3 || upstreams[0].ErrorCount != 1 || upstreams[0].AvgDurationMs != 250 {
+		t.Fatalf("upstream stats = %+v", upstreams)
 	}
-	if len(models) != 1 || models[0].TotalInputTokens != 100 || models[0].TotalOutputTokens != 200 {
-		t.Errorf("ModelStats unexpected: %+v", models)
+	if len(consumers) != 1 || consumers[0].ConsumerID != "consumer-1" || consumers[0].RequestCount != 3 || consumers[0].TotalInputTokens != 100 || consumers[0].TotalOutputTokens != 200 || consumers[0].LastUsedAt != now {
+		t.Fatalf("consumer stats = %+v", consumers)
 	}
 }
 
-// TestAggregateStatsLatency feeds nyro_request_latency_ms and asserts
-// AvgDurationMs > 0 on Overview, ModelStats, ProviderStats, and hourly.
-func TestAggregateStatsLatency(t *testing.T) {
+func TestAggregateHourlyUsesExactHTTPStatus(t *testing.T) {
+	at := time.Date(2026, time.August, 6, 3, 30, 0, 0, time.UTC)
 	samples := []MetricSample{
-		{
-			Ts: 1, Name: "nyro_requests_total", Kind: "counter", Value: 1,
-			LabelsJSON: labels("gpt", "openai", "k1", "2xx"),
-		},
-		// latency: 500 ms summed over 2 observations → avg 250 ms.
-		sampleLat("gpt", "openai", 500, 2),
+		{Ts: at.UnixNano(), Name: "nyro_requests_total", Value: 1, LabelsJSON: metricLabelJSON("r", "gpt", "u", "OpenAI", "c", "", 429)},
+		{Ts: at.UnixNano(), Name: "nyro_requests_total", Value: 1, LabelsJSON: metricLabelJSON("r", "gpt", "u", "OpenAI", "c", "", 204)},
+		{Ts: at.UnixNano(), Name: "nyro_request_latency_ms", HistSum: 40, HistCount: 2, LabelsJSON: metricLabelJSON("r", "gpt", "u", "OpenAI", "c", "", 0)},
 	}
-	ov, models, provs, _, err := AggregateStats(samples, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ov.AvgDurationMs != 250 {
-		t.Errorf("Overview AvgDurationMs=%v want 250", ov.AvgDurationMs)
-	}
-	if ov.AvgDurationMs <= 0 {
-		t.Errorf("Overview AvgDurationMs must be > 0, got %v", ov.AvgDurationMs)
-	}
-	if len(models) != 1 || models[0].AvgDurationMs != 250 {
-		t.Errorf("ModelStats AvgDurationMs unexpected: %+v", models)
-	}
-	if len(models) != 1 || models[0].AvgDurationMs <= 0 {
-		t.Errorf("ModelStats AvgDurationMs must be > 0, got %+v", models)
-	}
-	if len(provs) != 1 || provs[0].AvgDurationMs != 250 {
-		t.Errorf("ProviderStats AvgDurationMs unexpected: %+v", provs)
-	}
-	if len(provs) != 1 || provs[0].AvgDurationMs <= 0 {
-		t.Errorf("ProviderStats AvgDurationMs must be > 0, got %+v", provs)
-	}
-
 	hourly, err := AggregateHourly(samples, 0)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("AggregateHourly() error = %v", err)
 	}
-	if len(hourly) != 1 || hourly[0].AvgDurationMs != 250 {
-		t.Errorf("StatsHourly AvgDurationMs unexpected: %+v", hourly)
-	}
-	if len(hourly) != 1 || hourly[0].AvgDurationMs <= 0 {
-		t.Errorf("StatsHourly AvgDurationMs must be > 0, got %+v", hourly)
+	if len(hourly) != 1 || hourly[0].Hour != "2026-08-06T03:00:00Z" || hourly[0].RequestCount != 2 || hourly[0].ErrorCount != 1 || hourly[0].AvgDurationMs != 20 {
+		t.Fatalf("hourly = %+v", hourly)
 	}
 }
 
-// TestAggregateStatsProviderKeyShape asserts ProviderStats and ApiKeyStats
-// carry correct request/error counts.
-func TestAggregateStatsProviderKeyShape(t *testing.T) {
-	samples := append(sampleReq("gpt", "openai", "k1", "2xx", 4),
-		sampleReq("gpt", "openai", "k1", "5xx", 1)...) // openai: 5 req, 1 err
-	samples = append(samples, sampleReq("claude", "anthropic", "k2", "4xx", 2)...) // anthropic: 2 req, 2 err
-	_, _, provs, keys, err := AggregateStats(samples, 0)
+func TestAggregateStatsOmitsUnknownDomainDimensions(t *testing.T) {
+	now := time.Now().UnixNano()
+	samples := []MetricSample{
+		{Ts: now, Name: "nyro_requests_total", Value: 1, LabelsJSON: metricLabelJSON("route-1", "gpt-4o", "upstream-1", "OpenAI", "consumer-1", "", 200)},
+		{Ts: now, Name: "nyro_requests_total", Value: 1, LabelsJSON: metricLabelJSON("", "", "", "", "", "", 404)},
+	}
+	overview, routes, upstreams, consumers, err := AggregateStats(samples, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pmap := map[string]ProviderStats{}
-	for _, p := range provs {
-		pmap[p.Provider] = p
+	if overview.TotalRequests != 2 || overview.ErrorCount != 1 {
+		t.Fatalf("overview = %+v", overview)
 	}
-	if pmap["openai"].RequestCount != 5 || pmap["openai"].ErrorCount != 1 {
-		t.Errorf("openai ProviderStats=%+v want req=5 err=1", pmap["openai"])
-	}
-	if pmap["anthropic"].RequestCount != 2 || pmap["anthropic"].ErrorCount != 2 {
-		t.Errorf("anthropic ProviderStats=%+v want req=2 err=2", pmap["anthropic"])
-	}
-	kmap := map[string]ApiKeyStats{}
-	for _, k := range keys {
-		kmap[k.APIKeyID] = k
-	}
-	if kmap["k1"].RequestCount != 5 {
-		t.Errorf("k1 ApiKeyStats RequestCount=%d want 5", kmap["k1"].RequestCount)
-	}
-	if kmap["k2"].RequestCount != 2 {
-		t.Errorf("k2 ApiKeyStats RequestCount=%d want 2", kmap["k2"].RequestCount)
+	if len(routes) != 1 || len(upstreams) != 1 || len(consumers) != 1 {
+		t.Fatalf("routes=%+v upstreams=%+v consumers=%+v", routes, upstreams, consumers)
 	}
 }

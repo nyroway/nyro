@@ -218,8 +218,13 @@ gateways through config-sync.
   credentials (for example, `https://ai.example.com`). It is metadata for
   control-plane connection guidance; it does not bind a listener, route a
   request, or identify an individual node.
-- `obs_<signal>_retention_days`: retention for the admin-local parquet store
-  (`logs` default `7`, `metrics` `30`, `traces` `3`). Changes take effect
-  when the admin process restarts.
-- `--obs-data-dir`: an admin process flag selecting the parquet store's
-  directory; it is intentionally not a DB setting.
+- `obs_<signal>_retention_days`: retention for the embedded Observe SQLite
+  store (`logs` default `7`, `metrics` `30`, `traces` `3`). Changes take
+  effect when the server restarts.
+- `--observe-data-dir`: directory containing `observe.db`; default
+  `~/.nyro/data`.
+- `--state-data-dir`: directory containing `state.db`; default
+  `~/.nyro/data`.
+- `--otlp-listen` and `--redis-listen`: loopback listeners for the embedded
+  OTLP/HTTP and Redis-compatible servers. Disable them explicitly with
+  `--disable-otlp` and `--disable-redis`.

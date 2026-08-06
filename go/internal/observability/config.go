@@ -3,7 +3,6 @@ package observability
 import (
 	"fmt"
 	"strconv"
-	"time"
 )
 
 // SignalConfig is the resolved exporter configuration for a single signal
@@ -17,33 +16,15 @@ type SignalConfig struct {
 
 // ObsConfig is the resolved observability configuration. Each signal is
 // configured entirely independently — there is no shared/global exporter,
-// endpoint, or export interval. DataDir is intentionally NOT populated by
-// LoadConfig (see below); it is set by the caller (cmd/admin) after
-// LoadConfig returns.
+// endpoint, or export interval.
 type ObsConfig struct {
 	Logs    SignalConfig
 	Metrics SignalConfig
 	Traces  SignalConfig
 
-	// DataDir is admin-only (the gateway never uses it — it does not persist
-	// telemetry). LoadConfig deliberately leaves this at its zero value
-	// (""); the caller (cmd/admin, via an --obs-data-dir CLI flag) assigns it
-	// after LoadConfig returns.
-	DataDir string
-
 	LogsRetentionDays    int
 	MetricsRetentionDays int
 	TracesRetentionDays  int
-
-	// Per-signal flush cadence — admin-only (like DataDir and the retention
-	// fields): how often the receiver flushes that signal's buffered rows to
-	// parquet (the time trigger complementing the sink's maxRows size trigger).
-	// Resolved from obs_<signal>_flush_interval, each defaulting to
-	// DefaultFlushInterval. The gateway loads them too but never uses them — it
-	// does not persist telemetry.
-	LogsFlushInterval    time.Duration
-	MetricsFlushInterval time.Duration
-	TracesFlushInterval  time.Duration
 }
 
 // signalKeyNames maps each Signal to the key-name segment used in setting
@@ -73,8 +54,8 @@ var signalKeyNames = map[Signal]string{
 //     validation, e.g. otlp requiring endpoint, is a downstream concern for
 //     the provider builder, not LoadConfig).
 //
-// obs_data_dir is no longer read here — see ObsConfig.DataDir. Retention
-// settings (obs_<signal>_retention_days) are unchanged.
+// Retention settings (obs_<signal>_retention_days) configure the embedded
+// Observe store.
 func LoadConfig(get func(string) (string, error)) (ObsConfig, error) {
 	g := func(k string) string { v, _ := get(k); return v }
 	ret := func(k string, def int) int {
@@ -85,22 +66,10 @@ func LoadConfig(get func(string) (string, error)) (ObsConfig, error) {
 		}
 		return def
 	}
-	dur := func(k string, def time.Duration) time.Duration {
-		if v := g(k); v != "" {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				return d
-			}
-		}
-		return def
-	}
-
 	cfg := ObsConfig{
 		LogsRetentionDays:    ret("obs_logs_retention_days", 7),
 		MetricsRetentionDays: ret("obs_metrics_retention_days", 30),
 		TracesRetentionDays:  ret("obs_traces_retention_days", 3),
-		LogsFlushInterval:    dur("obs_logs_flush_interval", DefaultFlushInterval),
-		MetricsFlushInterval: dur("obs_metrics_flush_interval", DefaultFlushInterval),
-		TracesFlushInterval:  dur("obs_traces_flush_interval", DefaultFlushInterval),
 	}
 
 	var err error
