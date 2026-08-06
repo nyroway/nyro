@@ -12,17 +12,32 @@
 package migrate
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gorm.io/gorm"
 
-	"github.com/nyroway/nyro/go/internal/bootstrap"
+	infradatabase "github.com/nyroway/nyro/go/infra/database"
+	dbsqlite "github.com/nyroway/nyro/go/infra/database/sqlite"
 	"github.com/nyroway/nyro/go/internal/schemadump"
 	"github.com/nyroway/nyro/go/internal/storage/database"
 )
+
+type openedGorm struct {
+	DB         *gorm.DB
+	connection *infradatabase.Connection
+}
+
+func (o *openedGorm) Close() error {
+	if o == nil {
+		return nil
+	}
+	return o.connection.Close()
+}
 
 // NewCmd builds the `nyro tool migrate` command group.
 func NewCmd() *cobra.Command {
@@ -43,11 +58,12 @@ func newDumpCmd() *cobra.Command {
 	dsn := cmd.Flags().String("dsn", "", "Database DSN used to select SQL dialect")
 	output := cmd.Flags().String("output", "", "Write SQL to a file")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		db, err := openGorm(orSQLiteMem(*dsn))
+		opened, err := openGorm(cmd.Context(), orSQLiteMem(*dsn))
 		if err != nil {
 			return err
 		}
-		sql, err := schemadump.Dump(db)
+		defer func() { _ = opened.Close() }()
+		sql, err := schemadump.Dump(opened.DB)
 		if err != nil {
 			return err
 		}
@@ -72,15 +88,16 @@ func newDiffCmd() *cobra.Command {
 		if *targetDSN != "" && *targetDSN == *shadowDSN {
 			return fmt.Errorf("--shadow-dsn must differ from --target-dsn (the shadow is written to)")
 		}
-		shadow, err := openGorm(orSQLiteMem(*shadowDSN))
+		shadow, err := openGorm(cmd.Context(), orSQLiteMem(*shadowDSN))
 		if err != nil {
 			return fmt.Errorf("open shadow: %w", err)
 		}
-		current, err := currentSchema(*targetFile, *targetDSN)
+		defer func() { _ = shadow.Close() }()
+		current, err := currentSchema(cmd.Context(), *targetFile, *targetDSN)
 		if err != nil {
 			return err
 		}
-		sql, err := schemadump.Diff(shadow, current)
+		sql, err := schemadump.Diff(shadow.DB, current)
 		if err != nil {
 			return err
 		}
@@ -91,7 +108,7 @@ func newDiffCmd() *cobra.Command {
 
 // currentSchema resolves the diff's "current state" from exactly one of a
 // schema file or a live target DB (introspected).
-func currentSchema(targetFile, targetDSN string) (string, error) {
+func currentSchema(ctx context.Context, targetFile, targetDSN string) (string, error) {
 	if targetFile != "" {
 		b, err := os.ReadFile(targetFile)
 		if err != nil {
@@ -99,36 +116,37 @@ func currentSchema(targetFile, targetDSN string) (string, error) {
 		}
 		return string(b), nil
 	}
-	target, err := openGorm(targetDSN)
+	target, err := openGorm(ctx, targetDSN)
 	if err != nil {
 		return "", fmt.Errorf("open target: %w", err)
 	}
-	sql, err := schemadump.IntrospectSchema(target)
+	defer func() { _ = target.Close() }()
+	sql, err := schemadump.IntrospectSchema(target.DB)
 	if err != nil {
 		return "", fmt.Errorf("introspect --target-dsn: %w", err)
 	}
 	return sql, nil
 }
 
-// openGorm opens a gorm.DB for dsn, reusing the storage backend constructors.
-func openGorm(dsn string) (*gorm.DB, error) {
-	backend, driverDSN, err := bootstrap.ParseDSN(dsn)
+// openGorm opens a caller-owned SQL connection and wraps it with the Config
+// Engine's GORM backend.
+func openGorm(ctx context.Context, dsn string) (*openedGorm, error) {
+	connection, err := infradatabase.Open(ctx, dsn, infradatabase.Options{
+		SQLite: dbsqlite.Options{
+			BusyTimeout:  5 * time.Second,
+			MaxOpenConns: 5,
+			MaxIdleConns: 2,
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
-	var b *database.Backend
-	switch backend {
-	case "sqlite":
-		b, err = database.NewSQLite(driverDSN)
-	case "postgres":
-		b, err = database.NewPostgres(driverDSN)
-	default:
-		return nil, fmt.Errorf("unknown backend %q", backend)
-	}
+	b, err := database.New(connection.Kind, connection.DB)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", backend, err)
+		_ = connection.Close()
+		return nil, err
 	}
-	return b.DB(), nil
+	return &openedGorm{DB: b.DB(), connection: connection}, nil
 }
 
 func orSQLiteMem(dsn string) string {

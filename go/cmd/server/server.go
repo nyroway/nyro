@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 
+	infradatabase "github.com/nyroway/nyro/go/infra/database"
 	dbsqlite "github.com/nyroway/nyro/go/infra/database/sqlite"
 	infraobserve "github.com/nyroway/nyro/go/infra/observe"
 	"github.com/nyroway/nyro/go/infra/observe/otlphttp"
@@ -189,11 +190,11 @@ func NewCmd() *cobra.Command {
 			dsn = defaultDSN()
 		}
 
-		backend, driverDSN, err := bootstrap.ParseDSN(dsn)
+		backend, driverDSN, err := infradatabase.ParseDSN(dsn)
 		if err != nil {
 			return err
 		}
-		if backend == "sqlite" {
+		if backend == infradatabase.KindSQLite {
 			// The sqlite driver opens/creates the DB file itself but never its
 			// parent directory. For the ~/.nyro default that's our own managed
 			// space, so auto-creating it (like ~/.aws, ~/.docker, ~/.kube) is
@@ -222,13 +223,15 @@ func NewCmd() *cobra.Command {
 			return err
 		}
 
-		st, err := bootstrap.OpenStorageFromDSN(dsn, autoMigrate, plaintextKeys)
+		ctx, cancel := context.WithCancel(cmd.Context())
+		defer cancel()
+
+		openedStorage, err := bootstrap.OpenStorageFromDSN(ctx, dsn, autoMigrate, plaintextKeys)
 		if err != nil {
 			return err
 		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		defer func() { _ = openedStorage.Close() }()
+		st := openedStorage.Storage
 
 		if !disableOTLP {
 			seedDefaultObsEndpoint(st.Settings(), otlpAddr)
@@ -324,7 +327,7 @@ func NewCmd() *cobra.Command {
 			// Cross-replica epoch polling is only meaningful when another
 			// replica can write to the same database, which the DSN scheme
 			// already tells us — see epochPollInterval.
-			watcher, err := startEpochWatcher(ctx, epochPollInterval(backend), st.Settings(), srv)
+			watcher, err := startEpochWatcher(ctx, epochPollInterval(string(backend)), st.Settings(), srv)
 			if err != nil {
 				return err
 			}

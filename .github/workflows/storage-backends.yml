@@ -55,6 +55,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -77,6 +83,12 @@ jobs:
         run: python3 -m pytest tests/e2e/storage/test_storage.py -vv -s -rA -m storage -k postgres
         env:
           DB_URL: postgresql://nyro:nyro@localhost:5432/nyro_test
+
+      - name: Run Go PostgreSQL integration test
+        working-directory: go
+        run: go test ./internal/storage/database -run TestPostgresIntegration -count=1
+        env:
+          NYRO_TEST_POSTGRES_DSN: postgres://nyro:nyro@localhost:5432/nyro_test?sslmode=disable
 
       - name: Run storage E2E tests (mysql)
         run: python3 -m pytest tests/e2e/storage/test_storage.py -vv -s -rA -m storage -k mysql

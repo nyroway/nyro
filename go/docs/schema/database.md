@@ -159,7 +159,10 @@ Single-node `nyro serve` keeps its three local databases under
 - `observe.db` stores lossless OTLP batches plus query indexes for the embedded
   Observe Engine.
 
-State and Observe use independent caller-owned `database/sql` pools. Their
+SQL connection ownership is centralized under `go/infra/database`: SQLite and
+Postgres pools are opened, verified, configured, and closed there. The Config
+Engine wraps its caller-owned pool with GORM for schema and query behavior;
+State and Observe use independent caller-owned SQLite pools directly. Their
 protocol boundaries are Redis and OTLP, so a clustered deployment can disable
 the embedded listeners and point clients at external components.
 
