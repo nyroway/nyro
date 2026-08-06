@@ -16,40 +16,32 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
+	infradatabase "github.com/nyroway/nyro/go/infra/database"
+	dbsqlite "github.com/nyroway/nyro/go/infra/database/sqlite"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/database"
 )
 
-// ParseDSN parses a --dsn value into a storage backend name and the
-// driver-native DSN that backend's constructor (NewSQLite/NewPostgres)
-// expects. Recognized schemes:
-//   - "sqlite://<path>": path is everything after "sqlite://" verbatim, so
-//     an absolute path is "sqlite:///abs/x.db", a relative path is
-//     "sqlite://./x.db", and an in-memory DB is "sqlite://:memory:".
-//   - "postgres://...": returned unchanged (with scheme) — gorm's postgres
-//     driver (pgx) accepts the URL form natively. "postgresql://" (the other
-//     libpq-recognized alias) is deliberately not accepted, to keep exactly
-//     one spelling per backend.
-//
-// Any other scheme (including "mysql://", "memory://" and "postgresql://") is
-// a hard error — there is no ephemeral backend reachable through --dsn.
-func ParseDSN(dsn string) (string, string, error) {
-	switch {
-	case strings.HasPrefix(dsn, "sqlite://"):
-		return "sqlite", strings.TrimPrefix(dsn, "sqlite://"), nil
-	case strings.HasPrefix(dsn, "postgres://"):
-		return "postgres", dsn, nil
-	default:
-		return "", "", fmt.Errorf("unrecognized --dsn scheme %q (want sqlite:// or postgres://)", dsn)
-	}
+// OpenedStorage owns a Config Engine storage backend and its SQL connection.
+type OpenedStorage struct {
+	storage.Storage
+	connection *infradatabase.Connection
 }
 
-// OpenStorageFromDSN parses dsn via ParseDSN and opens the resulting
-// backend.
+// Close releases the Config Engine connection pool.
+func (s *OpenedStorage) Close() error {
+	if s == nil {
+		return nil
+	}
+	return s.connection.Close()
+}
+
+type databaseOpener func(context.Context, string, infradatabase.Options) (*infradatabase.Connection, error)
+
+// OpenStorageFromDSN opens the Config Engine backend and owns its connection.
 //
 // autoMigrate controls whether the config-schema tables are created/altered
 // via GORM AutoMigrate (DDL). Its default is false regardless of backend —
@@ -63,29 +55,33 @@ func ParseDSN(dsn string) (string, string, error) {
 // key alongside its hash on creation, so keys can be retrieved after creation
 // (e.g. to display/copy a full key in the UI). Default false (hash-only); it
 // never affects the inbound auth path, which always compares hashes.
-func OpenStorageFromDSN(dsn string, autoMigrate, plaintextKeys bool) (storage.Storage, error) {
-	backend, driverDSN, err := ParseDSN(dsn)
+func OpenStorageFromDSN(ctx context.Context, dsn string, autoMigrate, plaintextKeys bool) (*OpenedStorage, error) {
+	return openStorageFromDSN(ctx, dsn, autoMigrate, plaintextKeys, infradatabase.Open)
+}
+
+func openStorageFromDSN(ctx context.Context, dsn string, autoMigrate, plaintextKeys bool, open databaseOpener) (*OpenedStorage, error) {
+	connection, err := open(ctx, dsn, infradatabase.Options{
+		SQLite: dbsqlite.Options{
+			BusyTimeout:  5 * time.Second,
+			MaxOpenConns: 5,
+			MaxIdleConns: 2,
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
-	switch backend {
-	case "sqlite":
-		b, err := database.NewSQLite(driverDSN)
-		if err != nil {
-			return nil, fmt.Errorf("open sqlite: %w", err)
-		}
-		b.SetPlaintextKeys(plaintextKeys)
-		return bootstrapSQL(b, autoMigrate)
-	case "postgres":
-		b, err := database.NewPostgres(driverDSN)
-		if err != nil {
-			return nil, fmt.Errorf("open postgres: %w", err)
-		}
-		b.SetPlaintextKeys(plaintextKeys)
-		return bootstrapSQL(b, autoMigrate)
-	default:
-		return nil, fmt.Errorf("unknown storage backend %q", backend)
+	b, err := database.New(connection.Kind, connection.DB)
+	if err != nil {
+		_ = connection.Close()
+		return nil, err
 	}
+	b.SetPlaintextKeys(plaintextKeys)
+	st, err := bootstrapSQL(b, autoMigrate)
+	if err != nil {
+		_ = connection.Close()
+		return nil, err
+	}
+	return &OpenedStorage{Storage: st, connection: connection}, nil
 }
 
 func bootstrapSQL(st storage.Storage, autoMigrate bool) (storage.Storage, error) {

@@ -3,6 +3,7 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 
@@ -10,6 +11,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	infradatabase "github.com/nyroway/nyro/go/infra/database"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/model"
 	"github.com/nyroway/nyro/go/internal/storage/query"
@@ -26,35 +28,33 @@ type Backend struct {
 	plaintextKeys bool
 }
 
+// New creates a shared SQL backend over a caller-owned connection pool.
+func New(kind infradatabase.Kind, pool *sql.DB) (*Backend, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("%s database connection is nil", kind)
+	}
+
+	var dialector gorm.Dialector
+	switch kind {
+	case infradatabase.KindSQLite:
+		dialector = sqlite.Dialector{Conn: pool}
+	case infradatabase.KindPostgres:
+		dialector = postgres.New(postgres.Config{Conn: pool})
+	default:
+		return nil, fmt.Errorf("unsupported database kind %q", kind)
+	}
+
+	db, err := gorm.Open(dialector, &gorm.Config{Logger: newGormLogger(os.Stderr)})
+	if err != nil {
+		return nil, fmt.Errorf("initialize %s GORM backend: %w", kind, err)
+	}
+	return &Backend{backend: string(kind), db: db, q: query.Use(db)}, nil
+}
+
 // SetPlaintextKeys toggles recoverable plaintext key storage. It is set once
 // at startup (from the admin's --raw-api-keys flag) before the backend
 // serves any request.
 func (b *Backend) SetPlaintextKeys(v bool) { b.plaintextKeys = v }
-
-// NewSQLite opens a SQLite database and returns a shared SQL backend.
-func NewSQLite(path string) (*Backend, error) {
-	if path == "" {
-		path = ":memory:"
-	}
-	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: newGormLogger(os.Stderr)})
-	if err != nil {
-		return nil, err
-	}
-	sqlDB, _ := db.DB()
-	sqlDB.SetMaxOpenConns(5)
-	db.Exec("PRAGMA journal_mode=WAL")
-	db.Exec("PRAGMA busy_timeout=5000")
-	return &Backend{backend: "sqlite", db: db, q: query.Use(db)}, nil
-}
-
-// NewPostgres opens a Postgres database and returns a shared SQL backend.
-func NewPostgres(dsn string) (*Backend, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: newGormLogger(os.Stderr)})
-	if err != nil {
-		return nil, err
-	}
-	return &Backend{backend: "postgres", db: db, q: query.Use(db)}, nil
-}
 
 // DB exposes the underlying GORM database for tests and advanced callers.
 func (b *Backend) DB() *gorm.DB { return b.db }

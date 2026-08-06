@@ -9,10 +9,7 @@ import (
 
 func newTestBackend(t *testing.T) *Backend {
 	t.Helper()
-	b, err := NewSQLite(":memory:")
-	if err != nil {
-		t.Fatalf("NewSQLite: %v", err)
-	}
+	b := newSQLiteBackend(t)
 	if err := b.Migrate(); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}

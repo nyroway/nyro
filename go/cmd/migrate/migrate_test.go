@@ -2,11 +2,31 @@ package migrate
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestOpenGormOwnsClosableConnection(t *testing.T) {
+	opened, err := openGorm(context.Background(), "sqlite://:memory:")
+	if err != nil {
+		t.Fatalf("openGorm() error = %v", err)
+	}
+	if opened.DB == nil {
+		t.Fatal("openGorm() DB = nil")
+	}
+	if err := opened.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+	if err := opened.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if err := opened.connection.DB.Ping(); err == nil {
+		t.Fatal("connection remains usable after Close()")
+	}
+}
 
 // run executes `nyro tool migrate <args...>` against an isolated command tree and
 // returns combined stdout and any error.

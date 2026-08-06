@@ -1,12 +1,60 @@
 package database
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	infradatabase "github.com/nyroway/nyro/go/infra/database"
+	dbsqlite "github.com/nyroway/nyro/go/infra/database/sqlite"
+)
+
+func TestNewUsesCallerOwnedConnection(t *testing.T) {
+	pool, err := dbsqlite.Open(context.Background(), dbsqlite.Options{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("open sqlite pool: %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+
+	b, err := New(infradatabase.KindSQLite, pool)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	gotPool, err := b.DB().DB()
+	if err != nil {
+		t.Fatalf("GORM DB(): %v", err)
+	}
+	if gotPool != pool {
+		t.Fatal("Backend does not use the caller-owned connection pool")
+	}
+}
+
+func TestNewRejectsInvalidConnection(t *testing.T) {
+	t.Parallel()
+
+	if _, err := New(infradatabase.KindSQLite, nil); err == nil {
+		t.Fatal("New(sqlite, nil) error = nil")
+	}
+	if _, err := New(infradatabase.Kind("unknown"), nil); err == nil {
+		t.Fatal("New(unknown, nil) error = nil")
+	}
+}
+
+func newSQLiteBackend(t *testing.T) *Backend {
+	t.Helper()
+	pool, err := dbsqlite.Open(context.Background(), dbsqlite.Options{Path: ":memory:"})
+	if err != nil {
+		t.Fatalf("open SQLite pool: %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	b, err := New(infradatabase.KindSQLite, pool)
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	return b
+}
 
 func TestSQLiteBackendMigratesNewConfigSchema(t *testing.T) {
-	b, err := NewSQLite(":memory:")
-	if err != nil {
-		t.Fatalf("new sqlite: %v", err)
-	}
+	b := newSQLiteBackend(t)
 	if err := b.Migrate(); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -27,10 +75,7 @@ func TestSQLiteBackendMigratesNewConfigSchema(t *testing.T) {
 }
 
 func TestCheckSchema(t *testing.T) {
-	b, err := NewSQLite(":memory:")
-	if err != nil {
-		t.Fatalf("new sqlite: %v", err)
-	}
+	b := newSQLiteBackend(t)
 
 	// Fresh database: canonical tables missing → CheckSchema fails.
 	if err := b.CheckSchema(); err == nil {
