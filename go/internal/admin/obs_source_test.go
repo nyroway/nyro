@@ -14,10 +14,10 @@ import (
 	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 
-	dbsqlite "github.com/nyroway/nyro/go/infra/database/sqlite"
-	infraobserve "github.com/nyroway/nyro/go/infra/observe"
-	observesqlite "github.com/nyroway/nyro/go/infra/observe/sqlite"
 	"github.com/nyroway/nyro/go/internal/observability"
+	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
+	infraobserve "github.com/nyroway/nyro/go/internal/platform/observe"
+	observesqlite "github.com/nyroway/nyro/go/internal/platform/observe/sqlite"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 

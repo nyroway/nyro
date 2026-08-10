@@ -85,7 +85,7 @@ func requireOTLPEndpoint(signal Signal, params map[string]string) (string, error
 }
 
 // Per-signal default OTLP/HTTP request paths, matching the OTLP spec (and the
-// paths the embedded receiver mounts in infra/observe/otlphttp.
+// paths the embedded receiver mounts in internal/platform/observe/otlphttp.
 const (
 	otlpLogsPath    = "/v1/logs"
 	otlpMetricsPath = "/v1/metrics"

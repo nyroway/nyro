@@ -31,17 +31,17 @@ until parity is reached (P0–P6 migration plan).
 | `internal/logging/` | `logging/` | async request-log collector + retention |
 | `nyro.go` | `src-server/` + `crates/nyro-tools/` | unified CLI: `nyro proxy` (data plane), `nyro serve` (control plane), `nyro tool ca`, and `nyro tool migrate` |
 
-Reusable, application-independent infrastructure lives under `infra/`:
+Nyro-owned runtime infrastructure lives under `internal/platform/`:
 
 | Path | Responsibility |
 |---|---|
-| `infra/database/sqlite/` | caller-owned, pure-Go SQLite connection policy; no application schema or migration ownership |
-| `infra/state/` | binary-safe String/TTL semantic API, SQLite persistence, and a limited RESP2/RESP3 Redis-compatible server |
-| `infra/observe/` | lossless OTLP batch persistence, indexed SQLite queries, retention, and an OTLP/HTTP protobuf receiver |
+| `internal/platform/database/sqlite/` | caller-owned, pure-Go SQLite connection policy; no application schema or migration ownership |
+| `internal/platform/state/` | binary-safe String/TTL semantic API, SQLite persistence, and a limited RESP2/RESP3 Redis-compatible server |
+| `internal/platform/observe/` | lossless OTLP batch persistence, indexed SQLite queries, retention, and an OTLP/HTTP protobuf receiver |
 
-State and Observe are standalone library modules in this phase. They are not
-wired into Nyro commands or configuration yet, and use separate `state.db` and
-`observe.db` files when embedded.
+State and Observe remain separate internal platform packages assembled by
+`nyro serve`; they use dedicated `state.db` and `observe.db` files when
+embedded.
 
 ## Library mapping (Rust → Go)
 

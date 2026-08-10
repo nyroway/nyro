@@ -11,8 +11,8 @@ import (
 	metricsv1 "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 
-	infraobserve "github.com/nyroway/nyro/go/infra/observe"
 	"github.com/nyroway/nyro/go/internal/observability"
+	infraobserve "github.com/nyroway/nyro/go/internal/platform/observe"
 )
 
 func appendMetric(t *testing.T, store infraobserve.Store, at time.Time, metric *metricsv1.Metric) {

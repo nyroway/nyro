@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	infradatabase "github.com/nyroway/nyro/go/infra/database"
-	dbpostgres "github.com/nyroway/nyro/go/infra/database/postgres"
+	infradatabase "github.com/nyroway/nyro/go/internal/platform/database"
+	dbpostgres "github.com/nyroway/nyro/go/internal/platform/database/postgres"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 

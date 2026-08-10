@@ -21,8 +21,8 @@ import (
 	"github.com/spf13/cobra"
 	"gorm.io/gorm"
 
-	infradatabase "github.com/nyroway/nyro/go/infra/database"
-	dbsqlite "github.com/nyroway/nyro/go/infra/database/sqlite"
+	infradatabase "github.com/nyroway/nyro/go/internal/platform/database"
+	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
 	"github.com/nyroway/nyro/go/internal/schemadump"
 	"github.com/nyroway/nyro/go/internal/storage/database"
 )
