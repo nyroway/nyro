@@ -5,8 +5,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/nyroway/nyro/go/infra/observe"
 	"github.com/nyroway/nyro/go/internal/observability"
+	"github.com/nyroway/nyro/go/internal/platform/observe"
 )
 
 // ObserveSource projects the generic Observe store into Nyro's Admin DTOs.

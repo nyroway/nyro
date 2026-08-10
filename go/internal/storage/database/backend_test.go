@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	infradatabase "github.com/nyroway/nyro/go/infra/database"
-	dbsqlite "github.com/nyroway/nyro/go/infra/database/sqlite"
+	infradatabase "github.com/nyroway/nyro/go/internal/platform/database"
+	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
 )
 
 func TestNewUsesCallerOwnedConnection(t *testing.T) {

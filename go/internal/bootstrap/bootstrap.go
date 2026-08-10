@@ -19,8 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	infradatabase "github.com/nyroway/nyro/go/infra/database"
-	dbsqlite "github.com/nyroway/nyro/go/infra/database/sqlite"
+	infradatabase "github.com/nyroway/nyro/go/internal/platform/database"
+	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/database"
 )

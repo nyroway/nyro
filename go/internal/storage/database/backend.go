@@ -11,7 +11,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
-	infradatabase "github.com/nyroway/nyro/go/infra/database"
+	infradatabase "github.com/nyroway/nyro/go/internal/platform/database"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/model"
 	"github.com/nyroway/nyro/go/internal/storage/query"
