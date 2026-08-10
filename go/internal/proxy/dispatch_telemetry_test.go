@@ -10,8 +10,8 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/pipeline"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/llm/ir"
 )
 
 // captureStage records the Exchange as the chain unwinds, standing in for the

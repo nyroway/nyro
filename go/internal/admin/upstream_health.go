@@ -10,15 +10,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
+	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/anthropic/messages"
+	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/gemini/generatecontent"
+	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/chatcompletions"
+	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/responses"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/llm/codec"
-	_ "github.com/nyroway/nyro/go/llm/codec/anthropic/messages"
-	_ "github.com/nyroway/nyro/go/llm/codec/gemini/generatecontent"
-	_ "github.com/nyroway/nyro/go/llm/codec/openai/chatcompletions"
-	_ "github.com/nyroway/nyro/go/llm/codec/openai/responses"
-	"github.com/nyroway/nyro/go/llm/ir"
-	"github.com/nyroway/nyro/go/llm/spec"
 )
 
 type upstreamHealthEvent struct {

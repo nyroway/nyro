@@ -7,7 +7,7 @@
 // database/ (one GORM backend shared by SQLite and Postgres; it is
 // the only package allowed to import the generated query/ code).
 //
-// Layer: 1 (data) — may import llm/ and layer 0 (quota, for quota-window
-// validation). Must not import layer 2/3 (observability, proxy, router,
-// admin, dataplane, bootstrap).
+// Layer: 1 (data) — may import internal/protocol/llm and layer 0 (quota, for
+// quota-window validation). Must not import layer 2/3 (observability, proxy,
+// router, admin, dataplane, bootstrap).
 package storage

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/nyroway/nyro/go/llm/spec"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 )
 
 // DefaultAnthropicVersion is the anthropic-version header value applied by

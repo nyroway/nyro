@@ -26,7 +26,7 @@ package path = strings.ReplaceAll(id, "-", "/")
   rather than company-branded.
 - **api** is the vendor's own API name, lowercased with all separators removed.
 - There is **exactly one `-`**, and the api segment must not contain another —
-  the ID↔path bijection depends on it. `llm/codec/layout_test.go` asserts every
+  the ID↔path bijection depends on it. `internal/protocol/llm/codec/layout_test.go` asserts every
   registered handler's package path matches its protocol ID.
 
 The HTTP ingress path (`/v1/chat/completions`) is unrelated to the package
@@ -78,15 +78,15 @@ selectable protocols in config and the WebUI.
 - This schema has no released consumers yet, so there is no back-compat alias
   set: each protocol has exactly the alias listed above, and dropped identifiers
   are rejected as unknown protocols. The authoritative list of protocols and
-  rejected identifiers is `llm/spec/protocols.json` — the contract shared with
-  the WebUI; both `llm/spec/contract_test.go` and
+  rejected identifiers is `internal/protocol/llm/spec/protocols.json` — the contract shared with
+  the WebUI; both `internal/protocol/llm/spec/contract_test.go` and
   `webui/src/lib/protocol.contract.test.ts` assert their tables match it, so the
   two hand-maintained copies cannot drift.
 - The former `openai-compatible` "family" (which grouped chat-completions and
   embeddings) is removed; every protocol is now interface-level, unifying the
   concept across the whole set.
 - `openai-embeddings` currently has a working codec
-  (`llm/codec/openai/embeddings`) and e2e tests. It is defined but kept
+  (`internal/protocol/llm/codec/openai/embeddings`) and e2e tests. It is defined but kept
   commented/unexposed for now so this iteration can focus on the chat protocols;
   re-expose it (and confirm the `/v1/embeddings` ingress) when embeddings work
   resumes.

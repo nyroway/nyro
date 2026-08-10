@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nyroway/nyro/go/llm/ir"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // recorder is a Stage that appends to a shared trace on the way in and on the

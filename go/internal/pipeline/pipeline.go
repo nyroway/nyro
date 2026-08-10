@@ -15,9 +15,10 @@
 // their outbound half. That is how a cache hit or a rejected request ends the
 // exchange without a special-cased outcome enum.
 //
-// Layer: 0 (foundation) — may import llm/ only. Stages themselves live with
-// the subsystem they belong to (observability owns its Stage, proxy owns
-// authn/authz/quota), so this package holds the contract and nothing else.
+// Layer: 0 (foundation) — may import internal/protocol/llm only. Stages
+// themselves live with the subsystem they belong to (observability owns its
+// Stage, proxy owns authn/authz/quota), so this package holds the contract and
+// nothing else.
 package pipeline
 
 import (
@@ -25,7 +26,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/nyroway/nyro/go/llm/ir"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // Stage is one step in the chain. Handle runs once per request.
