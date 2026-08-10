@@ -34,15 +34,74 @@ func parseLabels(s string) metricLabels {
 // shapes. The caller is responsible for selecting the requested time window.
 func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []RouteStats, []UpstreamStats, []ConsumerStats, error) {
 	var ov StatsOverview
+	type histogramAcc struct {
+		bounds     []float64
+		buckets    []uint64
+		compatible bool
+	}
+	addHistogram := func(acc *histogramAcc, sample MetricSample) {
+		if len(sample.HistBuckets) != len(sample.HistBounds)+1 || len(sample.HistBuckets) == 0 {
+			return
+		}
+		if acc.bounds == nil {
+			acc.bounds = append([]float64(nil), sample.HistBounds...)
+			acc.buckets = append([]uint64(nil), sample.HistBuckets...)
+			acc.compatible = true
+			return
+		}
+		if !acc.compatible || len(acc.bounds) != len(sample.HistBounds) {
+			acc.compatible = false
+			return
+		}
+		for i := range acc.bounds {
+			if acc.bounds[i] != sample.HistBounds[i] {
+				acc.compatible = false
+				return
+			}
+		}
+		for i := range acc.buckets {
+			acc.buckets[i] += sample.HistBuckets[i]
+		}
+	}
+	p95 := func(acc histogramAcc) *float64 {
+		if !acc.compatible || len(acc.buckets) == 0 {
+			return nil
+		}
+		var total uint64
+		for _, count := range acc.buckets {
+			total += count
+		}
+		if total == 0 {
+			return nil
+		}
+		rank := (total*95 + 99) / 100
+		var cumulative uint64
+		for i, count := range acc.buckets {
+			cumulative += count
+			if cumulative < rank {
+				continue
+			}
+			if i >= len(acc.bounds) {
+				return nil
+			}
+			value := acc.bounds[i]
+			return &value
+		}
+		return nil
+	}
+	var overviewHistogram histogramAcc
 	type mAcc struct {
 		req, in, out int64
+		err          int64
 		lat          time.Duration
 		latCnt       int64
+		hist         histogramAcc
 	}
 	type pAcc struct {
 		req, err int64
 		lat      time.Duration
 		latCnt   int64
+		hist     histogramAcc
 	}
 	type kAcc struct {
 		req, in, out, cache int64
@@ -73,6 +132,9 @@ func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []RouteStat
 				}
 				routeModels[l.RouteID] = l.RouteModel
 				mm.req += value
+				if l.ResponseStatusCode >= 400 {
+					mm.err += value
+				}
 			}
 			if l.UpstreamID != "" {
 				pp := upstreams[l.UpstreamID]
@@ -138,6 +200,7 @@ func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []RouteStat
 				}
 			}
 		case "nyro_request_latency_ms":
+			addHistogram(&overviewHistogram, s)
 			latSum += time.Duration(s.HistSum * float64(time.Millisecond))
 			latCnt += s.HistCount
 			if l.RouteID != "" {
@@ -149,6 +212,7 @@ func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []RouteStat
 				routeModels[l.RouteID] = l.RouteModel
 				mm.lat += time.Duration(s.HistSum * float64(time.Millisecond))
 				mm.latCnt += s.HistCount
+				addHistogram(&mm.hist, s)
 			}
 			if l.UpstreamID != "" {
 				pp := upstreams[l.UpstreamID]
@@ -159,12 +223,14 @@ func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []RouteStat
 				upstreamNames[l.UpstreamID] = l.UpstreamName
 				pp.lat += time.Duration(s.HistSum * float64(time.Millisecond))
 				pp.latCnt += s.HistCount
+				addHistogram(&pp.hist, s)
 			}
 		}
 	}
 	if latCnt > 0 {
 		ov.AvgDurationMs = float64(latSum/time.Millisecond) / float64(latCnt)
 	}
+	ov.P95DurationMs = p95(overviewHistogram)
 
 	models := make([]RouteStats, 0, len(routes))
 	for id, a := range routes {
@@ -173,7 +239,7 @@ func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []RouteStat
 			avg = float64(a.lat.Milliseconds()) / float64(a.latCnt)
 		}
 		models = append(models, RouteStats{
-			RouteID: id, RouteModel: routeModels[id], RequestCount: a.req, TotalInputTokens: a.in, TotalOutputTokens: a.out, AvgDurationMs: avg,
+			RouteID: id, RouteModel: routeModels[id], RequestCount: a.req, TotalInputTokens: a.in, TotalOutputTokens: a.out, AvgDurationMs: avg, P95DurationMs: p95(a.hist), ErrorCount: a.err,
 		})
 	}
 	sort.Slice(models, func(i, j int) bool {
@@ -189,7 +255,7 @@ func AggregateStats(samples []MetricSample, _ int64) (StatsOverview, []RouteStat
 		if a.latCnt > 0 {
 			avg = float64(a.lat.Milliseconds()) / float64(a.latCnt)
 		}
-		provs = append(provs, UpstreamStats{UpstreamID: id, UpstreamName: upstreamNames[id], RequestCount: a.req, ErrorCount: a.err, AvgDurationMs: avg})
+		provs = append(provs, UpstreamStats{UpstreamID: id, UpstreamName: upstreamNames[id], RequestCount: a.req, ErrorCount: a.err, AvgDurationMs: avg, P95DurationMs: p95(a.hist)})
 	}
 	sort.Slice(provs, func(i, j int) bool {
 		if provs[i].RequestCount != provs[j].RequestCount {

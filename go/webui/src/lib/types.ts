@@ -285,6 +285,7 @@ export interface StatsOverview {
   total_output_tokens: number;
   avg_duration_ms: number;
   error_count: number;
+  p95_duration_ms: number | null;
 }
 
 export interface StatsHourly {
@@ -303,6 +304,8 @@ export interface RouteStats {
   total_input_tokens: number;
   total_output_tokens: number;
   avg_duration_ms: number;
+  error_count: number;
+  p95_duration_ms: number | null;
 }
 
 export interface UpstreamStats {
@@ -311,6 +314,21 @@ export interface UpstreamStats {
   request_count: number;
   error_count: number;
   avg_duration_ms: number;
+  p95_duration_ms: number | null;
+}
+
+export type RuntimeServiceID =
+  | "control-plane"
+  | "embedded-proxy"
+  | "redis-state"
+  | "otlp-receiver";
+
+export interface RuntimeService {
+  id: RuntimeServiceID;
+  status: "running" | "disabled";
+  listen?: string;
+  storage_backend?: string;
+  data_path?: string;
 }
 
 export interface ConsumerStats {
@@ -363,17 +381,6 @@ export interface RouteImportPreview {
   discovered: number;
   create: string[];
   skip: string[];
-}
-
-export interface ModelCapabilities {
-  provider: string;
-  model_id: string;
-  context_window: number;
-  embedding_length?: number | null;
-  tool_call: boolean;
-  reasoning: boolean;
-  input_modalities: string[];
-  output_modalities: string[];
 }
 
 export type ProviderProtocol =
@@ -465,62 +472,4 @@ export interface ImportResult {
   providers_imported: number;
   models_imported: number;
   settings_imported: number;
-}
-
-
-export interface OAuthSessionInitData {
-  session_id: string;
-  vendor: string;
-  scheme: string;
-  auth_url: string;
-  requires_manual_code: boolean;
-  user_code: string;
-  verification_uri: string;
-  verification_uri_complete: string;
-  expires_in: number;
-  interval: number;
-}
-
-export type OAuthSessionStatusData =
-  | {
-      status: "pending";
-      scheme: string;
-      auth_url: string;
-      requires_manual_code: boolean;
-      expires_in: number;
-      interval: number;
-      user_code: string;
-      verification_uri_complete: string;
-    }
-  | {
-      status: "ready";
-      expires_in: number;
-      resource_url?: string | null;
-    }
-  | {
-      status: "error";
-      code: string;
-      message: string;
-    };
-
-export type ProviderOAuthStatus =
-  | "not_connected"
-  | "pending"
-  | "connected"
-  | "unavailable"
-  | "quota_exhausted"
-  | "error"
-  | "disconnected";
-
-export interface ProviderOAuthStatusData {
-  provider_id: string;
-  provider_name: string;
-  driver_key: string;
-  status: ProviderOAuthStatus;
-  expires_at?: string | null;
-  resource_url?: string | null;
-  subject_id?: string | null;
-  last_error?: string | null;
-  updated_at?: string | null;
-  has_refresh_token: boolean;
 }

@@ -116,7 +116,7 @@ go run . serve --webui-dir ./webui/dist
 binary so no external `--webui-dir` is needed at deploy time:
 
 ```bash
-cd go/webui && npm install && npm run build   # produces go/webui/dist
+cd go/webui && pnpm install && pnpm run build # produces go/webui/dist
 cd ..
 rm -rf internal/webui/dist
 mkdir -p internal/webui/dist

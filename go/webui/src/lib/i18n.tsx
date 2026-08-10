@@ -1,38 +1,41 @@
-/* eslint-disable react-hooks/set-state-in-effect, react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components */
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import {
+  resolveInitialLocale,
+  translate,
+  type Locale,
+  type MessageKey,
+} from "./messages";
 
-export type Locale = "zh-CN" | "en-US";
+export type { Locale, MessageKey } from "./messages";
 
 interface LocaleContextValue {
   locale: Locale;
   setLocale: (next: Locale) => void;
+  t: (key: MessageKey, params?: Record<string, string | number>) => string;
 }
 
 const LocaleContext = createContext<LocaleContextValue | null>(null);
 
 export function LocaleProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("en-US");
+  const [locale, setLocaleState] = useState<Locale>(() =>
+    resolveInitialLocale(window.localStorage.getItem("nyro-locale")),
+  );
 
   useEffect(() => {
-    const saved = localStorage.getItem("nyro-locale");
-    const initial: Locale =
-      saved === "zh-CN" || saved === "en-US"
-        ? saved
-        : navigator.language.startsWith("zh")
-          ? "zh-CN"
-          : "en-US";
-    setLocaleState(initial);
-    document.documentElement.lang = initial;
-  }, []);
+    document.documentElement.lang = locale;
+  }, [locale]);
 
   const setLocale = (next: Locale) => {
     setLocaleState(next);
     localStorage.setItem("nyro-locale", next);
-    document.documentElement.lang = next;
   };
 
-  const value = useMemo(() => ({ locale, setLocale }), [locale]);
+  const value = useMemo(
+    () => ({ locale, setLocale, t: (key: MessageKey, params?: Record<string, string | number>) => translate(locale, key, params) }),
+    [locale],
+  );
 
   return <LocaleContext.Provider value={value}>{children}</LocaleContext.Provider>;
 }

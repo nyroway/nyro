@@ -30,9 +30,9 @@ interface MultiSelectProps {
 export function MultiSelect({
   options,
   values,
-  placeholder = "选择...",
-  searchPlaceholder = "搜索...",
-  emptyText = "无匹配结果",
+  placeholder = "Select...",
+  searchPlaceholder = "Search...",
+  emptyText = "No matches",
   onChange,
   className,
   disabled = false,

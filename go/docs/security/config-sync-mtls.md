@@ -70,8 +70,7 @@ nyro proxy --server server.internal:19532 --sync-token "$NEW"
 ```
 
 Prefer the environment (`NYRO_SERVE_SYNC_TOKEN`, `NYRO_PROXY_SYNC_TOKEN`) over
-the flag, which exposes the value in `ps`. The same applies to the management
-API's `--token`.
+the flag, which exposes the value in `ps`.
 
 **A token authorizes; it does not identify.** Every holder is equally
 privileged and indistinguishable, and `node_id` stays self-reported — so any
@@ -232,8 +231,7 @@ prefer mTLS below.
 export NYRO_SERVE_SYNC_TOKEN=... NYRO_PROXY_SYNC_TOKEN=...   # same value
 
 nyro serve --listen 10.0.0.10:19531 \
-  --sync-listen 10.0.0.10:19532 \
-  --token "$NYRO_SERVE_TOKEN" --auto-migrate
+  --sync-listen 10.0.0.10:19532 --auto-migrate
 nyro proxy --server 10.0.0.10:19532
 ```
 
@@ -278,14 +276,12 @@ case that workflow is for:
 # server-1
 nyro serve --listen 10.0.0.11:19531 \
   --sync-listen 10.0.0.11:19532 \
-  --dsn "$NYRO_SHARED_DSN" \
-  --token "$NYRO_SERVE_TOKEN"
+  --dsn "$NYRO_SHARED_DSN"
 
 # server-2
 nyro serve --listen 10.0.0.12:19531 \
   --sync-listen 10.0.0.12:19532 \
-  --dsn "$NYRO_SHARED_DSN" \
-  --token "$NYRO_SERVE_TOKEN"
+  --dsn "$NYRO_SHARED_DSN"
 ```
 
 Use the same shared PostgreSQL DSN on every replica and add complete
@@ -307,18 +303,19 @@ nyro proxy --config ./config.yaml
 Control-plane changes do not reach a proxy configured this way. `--sync-tls-*`
 flags are rejected when `--sync-listen` is empty.
 
-## HTTP TLS and the optional management token
+## HTTP TLS and management API access
 
 The server's REST/WebUI `--listen` endpoint and the proxy's client API
 `--listen` endpoint serve HTTP. The config-sync `--sync-tls-*` flags do not enable
 HTTPS on either endpoint. Terminate public or cross-host HTTPS in a reverse
 proxy, ingress, load balancer, or service mesh.
 
-`nyro serve --token <value>` optionally adds Bearer authentication to
-`/api/v1` routes; it does not authenticate config-sync. Omitting it is allowed,
-but a non-loopback server `--listen` address emits a warning that control-plane
-routes are unauthenticated. Use a token for exposed management APIs, and carry it
-over deployment-layer HTTPS so the token itself is not sent in cleartext.
+The management API has no built-in authentication. It binds to loopback by
+default; a non-loopback server `--listen` address emits a warning because the
+API exposes configuration writes and upstream credentials. Restrict any
+off-host listener with a private network, firewall, or an authenticated HTTPS
+reverse proxy. The browser same-origin and loopback Host checks reduce
+CSRF/DNS-rebinding risk, but do not authenticate operators.
 
 ## Elastic scaling
 

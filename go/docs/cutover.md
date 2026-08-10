@@ -31,8 +31,7 @@ go build -o /tmp/nyro .
   --config ./config.yaml
 # control plane (management API + WebUI):
 /tmp/nyro serve --listen 127.0.0.1:19531 \
-  --sync-listen= --webui-dir ./webui/dist \
-  --token "$NYRO_SERVE_TOKEN" --auto-migrate
+  --sync-listen= --webui-dir ./webui/dist --auto-migrate
 ```
 
 `--auto-migrate` above lets this first-boot server create its own (default
@@ -59,7 +58,7 @@ fastest path — and the only one that needs no token:
 ```bash
 # control plane, with config-sync enabled (loopback plaintext, no token needed):
 /tmp/nyro serve --listen 127.0.0.1:19531 \
-  --sync-listen 127.0.0.1:19532 --token "$NYRO_SERVE_TOKEN" --auto-migrate
+  --sync-listen 127.0.0.1:19532 --auto-migrate
 # data plane, subscribing to config-sync instead of --config:
 /tmp/nyro proxy --listen 127.0.0.1:19529 \
   --server 127.0.0.1:19532
@@ -102,8 +101,7 @@ DDL a DBA reviews (print it with `nyro tool migrate dump`/`diff`; see
 # Run on each server host, with a distinct --listen/--sync-listen address.
 /tmp/nyro serve --listen 10.0.0.11:19531 \
   --sync-listen 10.0.0.11:19532 \
-  --dsn "$NYRO_SHARED_DSN" \
-  --token "$NYRO_SERVE_TOKEN"
+  --dsn "$NYRO_SHARED_DSN"
 ```
 
 The polling default is `0` (disabled); a single server still pushes its own
@@ -113,10 +111,10 @@ proxy unless the config-sync network is deliberately trusted for plaintext.
 The server's REST/WebUI listener and the proxy's client listener are HTTP-only. The
 config-sync TLS flags secure only the gRPC channel; terminate HTTPS for those
 HTTP listeners at a reverse proxy, ingress, load balancer, or service mesh.
-`--token` is optional Bearer protection for the server's `/api/v1` routes and
-does not secure config-sync. A non-loopback server listener without `--token`
-logs a warning instead of refusing to start; exposed management APIs should use a token
-over deployment-layer HTTPS.
+The management API has no built-in authentication and binds to loopback by
+default. If `--listen` is exposed off-host, restrict it with a private network,
+firewall, or an authenticated HTTPS reverse proxy. The browser same-origin and
+loopback Host checks are CSRF/DNS-rebinding defenses, not operator authentication.
 
 ## 2. Shadow traffic + parity diff
 

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -35,13 +36,13 @@ type StatsSource interface {
 	StatsHourly(context.Context, int64) ([]observability.StatsHourly, error)
 }
 
-// Mount registers the admin REST API under /api/v1 on r. If adminToken is
-// non-empty, every admin route requires Authorization: Bearer <adminToken>.
-func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, stats StatsSource) {
+// Mount registers the admin REST API under /api/v1 on r. The management API
+// intentionally has no built-in authentication: nyro serve binds it to
+// loopback by default, while remote deployments protect it at the network or
+// reverse-proxy boundary.
+func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource) {
 	r.Route("/api/v1", func(g chi.Router) {
-		if adminToken != "" {
-			g.Use(bearerAuth(adminToken))
-		}
+		g.Use(sameOriginAdminWrites)
 
 		g.Get("/status", func(w http.ResponseWriter, r *http.Request) {
 			upstreams, _ := s.Upstreams().List()
@@ -70,6 +71,9 @@ func Mount(r chi.Router, s storage.Storage, adminToken string, logs LogSource, s
 				return
 			}
 			webutil.JSON(w, http.StatusOK, lister.Nodes())
+		})
+		g.Get("/runtime/services", func(w http.ResponseWriter, r *http.Request) {
+			webutil.JSON(w, http.StatusOK, runtimeServices())
 		})
 
 		// ── upstreams ──
@@ -527,17 +531,48 @@ func testHTTPClient(proxyURL string, timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: http.ProxyURL(parsed)}}
 }
 
-func bearerAuth(token string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			h := r.Header.Get("Authorization")
-			if !strings.HasPrefix(h, "Bearer ") || strings.TrimPrefix(h, "Bearer ") != token {
-				webutil.Error(w, http.StatusUnauthorized, "unauthorized", "AUTH_ERROR")
+func sameOriginAdminWrites(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+			webutil.Error(w, http.StatusForbidden, "cross-origin admin write rejected", "ORIGIN_MISMATCH")
+			return
+		}
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin != "" {
+			parsed, err := url.Parse(origin)
+			if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Host, r.Host) {
+				webutil.Error(w, http.StatusForbidden, "cross-origin admin write rejected", "ORIGIN_MISMATCH")
 				return
 			}
-			next.ServeHTTP(w, r)
-		})
-	}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// LoopbackHostGuard rejects non-loopback Host headers for a management server
+// bound to loopback. Without this check, DNS rebinding can make a malicious
+// website's hostname resolve to 127.0.0.1 and bypass the browser same-origin
+// boundary. Remote listeners do not use this middleware because their public
+// hostnames are deployment-specific.
+func LoopbackHostGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.TrimSpace(r.Host)
+		if split, _, err := net.SplitHostPort(host); err == nil {
+			host = split
+		}
+		host = strings.TrimSuffix(strings.Trim(host, "[]"), ".")
+		ip := net.ParseIP(host)
+		if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+			webutil.Error(w, http.StatusForbidden, "non-loopback Host rejected", "INVALID_HOST")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // anyList renders the result of a list func.

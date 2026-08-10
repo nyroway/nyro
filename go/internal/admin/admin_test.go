@@ -21,7 +21,7 @@ func newEngine(t *testing.T, token string) (chi.Router, *memory.Backend) {
 	t.Helper()
 	st := memory.New()
 	r := chi.NewRouter()
-	Mount(r, st.Storage(), token, nil, nil)
+	Mount(r, st.Storage(), nil, nil)
 	return r, st
 }
 
@@ -62,16 +62,13 @@ func sseDataObjects(t *testing.T, body string) []map[string]any {
 	return out
 }
 
-func TestAdminAuth(t *testing.T) {
+func TestAdminDoesNotRequireAuthentication(t *testing.T) {
 	r, _ := newEngine(t, "secret")
-	if rec := do(r, "GET", "/api/v1/upstreams", "", nil); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("no token → %d, want 401", rec.Code)
+	if rec := do(r, "GET", "/api/v1/upstreams", "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("upstreams without token → %d, want 200", rec.Code)
 	}
-	if rec := do(r, "GET", "/api/v1/upstreams", "wrong", nil); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("bad token → %d, want 401", rec.Code)
-	}
-	if rec := do(r, "GET", "/api/v1/status", "secret", nil); rec.Code != http.StatusOK {
-		t.Fatalf("status with token → %d", rec.Code)
+	if rec := do(r, "GET", "/api/v1/status", "", nil); rec.Code != http.StatusOK {
+		t.Fatalf("status without token → %d, want 200", rec.Code)
 	}
 }
 
@@ -116,6 +113,114 @@ func TestAdminRouteAndSettings(t *testing.T) {
 	rec = do(r, "GET", "/api/v1/settings/log_retention_days", "", nil)
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"value":"7"`)) {
 		t.Errorf("get setting → %s", rec.Body.String())
+	}
+}
+
+func TestRuntimeServicesEndpointExists(t *testing.T) {
+	r, _ := newEngine(t, "")
+
+	rec := do(r, http.MethodGet, "/api/v1/runtime/services", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("runtime services status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+		t.Fatalf("runtime services body = %q, want []", got)
+	}
+}
+
+func TestRuntimeServicesReturnsConfiguredSnapshotWithoutSecrets(t *testing.T) {
+	SetRuntimeServices([]RuntimeService{
+		{ID: ServiceControlPlane, Status: ServiceRunning, Listen: "127.0.0.1:19531", StorageBackend: "postgres"},
+		{ID: ServiceEmbeddedProxy, Status: ServiceDisabled, Listen: "127.0.0.1:19530"},
+		{ID: ServiceRedisState, Status: ServiceRunning, Listen: "127.0.0.1:16379", StorageBackend: "sqlite", DataPath: "/tmp/state.db"},
+		{ID: ServiceOTLPReceiver, Status: ServiceRunning, Listen: "127.0.0.1:14318", StorageBackend: "sqlite", DataPath: "/tmp/observe.db"},
+	})
+	t.Cleanup(func() { SetRuntimeServices(nil) })
+	r, _ := newEngine(t, "")
+
+	rec := do(r, http.MethodGet, "/api/v1/runtime/services", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("runtime services status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var services []RuntimeService
+	if err := json.Unmarshal(rec.Body.Bytes(), &services); err != nil {
+		t.Fatalf("decode runtime services: %v", err)
+	}
+	if len(services) != 4 {
+		t.Fatalf("runtime services len = %d, want 4: %+v", len(services), services)
+	}
+	if services[0].ID != ServiceControlPlane || services[0].Status != ServiceRunning || services[0].StorageBackend != "postgres" {
+		t.Fatalf("control-plane service = %+v", services[0])
+	}
+	if services[1].ID != ServiceEmbeddedProxy || services[1].Status != ServiceDisabled {
+		t.Fatalf("embedded proxy service = %+v", services[1])
+	}
+	body := strings.ToLower(rec.Body.String())
+	for _, forbidden := range []string{"dsn", "password", "token", "postgres://"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("runtime services response leaks forbidden field %q: %s", forbidden, rec.Body.String())
+		}
+	}
+}
+
+func TestCrossOriginAdminWriteIsRejected(t *testing.T) {
+	r, _ := newEngine(t, "")
+	req := httptest.NewRequest(http.MethodPost, "http://nyro.local/api/v1/upstreams", strings.NewReader(
+		`{"name":"OpenAI","provider":"openai","protocol":"openai-chatcompletions","base_url":"https://api.openai.com"}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://attacker.example")
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin write status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSameOriginAndNonBrowserAdminWritesRemainAvailable(t *testing.T) {
+	for _, origin := range []string{"http://nyro.local", ""} {
+		t.Run(origin, func(t *testing.T) {
+			r, _ := newEngine(t, "")
+			req := httptest.NewRequest(http.MethodPost, "http://nyro.local/api/v1/upstreams", strings.NewReader(
+				`{"name":"OpenAI","provider":"openai","protocol":"openai-chatcompletions","base_url":"https://api.openai.com"}`,
+			))
+			req.Header.Set("Content-Type", "application/json")
+			if origin != "" {
+				req.Header.Set("Origin", origin)
+			}
+			rec := httptest.NewRecorder()
+
+			r.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("write with Origin %q status = %d, want 201; body = %s", origin, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestLoopbackHostGuardRejectsDNSRebindingHosts(t *testing.T) {
+	handler := LoopbackHostGuard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, tc := range []struct {
+		host string
+		want int
+	}{
+		{host: "localhost:19531", want: http.StatusNoContent},
+		{host: "127.0.0.1:19531", want: http.StatusNoContent},
+		{host: "[::1]:19531", want: http.StatusNoContent},
+		{host: "attacker.example:19531", want: http.StatusForbidden},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/api/v1/status", nil)
+		req.Host = tc.host
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("Host %q status = %d, want %d", tc.host, rec.Code, tc.want)
+		}
 	}
 }
 

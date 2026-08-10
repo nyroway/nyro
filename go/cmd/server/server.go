@@ -105,7 +105,6 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().String("sync-tls-ca", "", "CA certificate for config sync")
 	cmd.Flags().String("sync-tls-cert", "", "Server certificate for config sync")
 	cmd.Flags().String("sync-tls-key", "", "Server private key for config sync")
-	cmd.Flags().String("token", "", "Bearer token for the management API")
 	cmd.Flags().String("webui-dir", "", "Directory containing the built WebUI")
 	cmd.Flags().String("dsn", "", "Configuration database DSN (default ~/.nyro/data/config.db)")
 	cmd.Flags().Bool("auto-migrate", false, "Create or update database tables on startup")
@@ -126,7 +125,6 @@ func NewCmd() *cobra.Command {
 		tlsCA, _ := cmd.Flags().GetString("sync-tls-ca")
 		tlsCert, _ := cmd.Flags().GetString("sync-tls-cert")
 		tlsKey, _ := cmd.Flags().GetString("sync-tls-key")
-		adminToken, _ := cmd.Flags().GetString("token")
 		webuiDir, _ := cmd.Flags().GetString("webui-dir")
 		dsn, _ := cmd.Flags().GetString("dsn")
 		autoMigrate, _ := cmd.Flags().GetBool("auto-migrate")
@@ -162,8 +160,8 @@ func NewCmd() *cobra.Command {
 				}
 			}
 		}
-		if adminToken == "" && !configsync.IsLoopbackListenAddress(addr) {
-			slog.Warn("management API is exposed without --token; unauthenticated clients can access control-plane routes", "listen", addr)
+		if !configsync.IsLoopbackListenAddress(addr) {
+			slog.Warn("management API is listening on a non-loopback address without built-in authentication; it exposes upstream credentials and full configuration write access — restrict it with a private network, firewall, or authenticated HTTPS reverse proxy", "listen", addr)
 		}
 
 		var configTLS *tls.Config
@@ -222,6 +220,21 @@ func NewCmd() *cobra.Command {
 		if err := prepareDataDir(cmd, "observe-data-dir", observeDataDir); err != nil {
 			return err
 		}
+
+		admin.SetRuntimeServices(runtimeServiceSnapshot(runtimeServiceOptions{
+			controlListen:  addr,
+			proxyListen:    proxyAddr,
+			disableProxy:   disableProxy,
+			redisListen:    redisAddr,
+			disableRedis:   disableRedis,
+			stateDataDir:   stateDataDir,
+			otlpListen:     otlpAddr,
+			disableOTLP:    disableOTLP,
+			observeDataDir: observeDataDir,
+			configBackend:  string(backend),
+			configPath:     driverDSN,
+		}))
+		defer admin.SetRuntimeServices(nil)
 
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
@@ -354,8 +367,11 @@ func NewCmd() *cobra.Command {
 
 		engine := chi.NewRouter()
 		engine.Use(middleware.Recoverer)
+		if configsync.IsLoopbackListenAddress(addr) {
+			engine.Use(admin.LoopbackHostGuard)
+		}
 		observeSource := admin.NewObserveSource(observeStore)
-		admin.Mount(engine, st, adminToken, observeSource, observeSource)
+		admin.Mount(engine, st, observeSource, observeSource)
 		webui.Mount(engine, webuiDir)
 
 		var dataPlaneHandler http.Handler
@@ -445,6 +461,44 @@ func NewCmd() *cobra.Command {
 		return bootstrap.RunManagedServers(managed...)
 	}
 	return cmd
+}
+
+type runtimeServiceOptions struct {
+	controlListen  string
+	proxyListen    string
+	disableProxy   bool
+	redisListen    string
+	disableRedis   bool
+	stateDataDir   string
+	otlpListen     string
+	disableOTLP    bool
+	observeDataDir string
+	configBackend  string
+	configPath     string
+}
+
+func runtimeServiceSnapshot(options runtimeServiceOptions) []admin.RuntimeService {
+	status := func(disabled bool) admin.RuntimeServiceStatus {
+		if disabled {
+			return admin.ServiceDisabled
+		}
+		return admin.ServiceRunning
+	}
+	control := admin.RuntimeService{
+		ID:             admin.ServiceControlPlane,
+		Status:         admin.ServiceRunning,
+		Listen:         options.controlListen,
+		StorageBackend: options.configBackend,
+	}
+	if options.configBackend == "sqlite" {
+		control.DataPath = options.configPath
+	}
+	return []admin.RuntimeService{
+		control,
+		{ID: admin.ServiceEmbeddedProxy, Status: status(options.disableProxy), Listen: options.proxyListen},
+		{ID: admin.ServiceRedisState, Status: status(options.disableRedis), Listen: options.redisListen, StorageBackend: "sqlite", DataPath: filepath.Join(options.stateDataDir, "state.db")},
+		{ID: admin.ServiceOTLPReceiver, Status: status(options.disableOTLP), Listen: options.otlpListen, StorageBackend: "sqlite", DataPath: filepath.Join(options.observeDataDir, "observe.db")},
+	}
 }
 
 func prepareDataDir(cmd *cobra.Command, flag, dir string) error {

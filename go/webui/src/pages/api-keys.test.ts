@@ -92,7 +92,7 @@ describe("dynamic quota editor", () => {
 
   it("treats concurrency as a single value with no window", () => {
     const start = source.indexOf("function buildQuotasPayload");
-    const end = source.indexOf("\nconst quotaBadgeColors", start);
+    const end = source.indexOf("\n}", start);
     if (start < 0 || end < 0) {
       throw new Error("Could not locate buildQuotasPayload");
     }
@@ -101,32 +101,18 @@ describe("dynamic quota editor", () => {
     expect(body).toContain('quotas.push({ quota_type: "concurrency", quota_limit: Number.parseInt(form.concurrency, 10) });');
   });
 
-  it("renders exactly one badge per quota type, folding extra rules into a +N suffix instead of adding badges", () => {
-    const start = source.indexOf("function renderQuotaBadges(quotas: ConsumerQuota[] | undefined)");
-    const end = source.indexOf("\n  }", start);
-    if (start < 0 || end < 0) {
-      throw new Error("Could not locate renderQuotaBadges");
-    }
-    const body = source.slice(start, end);
-
-    expect(body).toContain("quotaSummaryOrder.flatMap(({ type, zh, en }, idx) => {");
-    expect(body).toContain('const suffix = rows.length > 1 ? ` +${rows.length - 1}` : "";');
+  it("summarizes quota rules in one compact table cell", () => {
+    expect(source).toContain("formatQuotaRule(consumer.quotas[0])");
+    expect(source).toContain('common.additionalRules", { count: consumer.quotas.length - 1 }');
   });
 });
 
-describe("access permission summary badges", () => {
-  it("shows one count badge per access dimension instead of one badge per bound item", () => {
-    const start = source.indexOf("function renderAccessBadges(consumer: Consumer)");
-    const end = source.indexOf("\n  }", start);
-    if (start < 0 || end < 0) {
-      throw new Error("Could not locate renderAccessBadges");
-    }
-    const body = source.slice(start, end);
-
-    expect(body).toContain("consumer.routes?.length ?? 0");
-    expect(body).toContain("consumer.protocols?.length ?? 0");
-    expect(body).toContain("consumer.ip_allowlist?.length ?? 0");
-    expect(body).toContain(".filter((d) => d.count > 0)");
+describe("access permission summary", () => {
+  it("keeps long permission sets compact in the table", () => {
+    expect(source).toContain("consumer.routes.slice(0, 2).map");
+    expect(source).toContain("consumer.routes.length - 2");
+    expect(source).toContain('consumer.protocols.join(" / ")');
+    expect(source).toContain("consumer.ip_allowlist.length");
   });
 });
 
@@ -159,7 +145,7 @@ describe("multi-key management", () => {
   });
 
   it("warns when deleting a consumer's only key", () => {
-    const start = source.indexOf("title={isZh ? \"确认删除 Key\"");
+    const start = source.indexOf('title={localizedMessage(isZh, "v2.api-keys.confirmKeyDeletion2")}');
     const end = source.indexOf("\n      />", start);
     if (start < 0 || end < 0) {
       throw new Error("Could not locate the delete-key ConfirmDialog");
@@ -194,9 +180,9 @@ describe("multi-key management", () => {
   });
 
   it("has a + button in the list row to add a key, before the edit button", () => {
-    const start = source.indexOf("onClick={() => toggleConsumerEnabledMut.mutate({ id: item.id");
-    const editIdx = source.indexOf("onClick={() => startEdit(item)}", start);
-    const addIdx = source.indexOf("onClick={() => openAddKeyDialog(item)}", start);
+    const start = source.indexOf("toggleConsumerEnabledMut.mutate({ id: consumer.id");
+    const editIdx = source.indexOf("startEdit(consumer)", start);
+    const addIdx = source.indexOf("openAddKeyDialog(consumer)", start);
     if (start < 0 || editIdx < 0 || addIdx < 0) {
       throw new Error("Could not locate the list row action buttons");
     }

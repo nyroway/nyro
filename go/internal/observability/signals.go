@@ -68,11 +68,13 @@ type LogRecord struct {
 // MetricSample is one point of a metrics time-series snapshot (one OTLP
 // metric export = one snapshot = many samples).
 type MetricSample struct {
-	Ts         int64
-	Name       string
-	LabelsJSON string
-	Kind       string // "counter" | "histogram" | "gauge"
-	Value      float64
-	HistSum    float64
-	HistCount  int64
+	Ts          int64
+	Name        string
+	LabelsJSON  string
+	Kind        string // "counter" | "histogram" | "gauge"
+	Value       float64
+	HistSum     float64
+	HistCount   int64
+	HistBounds  []float64
+	HistBuckets []uint64
 }

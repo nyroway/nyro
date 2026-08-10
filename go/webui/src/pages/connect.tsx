@@ -1,6 +1,6 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Code2, Copy } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 
 import { backend } from "@/lib/backend";
 import type { Consumer, Route } from "@/lib/types";
@@ -9,8 +9,13 @@ import { formatKeyPreview } from "@/lib/format";
 import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
 import { ProviderIcon } from "@/components/ui/provider-icon";
+import { Notice } from "@/components/v2/notice";
+import { PageHeader } from "@/components/v2/page-header";
+import { PageLayout } from "@/components/v2/page-layout";
+import { Status } from "@/components/v2/status";
+import { Surface } from "@/components/v2/surface";
+import { localizedMessage } from "@/lib/messages";
 
 const CodeHighlighter = lazy(() => import("@/components/ui/code-highlighter"));
 
@@ -94,7 +99,9 @@ function languageLabel(language: CodeLanguage) {
   return "cURL";
 }
 
-function codeTemplate(params: {
+// Exported for deterministic sample-generation tests; the page remains the only runtime consumer.
+// eslint-disable-next-line react-refresh/only-export-components
+export function codeTemplate(params: {
   protocol: CodeProtocol;
   model: string;
   host: string;
@@ -379,7 +386,6 @@ console.log(response.content[0]);`;
   const cfg = maxTokens ? `\n  config: { maxOutputTokens: ${maxTokens} },` : "";
   const head = `// npm install @google/genai
 import { GoogleGenAI } from "@google/genai";
-
 const client = new GoogleGenAI({
   apiKey: ${tsKey},
   baseUrl: "${host}",
@@ -407,7 +413,7 @@ console.log(response.text);`;
 }
 
 export default function ConnectPage() {
-  const { locale } = useLocale();
+  const { locale, t } = useLocale();
   const isZh = locale === "zh-CN";
 
   const [codeLang, setCodeLang] = useState<CodeLanguage>("python");
@@ -417,7 +423,6 @@ export default function ConnectPage() {
   const [stream, setStream] = useState(false);
   const [maxTokensInput, setMaxTokensInput] = useState(DEFAULT_MAX_TOKENS);
   const [copied, setCopied] = useState(false);
-  const [isDarkTheme, setIsDarkTheme] = useState(false);
 
   const { data: routes = [] } = useQuery<Route[]>({
     queryKey: ["routes"],
@@ -432,24 +437,10 @@ export default function ConnectPage() {
     queryFn: () => backend("get_setting", { key: PUBLIC_GATEWAY_URL_KEY }),
   });
 
-  useEffect(() => {
-    const root = document.documentElement;
-    const syncTheme = () => setIsDarkTheme(root.getAttribute("data-theme") === "dark");
-    syncTheme();
-    const observer = new MutationObserver(syncTheme);
-    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (selectedRouteId && !routes.some((r) => r.id === selectedRouteId)) {
-      setSelectedRouteId("");
-    }
-  }, [routes, selectedRouteId]);
-
+  const effectiveRouteID = routes.some((route) => route.id === selectedRouteId) ? selectedRouteId : "";
   const selectedRoute = useMemo(
-    () => routes.find((r) => r.id === selectedRouteId) ?? null,
-    [routes, selectedRouteId],
+    () => routes.find((r) => r.id === effectiveRouteID) ?? null,
+    [routes, effectiveRouteID],
   );
 
   const flatKeys = useMemo(() => flattenKeys(consumers), [consumers]);
@@ -464,19 +455,10 @@ export default function ConnectPage() {
 
   const showKeyPicker = Boolean(selectedRoute?.enable_auth) && plaintextMode;
 
-  useEffect(() => {
-    if (!showKeyPicker) {
-      setSelectedKeyId("");
-      return;
-    }
-    if (selectedKeyId && !availableKeys.some((k) => k.id === selectedKeyId)) {
-      setSelectedKeyId("");
-    }
-  }, [availableKeys, selectedKeyId, showKeyPicker]);
-
+  const effectiveKeyID = showKeyPicker && availableKeys.some((key) => key.id === selectedKeyId) ? selectedKeyId : "";
   const selectedKey = useMemo(
-    () => availableKeys.find((k) => k.id === selectedKeyId) ?? null,
-    [availableKeys, selectedKeyId],
+    () => availableKeys.find((k) => k.id === effectiveKeyID) ?? null,
+    [availableKeys, effectiveKeyID],
   );
 
   // base_url: a configured public URL wins; otherwise a fixed local address.
@@ -515,185 +497,73 @@ export default function ConnectPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">{isZh ? "接入" : "Connect"}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {isZh
-            ? "通过代码将应用连接到 Nyro Gateway（支持流式与非流式）"
-            : "Connect your app to Nyro Gateway via code (streaming and non-streaming)"}
-        </p>
-      </div>
+    <PageLayout header={<PageHeader title={t("page.connect.title")} description={t("page.connect.subtitle")} />}>
+      <Notice title={localizedMessage(isZh, "v2.connect.gatewayEndpoint")}>
+        <code>{host}</code>{localizedMessage(isZh, "v2.connect.samplesReadTheKeyFromAnEnvironmentVariable")}
+      </Notice>
 
-      <div className="connect-panel glass rounded-2xl p-5 space-y-4">
-        <div className="space-y-2">
-          <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-            {isZh ? "选择接入协议" : "Select Ingress Protocol"}
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {CODE_PROTOCOLS.map((protocol) => {
-              const active = protocol.id === selectedProtocol;
-              return (
-                <button
-                  key={protocol.id}
-                  type="button"
-                  onClick={() => setSelectedProtocol(protocol.id)}
-                  data-state={active ? "on" : "off"}
-                  className="provider-preset-card h-auto rounded-xl px-3 py-2.5 text-left"
-                >
-                  <div className="flex items-start gap-2.5">
-                    <div className="inline-flex h-9 w-9 items-center justify-center">
-                      <ProviderIcon
-                        iconKey={protocol.iconKey}
-                        name={protocol.name}
-                        protocol={protocol.id}
-                        size={30}
-                        className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
-                      />
-                      <ProviderIcon
-                        iconKey={protocol.iconKey}
-                        name={protocol.name}
-                        protocol={protocol.id}
-                        size={30}
-                        monochrome
-                        className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm leading-tight font-semibold text-slate-900">{protocol.name}</p>
-                      <p className="mt-1 text-xs text-slate-500 break-all">{protocol.apiPath}</p>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="connect-cli-shell rounded-xl border p-4 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Code2 className="h-4 w-4 text-slate-600" />
-            <p className="text-sm font-semibold text-slate-900">{protocolLabel(selectedProtocol)}</p>
-            <Badge variant="outline" className="connect-label-badge">
-              {CODE_PROTOCOLS.find((p) => p.id === selectedProtocol)?.apiPath}
-            </Badge>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 items-start">
-            <div className="space-y-2">
-              <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                {isZh ? "选择模型" : "Select Model"}
-              </p>
-              <Combobox
-                className="bg-white"
-                value={selectedRouteId}
-                onValueChange={setSelectedRouteId}
-                options={routes.map((r) => ({ value: r.id, label: r.model }))}
-                placeholder={
-                  routes.length > 0
-                    ? isZh ? "选择模型" : "Select model"
-                    : isZh ? "请先创建模型" : "Create a model first"
-                }
-                searchPlaceholder={isZh ? "搜索模型..." : "Search models..."}
-                emptyText={isZh ? "暂无可选模型" : "No models available"}
-              />
-            </div>
-
-            {showKeyPicker && (
-              <div className="space-y-2">
-                <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                  {isZh ? "选择 API Key" : "Select API Key"}
-                </p>
-                <Combobox
-                  className="bg-white"
-                  value={selectedKeyId}
-                  onValueChange={setSelectedKeyId}
-                  options={availableKeys.map((k) => ({
-                    value: k.id,
-                    label: `${k.name} · ${formatKeyPreview(k.keyPreview)}`,
-                  }))}
-                  placeholder={isZh ? "选择 API Key" : "Select API key"}
-                  searchPlaceholder={isZh ? "搜索 API Key..." : "Search API keys..."}
-                  emptyText={isZh ? "暂无可选 API Key" : "No API keys available"}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 items-start">
-            <div className="space-y-2">
-              <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                {isZh ? "最大 Token 数" : "Max tokens (max_tokens)"}
-              </p>
-              <Input
-                type="number"
-                min={1}
-                inputMode="numeric"
-                className="bg-white"
-                value={maxTokensInput}
-                onChange={(e) => setMaxTokensInput(e.target.value)}
-                placeholder={isZh ? "默认 1024" : "Default 1024"}
-              />
-            </div>
-            <div className="space-y-2">
-              <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                {isZh ? "输出方式" : "Output Mode"}
-              </p>
-              <label className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                <span className="text-xs text-slate-600">
-                  {stream
-                    ? isZh ? "流式：逐块返回" : "Streaming: incremental chunks (stream)"
-                    : isZh ? "非流式：一次性返回" : "Non-streaming: single response"}
-                </span>
-                <Switch checked={stream} onCheckedChange={setStream} />
-              </label>
-            </div>
-          </div>
-
-          {selectedRoute ? (
-            <div className="space-y-2">
-              <div className="connect-code-tabs flex gap-1">
-                {CODE_LANGS.map((lang) => (
-                  <button
-                    key={lang}
-                    onClick={() => setCodeLang(lang)}
-                    className={`connect-code-tab-btn px-3 py-2 text-xs font-medium transition-colors cursor-pointer ${
-                      codeLang === lang ? "is-active" : ""
-                    }`}
-                  >
-                    {languageLabel(lang)}
+      <div className="v2-connect-workspace">
+        <Surface className="v2-connect-config" title={localizedMessage(isZh, "v2.connect.requestConfiguration")} description={localizedMessage(isZh, "v2.connect.changesUpdateTheCodeSampleImmediately")}>
+          <div className="v2-connect-form">
+            <div className="v2-connect-field">
+              <label>{localizedMessage(isZh, "v2.connect.ingressProtocol")}</label>
+              <div className="v2-protocol-options">
+                {CODE_PROTOCOLS.map((protocol) => (
+                  <button key={protocol.id} type="button" className={protocol.id === selectedProtocol ? "active" : ""} onClick={() => setSelectedProtocol(protocol.id)}>
+                    <ProviderIcon iconKey={protocol.iconKey} name={protocol.name} protocol={protocol.id} size={22} />
+                    <span><strong>{protocol.name}</strong><code>{protocol.apiPath}</code></span>
                   </button>
                 ))}
               </div>
-
-              <div className="connect-code-example-box relative rounded-xl p-4">
-                <button
-                  onClick={copyCode}
-                  className="connect-code-copy-btn absolute top-3 right-3 rounded-xl p-3 cursor-pointer transition-colors"
-                  title={isZh ? "复制代码" : "Copy code"}
-                >
-                  {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
-                </button>
-                <Suspense fallback={<pre className="overflow-x-auto text-xs text-slate-500">{generatedCode}</pre>}>
-                  <CodeHighlighter code={generatedCode} language={syntaxLanguage(codeLang)} dark={isDarkTheme} padding={0} />
-                </Suspense>
-              </div>
             </div>
-          ) : (
-            <p className="text-xs text-amber-600">
-              {isZh ? "请先选择模型以生成代码示例。" : "Select a model first to generate code samples."}
-            </p>
-          )}
+            <div className="v2-connect-field">
+              <label>{localizedMessage(isZh, "v2.connect.model")}</label>
+              <Combobox
+                value={effectiveRouteID}
+                onValueChange={(value) => { setSelectedRouteId(value); setSelectedKeyId(""); }}
+                options={routes.filter((route) => route.enabled).map((route) => ({ value: route.id, label: route.model }))}
+                placeholder={routes.length ? (localizedMessage(isZh, "v2.connect.selectModel")) : (localizedMessage(isZh, "v2.connect.createAModelFirst"))}
+                searchPlaceholder={localizedMessage(isZh, "v2.connect.searchModels")}
+                emptyText={localizedMessage(isZh, "v2.connect.noModelsAvailable")}
+              />
+              <small>{localizedMessage(isZh, "v2.connect.onlyEnabledModelRoutesAreShown")}</small>
+            </div>
+            {showKeyPicker ? (
+              <div className="v2-connect-field">
+                <label>API Key</label>
+                <Combobox value={effectiveKeyID} onValueChange={setSelectedKeyId} options={availableKeys.map((key) => ({ value: key.id, label: `${key.name} · ${formatKeyPreview(key.keyPreview)}` }))} placeholder={localizedMessage(isZh, "v2.connect.selectApiKey")} searchPlaceholder={localizedMessage(isZh, "v2.connect.searchApiKeys")} emptyText={localizedMessage(isZh, "v2.connect.noApiKeysAvailable")} />
+                <small>{localizedMessage(isZh, "v2.connect.theKeyMustBeAllowedToAccessThe")}</small>
+              </div>
+            ) : (
+              <Notice title={localizedMessage(isZh, "v2.connect.apiKey")}>{localizedMessage(isZh, "connect.keyFromEnvironment", { name: API_KEY_ENV })}</Notice>
+            )}
+            <div className="v2-connect-grid">
+              <div className="v2-connect-field"><label>{localizedMessage(isZh, "v2.api-keys.maxOutputTokens")}</label><Input type="number" min={1} inputMode="numeric" value={maxTokensInput} onChange={(event) => setMaxTokensInput(event.target.value)} /></div>
+              <div className="v2-connect-field"><label>{localizedMessage(isZh, "v2.connect.streaming")}</label><div className="v2-connect-switch"><span>{stream ? (localizedMessage(isZh, "v2.connect.enabled")) : (localizedMessage(isZh, "v2.settings.disabled"))}</span><Switch checked={stream} onCheckedChange={setStream} /></div></div>
+            </div>
+          </div>
+        </Surface>
 
-          {selectedRoute && useEnvVar && (
-            <p className="text-xs text-slate-500">
-              {isZh
-                ? `示例从环境变量 ${API_KEY_ENV} 读取密钥；如需回填完整 Key，请以 --plaintext-keys 启动 admin。`
-                : `The sample reads the key from the ${API_KEY_ENV} environment variable; start admin with --plaintext-keys to inline the full key.`}
-            </p>
-          )}
-        </div>
+        <section className="v2-code-surface">
+          <header>
+            <div className="v2-code-tabs">{CODE_LANGS.map((language) => <button type="button" key={language} className={codeLang === language ? "active" : ""} onClick={() => setCodeLang(language)}>{languageLabel(language)}</button>)}</div>
+            <button type="button" className="v2-copy-code" onClick={copyCode}>{copied ? <Check /> : <Copy />}{copied ? (localizedMessage(isZh, "v2.api-keys.copied")) : (localizedMessage(isZh, "v2.connect.copyCode"))}</button>
+          </header>
+          <div className="v2-code-body">
+            {selectedRoute ? <Suspense fallback={<pre>{generatedCode}</pre>}><CodeHighlighter code={generatedCode} language={syntaxLanguage(codeLang)} dark padding={0} /></Suspense> : <div className="v2-code-empty">{localizedMessage(isZh, "v2.connect.selectAModelToGenerateCodeHere")}</div>}
+          </div>
+          <footer>{selectedRoute ? `${protocolLabel(selectedProtocol)} · ${selectedRoute.model}` : (localizedMessage(isZh, "v2.connect.waitingForAModel"))}</footer>
+        </section>
       </div>
-    </div>
+
+      <Surface title={localizedMessage(isZh, "v2.connect.integrationChecklist")} description={localizedMessage(isZh, "v2.connect.confirmTheseItemsBeforeRunningTheSample")}>
+        <div className="v2-connect-checks">
+          <div><span>{localizedMessage(isZh, "v2.connect.gatewayEndpoint")}</span><Status tone="success">{localizedMessage(isZh, "v2.connect.configured")}</Status></div>
+          <div><span>{localizedMessage(isZh, "v2.connect.modelRoute")}</span><Status tone={selectedRoute ? "success" : "warning"}>{selectedRoute?.model ?? (localizedMessage(isZh, "v2.connect.notSelected"))}</Status></div>
+          <div><span>{localizedMessage(isZh, "v2.connect.consumerKey")}</span><Status tone={!selectedRoute?.enable_auth || !showKeyPicker || selectedKey ? "success" : "warning"}>{!selectedRoute?.enable_auth ? (localizedMessage(isZh, "v2.connect.notRequired")) : useEnvVar ? API_KEY_ENV : (selectedKey?.name ?? (localizedMessage(isZh, "v2.connect.notSelected")))}</Status></div>
+          <div><span>{localizedMessage(isZh, "v2.connect.protocolTranslation")}</span><Status tone="info">{protocolLabel(selectedProtocol)}</Status></div>
+        </div>
+      </Surface>
+    </PageLayout>
   );
 }

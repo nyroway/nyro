@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { backend, streamProviderDraftHealth, streamProviderEditDraftHealth, streamProviderHealth, streamProviderRouteImport } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type {
@@ -17,29 +18,23 @@ import type {
   ProviderProtocol,
 } from "@/lib/types";
 import {
-  Server,
   Plus,
   Trash2,
-  CheckCircle,
-  XCircle,
   Zap,
-  Loader2,
   Pencil,
-  X,
   ChevronLeft,
   ChevronRight,
   Eye,
   EyeOff,
   Info,
-  ToggleRight,
-  ToggleLeft,
   Route as RouteIcon,
+  Search,
+  RefreshCw,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -63,6 +58,17 @@ import {
   isCustomProviderPreset,
   withCustomProviderPreset,
 } from "@/lib/provider-presets";
+import { DataTable, type DataTableColumn } from "@/components/v2/data-table";
+import { EmptyState } from "@/components/v2/empty-state";
+import { FilterBar } from "@/components/v2/filter-bar";
+import { Inspector } from "@/components/v2/inspector";
+import { PageHeader } from "@/components/v2/page-header";
+import { PageLayout } from "@/components/v2/page-layout";
+import { ResourceEditorDialog } from "@/components/v2/resource-editor-dialog";
+import { Status } from "@/components/v2/status";
+import { Surface } from "@/components/v2/surface";
+import { filterProviders, type ProviderFilters } from "@/features/providers/provider-view-model";
+import { localizedMessage, type MessageKey } from "@/lib/messages";
 
 function protocolUrl(protocol: string) {
   return PROTOCOL_TABLE.find((p) => p.id === resolveProtocol(protocol))?.defaultBaseUrl
@@ -232,22 +238,138 @@ const protocolOptions = [
   { label: "Gemini generateContent", value: "gemini-generatecontent" },
 ] as const satisfies ReadonlyArray<{ label: string; value: ProviderProtocol }>;
 
+type ProviderDetailContentProps = {
+  provider: Upstream;
+  result?: TestResult;
+  onTest: () => void;
+  onImport: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+};
+
+export function ProviderDetailContent({
+  provider,
+  result,
+  onTest,
+  onImport,
+  onEdit,
+  onDelete,
+}: ProviderDetailContentProps) {
+  const { locale } = useLocale();
+  const isZh = locale === "zh-CN";
+  const healthLabel = !result
+    ? localizedMessage(isZh, "v2.providers.notTested")
+    : result.success
+      ? localizedMessage(isZh, "v2.providers.healthy")
+      : localizedMessage(isZh, "v2.providers.failed2");
+  const healthTone = !result ? "neutral" : result.success ? "success" : "danger";
+
+  return (
+    <div className="v2-provider-detail">
+      <div className="v2-provider-detail-summary">
+        <div><span>{localizedMessage(isZh, "v2.providers.health")}</span><Status tone={healthTone}>{healthLabel}</Status></div>
+        <div><span>{localizedMessage(isZh, "v2.providers.latency")}</span><strong>{result ? `${result.latency_ms}ms` : "—"}</strong></div>
+        <div><span>{localizedMessage(isZh, "v2.providers.models")}</span><strong>{provider.models?.length ?? 0}</strong></div>
+      </div>
+
+      <section className="v2-provider-detail-section">
+        <header>
+          <h3>{localizedMessage(isZh, "v2.providers.connectionSummary")}</h3>
+          <p>{localizedMessage(isZh, "v2.providers.connectionSummaryDetail")}</p>
+        </header>
+        <dl className="v2-provider-kv">
+          <div><dt>{localizedMessage(isZh, "v2.providers.protocol")}</dt><dd>{protocolDisplayName(provider.protocol ?? "") ?? provider.protocol ?? "—"}</dd></div>
+          <div><dt>Base URL</dt><dd><code>{provider.base_url || "—"}</code></dd></div>
+          <div><dt>{localizedMessage(isZh, "v2.providers.credentials")}</dt><dd>{provider.credentials ? localizedMessage(isZh, "v2.providers.configured") : "—"}</dd></div>
+          <div><dt>{localizedMessage(isZh, "v2.providers.modelDiscoveryAddress")}</dt><dd><code>{provider.models_url || "—"}</code></dd></div>
+          <div><dt>{localizedMessage(isZh, "v2.providers.status")}</dt><dd>{provider.enabled ? localizedMessage(isZh, "v2.providers.enabled") : localizedMessage(isZh, "v2.providers.disabled")}</dd></div>
+        </dl>
+      </section>
+
+      <div className="v2-provider-detail-actions">
+        <button type="button" className="v2-button" onClick={onTest}><Zap />{localizedMessage(isZh, "v2.providers.testConnection")}</button>
+        <button type="button" className="v2-button" onClick={onImport}><RouteIcon />{localizedMessage(isZh, "v2.providers.importModelRoutes")}</button>
+        <button type="button" className="v2-button v2-button-primary" onClick={onEdit}><Pencil />{localizedMessage(isZh, "v2.providers.editConfiguration")}</button>
+        <button type="button" className="v2-button v2-button-danger" onClick={onDelete}><Trash2 />{localizedMessage(isZh, "v2.providers.delete")}</button>
+      </div>
+    </div>
+  );
+}
+
+export function ProviderFormSections({
+  connection,
+  credentials,
+  discovery,
+}: {
+  connection: ReactNode;
+  credentials: ReactNode;
+  discovery: ReactNode;
+}) {
+  const { locale } = useLocale();
+  const isZh = locale === "zh-CN";
+
+  return (
+    <div className="v2-provider-form-sections">
+      <ProviderFormSection
+        name="connection"
+        title={localizedMessage(isZh, "v2.providers.connection")}
+        description={localizedMessage(isZh, "v2.providers.connectionFormDetail")}
+      >
+        {connection}
+      </ProviderFormSection>
+      <ProviderFormSection
+        name="credentials"
+        title={localizedMessage(isZh, "v2.providers.credentials")}
+        description={localizedMessage(isZh, "v2.providers.credentialsFormDetail")}
+      >
+        {credentials}
+      </ProviderFormSection>
+      <ProviderFormSection
+        name="discovery"
+        title={localizedMessage(isZh, "v2.providers.modelDiscoveryAddress")}
+        description={localizedMessage(isZh, "v2.providers.discoveryFormDetail")}
+      >
+        {discovery}
+      </ProviderFormSection>
+    </div>
+  );
+}
+
+function ProviderFormSection({
+  name,
+  title,
+  description,
+  children,
+}: {
+  name: "connection" | "credentials" | "discovery";
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="v2-provider-form-section" data-provider-form-section={name}>
+      <header><h3>{title}</h3><p>{description}</p></header>
+      <div className="v2-provider-form-grid">{children}</div>
+    </section>
+  );
+}
+
 function validateProviderEndpoint(
   protocol: string | undefined,
   baseUrl: string | undefined,
   isZh: boolean,
 ): string | null {
   if (!protocol?.trim()) {
-    return isZh ? "协议不能为空" : "Protocol is required";
+    return localizedMessage(isZh, "v2.providers.protocolIsRequired");
   }
   const trimmed = baseUrl?.trim() ?? "";
   if (!trimmed) {
-    return isZh ? "Base URL 不能为空" : "Base URL is required";
+    return localizedMessage(isZh, "v2.providers.baseUrlIsRequired");
   }
   try {
     new URL(trimmed);
   } catch {
-    return isZh ? `无效的 Base URL: ${baseUrl}` : `Invalid base URL: ${baseUrl}`;
+    return localizedMessage(isZh, "providers.invalidBaseURL", { url: baseUrl ?? "" });
   }
   return null;
 }
@@ -457,8 +579,8 @@ function CredentialFieldInput({
   const isSecret = field.type === "secret";
   const isJsonBlob = isSecret && /json/i.test(field.name);
   const credentialPlaceholder = field.name === "api_key"
-    ? (isZh ? "如：sk-..." : "e.g. sk-...")
-    : (isZh ? `请输入 ${label}` : `Enter ${label}`);
+    ? (localizedMessage(isZh, "v2.providers.eGSk"))
+    : localizedMessage(isZh, "providers.enterCredential", { label });
 
   if (field.type === "enum" && field.values?.length) {
     return (
@@ -485,7 +607,7 @@ function CredentialFieldInput({
       <div className="col-span-2 space-y-2">
         <FieldLabel required={field.required}>{label}</FieldLabel>
         <textarea
-          placeholder={isZh ? "粘贴 JSON 内容" : "Paste JSON content"}
+          placeholder={localizedMessage(isZh, "v2.providers.pasteJsonContent")}
           value={value}
           rows={8}
           className="min-h-32 w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300"
@@ -514,7 +636,7 @@ function CredentialFieldInput({
             type="button"
             onClick={() => setReveal((prev) => !prev)}
             className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-            aria-label={reveal ? (isZh ? "隐藏" : "Hide") : (isZh ? "显示" : "Show")}
+            aria-label={reveal ? (localizedMessage(isZh, "v2.providers.hide")) : (localizedMessage(isZh, "v2.providers.show"))}
           >
             {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
@@ -571,6 +693,52 @@ type TestLogEntry = {
   message: string;
 };
 
+export function ProviderTestLog({
+  logs,
+  emptyLabel,
+  containerRef,
+}: {
+  logs: TestLogEntry[];
+  emptyLabel: string;
+  containerRef?: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <div ref={containerRef} className="v2-provider-test-log">
+      {logs.length === 0
+        ? <p className="v2-provider-test-empty">{emptyLabel}</p>
+        : logs.map((log, index) => (
+          <p key={`${log.timestamp}-${index}`} data-log-level={log.level}>
+            <time>{log.timestamp}</time><span>{log.message}</span>
+          </p>
+        ))}
+    </div>
+  );
+}
+
+export function RouteImportSummary({ preview }: { preview: RouteImportPreview }) {
+  const { locale } = useLocale();
+  const isZh = locale === "zh-CN";
+
+  return (
+    <div className="v2-provider-import-summary">
+      <div className="v2-provider-import-metrics">
+        <div><span>{localizedMessage(isZh, "v2.providers.discovered")}</span><strong>{preview.discovered}</strong></div>
+        <div><span>{localizedMessage(isZh, "v2.providers.create")}</span><strong>{preview.create.length}</strong></div>
+        <div><span>{localizedMessage(isZh, "v2.providers.skip")}</span><strong>{preview.skip.length}</strong></div>
+      </div>
+      <section>
+        <h4>{localizedMessage(isZh, "v2.providers.routesToCreate")}</h4>
+        <div className="v2-provider-import-routes">
+          {preview.create.slice(0, 8).map((model) => <code key={model}>{model}</code>)}
+          {preview.create.length > 8 && <span>+{preview.create.length - 8}</span>}
+          {preview.create.length === 0 && <small>{localizedMessage(isZh, "v2.providers.noRoutesNeedToBeCreated")}</small>}
+        </div>
+      </section>
+      {preview.skip.length > 0 && <p>{localizedMessage(isZh, "providers.importSkipped", { count: preview.skip.length })}</p>}
+    </div>
+  );
+}
+
 const PROVIDER_TEST_RESULTS_STORAGE_KEY = "nyro.provider-test-results.v1";
 
 function nowTimestamp() {
@@ -615,15 +783,19 @@ function saveProviderTestResults(results: Record<string, TestResult>) {
 }
 
 export default function ProvidersPage() {
-  const { locale } = useLocale();
+  const { locale, t } = useLocale();
   const isZh = locale === "zh-CN";
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
-  const [testingId, setTestingId] = useState<string | null>(null);
-  const [routeImportingId, setRouteImportingId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<ProviderFilters>({ query: "", protocol: "all", enabled: "all" });
+  const [, setTestingId] = useState<string | null>(null);
+  const [, setRouteImportingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, TestResult>>(loadProviderTestResults);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [testLogs, setTestLogs] = useState<TestLogEntry[]>([]);
@@ -658,6 +830,7 @@ export default function ProvidersPage() {
     () => withCustomProviderPreset(providerPresetsRaw.map(providerPresetFromDTO)),
     [providerPresetsRaw],
   );
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) ?? null;
   const [form, setForm] = useState<ProviderFormState>(emptyCreate);
   const selectedPreset = useMemo(
     () => providerPresets.find((preset) => preset.id === selectedPresetId) ?? null,
@@ -686,7 +859,7 @@ export default function ProvidersPage() {
       closeCreateForm();
     },
     onError: (error: unknown) => {
-      showErrorDialog("创建提供商失败", "Failed to create provider", error);
+      showErrorDialog("providers.error.create", error);
     },
   });
 
@@ -705,7 +878,7 @@ export default function ProvidersPage() {
     },
     onError: (err: Error) => {
       setEditError(String(err));
-      showErrorDialog("保存提供商失败", "Failed to save provider", err);
+      showErrorDialog("providers.error.save", err);
     },
   });
 
@@ -713,7 +886,7 @@ export default function ProvidersPage() {
     mutationFn: (id: string) => backend("delete_upstream", { id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["providers"] }),
     onError: (error: unknown) => {
-      showErrorDialog("删除提供商失败", "Failed to delete provider", error);
+      showErrorDialog("providers.error.delete", error);
     },
   });
 
@@ -724,7 +897,7 @@ export default function ProvidersPage() {
       backend("update_upstream", { id, input: { enabled: is_enabled } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["providers"] }),
     onError: (error: unknown) => {
-      showErrorDialog("操作失败", "Operation failed", error);
+      showErrorDialog("providers.error.operation", error);
     },
   });
 
@@ -736,9 +909,9 @@ export default function ProvidersPage() {
     return localizeBackendErrorMessage(error, isZh);
   }
 
-  function showErrorDialog(titleZh: string, titleEn: string, error: unknown) {
+  function showErrorDialog(titleKey: MessageKey, error: unknown) {
     setErrorDialog({
-      title: isZh ? titleZh : titleEn,
+      title: localizedMessage(isZh, titleKey),
       description: normalizeErrorMessage(error),
     });
   }
@@ -787,8 +960,8 @@ export default function ProvidersPage() {
     let completed = false;
 
     try {
-      appendTestLog("info", isZh ? `开始测试 ${provider.name}...` : `Start testing ${provider.name}...`);
-      appendTestLog("info", isZh ? "会向上游发送一次最小模型请求用于验证模型可用性" : "A minimal upstream model request will be sent to verify model availability.");
+      appendTestLog("info", localizedMessage(isZh, "providers.startTest", { name: provider.name }));
+      appendTestLog("info", localizedMessage(isZh, "v2.providers.aMinimalUpstreamModelRequestWillBeSent"));
 
       await streamProviderHealth(provider.id, (event) => {
         if (isCanceled()) return;
@@ -811,14 +984,14 @@ export default function ProvidersPage() {
         }
       }, abortController.signal);
       if (!completed && !isCanceled() && !abortController.signal.aborted) {
-        const message = isZh ? "测试未返回完成事件" : "Health check did not return a completion event";
+        const message = localizedMessage(isZh, "v2.providers.healthCheckDidNotReturnACompletionEvent");
         appendTestLog("error", `✗ ${message}`);
         finish({ success: false, latency_ms: modelResult.latency_ms, model: modelResult.model, error: message });
       }
     } catch (error: unknown) {
       if (isCanceled() || abortController.signal.aborted) return;
       const message = normalizeErrorMessage(error);
-      appendTestLog("error", `${isZh ? "✗ 测试失败" : "✗ Test failed"}: ${message}`);
+      appendTestLog("error", `${localizedMessage(isZh, "v2.providers.testFailed")}: ${message}`);
       finish({ success: false, latency_ms: 0, model: undefined, error: message });
     } finally {
       if (!isCanceled()) {
@@ -830,26 +1003,26 @@ export default function ProvidersPage() {
   function healthCheckName(check: ProviderHealthEvent["check"]) {
     switch (check) {
       case "config":
-        return isZh ? "配置校验" : "Configuration validation";
+        return localizedMessage(isZh, "v2.providers.configurationValidation");
       case "credentials":
-        return isZh ? "凭证校验" : "Credential validation";
+        return localizedMessage(isZh, "v2.providers.credentialValidation");
       case "models":
-        return isZh ? "模型发现" : "Model discovery";
+        return localizedMessage(isZh, "v2.providers.modelDiscovery");
       case "model_request":
-        return isZh ? "模型测试" : "Model request test";
+        return localizedMessage(isZh, "v2.providers.modelRequestTest");
       default:
-        return isZh ? "健康检查" : "Health check";
+        return localizedMessage(isZh, "v2.providers.healthCheck");
     }
   }
 
   function routeImportStageName(stage: RouteImportEvent["stage"]) {
     switch (stage) {
       case "models":
-        return isZh ? "模型发现" : "Model discovery";
+        return localizedMessage(isZh, "v2.providers.modelDiscovery");
       case "creating":
-        return isZh ? "路由导入" : "Route import";
+        return localizedMessage(isZh, "v2.providers.routeImport");
       default:
-        return isZh ? "导入" : "Import";
+        return localizedMessage(isZh, "v2.providers.import");
     }
   }
 
@@ -859,11 +1032,11 @@ export default function ProvidersPage() {
         event.success ? "success" : "error",
         event.success
           ? (mode === "create"
-            ? (isZh ? "✓ 测试全部通过，点击完成创建" : "✓ All checks passed. Click Create Provider to finish.")
+            ? (localizedMessage(isZh, "v2.providers.allChecksPassedClickCreateProviderToFinish"))
             : mode === "edit"
-              ? (isZh ? "✓ 测试全部通过，点击完成保存" : "✓ All checks passed. Click Save Provider to finish.")
-              : (isZh ? "✓ 测试全部通过" : "✓ All checks passed."))
-          : `${isZh ? "✗ 测试未通过" : "✗ Checks failed"}${event.error ? `: ${event.error}` : ""}`,
+              ? (localizedMessage(isZh, "v2.providers.allChecksPassedClickSaveProviderToFinish"))
+              : (localizedMessage(isZh, "v2.providers.allChecksPassed")))
+          : `${localizedMessage(isZh, "v2.providers.checksFailed")}${event.error ? `: ${event.error}` : ""}`,
       );
       return;
     }
@@ -876,7 +1049,7 @@ export default function ProvidersPage() {
     if (event.status === "passed") {
       const latency = event.latency_ms != null ? ` ${event.latency_ms}ms` : "";
       if (event.check === "models" && event.models && event.models.length > 0) {
-        appendTestLog("success", `✓ ${name} (${isZh ? `共 ${event.models.length} 个` : `${event.models.length} found`})`);
+        appendTestLog("success", `✓ ${name} (${localizedMessage(isZh, "providers.modelsFound", { count: event.models.length })})`);
         for (const model of event.models) {
           appendTestLog("info", `    - ${model}`);
         }
@@ -889,15 +1062,18 @@ export default function ProvidersPage() {
       return;
     }
     if (event.status === "failed") {
-      appendTestLog("error", `✗ ${name}: ${event.error ?? event.message ?? (isZh ? "失败" : "failed")}`);
+      appendTestLog("error", `✗ ${name}: ${event.error ?? event.message ?? (localizedMessage(isZh, "v2.providers.failed"))}`);
     }
   }
 
   function appendRouteImportEvent(event: RouteImportEvent) {
     if (event.type === "complete") {
-      const summary = isZh
-        ? `发现 ${event.discovered ?? 0} 个，创建 ${event.created ?? 0} 个，跳过 ${event.skipped ?? 0} 个，失败 ${event.failed ?? 0} 个`
-        : `Discovered ${event.discovered ?? 0}, created ${event.created ?? 0}, skipped ${event.skipped ?? 0}, failed ${event.failed ?? 0}`;
+      const summary = localizedMessage(isZh, "providers.importSummary", {
+        discovered: event.discovered ?? 0,
+        created: event.created ?? 0,
+        skipped: event.skipped ?? 0,
+        failed: event.failed ?? 0,
+      });
       appendTestLog(event.success ? "success" : "error", `${event.success ? "✓" : "✗"} ${summary}`);
       return;
     }
@@ -909,7 +1085,7 @@ export default function ProvidersPage() {
         const count = event.count != null ? ` (${event.count})` : "";
         appendTestLog("success", `✓ ${name}${count}`);
       } else if (event.status === "failed") {
-        appendTestLog("error", `✗ ${name}: ${event.error ?? event.message ?? (isZh ? "失败" : "failed")}`);
+        appendTestLog("error", `✗ ${name}: ${event.error ?? event.message ?? (localizedMessage(isZh, "v2.providers.failed"))}`);
       }
       return;
     }
@@ -917,9 +1093,9 @@ export default function ProvidersPage() {
       if (event.status === "created") {
         appendTestLog("success", `✓ ${event.model ?? ""}`);
       } else if (event.status === "skipped") {
-        appendTestLog("info", `- ${event.model ?? ""} ${isZh ? "已存在，跳过" : "already exists, skipped"}`);
+        appendTestLog("info", `- ${event.model ?? ""} ${localizedMessage(isZh, "v2.providers.alreadyExistsSkipped")}`);
       } else if (event.status === "failed") {
-        appendTestLog("error", `✗ ${event.model ?? ""}: ${event.error ?? event.reason ?? (isZh ? "失败" : "failed")}`);
+        appendTestLog("error", `✗ ${event.model ?? ""}: ${event.error ?? event.reason ?? (localizedMessage(isZh, "v2.providers.failed"))}`);
       }
     }
   }
@@ -941,8 +1117,8 @@ export default function ProvidersPage() {
     setTestDialogOpen(true);
     setIsTestRunning(true);
 
-    appendTestLog("info", isZh ? `开始导入 ${provider.name} 的模型路由...` : `Start importing routes for ${provider.name}...`);
-    appendTestLog("info", isZh ? "已有同名路由会自动跳过，不会修改现有路由。" : "Existing routes with the same name are skipped; existing routes are not modified.");
+    appendTestLog("info", localizedMessage(isZh, "providers.startImport", { name: provider.name }));
+    appendTestLog("info", localizedMessage(isZh, "v2.providers.existingRoutesWithTheSameNameAreSkipped"));
 
     try {
       await streamProviderRouteImport(provider.id, (event) => {
@@ -957,7 +1133,7 @@ export default function ProvidersPage() {
     } catch (error: unknown) {
       if (isCanceled() || abortController.signal.aborted) return;
       const message = normalizeErrorMessage(error);
-      appendTestLog("error", `${isZh ? "✗ 导入失败" : "✗ Import failed"}: ${message}`);
+      appendTestLog("error", `${localizedMessage(isZh, "v2.providers.importFailed")}: ${message}`);
       setIsTestRunning(false);
       setRouteImportingId(null);
     } finally {
@@ -973,7 +1149,7 @@ export default function ProvidersPage() {
       const preview = await backend<RouteImportPreview>("preview_provider_route_import", { id: provider.id });
       setRouteImportPreview({ provider, preview });
     } catch (error: unknown) {
-      showErrorDialog("预览导入失败", "Failed to preview route import", error);
+      showErrorDialog("providers.error.previewImport", error);
     } finally {
       setRouteImportingId(null);
     }
@@ -995,8 +1171,8 @@ export default function ProvidersPage() {
     setTestDialogOpen(true);
     setIsTestRunning(true);
 
-    appendTestLog("info", isZh ? `开始创建前测试 ${input.name}...` : `Start pre-create checks for ${input.name}...`);
-    appendTestLog("info", isZh ? "会向上游发送一次最小模型请求用于验证模型可用性" : "A minimal upstream model request will be sent to verify model availability.");
+    appendTestLog("info", localizedMessage(isZh, "providers.startPreCreate", { name: input.name }));
+    appendTestLog("info", localizedMessage(isZh, "v2.providers.aMinimalUpstreamModelRequestWillBeSent"));
 
     try {
       await streamProviderDraftHealth(input, (event) => {
@@ -1010,7 +1186,7 @@ export default function ProvidersPage() {
     } catch (error: unknown) {
       if (isCanceled() || abortController.signal.aborted) return;
       const message = normalizeErrorMessage(error);
-      appendTestLog("error", `${isZh ? "✗ 流式测试失败" : "✗ Streaming health check failed"}: ${message}`);
+      appendTestLog("error", `${localizedMessage(isZh, "v2.providers.streamingHealthCheckFailed")}: ${message}`);
       setCreateHealthPassed(false);
       setIsTestRunning(false);
     } finally {
@@ -1036,8 +1212,8 @@ export default function ProvidersPage() {
     setTestDialogOpen(true);
     setIsTestRunning(true);
 
-    appendTestLog("info", isZh ? `开始保存前测试 ${draft.name}...` : `Start pre-save checks for ${draft.name}...`);
-    appendTestLog("info", isZh ? "会向上游发送一次最小模型请求用于验证模型可用性" : "A minimal upstream model request will be sent to verify model availability.");
+    appendTestLog("info", localizedMessage(isZh, "providers.startPreSave", { name: draft.name }));
+    appendTestLog("info", localizedMessage(isZh, "v2.providers.aMinimalUpstreamModelRequestWillBeSent"));
 
     try {
       await streamProviderEditDraftHealth(update.id, draft, (event) => {
@@ -1051,7 +1227,7 @@ export default function ProvidersPage() {
     } catch (error: unknown) {
       if (isCanceled() || abortController.signal.aborted) return;
       const message = normalizeErrorMessage(error);
-      appendTestLog("error", `${isZh ? "✗ 流式测试失败" : "✗ Streaming health check failed"}: ${message}`);
+      appendTestLog("error", `${localizedMessage(isZh, "v2.providers.streamingHealthCheckFailed")}: ${message}`);
       setEditHealthPassed(false);
       setIsTestRunning(false);
     } finally {
@@ -1061,7 +1237,7 @@ export default function ProvidersPage() {
     }
   }
 
-  function startEdit(p: Upstream) {
+  const startEdit = useCallback((p: Upstream) => {
     setEditingId(p.id);
     setEditError(null);
     const protocol = (resolveProtocol(p.protocol) ?? "openai-chatcompletions") as ProviderProtocol;
@@ -1082,7 +1258,24 @@ export default function ProvidersPage() {
       api_key: apiKeyFromCredentials(p.credentials),
       credentials: credentialsRecord(p.credentials),
     });
-  }
+  }, [providerPresets]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("action") === "create") {
+      setEditingId(null);
+      setShowForm(true);
+      navigate(location.pathname, { replace: true });
+      return;
+    }
+    const focus = params.get("focus");
+    if (!focus || providerPresets.length === 0) return;
+    const provider = providers.find((item) => item.id === focus);
+    if (!provider) return;
+    setPage(Math.floor(providers.findIndex((item) => item.id === focus) / PAGE_SIZE));
+    startEdit(provider);
+    navigate(location.pathname, { replace: true });
+  }, [location.pathname, location.search, navigate, providerPresets.length, providers, startEdit]);
 
   function handleProtocolChange(nextProtocol: string) {
     const protocol = resolveProtocol(nextProtocol) as ProviderProtocol | null;
@@ -1162,6 +1355,9 @@ export default function ProvidersPage() {
     if (providerPresets.some((preset) => preset.id === selectedPresetId)) return;
     const fallback = providerPresets[0];
     if (fallback) handleTemplateChange(fallback.id);
+    // handleTemplateChange is intentionally omitted: this effect is keyed by
+    // the preset snapshot and selection, and only calls it to apply fallback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerPresets, selectedPresetId]);
 
   function closeCreateForm() {
@@ -1171,8 +1367,9 @@ export default function ProvidersPage() {
     setForm(emptyCreate);
   }
 
-  const totalPages = Math.max(1, Math.ceil(providers.length / PAGE_SIZE));
-  const pagedProviders = providers.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const filteredProviders = useMemo(() => filterProviders(providers, filters), [filters, providers]);
+  const totalPages = Math.max(1, Math.ceil(filteredProviders.length / PAGE_SIZE));
+  const pagedProviders = filteredProviders.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
   const createCredentialFields = credentialFieldsForPreset(selectedPreset);
   const createCredentialLayout = splitApiKeyCredentialField(createCredentialFields);
   const createPresetBaseUrl = selectedPreset
@@ -1186,6 +1383,10 @@ export default function ProvidersPage() {
       setPage(0);
     }
   }, [page, totalPages]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [filters]);
 
   useEffect(() => {
     if (!logsContainerRef.current) return;
@@ -1231,665 +1432,388 @@ export default function ProvidersPage() {
     });
   }, [isLoading, providers]);
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "提供商" : "Providers"}</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {isZh ? "管理你的 LLM 提供商连接" : "Manage your LLM provider connections"}
-          </p>
+  const providerColumns: DataTableColumn<Upstream>[] = [
+    {
+      key: "provider",
+      header: localizedMessage(isZh, "v2.providers.provider"),
+      render: (provider) => {
+        const preset = providerPresets.find((item) => item.id === (provider.provider || ""));
+        return (
+          <div className="v2-provider-cell">
+            <ProviderIcon
+              iconKey={preset?.icon}
+              name={provider.name}
+              protocol={provider.protocol}
+              baseUrl={provider.base_url}
+              size={28}
+              className="v2-provider-icon"
+            />
+            <div><strong>{provider.name}</strong><span>{provider.provider || "custom"}</span></div>
+          </div>
+        );
+      },
+    },
+    {
+      key: "protocol",
+      header: localizedMessage(isZh, "v2.providers.protocol"),
+      render: (provider) => (
+        <code className="v2-code-pill">{protocolDisplayName(provider.protocol ?? "") ?? provider.protocol ?? "—"}</code>
+      ),
+    },
+    {
+      key: "connection",
+      header: localizedMessage(isZh, "v2.providers.connection"),
+      render: (provider) => (
+        <div className="v2-connection-cell">
+          <span title={provider.base_url}>{provider.base_url || "—"}</span>
+          {provider.proxy_url ? <small>{localizedMessage(isZh, "v2.providers.viaProxy")}</small> : null}
         </div>
-        <Button
-          onClick={() => {
-            setEditingId(null);
-            if (showForm) {
-              closeCreateForm();
-              return;
-            }
-            setShowForm(true);
-            setSelectedPresetId("");
-            setModelsMode("url");
-            setForm(emptyCreate);
+      ),
+    },
+    {
+      key: "models",
+      header: localizedMessage(isZh, "v2.providers.models"),
+      className: "v2-table-number",
+      render: (provider) => provider.models?.length ?? 0,
+    },
+    {
+      key: "health",
+      header: localizedMessage(isZh, "v2.providers.health"),
+      render: (provider) => {
+        const result = testResult[provider.id];
+        if (!result) return <Status tone="neutral">{localizedMessage(isZh, "v2.providers.notTested")}</Status>;
+        return result.success
+          ? <Status tone="success">{localizedMessage(isZh, "v2.providers.healthy")}</Status>
+          : <Status tone="danger">{localizedMessage(isZh, "v2.providers.failed2")}</Status>;
+      },
+    },
+    {
+      key: "actions",
+      header: localizedMessage(isZh, "v2.providers.status"),
+      className: "v2-table-toggle",
+      render: (provider) => (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={provider.enabled}
+          className="v2-provider-toggle"
+          data-enabled={provider.enabled}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (provider.enabled) setProviderToDisable(provider);
+            else toggleEnabledMut.mutate({ id: provider.id, is_enabled: true });
           }}
-          className="flex items-center gap-2"
+          title={provider.enabled ? localizedMessage(isZh, "v2.providers.disable") : localizedMessage(isZh, "v2.providers.enable")}
         >
-          <Plus className="h-4 w-4" />
-          {isZh ? "新增提供商" : "Add Provider"}
-        </Button>
-      </div>
+          <span />
+        </button>
+      ),
+    },
+  ];
+
+  return (
+    <PageLayout
+      header={(
+        <PageHeader
+          title={t("page.providers.title")}
+          description={t("page.providers.subtitle")}
+          actions={(
+            <Button
+              onClick={() => {
+                setEditingId(null);
+                setShowForm(true);
+                setSelectedPresetId("");
+                setModelsMode("url");
+                setForm(emptyCreate);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              {localizedMessage(isZh, "v2.providers.addProvider")}
+            </Button>
+          )}
+        />
+      )}
+    >
 
       {/* Create Form */}
-      {showForm && (
-        <div className="glass rounded-2xl p-6 space-y-6">
-          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "新建提供商" : "New Provider"}</h2>
-          <div className="space-y-3">
-            <ToggleGroup
-              type="single"
-              value={selectedPresetId}
-              onValueChange={(value) => {
-                if (value) handleTemplateChange(value);
+      <ResourceEditorDialog
+        open={showForm}
+        title={localizedMessage(isZh, "v2.providers.newProvider")}
+        description={localizedMessage(isZh, "v2.providers.configureConnectionCredentialsAndModelDiscovery")}
+        onClose={closeCreateForm}
+        footer={(
+          <div className="v2-inspector-footer-actions">
+            <Button onClick={closeCreateForm} variant="secondary">
+              {localizedMessage(isZh, "v2.providers.cancel")}
+            </Button>
+            <Button
+              onClick={() => {
+                const protocol = form.protocol || "openai-chatcompletions";
+                const baseUrl = toGatewayBaseUrl(form.base_url ?? "");
+                const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
+                if (validation) {
+                  setErrorDialog({
+                    title: localizedMessage(isZh, "v2.providers.failedToCreateProvider"),
+                    description: validation,
+                  });
+                  return;
+                }
+                const input: CreateUpstream = buildCreateUpstreamInput({
+                  ...form,
+                  protocol,
+                  base_url: baseUrl,
+                  models_url: modelsMode === "url" ? form.models_url : "",
+                  models: modelsMode === "static" ? form.models : "",
+                });
+                void handleCreateHealthCheck(input);
               }}
-              className="provider-preset-group"
+              disabled={
+                createMut.isPending
+                || isTestRunning
+                || !form.name.trim()
+                || missingRequiredCredentials(createCredentialFields, form.credentials ?? {})
+                || createBaseUrlMissing
+              }
             >
-              {providerPresets.map((preset) => (
-                <ToggleGroupItem
-                  key={preset.id}
-                  value={preset.id}
-                  variant="outline"
-                  size="lg"
-                  className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
-                  aria-label={presetLabel(preset)}
-                >
-                  <ProviderIcon
-                    iconKey={preset.icon}
-                    name={preset.icon ?? preset.name}
-                    size={26}
-                    className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
-                  />
-                  <ProviderIcon
-                    iconKey={preset.icon}
-                    name={preset.icon ?? preset.name}
-                    size={26}
-                    monochrome
-                    className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
-                  />
-                  <span className={presetLabelClass(preset)}>{presetLabel(preset)}</span>
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
+              {isTestRunning
+                ? localizedMessage(isZh, "v2.providers.testing")
+                : localizedMessage(isZh, "v2.providers.testCreate")}
+            </Button>
           </div>
-          <div className="h-px bg-slate-200/70" />
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
-                <Input
-                  placeholder={isZh ? "如：OpenAI 生产环境" : "e.g. OpenAI Production"}
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <FieldLabel required>{isZh ? "协议" : "Protocol"}</FieldLabel>
-                <Select value={form.protocol} onValueChange={(value) => handleProtocolChange(value)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {createProtocolOptions.map((protocol) => (
-                      <SelectItem key={protocol} value={protocol}>
-                        {protocolDisplayName(protocol) ?? protocol}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {createCredentialLayout.apiKeyField ? (
-                <CredentialFieldInput
-                  field={createCredentialLayout.apiKeyField}
-                  value={form.credentials?.[createCredentialLayout.apiKeyField.name] ?? ""}
-                  onChange={(value) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      credentials: { ...(prev.credentials ?? {}), [createCredentialLayout.apiKeyField!.name]: value },
-                    }))
-                  }
-                  isZh={isZh}
-                />
-              ) : (
-                <div aria-hidden="true" />
-              )}
-              <div className="space-y-2">
-                <FieldLabel required>Base URL</FieldLabel>
-                <Input
-                  placeholder={isZh ? "如：https://api.openai.com/v1" : "e.g. https://api.openai.com/v1"}
-                  value={form.base_url}
-                  onChange={(e) => setForm({ ...form, base_url: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <FieldLabel
-                  required
-                  info={
-                    isZh
-                      ? "用于创建模型时自动获取可用模型列表"
-                      : "Used to auto-fetch available model list when creating models"
-                  }
-                >
-                  {isZh ? "模型发现" : "Model Discovery"}
-                </FieldLabel>
-                {modelsMode === "url" ? (
-                  <Input
-                    placeholder={isZh ? "如：https://api.openai.com/v1/models" : "e.g. https://api.openai.com/v1/models"}
-                    value={form.models_url ?? ""}
-                    onChange={(e) => setForm({ ...form, models_url: e.target.value })}
-                  />
-                ) : (
-                  <textarea
-                    ref={modelsTextareaRef}
-                    rows={1}
-                    className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder={isZh ? "每行一个模型名，如：gpt-4o" : "One model per line, e.g. gpt-4o"}
-                    value={form.models ?? ""}
-                    onChange={(e) => {
-                      setForm({ ...form, models: e.target.value });
-                      autoGrowTextarea(e.target);
-                    }}
-                  />
-                )}
-                <ToggleGroup
-                  type="single"
-                  value={modelsMode}
-                  onValueChange={(value) => {
-                    if (!value) return;
-                    setModelsMode(value as ModelsMode);
-                  }}
-                  className="provider-region-group"
-                >
-                  <ToggleGroupItem value="url" variant="outline" size="sm">
-                    {isZh ? "自动发现" : "Auto Discovery"}
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="static" variant="outline" size="sm">
-                    {isZh ? "手动填写" : "Manual Entry"}
-                  </ToggleGroupItem>
+        )}
+      >
+        <ProviderFormSections
+          connection={(
+            <>
+              <div className="v2-field-span-2">
+                <FieldLabel required>{localizedMessage(isZh, "v2.providers.provider")}</FieldLabel>
+                <ToggleGroup type="single" value={selectedPresetId} onValueChange={(value) => { if (value) handleTemplateChange(value); }} className="provider-preset-group">
+                  {providerPresets.map((preset) => (
+                    <ToggleGroupItem key={preset.id} value={preset.id} variant="outline" size="lg" className="provider-preset-card" aria-label={presetLabel(preset)}>
+                      <ProviderIcon iconKey={preset.icon} name={preset.icon ?? preset.name} size={24} className="provider-preset-icon provider-preset-icon-colored" />
+                      <ProviderIcon iconKey={preset.icon} name={preset.icon ?? preset.name} size={24} monochrome className="provider-preset-icon provider-preset-icon-mono" />
+                      <span className={presetLabelClass(preset)}>{presetLabel(preset)}</span>
+                    </ToggleGroupItem>
+                  ))}
                 </ToggleGroup>
               </div>
-              <div className="space-y-2">
-                <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
-                <Input
-                  placeholder={isZh ? "如：http://127.0.0.1:7890" : "e.g. http://127.0.0.1:7890"}
-                  value={form.proxy_url ?? ""}
-                  onChange={(e) => setForm({ ...form, proxy_url: e.target.value })}
-                />
-              </div>
-              {createCredentialLayout.otherFields.map((field) => (
-                <CredentialFieldInput
-                  key={field.name}
-                  field={field}
-                  value={form.credentials?.[field.name] ?? ""}
-                  onChange={(value) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      credentials: { ...(prev.credentials ?? {}), [field.name]: value },
-                    }))
-                  }
-                  isZh={isZh}
-                />
-              ))}
+              <div><FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel><Input placeholder={localizedMessage(isZh, "v2.providers.eGOpenaiProduction")} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div>
+              <div><FieldLabel required>{localizedMessage(isZh, "v2.providers.protocol")}</FieldLabel><Select value={form.protocol} onValueChange={handleProtocolChange}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{createProtocolOptions.map((protocol) => <SelectItem key={protocol} value={protocol}>{protocolDisplayName(protocol) ?? protocol}</SelectItem>)}</SelectContent></Select></div>
+              <div><FieldLabel required>Base URL</FieldLabel><Input placeholder={localizedMessage(isZh, "v2.providers.eGHttpsApiOpenaiComV1")} value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} /></div>
+              <div><FieldLabel>{localizedMessage(isZh, "v2.providers.proxyUrl")}</FieldLabel><Input placeholder={localizedMessage(isZh, "v2.providers.eGHttp1270017890")} value={form.proxy_url ?? ""} onChange={(event) => setForm({ ...form, proxy_url: event.target.value })} /></div>
+            </>
+          )}
+          credentials={(
+            <>
+              {createCredentialLayout.apiKeyField && <CredentialFieldInput field={createCredentialLayout.apiKeyField} value={form.credentials?.[createCredentialLayout.apiKeyField.name] ?? ""} onChange={(value) => setForm((current) => ({ ...current, credentials: { ...(current.credentials ?? {}), [createCredentialLayout.apiKeyField!.name]: value } }))} isZh={isZh} />}
+              {createCredentialLayout.otherFields.map((field) => <CredentialFieldInput key={field.name} field={field} value={form.credentials?.[field.name] ?? ""} onChange={(value) => setForm((current) => ({ ...current, credentials: { ...(current.credentials ?? {}), [field.name]: value } }))} isZh={isZh} />)}
+            </>
+          )}
+          discovery={(
+            <div className="v2-field-span-2">
+              <FieldLabel required info={localizedMessage(isZh, "v2.providers.usedToAutoFetchAvailableModelListWhen")}>{localizedMessage(isZh, "v2.providers.modelDiscovery2")}</FieldLabel>
+              {modelsMode === "url" ? <Input placeholder={localizedMessage(isZh, "v2.providers.eGHttpsApiOpenaiComV1Models")} value={form.models_url ?? ""} onChange={(event) => setForm({ ...form, models_url: event.target.value })} /> : <textarea ref={modelsTextareaRef} rows={1} className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50" placeholder={localizedMessage(isZh, "v2.providers.oneModelPerLineEGGpt4o")} value={form.models ?? ""} onChange={(event) => { setForm({ ...form, models: event.target.value }); autoGrowTextarea(event.target); }} />}
+              <ToggleGroup type="single" value={modelsMode} onValueChange={(value) => { if (value) setModelsMode(value as ModelsMode); }} className="provider-region-group"><ToggleGroupItem value="url" variant="outline" size="sm">{localizedMessage(isZh, "v2.providers.autoDiscovery")}</ToggleGroupItem><ToggleGroupItem value="static" variant="outline" size="sm">{localizedMessage(isZh, "v2.providers.manualEntry")}</ToggleGroupItem></ToggleGroup>
             </div>
-              <div className="flex gap-3">
-                <Button
-                  onClick={() => {
-                    const protocol = form.protocol || "openai-chatcompletions";
-                    const baseUrl = toGatewayBaseUrl(form.base_url ?? "");
-                    const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
-                    if (validation) {
-                      setErrorDialog({
-                        title: isZh ? "创建提供商失败" : "Failed to create provider",
-                        description: validation,
-                      });
-                      return;
-                    }
-                    const input: CreateUpstream = buildCreateUpstreamInput({
-                      ...form,
-                      protocol,
-                      base_url: baseUrl,
-                      models_url: modelsMode === "url" ? form.models_url : "",
-                      models: modelsMode === "static" ? form.models : "",
-                    });
-                    void handleCreateHealthCheck(input);
-                  }}
-                  disabled={
-                    createMut.isPending
-                    || isTestRunning
-                    || !form.name.trim()
-                    || missingRequiredCredentials(createCredentialFields, form.credentials ?? {})
-                    || createBaseUrlMissing
-                  }
-                >
-                  {isTestRunning
-                    ? (isZh ? "测试中..." : "Testing...")
-                    : (isZh ? "测试并创建" : "Test & Create")}
-                </Button>
-              <Button
-                onClick={closeCreateForm}
-                variant="secondary"
-              >
-                {isZh ? "取消" : "Cancel"}
-              </Button>
+          )}
+        />
+      </ResourceEditorDialog>
+
+      <FilterBar summary={localizedMessage(isZh, "common.showing", { visible: filteredProviders.length, total: providers.length })}>
+        <label className="v2-search-field">
+          <Search aria-hidden="true" />
+          <Input
+            aria-label={localizedMessage(isZh, "v2.providers.searchProviders")}
+            placeholder={localizedMessage(isZh, "v2.providers.searchNameProtocolOrEndpoint")}
+            value={filters.query}
+            onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+          />
+        </label>
+        <Select value={filters.protocol} onValueChange={(protocol) => setFilters((current) => ({ ...current, protocol }))}>
+          <SelectTrigger aria-label={localizedMessage(isZh, "v2.providers.filterByProtocol")}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{localizedMessage(isZh, "v2.providers.allProtocols")}</SelectItem>
+            {protocolOptions.map((protocol) => <SelectItem key={protocol.value} value={protocol.value}>{protocol.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select
+          value={filters.enabled}
+          onValueChange={(enabled) => setFilters((current) => ({ ...current, enabled: enabled as ProviderFilters["enabled"] }))}
+        >
+          <SelectTrigger aria-label={localizedMessage(isZh, "v2.providers.filterByStatus")}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{localizedMessage(isZh, "v2.providers.allStatuses")}</SelectItem>
+            <SelectItem value="enabled">{localizedMessage(isZh, "v2.providers.enabled")}</SelectItem>
+            <SelectItem value="disabled">{localizedMessage(isZh, "v2.providers.disabled")}</SelectItem>
+          </SelectContent>
+        </Select>
+        <button
+          type="button"
+          className="v2-button v2-filter-refresh"
+          onClick={() => void qc.invalidateQueries({ queryKey: ["providers"] })}
+        >
+          <RefreshCw aria-hidden="true" />
+          {localizedMessage(isZh, "v2.providers.refreshStatus")}
+        </button>
+      </FilterBar>
+
+      <Surface
+        className="v2-table-surface"
+        title={localizedMessage(isZh, "v2.providers.upstreamProviders")}
+        description={localizedMessage(isZh, "v2.providers.upstreamProvidersDetail")}
+        actions={(
+          <Status tone="success">
+            {localizedMessage(isZh, "v2.providers.availableCount", {
+              count: filteredProviders.filter((provider) => provider.enabled && testResult[provider.id]?.success).length,
+            })}
+          </Status>
+        )}
+        footer={(
+          <>
+            <span>{localizedMessage(isZh, "v2.providers.healthStatusNotice")}</span>
+            <span>{localizedMessage(isZh, "v2.providers.credentialsPlaintextNotice")}</span>
+          </>
+        )}
+      >
+        <DataTable
+          columns={providerColumns}
+          rows={pagedProviders}
+          rowKey={(provider) => provider.id}
+          onRowClick={(provider) => setSelectedProviderId(provider.id)}
+          loading={isLoading}
+          empty={(
+            <EmptyState
+              title={providers.length === 0
+                ? (localizedMessage(isZh, "v2.providers.noProvidersConfigured"))
+                : (localizedMessage(isZh, "v2.providers.noProvidersMatchTheseFilters"))}
+              description={providers.length === 0
+                ? (localizedMessage(isZh, "v2.providers.addYourFirstModelServiceConnectionToStart"))
+                : (localizedMessage(isZh, "v2.providers.tryAdjustingTheSearchOrFilters"))}
+              action={providers.length === 0 ? <Button onClick={() => setShowForm(true)}><Plus />{localizedMessage(isZh, "v2.providers.addProvider")}</Button> : undefined}
+            />
+          )}
+        />
+        {filteredProviders.length > PAGE_SIZE && (
+          <div className="v2-pagination">
+            <span>{localizedMessage(isZh, "common.pagination", { page: page + 1, total: totalPages })}</span>
+            <div>
+              <Button onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} variant="outline" size="icon"><ChevronLeft /></Button>
+              <Button onClick={() => setPage(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1} variant="outline" size="icon"><ChevronRight /></Button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Surface>
 
-      {/* List */}
-      {isLoading ? (
-        <div className="text-center text-sm text-slate-500 py-12">{isZh ? "加载中..." : "Loading..."}</div>
-      ) : providers.length === 0 ? (
-        <div className="glass rounded-2xl p-12 text-center">
-          <Server className="mx-auto h-10 w-10 text-slate-400" />
-          <p className="mt-3 text-sm text-slate-500">{isZh ? "还没有配置提供商" : "No providers configured yet"}</p>
-          <p className="mt-1 text-xs text-slate-400">{isZh ? "添加提供商后开始使用" : "Add a provider to get started"}</p>
-        </div>
-      ) : (
-        <div className="grid gap-3">
-          {pagedProviders.map((p) => {
-            const tr = testResult[p.id];
-            const status = tr ? (tr.success ? "success" : "failed") : null;
-            const isEditing = editingId === p.id;
-            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-chatcompletions") as ProviderProtocol];
-            const selectedPreset = providerPresets.find((preset) => preset.id === (p.provider || ""));
-            const selectedProviderName = selectedPreset
-              ? presetLabel(selectedPreset)
-              : (p.provider || p.name);
+      <Inspector
+        open={Boolean(selectedProvider)}
+        title={selectedProvider?.name ?? localizedMessage(isZh, "v2.providers.providerDetails")}
+        description={selectedProvider?.id}
+        onClose={() => setSelectedProviderId(null)}
+      >
+        {selectedProvider && (
+          <ProviderDetailContent
+            provider={selectedProvider}
+            result={testResult[selectedProvider.id]}
+            onTest={() => {
+              setSelectedProviderId(null);
+              void handleTest(selectedProvider);
+            }}
+            onImport={() => {
+              setSelectedProviderId(null);
+              void handlePreviewRouteImport(selectedProvider);
+            }}
+            onEdit={() => {
+              setSelectedProviderId(null);
+              startEdit(selectedProvider);
+            }}
+            onDelete={() => {
+              setSelectedProviderId(null);
+              setProviderToDelete(selectedProvider);
+            }}
+          />
+        )}
+      </Inspector>
 
-            if (isEditing) {
-              const editingPresetId = editForm.provider ?? "";
-              const editingPreset = editingPresetId
-                ? providerPresets.find((preset) => preset.id === editingPresetId) ?? null
-                : null;
-              const editCredentialFields = credentialFieldsForPreset(editingPreset);
-              const editCredentialLayout = splitApiKeyCredentialField(editCredentialFields);
-              const editPresetBaseUrl = editingPreset
-                ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-chatcompletions").baseUrl
-                : "";
-              const editBaseUrlMissing = !editPresetBaseUrl && !editForm.base_url?.trim();
-              const editProtocolOptions = availableProtocolsForPreset(editingPreset);
-              // provider is fixed at creation time and can't be changed on
-              // edit (it anchors the persisted credential/auth-scheme
-              // lookup) — the quickselect shows only the assigned preset,
-              // locked. Falls back to the full list only if the provider id
-              // doesn't match any known preset (e.g. legacy/"custom" data),
-              // so the picker is never left empty.
-              const editLockedPresets = editingPreset ? [editingPreset] : providerPresets;
-              return (
-                <div key={p.id} className="glass rounded-2xl p-5 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-900">{isZh ? "编辑提供商" : "Edit Provider"}</h3>
-                    <button onClick={() => setEditingId(null)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="space-y-3">
-                    <FieldLabel
-                      info={
-                        isZh
-                          ? "创建后不可更改提供商预设"
-                          : "The provider preset can't be changed after creation"
-                      }
-                    >
-                      {isZh ? "提供商" : "Provider"}
-                    </FieldLabel>
+      {pagedProviders.map((provider) => {
+        if (editingId !== provider.id) return null;
+        const editingPresetId = editForm.provider ?? "";
+        const editingPreset = editingPresetId ? providerPresets.find((preset) => preset.id === editingPresetId) ?? null : null;
+        const editCredentialFields = credentialFieldsForPreset(editingPreset);
+        const editCredentialLayout = splitApiKeyCredentialField(editCredentialFields);
+        const editPresetBaseUrl = editingPreset ? resolvePresetConfig(editingPreset, (editForm.protocol as ProviderProtocol) || "openai-chatcompletions").baseUrl : "";
+        const editBaseUrlMissing = !editPresetBaseUrl && !editForm.base_url?.trim();
+        const editProtocolOptions = availableProtocolsForPreset(editingPreset);
+        const editLockedPresets = editingPreset ? [editingPreset] : providerPresets;
+
+        return (
+          <ResourceEditorDialog
+            key={provider.id}
+            open
+            title={localizedMessage(isZh, "v2.providers.editProvider")}
+            description={provider.name}
+            onClose={() => { setEditingId(null); setEditError(null); }}
+            footer={(
+              <div className="v2-inspector-footer-actions">
+                <Button onClick={() => { setEditingId(null); setEditError(null); }} variant="secondary">{localizedMessage(isZh, "v2.providers.cancel")}</Button>
+                <Button
+                  onClick={() => {
+                    setEditError(null);
+                    const protocol = editForm.protocol || "openai-chatcompletions";
+                    const baseUrl = toGatewayBaseUrl(editForm.base_url ?? "");
+                    const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
+                    if (validation) { setEditError(validation); return; }
+                    const editModelsUrl = editModelsMode === "url" ? (editForm.models_url ?? "") : "";
+                    const editModels = editModelsMode === "static" ? (editForm.models ?? "") : "";
+                    const update: UpdateUpstream = buildUpdateUpstreamInput({ name: editForm.name || undefined, provider: editForm.provider || undefined, protocol, base_url: baseUrl, proxy_url: editForm.proxy_url ?? "", models_url: editModelsUrl, models: editModels, credentials: editForm.credentials && Object.keys(editForm.credentials).length ? editForm.credentials : undefined });
+                    const draft: CreateUpstream = buildCreateUpstreamInput({ name: editForm.name ?? "", provider: editForm.provider || "custom", protocol, base_url: baseUrl, proxy_url: editForm.proxy_url ?? "", models_url: editModelsUrl, models: editModels, api_key: editForm.api_key ?? "", credentials: editForm.credentials ?? {} });
+                    void handleUpdateHealthCheck(draft, { id: editForm.id, ...update });
+                  }}
+                  disabled={updateMut.isPending || isTestRunning || missingRequiredCredentials(editCredentialFields, editForm.credentials ?? {}) || editBaseUrlMissing}
+                >
+                  {isTestRunning ? localizedMessage(isZh, "v2.providers.testing") : localizedMessage(isZh, "v2.providers.testSave")}
+                </Button>
+              </div>
+            )}
+          >
+            <ProviderFormSections
+              connection={(
+                <>
+                  <div className="v2-field-span-2">
+                    <FieldLabel info={localizedMessage(isZh, "v2.providers.theProviderPresetCanTBeChangedAfter")}>{localizedMessage(isZh, "v2.providers.provider")}</FieldLabel>
                     <ToggleGroup type="single" value={editingPresetId} className="provider-preset-group">
                       {editLockedPresets.map((preset) => (
-                        <ToggleGroupItem
-                          key={preset.id}
-                          value={preset.id}
-                          variant="outline"
-                          size="lg"
-                          disabled
-                          className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
-                          aria-label={presetLabel(preset)}
-                        >
-                          <ProviderIcon
-                            iconKey={preset.icon}
-                            name={preset.icon ?? preset.name}
-                            size={26}
-                            className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
-                          />
-                          <ProviderIcon
-                            iconKey={preset.icon}
-                            name={preset.icon ?? preset.name}
-                            size={26}
-                            monochrome
-                            className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
-                          />
+                        <ToggleGroupItem key={preset.id} value={preset.id} variant="outline" size="lg" disabled className="provider-preset-card" aria-label={presetLabel(preset)}>
+                          <ProviderIcon iconKey={preset.icon} name={preset.icon ?? preset.name} size={24} className="provider-preset-icon provider-preset-icon-colored" />
+                          <ProviderIcon iconKey={preset.icon} name={preset.icon ?? preset.name} size={24} monochrome className="provider-preset-icon provider-preset-icon-mono" />
                           <span className={presetLabelClass(preset)}>{presetLabel(preset)}</span>
                         </ToggleGroupItem>
                       ))}
                     </ToggleGroup>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
-                      <Input
-                        placeholder={isZh ? "如：OpenAI 生产环境" : "e.g. OpenAI Production"}
-                        value={editForm.name ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <FieldLabel required>{isZh ? "协议" : "Protocol"}</FieldLabel>
-                      <Select
-                        value={editForm.protocol ?? ""}
-                        onValueChange={(value) => handleEditProtocolChange(value)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {editProtocolOptions.map((protocol) => (
-                            <SelectItem key={protocol} value={protocol}>
-                              {protocolDisplayName(protocol) ?? protocol}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {editCredentialLayout.apiKeyField ? (
-                      <CredentialFieldInput
-                        field={editCredentialLayout.apiKeyField}
-                        value={editForm.credentials?.[editCredentialLayout.apiKeyField.name] ?? ""}
-                        onChange={(value) =>
-                          setEditForm((prev) => ({
-                            ...prev,
-                            credentials: { ...(prev.credentials ?? {}), [editCredentialLayout.apiKeyField!.name]: value },
-                          }))
-                        }
-                        isZh={isZh}
-                      />
-                    ) : (
-                      <div aria-hidden="true" />
-                    )}
-                    <div className="space-y-2">
-                      <FieldLabel required>Base URL</FieldLabel>
-                      <Input
-                        placeholder={isZh ? "如：https://api.openai.com/v1" : "e.g. https://api.openai.com/v1"}
-                        value={editForm.base_url ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, base_url: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <FieldLabel
-                        required
-                        info={
-                          isZh
-                            ? "用于创建模型时自动获取可用模型列表"
-                            : "Used to auto-fetch available model list when creating models"
-                        }
-                      >
-                        {isZh ? "模型发现" : "Model Discovery"}
-                      </FieldLabel>
-                      {editModelsMode === "url" ? (
-                        <Input
-                          placeholder={isZh ? "如：https://api.openai.com/v1/models" : "e.g. https://api.openai.com/v1/models"}
-                          value={editForm.models_url ?? ""}
-                          onChange={(e) => setEditForm({ ...editForm, models_url: e.target.value })}
-                        />
-                      ) : (
-                        <textarea
-                          ref={editModelsTextareaRef}
-                          rows={1}
-                          className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          placeholder={isZh ? "每行一个模型名，如：gpt-4o" : "One model per line, e.g. gpt-4o"}
-                          value={editForm.models ?? ""}
-                          onChange={(e) => {
-                            setEditForm({ ...editForm, models: e.target.value });
-                            autoGrowTextarea(e.target);
-                          }}
-                        />
-                      )}
-                      <ToggleGroup
-                        type="single"
-                        value={editModelsMode}
-                        onValueChange={(value) => {
-                          if (!value) return;
-                          setEditModelsMode(value as ModelsMode);
-                        }}
-                        className="provider-region-group"
-                      >
-                        <ToggleGroupItem value="url" variant="outline" size="sm">
-                          {isZh ? "自动发现" : "Auto Discovery"}
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value="static" variant="outline" size="sm">
-                          {isZh ? "手动填写" : "Manual Entry"}
-                        </ToggleGroupItem>
-                      </ToggleGroup>
-                    </div>
-                    <div className="space-y-2">
-                      <FieldLabel>{isZh ? "代理地址" : "Proxy URL"}</FieldLabel>
-                      <Input
-                        placeholder={isZh ? "如：http://127.0.0.1:7890" : "e.g. http://127.0.0.1:7890"}
-                        value={editForm.proxy_url ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, proxy_url: e.target.value })}
-                      />
-                    </div>
-                    {editCredentialLayout.otherFields.map((field) => (
-                      <CredentialFieldInput
-                        key={field.name}
-                        field={field}
-                        value={editForm.credentials?.[field.name] ?? ""}
-                        onChange={(value) =>
-                          setEditForm((prev) => ({
-                            ...prev,
-                            credentials: { ...(prev.credentials ?? {}), [field.name]: value },
-                          }))
-                        }
-                        isZh={isZh}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex gap-3">
-                    <Button
-                      onClick={() => {
-                        setEditError(null);
-                        const protocol = editForm.protocol || "openai-chatcompletions";
-                        const baseUrl = toGatewayBaseUrl(editForm.base_url ?? "");
-                        const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
-                        if (validation) {
-                          setEditError(validation);
-                          return;
-                        }
-                        const editModelsUrl = editModelsMode === "url" ? (editForm.models_url ?? "") : "";
-                        const editModels = editModelsMode === "static" ? (editForm.models ?? "") : "";
-                        const update: UpdateUpstream = buildUpdateUpstreamInput({
-                          name: editForm.name || undefined,
-                          provider: editForm.provider || undefined,
-                          protocol,
-                          base_url: baseUrl,
-                          proxy_url: editForm.proxy_url ?? "",
-                          models_url: editModelsUrl,
-                          models: editModels,
-                          credentials: editForm.credentials && Object.keys(editForm.credentials).length
-                            ? editForm.credentials
-                            : undefined,
-                        });
-                        const draft: CreateUpstream = buildCreateUpstreamInput({
-                          name: editForm.name ?? "",
-                          provider: editForm.provider || "custom",
-                          protocol,
-                          base_url: baseUrl,
-                          proxy_url: editForm.proxy_url ?? "",
-                          models_url: editModelsUrl,
-                          models: editModels,
-                          api_key: editForm.api_key ?? "",
-                          credentials: editForm.credentials ?? {},
-                        });
-                        void handleUpdateHealthCheck(draft, { id: editForm.id, ...update });
-                      }}
-                      disabled={
-                        updateMut.isPending
-                        || isTestRunning
-                        || missingRequiredCredentials(editCredentialFields, editForm.credentials ?? {})
-                        || editBaseUrlMissing
-                      }
-                    >
-                      {isTestRunning
-                        ? (isZh ? "测试中..." : "Testing...")
-                        : (isZh ? "测试并保存" : "Test & Save")}
-                    </Button>
-                    <Button
-                      onClick={() => { setEditingId(null); setEditError(null); }}
-                      variant="secondary"
-                    >
-                      {isZh ? "取消" : "Cancel"}
-                    </Button>
-                  </div>
-                  {editError && (
-                    <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{editError}</p>
-                  )}
+                  <div><FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel><Input placeholder={localizedMessage(isZh, "v2.providers.eGOpenaiProduction")} value={editForm.name ?? ""} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} /></div>
+                  <div><FieldLabel required>{localizedMessage(isZh, "v2.providers.protocol")}</FieldLabel><Select value={editForm.protocol ?? ""} onValueChange={handleEditProtocolChange}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{editProtocolOptions.map((protocol) => <SelectItem key={protocol} value={protocol}>{protocolDisplayName(protocol) ?? protocol}</SelectItem>)}</SelectContent></Select></div>
+                  <div><FieldLabel required>Base URL</FieldLabel><Input placeholder={localizedMessage(isZh, "v2.providers.eGHttpsApiOpenaiComV1")} value={editForm.base_url ?? ""} onChange={(event) => setEditForm({ ...editForm, base_url: event.target.value })} /></div>
+                  <div><FieldLabel>{localizedMessage(isZh, "v2.providers.proxyUrl")}</FieldLabel><Input placeholder={localizedMessage(isZh, "v2.providers.eGHttp1270017890")} value={editForm.proxy_url ?? ""} onChange={(event) => setEditForm({ ...editForm, proxy_url: event.target.value })} /></div>
+                </>
+              )}
+              credentials={(
+                <>
+                  {editCredentialLayout.apiKeyField && <CredentialFieldInput field={editCredentialLayout.apiKeyField} value={editForm.credentials?.[editCredentialLayout.apiKeyField.name] ?? ""} onChange={(value) => setEditForm((current) => ({ ...current, credentials: { ...(current.credentials ?? {}), [editCredentialLayout.apiKeyField!.name]: value } }))} isZh={isZh} />}
+                  {editCredentialLayout.otherFields.map((field) => <CredentialFieldInput key={field.name} field={field} value={editForm.credentials?.[field.name] ?? ""} onChange={(value) => setEditForm((current) => ({ ...current, credentials: { ...(current.credentials ?? {}), [field.name]: value } }))} isZh={isZh} />)}
+                </>
+              )}
+              discovery={(
+                <div className="v2-field-span-2">
+                  <FieldLabel required info={localizedMessage(isZh, "v2.providers.usedToAutoFetchAvailableModelListWhen")}>{localizedMessage(isZh, "v2.providers.modelDiscovery2")}</FieldLabel>
+                  {editModelsMode === "url" ? <Input placeholder={localizedMessage(isZh, "v2.providers.eGHttpsApiOpenaiComV1Models")} value={editForm.models_url ?? ""} onChange={(event) => setEditForm({ ...editForm, models_url: event.target.value })} /> : <textarea ref={editModelsTextareaRef} rows={1} className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50" placeholder={localizedMessage(isZh, "v2.providers.oneModelPerLineEGGpt4o")} value={editForm.models ?? ""} onChange={(event) => { setEditForm({ ...editForm, models: event.target.value }); autoGrowTextarea(event.target); }} />}
+                  <ToggleGroup type="single" value={editModelsMode} onValueChange={(value) => { if (value) setEditModelsMode(value as ModelsMode); }} className="provider-region-group"><ToggleGroupItem value="url" variant="outline" size="sm">{localizedMessage(isZh, "v2.providers.autoDiscovery")}</ToggleGroupItem><ToggleGroupItem value="static" variant="outline" size="sm">{localizedMessage(isZh, "v2.providers.manualEntry")}</ToggleGroupItem></ToggleGroup>
                 </div>
-              );
-            }
-
-            return (
-              <div key={p.id} className="glass rounded-2xl p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100">
-                      <ProviderIcon
-                        iconKey={selectedPreset?.icon}
-                        name={p.name}
-                        protocol={p.protocol}
-                        baseUrl={p.base_url}
-                        size={30}
-                        className="provider-preset-icon provider-preset-icon-colored rounded-xl border border-slate-300/70 bg-transparent"
-                      />
-                      <ProviderIcon
-                        iconKey={selectedPreset?.icon}
-                        name={p.name}
-                        protocol={p.protocol}
-                        baseUrl={p.base_url}
-                        size={30}
-                        monochrome
-                        className="provider-preset-icon provider-preset-icon-mono rounded-xl border border-slate-300/70 bg-transparent"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="inline-flex h-5 items-center font-semibold text-slate-900">{p.name}</span>
-                        <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600">
-                          {selectedProviderName}
-                        </code>
-                        {protocolLabels.map((protocol) => (
-                          <Badge
-                            key={`${p.id}-${protocol}`}
-                            variant={
-                              protocol === "anthropic-messages"
-                                ? "warning"
-                                : protocol === "gemini-generatecontent"
-                                  ? "secondary"
-                                  : "success"
-                            }
-                            className={`connect-label-badge ${protocol === "gemini-generatecontent" ? "bg-violet-50 text-violet-700" : ""}`}
-                          >
-                            {PROTOCOL_TABLE.find((pt) => pt.id === protocol)?.displayName ?? protocol}
-                          </Badge>
-                        ))}
-                        {p.proxy_url && (
-                          <Badge variant="success" className="connect-label-badge">
-                            {isZh ? "代理" : "Proxy"}
-                          </Badge>
-                        )}
-                        {!p.enabled && (
-                          <Badge variant="danger" className="connect-label-badge">
-                            {isZh ? "已禁用" : "Disabled"}
-                          </Badge>
-                        )}
-                        {status === "success" ? (
-                          <CheckCircle
-                            className="h-3.5 w-3.5 text-green-500"
-                            aria-label={isZh ? "测试成功" : "Test passed"}
-                          />
-                        ) : status === "failed" ? (
-                          <XCircle
-                            className="h-3.5 w-3.5 text-red-400"
-                            aria-label={isZh ? "测试失败" : "Test failed"}
-                          />
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-0.5">
-                    <button
-                      onClick={() => {
-                        if (p.enabled) {
-                          setProviderToDisable(p);
-                        } else {
-                          toggleEnabledMut.mutate({ id: p.id, is_enabled: true });
-                        }
-                      }}
-                      title={p.enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
-                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
-                    >
-                      {p.enabled ? (
-                        <ToggleRight className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <ToggleLeft className="h-4 w-4 text-slate-400" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleTest(p)}
-                      disabled={Boolean(testingId) || Boolean(routeImportingId)}
-                      title={isZh ? "测试" : "Test"}
-                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-500 cursor-pointer disabled:opacity-50"
-                    >
-                      {testingId === p.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Zap className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handlePreviewRouteImport(p)}
-                      disabled={Boolean(testingId) || Boolean(routeImportingId)}
-                      title={isZh ? "导入模型路由" : "Import model routes"}
-                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-emerald-50 hover:text-emerald-600 cursor-pointer disabled:opacity-50"
-                    >
-                      {routeImportingId === p.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <RouteIcon className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => startEdit(p)}
-                      title={isZh ? "编辑" : "Edit"}
-                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500 cursor-pointer"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => setProviderToDelete(p)}
-                      title={isZh ? "删除" : "Delete"}
-                      className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 cursor-pointer"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {providers.length > PAGE_SIZE && (
-            <div className="flex items-center justify-between px-1 pt-1">
-              <span className="text-xs text-slate-500">
-                {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
-              </span>
-              <div className="flex gap-1">
-                <Button
-                  onClick={() => setPage(Math.max(0, page - 1))}
-                  disabled={page === 0}
-                  variant="outline"
-                  size="icon"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
-                  disabled={page >= totalPages - 1}
-                  variant="outline"
-                  size="icon"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+              )}
+            />
+            {editError && <p className="v2-provider-form-error">{editError}</p>}
+          </ResourceEditorDialog>
+        );
+      })}
 
       <Dialog
         open={testDialogOpen}
@@ -1901,68 +1825,50 @@ export default function ProvidersPage() {
           }
         }}
       >
-        <DialogContent className="w-[min(92vw,720px)]">
+        <DialogContent className="v2-provider-test-dialog">
           <DialogHeader>
             <DialogTitle>
               {testDialogMode === "create"
-                ? (isZh ? `创建前测试 ${pendingCreateInput?.name ?? ""}` : `Pre-create test ${pendingCreateInput?.name ?? ""}`)
+                ? localizedMessage(isZh, "providers.testDialog.create", { name: pendingCreateInput?.name ?? "" })
                 : testDialogMode === "edit"
-                  ? (isZh ? `保存前测试 ${editForm.name ?? ""}` : `Pre-save test ${editForm.name ?? ""}`)
+                  ? localizedMessage(isZh, "providers.testDialog.edit", { name: editForm.name ?? "" })
                   : testDialogMode === "route_import"
-                    ? (isZh ? `导入模型路由 ${testTarget?.name ?? ""}` : `Import routes for ${testTarget?.name ?? ""}`)
-                    : (isZh ? `测试 ${testTarget?.name ?? ""}` : `Test ${testTarget?.name ?? ""}`)}
+                    ? localizedMessage(isZh, "providers.testDialog.import", { name: testTarget?.name ?? "" })
+                    : localizedMessage(isZh, "providers.testDialog.test", { name: testTarget?.name ?? "" })}
             </DialogTitle>
             <DialogDescription>
               {testDialogMode === "create"
-                ? (isZh ? "实时展示创建前验证流水线" : "Real-time pre-create validation pipeline")
+                ? (localizedMessage(isZh, "v2.providers.realTimePreCreateValidationPipeline"))
                 : testDialogMode === "edit"
-                  ? (isZh ? "实时展示保存前验证流水线" : "Real-time pre-save validation pipeline")
+                  ? (localizedMessage(isZh, "v2.providers.realTimePreSaveValidationPipeline"))
                   : testDialogMode === "route_import"
-                    ? (isZh ? "实时展示模型路由导入进度" : "Real-time progress for route import")
-                    : (isZh ? "实时展示 Provider 测试日志" : "Real-time logs for provider testing")}
+                    ? (localizedMessage(isZh, "v2.providers.realTimeProgressForRouteImport"))
+                    : (localizedMessage(isZh, "v2.providers.realTimeLogsForProviderTesting"))}
             </DialogDescription>
           </DialogHeader>
-          <div
-            ref={logsContainerRef}
-            className="h-64 overflow-y-auto rounded-lg border border-emerald-500/30 bg-[#050c1f] p-3 font-mono text-sm text-emerald-300 shadow-inner shadow-black/40"
-          >
-            {testLogs.length === 0 ? (
-              <p className="text-xs text-emerald-400/80">{isZh ? "等待测试开始..." : "Waiting for test to start..."}</p>
-            ) : (
-              testLogs.map((log, idx) => (
-                <p
-                  key={`${log.timestamp}-${idx}`}
-                  className={
-                    log.level === "error"
-                      ? "text-red-300"
-                      : log.level === "success"
-                        ? "text-emerald-300"
-                        : "text-emerald-200"
-                  }
-                >
-                  [{log.timestamp}] {log.message}
-                </p>
-              ))
-            )}
-          </div>
+          <ProviderTestLog
+            logs={testLogs}
+            emptyLabel={localizedMessage(isZh, "v2.providers.waitingForTestToStart")}
+            containerRef={logsContainerRef}
+          />
           <DialogFooter>
             {testDialogMode === "create" && createHealthPassed && pendingCreateInput ? (
               <Button onClick={() => createMut.mutate(pendingCreateInput)} disabled={createMut.isPending}>
                 {createMut.isPending
-                  ? (isZh ? "创建中..." : "Creating...")
-                  : (isZh ? "完成创建" : "Create Provider")}
+                  ? (localizedMessage(isZh, "v2.providers.creating"))
+                  : (localizedMessage(isZh, "v2.providers.createProvider"))}
               </Button>
             ) : testDialogMode === "edit" && editHealthPassed && pendingUpdateInput ? (
               <Button onClick={() => updateMut.mutate(pendingUpdateInput)} disabled={updateMut.isPending}>
                 {updateMut.isPending
-                  ? (isZh ? "保存中..." : "Saving...")
-                  : (isZh ? "完成保存" : "Save Provider")}
+                  ? (localizedMessage(isZh, "v2.providers.saving"))
+                  : (localizedMessage(isZh, "v2.providers.saveProvider"))}
               </Button>
             ) : (
               <Button variant="secondary" onClick={closeTestDialog}>
                 {isTestRunning
-                  ? (isZh ? "取消" : "Cancel")
-                  : (isZh ? "关闭" : "Close")}
+                  ? (localizedMessage(isZh, "v2.providers.cancel"))
+                  : (localizedMessage(isZh, "v2.providers.close"))}
               </Button>
             )}
           </DialogFooter>
@@ -1974,10 +1880,10 @@ export default function ProvidersPage() {
         onOpenChange={(open) => {
           if (!open) setProviderToDisable(null);
         }}
-        title={isZh ? "确认禁用供应商" : "Confirm provider disable"}
-        description={isZh ? "禁用后，引用该供应商的模型请求将受影响，确认禁用？" : "After disabling, model requests referencing this provider will be affected. Confirm disable?"}
-        cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={isZh ? "禁用" : "Disable"}
+        title={localizedMessage(isZh, "v2.providers.confirmProviderDisable")}
+        description={localizedMessage(isZh, "v2.providers.afterDisablingModelRequestsReferencingThisProviderWill")}
+        cancelText={localizedMessage(isZh, "v2.providers.cancel")}
+        confirmText={localizedMessage(isZh, "v2.providers.disable")}
         onConfirm={() => {
           if (!providerToDisable) return;
           toggleEnabledMut.mutate({ id: providerToDisable.id, is_enabled: false });
@@ -1989,56 +1895,16 @@ export default function ProvidersPage() {
         onOpenChange={(open) => {
           if (!open) setRouteImportPreview(null);
         }}
-        title={isZh ? "确认导入模型路由" : "Confirm route import"}
+        title={localizedMessage(isZh, "v2.providers.confirmRouteImport")}
         description={
           routeImportPreview
-            ? (isZh
-              ? `将从「${routeImportPreview.provider.name}」导入当前模型列表。`
-              : `Import the current model list from "${routeImportPreview.provider.name}".`)
+            ? localizedMessage(isZh, "providers.importDescription", { name: routeImportPreview.provider.name })
             : undefined
         }
-        content={routeImportPreview ? (
-          <div className="space-y-3 text-sm text-slate-700">
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                <div className="text-xs text-slate-500">{isZh ? "发现" : "Discovered"}</div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">{routeImportPreview.preview.discovered}</div>
-              </div>
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-                <div className="text-xs text-emerald-700">{isZh ? "将创建" : "Create"}</div>
-                <div className="mt-1 text-lg font-semibold text-emerald-800">{routeImportPreview.preview.create.length}</div>
-              </div>
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                <div className="text-xs text-amber-700">{isZh ? "跳过" : "Skip"}</div>
-                <div className="mt-1 text-lg font-semibold text-amber-800">{routeImportPreview.preview.skip.length}</div>
-              </div>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-white p-3">
-              <div className="text-xs font-medium text-slate-600">{isZh ? "将创建的路由" : "Routes to create"}</div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {routeImportPreview.preview.create.slice(0, 8).map((model) => (
-                  <Badge key={model} variant="success" className="connect-label-badge">{model}</Badge>
-                ))}
-                {routeImportPreview.preview.create.length > 8 && (
-                  <Badge variant="secondary" className="connect-label-badge">+{routeImportPreview.preview.create.length - 8}</Badge>
-                )}
-                {routeImportPreview.preview.create.length === 0 && (
-                  <span className="text-xs text-slate-500">{isZh ? "没有需要创建的路由" : "No routes need to be created"}</span>
-                )}
-              </div>
-            </div>
-            {routeImportPreview.preview.skip.length > 0 && (
-              <p className="text-xs text-slate-500">
-                {isZh
-                  ? `已有 ${routeImportPreview.preview.skip.length} 个同名路由会被跳过，不会修改现有路由。`
-                  : `${routeImportPreview.preview.skip.length} existing routes will be skipped; existing routes are not modified.`}
-              </p>
-            )}
-          </div>
-        ) : undefined}
-        cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={isZh ? "确认导入" : "Import"}
-        confirmClassName="bg-emerald-600 text-white hover:bg-emerald-500"
+        content={routeImportPreview ? <RouteImportSummary preview={routeImportPreview.preview} /> : undefined}
+        cancelText={localizedMessage(isZh, "v2.providers.cancel")}
+        confirmText={localizedMessage(isZh, "v2.providers.import2")}
+        confirmClassName="v2-confirm-primary"
         onConfirm={() => {
           if (!routeImportPreview) return;
           const provider = routeImportPreview.provider;
@@ -2051,16 +1917,14 @@ export default function ProvidersPage() {
         onOpenChange={(open) => {
           if (!open) setProviderToDelete(null);
         }}
-        title={isZh ? "确认删除提供商" : "Confirm provider deletion"}
+        title={localizedMessage(isZh, "v2.providers.confirmProviderDeletion")}
         description={
           providerToDelete
-            ? (isZh
-              ? `此操作不可撤销。确认删除「${providerToDelete.name}」吗？`
-              : `This action cannot be undone. Delete "${providerToDelete.name}"?`)
+            ? localizedMessage(isZh, "providers.deleteDescription", { name: providerToDelete.name })
             : undefined
         }
-        cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={isZh ? "删除" : "Delete"}
+        cancelText={localizedMessage(isZh, "v2.providers.cancel")}
+        confirmText={localizedMessage(isZh, "v2.providers.delete")}
         onConfirm={() => {
           if (!providerToDelete) return;
           deleteMut.mutate(providerToDelete.id);
@@ -2075,9 +1939,9 @@ export default function ProvidersPage() {
         title={errorDialog?.title ?? ""}
         description={errorDialog?.description}
         hideCancel
-        confirmText={isZh ? "我知道了" : "OK"}
+        confirmText={localizedMessage(isZh, "v2.providers.ok")}
         onConfirm={() => setErrorDialog(null)}
       />
-    </div>
+    </PageLayout>
   );
 }
