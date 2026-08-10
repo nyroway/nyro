@@ -11,8 +11,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/nyroway/nyro/go/internal/pipeline"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/llm/ir"
 )
 
 // Exchange keys for the state the dispatcher hands to this Stage. They live in

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/llm/spec"
 )
 
 // normalizeEmptyModelsJSON collapses a models_json update payload that

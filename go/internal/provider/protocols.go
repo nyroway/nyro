@@ -1,6 +1,6 @@
 package provider
 
-import "github.com/nyroway/nyro/go/llm/spec"
+import "github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 
 // Protocol IDs are owned by protocol/ids (see the cloud-routing notes there).
 // These untyped aliases exist so provider code and storage rows, which carry

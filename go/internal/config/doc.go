@@ -6,7 +6,8 @@
 // settings (server/proxy/observability) + upstreams + routes + consumers
 // (nested keys/routes/quotas).
 //
-// Layer: 1 (data) — may import llm/, layer 0, storage, and configsync.
+// Layer: 1 (data) — may import internal/protocol/llm, layer 0, storage, and
+// configsync.
 //
 // It also imports observability (layer 2), but only for the exporter-registry
 // contract (Signal, ExporterDef, ExportersFor) used to validate the

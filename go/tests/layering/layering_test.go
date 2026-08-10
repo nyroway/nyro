@@ -2,9 +2,8 @@
 //
 // The rule: a package may import its own layer or any layer below it, never
 // above. Layers are declared in packageLayer below — that table, not the
-// directory tree, is the source of truth. internal/ stays deliberately flat
-// (see docs/superpowers/plans/2026-07-29-go-pipeline-and-layering.md), so a
-// grouping directory cannot express this and a test has to.
+// directory tree, is the source of truth. Foundation subtrees add stricter
+// horizontal boundaries that the numeric layers cannot express.
 //
 // Each package also carries its layer in its own package comment
 // ("// Layer: N (...)"), which is what a reader sees first; this test is what
@@ -79,7 +78,7 @@ func packageWithin(path, root string) bool {
 
 // Layer numbers. Lower may not import higher.
 const (
-	layerFoundation = 0 // stdlib/llm only, shared by every layer above
+	layerFoundation = 0 // protocol and platform foundations shared by higher layers
 	layerData       = 1 // persistence and configuration
 	layerObs        = 2 // instrumentation, sits between data and serve
 	layerServe      = 3 // HTTP surfaces and orchestration
@@ -90,12 +89,21 @@ const (
 // forces a deliberate layering decision rather than silently defaulting.
 var packageLayer = map[string]int{
 	// Layer 0 — foundation.
-	"internal/pipeline": layerFoundation,
-	"internal/quota":    layerFoundation,
-	"internal/provider": layerFoundation,
-	"internal/version":  layerFoundation,
-	"internal/webutil":  layerFoundation,
-	"internal/envflag":  layerFoundation,
+	"internal/pipeline":                                  layerFoundation,
+	"internal/protocol/llm":                              layerFoundation,
+	"internal/protocol/llm/codec":                        layerFoundation,
+	"internal/protocol/llm/codec/anthropic/messages":     layerFoundation,
+	"internal/protocol/llm/codec/gemini/generatecontent": layerFoundation,
+	"internal/protocol/llm/codec/openai/chatcompletions": layerFoundation,
+	"internal/protocol/llm/codec/openai/embeddings":      layerFoundation,
+	"internal/protocol/llm/codec/openai/responses":       layerFoundation,
+	"internal/protocol/llm/ir":                           layerFoundation,
+	"internal/protocol/llm/spec":                         layerFoundation,
+	"internal/quota":                                     layerFoundation,
+	"internal/provider":                                  layerFoundation,
+	"internal/version":                                   layerFoundation,
+	"internal/webutil":                                   layerFoundation,
+	"internal/envflag":                                   layerFoundation,
 
 	// Layer 1 — data.
 	"internal/storage":                     layerData,
@@ -171,7 +179,7 @@ func TestNoUpwardImports(t *testing.T) {
 		for _, imp := range pkg.imports {
 			toLayer, ok := packageLayer[imp]
 			if !ok {
-				continue // not an internal package (stdlib, llm/, third party)
+				continue // not an internal package (stdlib or third party)
 			}
 			if toLayer <= fromLayer {
 				continue

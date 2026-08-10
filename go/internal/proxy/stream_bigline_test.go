@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/llm/codec"
-	"github.com/nyroway/nyro/go/llm/spec"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 )
 
 // TestServeStreamHugeSSELine verifies SSE lines larger than bufio.Scanner's

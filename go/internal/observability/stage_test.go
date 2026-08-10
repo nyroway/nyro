@@ -16,8 +16,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/nyroway/nyro/go/internal/pipeline"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/llm/ir"
 )
 
 // captureLogger is a minimal log.Logger wrapper that records every emitted

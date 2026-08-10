@@ -8,18 +8,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
 	"github.com/nyroway/nyro/go/internal/webutil"
-	"github.com/nyroway/nyro/go/llm/codec"
 
 	// Blank imports run each codec's init(), which registers its
 	// EndpointHandler. Adding an ingress protocol is a line here and nothing
 	// else: the routes come from the handler's own Capabilities().
-	_ "github.com/nyroway/nyro/go/llm/codec/anthropic/messages"
-	_ "github.com/nyroway/nyro/go/llm/codec/gemini/generatecontent"
-	_ "github.com/nyroway/nyro/go/llm/codec/openai/chatcompletions"
-	_ "github.com/nyroway/nyro/go/llm/codec/openai/embeddings"
-	_ "github.com/nyroway/nyro/go/llm/codec/openai/responses"
-	"github.com/nyroway/nyro/go/llm/ir"
+	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/anthropic/messages"
+	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/gemini/generatecontent"
+	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/chatcompletions"
+	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/embeddings"
+	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/responses"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // NewRouter builds the chi router with the proxy routes wired.

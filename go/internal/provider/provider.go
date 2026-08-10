@@ -5,9 +5,9 @@
 // the data plane's authentication behavior lives in a small auth-scheme
 // registry (authenticator.go) keyed by Definition.Auth, not in this file.
 //
-// Layer: 0 (foundation) — may import llm/ only. Shared across layers: the
-// control plane (admin, config) reads Definitions; the data plane (proxy)
-// resolves outbound auth. Must not import any other internal package.
+// Layer: 0 (foundation) — may import internal/protocol/llm only. Shared across
+// layers: the control plane (admin, config) reads Definitions; the data plane
+// (proxy) resolves outbound auth. Must not import any other internal package.
 package provider
 
 import (

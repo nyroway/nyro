@@ -17,7 +17,7 @@
 // tracks connected gateways in memory (see ConfigServer.Nodes) for
 // operational visibility — this registry is not persisted.
 //
-// Layer: 1 (data) — may import llm/, layer 0, and storage.
+// Layer: 1 (data) — may import internal/protocol/llm, layer 0, and storage.
 //
 // It also imports observability (layer 2) for a single config-contract call
 // (IsExporterSettingKey), not for instrumentation — the same layer-0 metadata
