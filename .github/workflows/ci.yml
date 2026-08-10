@@ -111,6 +111,39 @@ jobs:
       - name: Go conversion tests
         run: make go-conversion-tests
 
+  go-webui:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: go/webui/pnpm-lock.yaml
+
+      - name: Install Go WebUI dependencies
+        run: pnpm -C go/webui install --frozen-lockfile
+
+      - name: Test Go WebUI
+        run: pnpm -C go/webui test
+
+      - name: Lint Go WebUI
+        run: pnpm -C go/webui lint
+
+      - name: Build Go WebUI
+        run: pnpm -C go/webui build
+
   unit-tests:
     needs: build
     runs-on: ubuntu-latest

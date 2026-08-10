@@ -1,244 +1,135 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, Info, Lock, LockOpen, Server, ShieldAlert } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Copy, Info, Lock, LockOpen, RefreshCw, ShieldAlert } from "lucide-react";
+
+import { PageHeader } from "@/components/v2/page-header";
+import { PageLayout } from "@/components/v2/page-layout";
+import {
+  buildNodeTopology,
+  isNodeConnectionVerified,
+  NODE_CONNECTION_MODES,
+  normalizeNodeConnectionMode,
+} from "@/features/nodes/node-topology";
 import { backend } from "@/lib/backend";
-import type { GatewayNode } from "@/lib/types";
-import { useLocale } from "@/lib/i18n";
 import { formatUptime } from "@/lib/format";
+import { useLocale } from "@/lib/i18n";
 import { formatServiceAddress } from "@/lib/service-address";
+import type { GatewayNode, RuntimeService } from "@/lib/types";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-// The absolute connect timestamp is only shown on hover (the cell itself shows
-// uptime), so it uses one fixed, locale-independent format — "YYYY/MM/DD
-// HH:mm:ss", 24-hour, zero-padded — rather than branching on the UI language.
-function formatConnectedAt(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+function connectedAt(iso: string, locale: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" }).format(date);
 }
-
-// connModeBadge maps the config-sync stream's transport security to an icon +
-// label. mTLS (mutually authenticated) reads as the secure baseline (green);
-// an in-process stream is equally safe by construction — it is this process's
-// own embedded data plane, reached over an in-memory pipe with no socket to
-// intercept. Server-only TLS is amber; plaintext / unknown shows an open lock.
-function connModeBadge(mode: string | undefined, isZh: boolean) {
-  switch (mode) {
-    case "mtls":
-      return { Icon: Lock, label: "mTLS", className: "text-emerald-600" };
-    case "inprocess":
-      return {
-        Icon: Lock,
-        label: isZh ? "进程内（内嵌数据面）" : "In-process (embedded data plane)",
-        className: "text-emerald-600",
-      };
-    case "tls":
-      return { Icon: Lock, label: "TLS", className: "text-amber-600" };
-    default:
-      return { Icon: LockOpen, label: isZh ? "明文" : "Plaintext", className: "text-slate-400" };
-  }
-}
-
-// A node's identity is only verified under mTLS, where the server derives it
-// from the client certificate's SPIFFE SAN. Over a token-authenticated or
-// plaintext stream the id is whatever the client claimed in Subscribe, so any
-// client that can connect can present any id — a join token authorizes, it does
-// not identify. In-process is trusted for a different reason: the "client" is
-// this same process.
-//
-// Surfacing that distinction matters because an operator reading this table
-// would otherwise treat every id as attested and, for example, use it to decide
-// which node to trust.
-function nodeIdIsVerified(mode: string | undefined) {
-  return mode === "mtls" || mode === "inprocess";
-}
-
-// CopyButton copies `value` to the clipboard and briefly swaps its icon to a
-// check as feedback. Self-contained so each row manages its own copied state.
-function CopyButton({ value, isZh }: { value: string; isZh: boolean }) {
-  const [copied, setCopied] = useState(false);
-  if (!value || value === "-") return null;
-  return (
-    <button
-      type="button"
-      aria-label={isZh ? "复制" : "Copy"}
-      title={copied ? (isZh ? "已复制" : "Copied") : isZh ? "复制" : "Copy"}
-      className="inline-flex text-slate-400 transition-colors hover:text-slate-600"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(value);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        } catch {
-          // Clipboard may be unavailable (insecure context); ignore silently.
-        }
-      }}
-    >
-      {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-    </button>
-  );
-}
-
-const COLUMN_COUNT = 7;
 
 export default function NodesPage() {
-  const { locale } = useLocale();
-  const isZh = locale === "zh-CN";
-
-  const { data: nodes = [], isLoading } = useQuery<GatewayNode[]>({
+  const { locale, t } = useLocale();
+  const queryClient = useQueryClient();
+  const nodesQuery = useQuery<GatewayNode[]>({
     queryKey: ["nodes"],
     queryFn: () => backend("list_nodes"),
     refetchInterval: 5_000,
   });
+  const servicesQuery = useQuery<RuntimeService[]>({
+    queryKey: ["runtime-services"],
+    queryFn: () => backend("list_runtime_services"),
+  });
+
+  const nodes = nodesQuery.data ?? [];
+  const versions = [...new Set(nodes.map((node) => node.applied_version))];
+  const version = versions.length === 1 ? `rev-${versions[0]}` : versions.length > 1 ? "mixed" : "—";
+  const controlAddress = servicesQuery.data?.find((service) => service.id === "control-plane")?.listen ?? "—";
+  const remoteCount = nodes.filter((node) => normalizeNodeConnectionMode(node) !== "inprocess").length;
+  const embeddedCount = nodes.length - remoteCount;
+  const topology = buildNodeTopology(nodes);
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">{isZh ? "节点" : "Nodes"}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {isZh
-            ? "当前已连接的网关节点，实时更新；"
-            : "Gateway nodes currently connected here, updated in real time"}
-        </p>
-      </div>
+    <PageLayout header={<PageHeader title={t("page.nodes.title")} description={t("page.nodes.subtitle")} />}>
+      <section className="v2-node-ledger">
+        <NodeMetric label={t("nodes.connected")} value={`${nodes.length}`} detail={nodes.length > 0 ? t("nodes.allOnline") : t("nodes.noNodes")} />
+        <NodeMetric label={t("nodes.inProcess")} value={String(embeddedCount)} detail={t("nodes.embeddedDetail")} />
+        <NodeMetric label={t("nodes.remoteMTLS")} value={String(remoteCount)} detail={t("nodes.remoteDetail")} />
+        <NodeMetric label={t("nodes.configVersion")} value={version} detail={versions.length <= 1 ? t("nodes.versionConsistent") : t("nodes.mixedVersions")} mono />
+      </section>
 
-      <div className="glass rounded-2xl p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-800">
-            {isZh ? `已连接节点 (${nodes.length})` : `Connected Nodes (${nodes.length})`}
-          </h3>
+      <section className="v2-surface">
+        <div className="v2-surface-head">
+          <div><h2>{t("nodes.connectionMap")}</h2><p>{t("nodes.connectionMapDetail")}</p></div>
+          {nodes.every(isNodeConnectionVerified) && nodes.length > 0 && <span className="v2-status status-success"><i />{t("nodes.identityHealthy")}</span>}
         </div>
-        <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
-          <table className="w-full text-sm">
-            <thead className="bg-white/70 text-slate-500">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "节点" : "Node"}</th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "主机名" : "Hostname"}</th>
-                <th className="px-3 py-2 text-left font-medium">
-                  <span className="inline-flex items-center gap-1">
-                    {isZh ? "服务地址" : "Service Address"}
-                    <TooltipProvider delayDuration={120}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            className="inline-flex cursor-help text-slate-400 hover:text-slate-600"
-                            aria-label={
-                              isZh
-                                ? "主机来自与该网关的实际连接地址；端口为网关自行上报的服务端口，两者拼接而成"
-                                : "Host is the real connection address to this gateway; port is self-reported by the gateway"
-                            }
-                          >
-                            <Info className="h-3.5 w-3.5" />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          {isZh
-                            ? "主机来自与该网关的实际连接地址；端口为网关自行上报的服务端口，两者拼接而成"
-                            : "Host is the real connection address to this gateway; port is self-reported by the gateway"}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+        <div className={`v2-topology is-${topology.layout}`}>
+          <div className="v2-topology-admin">
+            <span>{t("nodes.configSource")}</span><strong>Nyro Admin</strong><code>{controlAddress}</code><small>{t("nodes.currentVersion", { version })}</small>
+          </div>
+          <div className="v2-topology-connections">
+            {topology.connections.map(({ node, mode }) => (
+              <div className="v2-topology-connection" key={node.node_id}>
+                <div className="v2-topology-edge">
+                  <span className="v2-topology-edge-label">
+                    <small>{t("nodes.connectionMode")}</small>
+                    <strong>{t(mode.label)}</strong>
+                    <span>{t(mode.detail)}</span>
                   </span>
-                </th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "网关版本" : "Gateway Version"}</th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "配置版本" : "Config Version"}</th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "连接" : "Connection"}</th>
-                <th className="px-3 py-2 text-left font-medium">{isZh ? "状态" : "Status"}</th>
-              </tr>
-            </thead>
+                </div>
+                <div className="v2-topology-node">
+                  <strong>{node.hostname || node.node_id || t("common.unknown")}</strong>
+                  <code>{formatServiceAddress(node.remote_addr, node.service_port)}</code>
+                  <span><i />{t("common.online")} · {formatUptime(node.connected_at)}</span>
+                </div>
+              </div>
+            ))}
+            {topology.layout === "empty" && <div className="v2-topology-empty">{t("nodes.noNodes")}</div>}
+          </div>
+        </div>
+      </section>
+
+      <section className="v2-surface v2-node-table">
+        <div className="v2-surface-head">
+          <div><h2>{t("nodes.tableTitle")}</h2><p>{t("nodes.tableDetail")}</p></div>
+          <button type="button" className="v2-button v2-button-icon" onClick={() => void queryClient.invalidateQueries({ queryKey: ["nodes"] })}><RefreshCw />{t("common.refresh")}</button>
+        </div>
+        <div className="v2-table-wrap">
+          <table className="v2-data-table">
+            <thead><tr><th>{t("nodes.node")}</th><th>{t("nodes.address")}</th><th>{t("nodes.connection")}</th><th>{t("nodes.identity")}</th><th>{t("nodes.version")}</th><th>{t("nodes.configVersion")}</th><th>{t("nodes.connectedFor")}</th></tr></thead>
             <tbody>
-              {isLoading && (
-                <tr>
-                  <td className="px-3 py-6 text-center text-slate-400" colSpan={COLUMN_COUNT}>
-                    {isZh ? "加载中…" : "Loading…"}
-                  </td>
-                </tr>
-              )}
-              {!isLoading && nodes.length === 0 && (
-                <tr>
-                  <td className="px-3 py-6 text-center text-slate-400" colSpan={COLUMN_COUNT}>
-                    {isZh
-                      ? "暂无已连接的网关节点"
-                      : "No gateway nodes connected yet"}
-                  </td>
-                </tr>
-              )}
-              {nodes.map((n) => (
-                <tr key={n.node_id} className="border-t border-white/70 text-slate-700">
-                  <td className="px-3 py-2 font-medium">
-                    <span className="inline-flex items-center gap-2">
-                      <Server className="h-3.5 w-3.5 text-purple-600" />
-                      {n.node_id || (isZh ? "（未知）" : "(unknown)")}
-                      {!nodeIdIsVerified(n.conn_mode) && (
-                        <TooltipProvider delayDuration={120}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span
-                                className="inline-flex cursor-help text-amber-600"
-                                aria-label={isZh ? "身份未经验证" : "Unverified identity"}
-                              >
-                                <ShieldAlert className="h-3.5 w-3.5" />
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              {isZh
-                                ? "身份未经验证：该 ID 由节点自行上报，可被伪造。仅 mTLS 会用证书 SAN 校验节点身份；join token 只做准入，不提供身份。"
-                                : "Unverified identity: this ID is self-reported by the node and can be spoofed. Only mTLS verifies it against the certificate SAN; a join token authorizes, it does not identify."}
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      )}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">{n.hostname || "-"}</td>
-                  <td className="px-3 py-2 font-mono text-xs">
-                    <span className="inline-flex items-center gap-1.5">
-                      {formatServiceAddress(n.remote_addr, n.service_port)}
-                      <CopyButton value={formatServiceAddress(n.remote_addr, n.service_port)} isZh={isZh} />
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">{n.app_version || "-"}</td>
-                  <td className="px-3 py-2">{n.applied_version}</td>
-                  <td className="px-3 py-2">
-                    {(() => {
-                      const { Icon, label, className } = connModeBadge(n.conn_mode, isZh);
-                      return (
-                        <TooltipProvider delayDuration={120}>
-                          <span className="inline-flex items-center gap-1.5">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className={`inline-flex cursor-help ${className}`} aria-label={label}>
-                                  <Icon className="h-3.5 w-3.5" />
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent>{label}</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="cursor-help text-slate-700">
-                                  {formatUptime(n.connected_at)}
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent>{formatConnectedAt(n.connected_at)}</TooltipContent>
-                            </Tooltip>
-                          </span>
-                        </TooltipProvider>
-                      );
-                    })()}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                      {isZh ? "已连接" : "Connected"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {nodes.map((node) => {
+                const mode = NODE_CONNECTION_MODES[normalizeNodeConnectionMode(node)];
+                const isVerified = isNodeConnectionVerified(node);
+                const address = formatServiceAddress(node.remote_addr, node.service_port);
+                const ModeIcon = isVerified ? Lock : LockOpen;
+                return (
+                  <tr key={node.node_id}>
+                    <td><strong className="v2-mono">{node.hostname || node.node_id || t("common.unknown")}</strong><small className="v2-mono">{node.node_id || "—"}</small></td>
+                    <td><span className="v2-copy-value"><code>{address}</code><CopyButton value={address} /></span></td>
+                    <td><span className="v2-connection-mode"><ModeIcon />{t(mode.label)}</span></td>
+                    <td>
+                      <TooltipProvider delayDuration={120}><Tooltip><TooltipTrigger asChild>
+                        <span className={`v2-identity ${isVerified ? "verified" : "unverified"}`}>{isVerified ? <Lock /> : <ShieldAlert />}{isVerified ? t("nodes.verified") : t("nodes.unverified")}</span>
+                      </TooltipTrigger>{!isVerified && <TooltipContent>{t("nodes.unverifiedHelp")}</TooltipContent>}</Tooltip></TooltipProvider>
+                    </td>
+                    <td>{node.app_version || "—"}</td><td className="v2-mono">rev-{node.applied_version}</td>
+                    <td><TooltipProvider delayDuration={120}><Tooltip><TooltipTrigger asChild><span className="v2-help-value">{formatUptime(node.connected_at)}<Info /></span></TooltipTrigger><TooltipContent>{connectedAt(node.connected_at, locale)}</TooltipContent></Tooltip></TooltipProvider></td>
+                  </tr>
+                );
+              })}
+              {!nodesQuery.isLoading && nodes.length === 0 && <tr><td colSpan={7}><div className="v2-inline-empty">{t("nodes.noNodes")}</div></td></tr>}
+              {nodesQuery.isLoading && <tr><td colSpan={7}><div className="v2-inline-empty">{t("common.loading")}</div></td></tr>}
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
+        <div className="v2-surface-foot"><span>{t("nodes.autoRefresh")}</span><span>{t("nodes.addressHelp")}</span></div>
+      </section>
+    </PageLayout>
   );
+}
+
+function NodeMetric({ label, value, detail, mono = false }: { label: string; value: string; detail: string; mono?: boolean }) {
+  return <div><span>{label}</span><strong className={mono ? "v2-mono" : undefined}>{value}</strong><small>{detail}</small></div>;
+}
+
+function CopyButton({ value }: { value: string }) {
+  const { t } = useLocale();
+  const [copied, setCopied] = useState(false);
+  return <button type="button" title={t("common.copy")} onClick={async () => { await navigator.clipboard.writeText(value); setCopied(true); window.setTimeout(() => setCopied(false), 1200); }}>{copied ? <Check /> : <Copy />}</button>;
 }

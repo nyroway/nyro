@@ -1,4 +1,3 @@
-import { getAdminToken, clearAdminToken } from "./auth";
 import type {
   CreateConsumer,
   CreateConsumerKey,
@@ -13,22 +12,11 @@ import type {
   UpdateUpstream,
 } from "./types";
 
-const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-async function invokeIPC<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<T>(cmd, args);
-}
-
 async function invokeHTTP<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const mapping = resolveHTTP(cmd, args);
   const init: RequestInit = { method: mapping.method };
 
   const headers: Record<string, string> = {};
-  const token = getAdminToken();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
   if (mapping.body) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(mapping.body);
@@ -38,12 +26,6 @@ async function invokeHTTP<T>(cmd: string, args?: Record<string, unknown>): Promi
   }
 
   const resp = await fetch(mapping.url, init);
-
-  if (resp.status === 401 && window.location.pathname !== "/login") {
-    clearAdminToken();
-    window.location.replace("/login");
-    throw new Error("Authentication required");
-  }
 
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
@@ -93,10 +75,6 @@ async function streamProviderHealthEvents(
   const headers: Record<string, string> = {
     ...(init.headers as Record<string, string> | undefined),
   };
-  const token = getAdminToken();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
   const resp = await fetch(url, {
     method: "POST",
     ...init,
@@ -104,11 +82,6 @@ async function streamProviderHealthEvents(
     signal,
   });
 
-  if (resp.status === 401 && window.location.pathname !== "/login") {
-    clearAdminToken();
-    window.location.replace("/login");
-    throw new Error("Authentication required");
-  }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.error || `HTTP ${resp.status}`);
@@ -146,22 +119,11 @@ async function streamRouteImportEvents(
   onEvent: (event: RouteImportEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const headers: Record<string, string> = {};
-  const token = getAdminToken();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
   const resp = await fetch(url, {
     method: "POST",
-    headers,
     signal,
   });
 
-  if (resp.status === 401 && window.location.pathname !== "/login") {
-    clearAdminToken();
-    window.location.replace("/login");
-    throw new Error("Authentication required");
-  }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.error || `HTTP ${resp.status}`);
@@ -281,10 +243,6 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
     case "delete_upstream":
       return { method: "DELETE", url: `${base}/upstreams/${args?.id}` };
     case "test_provider_models":
-    case "get_model_capabilities":
-    case "get_provider_oauth_status":
-    case "reconnect_provider_oauth":
-    case "logout_provider_oauth":
       throw new Error("This provider workflow is not available in the Go WebUI yet.");
     case "get_provider_models":
       return {
@@ -298,12 +256,6 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
         url: `${base}/upstreams/${args?.id}/routes/import/preview`,
         transform: (value) => value as RouteImportPreview,
       };
-    case "init_oauth_session":
-    case "get_oauth_session_status":
-    case "cancel_oauth_session":
-    case "complete_oauth_session":
-    case "create_oauth_provider":
-      throw new Error("OAuth workflows are not available in the Go WebUI yet.");
     case "list_routes":
       return { method: "GET", url: `${base}/routes` };
     case "create_route":
@@ -377,25 +329,25 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
       const hours = args?.hours ?? 24;
       return { method: "GET", url: `${base}/stats/hourly?hours=${hours}` };
     }
-	case "get_stats_by_route": {
+    case "get_stats_by_route": {
       const hours = args?.hours;
       return {
         method: "GET",
-		url: `${base}/stats/routes${hours != null ? `?hours=${hours}` : ""}`,
+        url: `${base}/stats/routes${hours != null ? `?hours=${hours}` : ""}`,
       };
     }
-	case "get_stats_by_upstream": {
+    case "get_stats_by_upstream": {
       const hours = args?.hours;
       return {
         method: "GET",
-		url: `${base}/stats/upstreams${hours != null ? `?hours=${hours}` : ""}`,
+        url: `${base}/stats/upstreams${hours != null ? `?hours=${hours}` : ""}`,
       };
     }
-	case "get_stats_by_consumer": {
+    case "get_stats_by_consumer": {
       const hours = args?.hours;
       return {
         method: "GET",
-		url: `${base}/stats/consumers${hours != null ? `?hours=${hours}` : ""}`,
+        url: `${base}/stats/consumers${hours != null ? `?hours=${hours}` : ""}`,
       };
     }
 
@@ -419,6 +371,9 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
     case "list_nodes":
       return { method: "GET", url: `${base}/nodes` };
 
+    case "list_runtime_services":
+      return { method: "GET", url: `${base}/runtime/services` };
+
     case "export_config":
     case "import_config":
       throw new Error("Config import/export is not available in the Go WebUI yet.");
@@ -428,5 +383,4 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
   }
 }
 
-export const backend = IS_TAURI ? invokeIPC : invokeHTTP;
-export { IS_TAURI };
+export const backend = invokeHTTP;

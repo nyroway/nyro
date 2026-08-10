@@ -1,7 +1,8 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "react-router-dom";
 import { formatKeyPreview } from "@/lib/format";
 import {
   Check,
@@ -9,10 +10,10 @@ import {
   ChevronRight,
   Copy,
   Info,
-  KeyRound,
   Pencil,
   Plus,
   RotateCw,
+  Search,
   Trash2,
   ToggleRight,
   ToggleLeft,
@@ -57,6 +58,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { DataTable, type DataTableColumn } from "@/components/v2/data-table";
+import { EmptyState } from "@/components/v2/empty-state";
+import { FilterBar } from "@/components/v2/filter-bar";
+import { MetricLedger } from "@/components/v2/metric-ledger";
+import { PageHeader } from "@/components/v2/page-header";
+import { PageLayout } from "@/components/v2/page-layout";
+import { ResourceEditorDialog } from "@/components/v2/resource-editor-dialog";
+import { Status } from "@/components/v2/status";
+import { Surface } from "@/components/v2/surface";
+import { filterConsumers, type ConsumerFilters } from "@/features/consumers/consumer-view-model";
+import { localizedMessage, type MessageKey } from "@/lib/messages";
 
 const PAGE_SIZE = 7;
 
@@ -69,8 +81,8 @@ function CopyFullKeyButton({ token, isZh }: { token: string; isZh: boolean }) {
   return (
     <button
       type="button"
-      title={copied ? (isZh ? "已复制" : "Copied") : isZh ? "复制完整 Key" : "Copy full key"}
-      aria-label={isZh ? "复制完整 Key" : "Copy full key"}
+      title={copied ? (localizedMessage(isZh, "v2.api-keys.copied")) : localizedMessage(isZh, "v2.api-keys.copyFullKey")}
+      aria-label={localizedMessage(isZh, "v2.api-keys.copyFullKey")}
       className="inline-flex text-slate-400 transition-colors hover:text-slate-600"
       onClick={async () => {
         try {
@@ -89,14 +101,14 @@ function CopyFullKeyButton({ token, isZh }: { token: string; isZh: boolean }) {
 
 type ExpirePreset = "never" | "1d" | "7d" | "30d" | "90d" | "180d" | "1y";
 
-const expirePresetOptions: { value: ExpirePreset; zh: string; en: string }[] = [
-  { value: "never", zh: "永不过期", en: "Never" },
-  { value: "1d", zh: "1 天", en: "1 day" },
-  { value: "7d", zh: "7 天", en: "7 days" },
-  { value: "30d", zh: "30 天", en: "30 days" },
-  { value: "90d", zh: "90 天", en: "90 days" },
-  { value: "180d", zh: "180 天", en: "180 days" },
-  { value: "1y", zh: "1 年", en: "1 year" },
+const expirePresetOptions: { value: ExpirePreset; label: MessageKey }[] = [
+  { value: "never", label: "consumers.expiry.never" },
+  { value: "1d", label: "consumers.expiry.1d" },
+  { value: "7d", label: "consumers.expiry.7d" },
+  { value: "30d", label: "consumers.expiry.30d" },
+  { value: "90d", label: "consumers.expiry.90d" },
+  { value: "180d", label: "consumers.expiry.180d" },
+  { value: "1y", label: "consumers.expiry.1y" },
 ];
 
 function FieldLabel({
@@ -161,7 +173,7 @@ function SectionTitle({ children, info }: { children: string; info?: string }) {
 
 
 function formatExpiresText(value: string | null | undefined, isZh: boolean) {
-  if (!value) return isZh ? "永不过期" : "Never";
+  if (!value) return localizedMessage(isZh, "v2.api-keys.never");
   return value.replace("T", " ").slice(0, 19);
 }
 
@@ -177,7 +189,7 @@ function isApiKeyExpired(expiresAt: string | null | undefined) {
 }
 
 function formatValidityLabel(expired: boolean, isZh: boolean) {
-  return expired ? (isZh ? "过期" : "Expired") : (isZh ? "有效" : "Valid");
+  return expired ? (localizedMessage(isZh, "v2.api-keys.expired")) : (localizedMessage(isZh, "v2.api-keys.valid"));
 }
 
 function resolveExpiresAt(preset: ExpirePreset) {
@@ -332,22 +344,6 @@ function isValidIPOrCIDR(value: string): boolean {
 
 const protocolOptions: ComboboxOption[] = PROTOCOL_TABLE.map((p) => ({ value: p.id, label: p.displayName }));
 
-const quotaBadgeColors = [
-  "bg-indigo-50 text-indigo-700",
-  "bg-rose-50 text-rose-700",
-  "bg-teal-50 text-teal-700",
-  "bg-amber-50 text-amber-700",
-  "bg-fuchsia-50 text-fuchsia-700",
-];
-
-/** Quota types surfaced as list-card summary badges, in display order. Budget
- *  quotas are intentionally excluded — there's no WebUI editor for them yet. */
-const quotaSummaryOrder: { type: string; zh: string; en: string }[] = [
-  { type: "requests", zh: "限频", en: "Rate" },
-  { type: "tokens", zh: "限量", en: "Tokens" },
-  { type: "concurrency", zh: "并发", en: "Concurrency" },
-];
-
 function formatQuotaRule(q: ConsumerQuota) {
   return q.window ? `${q.quota_limit}/${q.window}` : `${q.quota_limit}`;
 }
@@ -373,7 +369,7 @@ function QuotaEditor({
       <div className="space-y-2">
         <FieldLabel>{title}</FieldLabel>
         {rows.length === 0 && (
-          <p className="text-xs text-slate-400">{isZh ? "未设置，不限" : "Not set, unlimited"}</p>
+          <p className="text-xs text-slate-400">{localizedMessage(isZh, "v2.api-keys.notSetUnlimited")}</p>
         )}
         {rows.map((row, idx) => (
           <div key={idx} className="flex items-center gap-2">
@@ -387,7 +383,7 @@ function QuotaEditor({
                 next[idx] = { ...row, limit: digitsOnly(e.target.value) };
                 updateRows(kind, next);
               }}
-              placeholder={isZh ? "上限次数" : "limit"}
+              placeholder={localizedMessage(isZh, "v2.api-keys.limit")}
               className="flex-1"
             />
             <div className="w-32 shrink-0">
@@ -400,7 +396,7 @@ function QuotaEditor({
                   updateRows(kind, next);
                 }}
                 allowCustom
-                placeholder={isZh ? "窗口" : "window"}
+                placeholder={localizedMessage(isZh, "v2.api-keys.window")}
               />
             </div>
             {rows.length > 1 ? (
@@ -408,7 +404,7 @@ function QuotaEditor({
                 type="button"
                 onClick={() => updateRows(kind, rows.filter((_, i) => i !== idx))}
                 className="cursor-pointer p-1 text-slate-400 hover:text-red-500"
-                title={isZh ? "删除该条限额" : "Remove rule"}
+                title={localizedMessage(isZh, "v2.api-keys.removeRule")}
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -417,7 +413,7 @@ function QuotaEditor({
                 type="button"
                 onClick={() => updateRows(kind, [{ limit: "", window: "" }])}
                 className="cursor-pointer p-1 text-slate-400 hover:text-slate-600"
-                title={isZh ? "清空" : "Clear"}
+                title={localizedMessage(isZh, "v2.api-keys.clear")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -431,7 +427,7 @@ function QuotaEditor({
           onClick={() => updateRows(kind, [...rows, { limit: "", window: "" }])}
         >
           <Plus className="h-3.5 w-3.5" />
-          {isZh ? "添加一条" : "Add rule"}
+          {localizedMessage(isZh, "v2.api-keys.addRule")}
         </Button>
       </div>
     );
@@ -439,17 +435,15 @@ function QuotaEditor({
 
   return (
     <div className="grid grid-cols-2 items-start gap-4">
-      {renderGroup("requests", isZh ? "请求频率限额" : "Rate limit")}
-      {renderGroup("tokens", isZh ? "Token 用量限额" : "Token quota")}
+      {renderGroup("requests", localizedMessage(isZh, "v2.api-keys.rateLimit"))}
+      {renderGroup("tokens", localizedMessage(isZh, "v2.api-keys.tokenQuota"))}
       <div className="space-y-2">
         <FieldLabel
           info={
-            isZh
-              ? "限制同时处理中的最大请求数，留空不做限制"
-              : "Caps the number of requests processed at the same time; leave empty for no limit"
+            localizedMessage(isZh, "v2.api-keys.capsTheNumberOfRequestsProcessedAtThe")
           }
         >
-          {isZh ? "并发上限" : "Concurrency limit"}
+          {localizedMessage(isZh, "v2.api-keys.concurrencyLimit")}
         </FieldLabel>
         <Input
           type="text"
@@ -457,7 +451,7 @@ function QuotaEditor({
           pattern="[0-9]*"
           value={value.concurrency}
           onChange={(e) => onChange({ ...value, concurrency: digitsOnly(e.target.value) })}
-          placeholder={isZh ? "如：10" : "e.g. 10"}
+          placeholder={localizedMessage(isZh, "v2.api-keys.eG10")}
         />
       </div>
     </div>
@@ -476,36 +470,36 @@ function LimitsEditor({
   return (
     <div className="grid grid-cols-3 gap-4">
       <div className="space-y-2">
-        <FieldLabel>{isZh ? "最大输入 Token" : "Max input tokens"}</FieldLabel>
+        <FieldLabel>{localizedMessage(isZh, "v2.api-keys.maxInputTokens")}</FieldLabel>
         <Input
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
           value={value.maxInputTokens}
           onChange={(e) => onChange({ ...value, maxInputTokens: digitsOnly(e.target.value) })}
-          placeholder={isZh ? "如：4000" : "e.g. 4000"}
+          placeholder={localizedMessage(isZh, "v2.api-keys.eG4000")}
         />
       </div>
       <div className="space-y-2">
-        <FieldLabel>{isZh ? "最大输出 Token" : "Max output tokens"}</FieldLabel>
+        <FieldLabel>{localizedMessage(isZh, "v2.api-keys.maxOutputTokens")}</FieldLabel>
         <Input
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
           value={value.maxOutputTokens}
           onChange={(e) => onChange({ ...value, maxOutputTokens: digitsOnly(e.target.value) })}
-          placeholder={isZh ? "如：2000" : "e.g. 2000"}
+          placeholder={localizedMessage(isZh, "v2.api-keys.eG2000")}
         />
       </div>
       <div className="space-y-2">
-        <FieldLabel>{isZh ? "最大请求体积（字节）" : "Max request body (bytes)"}</FieldLabel>
+        <FieldLabel>{localizedMessage(isZh, "v2.api-keys.maxRequestBodyBytes")}</FieldLabel>
         <Input
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
           value={value.maxRequestBodyBytes}
           onChange={(e) => onChange({ ...value, maxRequestBodyBytes: digitsOnly(e.target.value) })}
-          placeholder={isZh ? "如：1048576" : "e.g. 1048576"}
+          placeholder={localizedMessage(isZh, "v2.api-keys.eG1048576")}
         />
       </div>
     </div>
@@ -538,7 +532,7 @@ function IPAllowlistEditor({
                 next[idx] = e.target.value;
                 updateRows(next);
               }}
-              placeholder={isZh ? "例如 10.0.0.0/8 或 192.168.1.1" : "e.g. 10.0.0.0/8 or 192.168.1.1"}
+              placeholder={localizedMessage(isZh, "v2.api-keys.eG100008Or")}
               className={invalid ? "border-red-400 focus-visible:ring-red-400" : ""}
             />
             {value.length > 1 ? (
@@ -546,7 +540,7 @@ function IPAllowlistEditor({
                 type="button"
                 onClick={() => updateRows(value.filter((_, i) => i !== idx))}
                 className="cursor-pointer p-1 text-slate-400 hover:text-red-500"
-                title={isZh ? "删除该条" : "Remove"}
+                title={localizedMessage(isZh, "v2.api-keys.remove")}
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -555,7 +549,7 @@ function IPAllowlistEditor({
                 type="button"
                 onClick={() => updateRows([""])}
                 className="cursor-pointer p-1 text-slate-400 hover:text-slate-600"
-                title={isZh ? "清空" : "Clear"}
+                title={localizedMessage(isZh, "v2.api-keys.clear")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -565,7 +559,7 @@ function IPAllowlistEditor({
       })}
       <Button type="button" variant="secondary" size="sm" onClick={() => updateRows([...value, ""])}>
         <Plus className="h-3.5 w-3.5" />
-        {isZh ? "添加一条" : "Add rule"}
+        {localizedMessage(isZh, "v2.api-keys.addRule")}
       </Button>
     </div>
   );
@@ -605,13 +599,15 @@ type EditForm = {
 type RevealedKey = { name: string; token: string };
 
 export default function ApiKeysPage() {
-  const { locale } = useLocale();
+  const { locale, t } = useLocale();
   const isZh = locale === "zh-CN";
   const qc = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const windowOptions = useMemo<ComboboxOption[]>(
     () => [
-      { value: "", label: isZh ? "不区分窗口" : "No window" },
+      { value: "", label: localizedMessage(isZh, "v2.api-keys.noWindow") },
       { value: "1m", label: "1m" },
       { value: "5m", label: "5m" },
       { value: "15m", label: "15m" },
@@ -628,6 +624,7 @@ export default function ApiKeysPage() {
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreate);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [page, setPage] = useState(0);
+  const [filters, setFilters] = useState<ConsumerFilters>({ query: "", status: "all" });
 
   const [revealedKey, setRevealedKey] = useState<RevealedKey | null>(null);
   const [showRevealDialog, setShowRevealDialog] = useState(false);
@@ -659,9 +656,9 @@ export default function ApiKeysPage() {
     return localizeBackendErrorMessage(error, isZh);
   }
 
-  function showErrorDialog(titleZh: string, titleEn: string, error: unknown) {
+  function showErrorDialog(titleKey: MessageKey, error: unknown) {
     setErrorDialog({
-      title: isZh ? titleZh : titleEn,
+      title: localizedMessage(isZh, titleKey),
       description: formatErrorMessage(error),
     });
   }
@@ -697,7 +694,7 @@ export default function ApiKeysPage() {
       }
     },
     onError: (error: unknown) => {
-      showErrorDialog("创建秘钥失败", "Failed to create key", error);
+      showErrorDialog("consumers.error.create", error);
     },
   });
 
@@ -710,7 +707,7 @@ export default function ApiKeysPage() {
       setEditForm(null);
     },
     onError: (error: unknown) => {
-      showErrorDialog("保存秘钥失败", "Failed to save key", error);
+      showErrorDialog("consumers.error.save", error);
     },
   });
 
@@ -718,7 +715,7 @@ export default function ApiKeysPage() {
     mutationFn: (id: string) => backend("delete_consumer", { id }),
     onSuccess: () => invalidateConsumers(),
     onError: (error: unknown) => {
-      showErrorDialog("删除秘钥失败", "Failed to delete key", error);
+      showErrorDialog("consumers.error.delete", error);
     },
   });
 
@@ -727,7 +724,7 @@ export default function ApiKeysPage() {
       backend("update_consumer", { id, input: { enabled } }),
     onSuccess: () => invalidateConsumers(),
     onError: (error: unknown) => {
-      showErrorDialog("操作失败", "Operation failed", error);
+      showErrorDialog("consumers.error.operation", error);
     },
   });
 
@@ -742,7 +739,7 @@ export default function ApiKeysPage() {
       }
     },
     onError: (error: unknown) => {
-      showErrorDialog("新增 Key 失败", "Failed to add key", error);
+      showErrorDialog("consumers.error.addKey", error);
     },
   });
 
@@ -758,7 +755,7 @@ export default function ApiKeysPage() {
     }) => backend<ConsumerKey>("update_consumer_key", { id: consumerId, keyId, input }),
     onSuccess: () => invalidateConsumers(),
     onError: (error: unknown) => {
-      showErrorDialog("更新 Key 失败", "Failed to update key", error);
+      showErrorDialog("consumers.error.updateKey", error);
     },
   });
 
@@ -789,7 +786,7 @@ export default function ApiKeysPage() {
       }
     },
     onError: (error: unknown) => {
-      showErrorDialog("重新生成 Key 失败", "Failed to regenerate key", error);
+      showErrorDialog("consumers.error.regenerateKey", error);
     },
   });
 
@@ -798,16 +795,21 @@ export default function ApiKeysPage() {
       backend("delete_consumer_key", { id: consumerId, keyId }),
     onSuccess: () => invalidateConsumers(),
     onError: (error: unknown) => {
-      showErrorDialog("删除 Key 失败", "Failed to delete key", error);
+      showErrorDialog("consumers.error.deleteKey", error);
     },
   });
 
-  const totalPages = Math.max(1, Math.ceil(consumers.length / PAGE_SIZE));
-  const pagedConsumers = consumers.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const filteredConsumers = useMemo(() => filterConsumers(consumers, filters), [consumers, filters]);
+  const totalPages = Math.max(1, Math.ceil(filteredConsumers.length / PAGE_SIZE));
+  const pagedConsumers = filteredConsumers.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
   useEffect(() => {
     if (page > totalPages - 1) setPage(0);
   }, [page, totalPages]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [filters]);
 
   // P0 fix: the backend resolves a consumer's route bindings by route *model name*
   // (see `resolveRouteIDsByModel` in the database/memory stores), not by route id.
@@ -822,7 +824,7 @@ export default function ApiKeysPage() {
     [routes],
   );
 
-  function startEdit(item: Consumer) {
+  const startEdit = useCallback((item: Consumer) => {
     setEditingId(item.id);
     setEditForm({
       id: item.id,
@@ -834,7 +836,24 @@ export default function ApiKeysPage() {
       quotas: quotasToForm(item.quotas),
       limits: limitsToForm(item.limits),
     });
-  }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("action") === "create") {
+      setEditingId(null);
+      setShowForm(true);
+      navigate(location.pathname, { replace: true });
+      return;
+    }
+    const focus = params.get("focus");
+    if (!focus) return;
+    const consumer = consumers.find((item) => item.id === focus);
+    if (!consumer) return;
+    setPage(Math.floor(consumers.findIndex((item) => item.id === focus) / PAGE_SIZE));
+    startEdit(consumer);
+    navigate(location.pathname, { replace: true });
+  }, [consumers, location.pathname, location.search, navigate, startEdit]);
 
   function openAddKeyDialog(consumer: Consumer) {
     setAddKeyForm({ name: "", expiresPreset: "never" });
@@ -849,48 +868,6 @@ export default function ApiKeysPage() {
   function openEditKeyDialog(consumer: Consumer, key: ConsumerKey) {
     setEditKeyForm({ name: key.name, expiresPreset: "never", expiresTouched: false });
     setEditKeyDialogFor({ consumer, key });
-  }
-
-  /** Renders one count badge per access dimension (models/protocols/IP
-   *  allowlist) that has a restriction set, instead of one badge per bound
-   *  item — keeps the card width independent of how many models/protocols/IPs
-   *  are configured. A dimension with nothing set means default-allow, so it
-   *  renders no badge at all. */
-  function renderAccessBadges(consumer: Consumer) {
-    const dims: { count: number; zh: string; en: string; className: string }[] = [
-      { count: consumer.routes?.length ?? 0, zh: "模型", en: "Models", className: "bg-cyan-50 text-cyan-700" },
-      { count: consumer.protocols?.length ?? 0, zh: "协议", en: "Protocols", className: "bg-violet-50 text-violet-700" },
-      { count: consumer.ip_allowlist?.length ?? 0, zh: "白名单", en: "IPs", className: "bg-slate-100 text-slate-600" },
-    ];
-    return dims
-      .filter((d) => d.count > 0)
-      .map((d) => (
-        <Badge key={d.en} variant="warning" className={`connect-label-badge ${d.className}`}>
-          {`${isZh ? d.zh : d.en} ${d.count}`}
-        </Badge>
-      ));
-  }
-
-  /** Renders exactly one badge per quota type present, so the card's width
-   *  never grows with the number of configured rules — extra rules of the
-   *  same type fold into a "+N" suffix on that one badge instead of adding
-   *  more badges. */
-  function renderQuotaBadges(quotas: ConsumerQuota[] | undefined) {
-    return quotaSummaryOrder.flatMap(({ type, zh, en }, idx) => {
-      const rows = (quotas ?? []).filter((q) => q.quota_type === type);
-      if (rows.length === 0) return [];
-      const label = isZh ? zh : en;
-      const suffix = rows.length > 1 ? ` +${rows.length - 1}` : "";
-      return [
-        <Badge
-          key={type}
-          variant="warning"
-          className={`connect-label-badge ${quotaBadgeColors[idx % quotaBadgeColors.length]}`}
-        >
-          {`${label} ${formatQuotaRule(rows[0])}${suffix}`}
-        </Badge>,
-      ];
-    });
   }
 
   // Single-key simplification: the backend keeps keys[] as 1:N, but the UI
@@ -908,10 +885,8 @@ export default function ApiKeysPage() {
           <code
             title={
               recoverableToken
-                ? (isZh ? "明文存储已开启，可复制完整 Key" : "Plaintext storage is on; the full key can be copied")
-                : isZh
-                  ? "完整 Key 仅在创建/新增/重新生成时展示一次，此处仅展示部分字符，无法复制完整 Key"
-                  : "Full key is shown once on create/add/regenerate; this is a partial preview and cannot be copied here"
+                ? (localizedMessage(isZh, "v2.api-keys.plaintextStorageIsOnTheFullKeyCan"))
+                : localizedMessage(isZh, "v2.api-keys.fullKeyIsShownOnceOnCreateAdd")
             }
             className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600"
           >
@@ -920,7 +895,7 @@ export default function ApiKeysPage() {
           {recoverableToken && <CopyFullKeyButton token={recoverableToken} isZh={isZh} />}
           {!key.enabled && (
             <Badge variant="danger" className="connect-label-badge">
-              {isZh ? "已禁用" : "Disabled"}
+              {localizedMessage(isZh, "v2.providers.disabled2")}
             </Badge>
           )}
           <Badge variant={keyExpired ? "danger" : "success"} className="connect-label-badge">
@@ -931,7 +906,7 @@ export default function ApiKeysPage() {
         <div className="flex shrink-0 items-center gap-0.5">
           <button
             onClick={() => updateKeyMut.mutate({ consumerId: consumer.id, keyId: key.id, input: { enabled: !key.enabled } })}
-            title={key.enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
+            title={key.enabled ? (localizedMessage(isZh, "v2.providers.disable")) : (localizedMessage(isZh, "v2.providers.enable"))}
             className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
           >
             {key.enabled ? (
@@ -942,21 +917,21 @@ export default function ApiKeysPage() {
           </button>
           <button
             onClick={() => openEditKeyDialog(consumer, key)}
-            title={isZh ? "编辑名称 / 有效期" : "Edit name / validity"}
+            title={localizedMessage(isZh, "v2.api-keys.editNameValidity")}
             className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
           >
             <Pencil className="h-4 w-4" />
           </button>
           <button
             onClick={() => setKeyToRegenerate({ consumer, key })}
-            title={isZh ? "重新生成 Key（旧 Key 将立即失效）" : "Regenerate key (old key is invalidated immediately)"}
+            title={localizedMessage(isZh, "v2.api-keys.regenerateKeyOldKeyIsInvalidatedImmediately")}
             className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
           >
             <RotateCw className="h-4 w-4" />
           </button>
           <button
             onClick={() => setKeyToDelete({ consumer, key })}
-            title={isZh ? "删除该 Key" : "Delete key"}
+            title={localizedMessage(isZh, "v2.api-keys.deleteKey")}
             className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
           >
             <Trash2 className="h-4 w-4" />
@@ -972,11 +947,11 @@ export default function ApiKeysPage() {
       return (
         <div className="flex items-center justify-between rounded-xl bg-slate-50/60 p-3">
           <p className="text-xs text-slate-400">
-            {isZh ? "暂无可用秘钥，无法鉴权。" : "No key yet — cannot authenticate."}
+            {localizedMessage(isZh, "v2.api-keys.noKeyYetCannotAuthenticate")}
           </p>
           <Button type="button" size="sm" variant="secondary" onClick={() => openAddKeyDialog(consumer)}>
             <Plus className="h-3.5 w-3.5" />
-            {isZh ? "新增 Key" : "Add key"}
+            {localizedMessage(isZh, "v2.api-keys.addKey")}
           </Button>
         </div>
       );
@@ -984,151 +959,115 @@ export default function ApiKeysPage() {
     return <div className="space-y-1.5">{keys.map((key) => renderKeyRow(consumer, key))}</div>;
   }
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "秘钥" : "API Keys"}</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {isZh ? "管理鉴权秘钥、配额与模型绑定" : "Manage authentication keys, quotas, and model bindings"}
-          </p>
+  const keyCount = consumers.reduce((sum, consumer) => sum + (consumer.keys?.length ?? 0), 0);
+  const activeKeyCount = consumers.reduce(
+    (sum, consumer) => sum + (consumer.keys ?? []).filter((key) => key.enabled && !isApiKeyExpired(key.expires_at)).length,
+    0,
+  );
+  const expiringKeyCount = consumers.reduce((sum, consumer) => sum + (consumer.keys ?? []).filter((key) => {
+    if (!key.expires_at || isApiKeyExpired(key.expires_at)) return false;
+    const expires = Date.parse(key.expires_at.includes("T") ? key.expires_at : `${key.expires_at.replace(" ", "T")}Z`);
+    return Number.isFinite(expires) && expires - Date.now() <= 10 * 24 * 60 * 60 * 1000;
+  }).length, 0);
+
+  const consumerColumns: DataTableColumn<Consumer>[] = [
+    {
+      key: "consumer",
+      header: localizedMessage(isZh, "v2.api-keys.consumer"),
+      render: (consumer) => (
+        <div className="v2-consumer-cell">
+          <span>{consumer.name.slice(0, 2).toLocaleUpperCase()}</span>
+          <div><strong>{consumer.name}</strong><code>{consumer.id}</code></div>
         </div>
-        <Button
-          onClick={() => {
-            setEditingId(null);
-            setEditForm(null);
-            setShowForm((v) => !v);
-          }}
-          className="flex items-center gap-2"
-        >
-          <Plus className="h-4 w-4" />
-          {isZh ? "新增秘钥" : "Add Key"}
-        </Button>
-      </div>
+      ),
+    },
+    {
+      key: "keys",
+      header: "Key",
+      render: (consumer) => {
+        const keys = consumer.keys ?? [];
+        const invalid = keys.filter((key) => !key.enabled || isApiKeyExpired(key.expires_at)).length;
+        return <div className="v2-key-count"><strong>{keys.length}</strong><span>{invalid ? localizedMessage(isZh, "common.unavailableCount", { count: invalid }) : localizedMessage(isZh, "v2.api-keys.allValid")}</span></div>;
+      },
+    },
+    {
+      key: "routes",
+      header: localizedMessage(isZh, "v2.api-keys.modelAccess"),
+      render: (consumer) => consumer.routes?.length
+        ? <div className="v2-tag-list">{consumer.routes.slice(0, 2).map((route) => <code key={route}>{route}</code>)}{consumer.routes.length > 2 && <span>+{consumer.routes.length - 2}</span>}</div>
+        : <span className="v2-unrestricted">{localizedMessage(isZh, "v2.api-keys.allModels")}</span>,
+    },
+    {
+      key: "restrictions",
+      header: localizedMessage(isZh, "v2.api-keys.restrictions"),
+      render: (consumer) => (
+        <div className="v2-access-cell">
+          <strong>{consumer.protocols?.length ? consumer.protocols.join(" / ") : (localizedMessage(isZh, "v2.providers.allProtocols"))}</strong>
+          <span>{consumer.ip_allowlist?.length ? localizedMessage(isZh, "consumers.ipRules", { count: consumer.ip_allowlist.length }) : localizedMessage(isZh, "v2.api-keys.anySourceIp")}</span>
+        </div>
+      ),
+    },
+    {
+      key: "quotas",
+      header: localizedMessage(isZh, "v2.api-keys.quotas"),
+      render: (consumer) => consumer.quotas?.length
+        ? <div className="v2-access-cell"><strong>{formatQuotaRule(consumer.quotas[0])}</strong><span>{consumer.quotas.length > 1 ? localizedMessage(isZh, "common.additionalRules", { count: consumer.quotas.length - 1 }) : localizedMessage(isZh, "v2.api-keys.1Rule")}</span></div>
+        : <span className="v2-unrestricted">{localizedMessage(isZh, "v2.api-keys.unlimited")}</span>,
+    },
+    {
+      key: "status",
+      header: localizedMessage(isZh, "v2.providers.status"),
+      render: (consumer) => <Status tone={consumer.enabled ? "success" : "neutral"}>{consumer.enabled ? (localizedMessage(isZh, "v2.api-keys.enabled")) : (localizedMessage(isZh, "v2.api-keys.disabled"))}</Status>,
+    },
+    {
+      key: "actions",
+      header: <span className="sr-only">{localizedMessage(isZh, "v2.providers.actions")}</span>,
+      className: "v2-table-actions v2-consumer-actions",
+      render: (consumer) => (
+        <div className="v2-row-actions">
+          <button type="button" onClick={(event) => { event.stopPropagation(); toggleConsumerEnabledMut.mutate({ id: consumer.id, enabled: !consumer.enabled }); }} title={consumer.enabled ? (localizedMessage(isZh, "v2.api-keys.disable")) : (localizedMessage(isZh, "v2.providers.enable"))}>{consumer.enabled ? <ToggleRight /> : <ToggleLeft />}</button>
+          <button type="button" onClick={(event) => { event.stopPropagation(); openAddKeyDialog(consumer); }} title={localizedMessage(isZh, "v2.api-keys.addKey")}><Plus /></button>
+          <button type="button" onClick={(event) => { event.stopPropagation(); startEdit(consumer); }} title={localizedMessage(isZh, "v2.providers.edit")}><Pencil /></button>
+          <button type="button" onClick={(event) => { event.stopPropagation(); setConsumerToDelete(consumer); }} title={localizedMessage(isZh, "v2.providers.delete")}><Trash2 /></button>
+        </div>
+      ),
+    },
+  ];
 
-      {showForm && (
-        <div className="glass rounded-2xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "创建秘钥" : "Create Key"}</h2>
-          <div className="space-y-5">
-            <div className="space-y-3">
-              <SectionTitle>{isZh ? "1. 基本信息" : "1. Basic Information"}</SectionTitle>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
-                  <Input
-                    value={createForm.name}
-                    onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
-                    placeholder={isZh ? "如：生产环境" : "e.g. Production"}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel>{isZh ? "Key 有效期" : "Key validity"}</FieldLabel>
-                  <Select
-                    value={createForm.keyExpiresPreset}
-                    onValueChange={(value: ExpirePreset) =>
-                      setCreateForm((prev) => ({ ...prev, keyExpiresPreset: value }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {expirePresetOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {isZh ? option.zh : option.en}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <p className="text-xs text-slate-500">
-                {isZh
-                  ? "Key 值会在创建后自动生成，仅在创建成功后展示一次。"
-                  : "The key value is auto-generated and shown exactly once after creation."}
-              </p>
-            </div>
+  return (
+    <PageLayout
+      header={(
+        <PageHeader
+          title={t("page.apiKeys.title")}
+          description={t("page.apiKeys.subtitle")}
+          actions={<Button onClick={() => { setEditingId(null); setEditForm(null); setShowForm(true); }}><Plus />{localizedMessage(isZh, "v2.api-keys.addConsumer")}</Button>}
+        />
+      )}
+    >
 
-            <div className="h-px bg-slate-200/70" />
+      <MetricLedger items={[
+        { key: "consumers", label: localizedMessage(isZh, "v2.api-keys.consumers"), value: consumers.length, detail: localizedMessage(isZh, "common.enabledCount", { count: consumers.filter((item) => item.enabled).length }) },
+        { key: "active-keys", label: localizedMessage(isZh, "v2.api-keys.activeKeys"), value: activeKeyCount, detail: localizedMessage(isZh, "consumers.keysTotal", { count: keyCount }), tone: "success" },
+        { key: "expiring", label: localizedMessage(isZh, "v2.api-keys.expiringSoon"), value: expiringKeyCount, detail: localizedMessage(isZh, "v2.api-keys.within10Days"), tone: expiringKeyCount ? "warning" : "default" },
+        { key: "restricted", label: localizedMessage(isZh, "v2.api-keys.withQuotas"), value: consumers.filter((item) => item.quotas?.length).length, detail: localizedMessage(isZh, "v2.api-keys.consumerLevelLimits") },
+      ]} />
 
-            <div className="space-y-3">
-              <SectionTitle>{isZh ? "2. 访问权限" : "2. Access Permission"}</SectionTitle>
-              <div className="grid grid-cols-2 items-start gap-4">
-                <div className="space-y-2">
-                  <FieldLabel
-                    info={
-                      isZh
-                        ? "不绑定时默认允许访问所有受控模型"
-                        : "When left unbound, all protected models are accessible"
-                    }
-                  >
-                    {isZh ? "绑定模型" : "Bind Models"}
-                  </FieldLabel>
-                  <MultiSelect
-                    options={routeOptions}
-                    values={createForm.routes}
-                    placeholder={
-                      isZh ? "选择可访问的受控模型" : "Select protected models this key can access"
-                    }
-                    searchPlaceholder={isZh ? "搜索模型..." : "Search models..."}
-                    emptyText={isZh ? "无匹配模型" : "No matching models"}
-                    onChange={(next) => setCreateForm((prev) => ({ ...prev, routes: next }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel
-                    info={isZh ? "留空时不限制可用协议" : "Leaving this empty applies no protocol restriction"}
-                  >
-                    {isZh ? "允许协议" : "Allowed protocols"}
-                  </FieldLabel>
-                  <MultiSelect
-                    options={protocolOptions}
-                    values={createForm.protocols}
-                    placeholder={isZh ? "选择允许的协议" : "Select allowed protocols"}
-                    searchPlaceholder={isZh ? "搜索协议..." : "Search protocols..."}
-                    emptyText={isZh ? "无匹配协议" : "No matching protocols"}
-                    onChange={(next) => setCreateForm((prev) => ({ ...prev, protocols: next }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel
-                    info={isZh ? "留空时不限制来源 IP" : "Leaving this empty applies no restriction on source IP"}
-                  >
-                    {isZh ? "IP 白名单" : "IP allowlist"}
-                  </FieldLabel>
-                  <IPAllowlistEditor
-                    value={createForm.ipAllowlist}
-                    onChange={(next) => setCreateForm((prev) => ({ ...prev, ipAllowlist: next }))}
-                    isZh={isZh}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="h-px bg-slate-200/70" />
-
-            <div className="space-y-3">
-              <SectionTitle>{isZh ? "3. 访问限额" : "3. Access Quota"}</SectionTitle>
-              <QuotaEditor
-                value={createForm.quotas}
-                onChange={(next) => setCreateForm((prev) => ({ ...prev, quotas: next }))}
-                isZh={isZh}
-                windowOptions={windowOptions}
-              />
-            </div>
-
-            <div className="h-px bg-slate-200/70" />
-
-            <div className="space-y-3">
-              <SectionTitle info={isZh ? "均为可选项，留空表示不做限制" : "All optional; leave empty for no limit"}>{isZh ? "4. 资源限额" : "4. Resource Limits"}</SectionTitle>
-              <LimitsEditor
-                value={createForm.limits}
-                onChange={(next) => setCreateForm((prev) => ({ ...prev, limits: next }))}
-                isZh={isZh}
-              />
-            </div>
-          </div>
-          <div className="flex gap-3">
+      <ResourceEditorDialog
+        open={showForm}
+        title={localizedMessage(isZh, "v2.api-keys.addConsumer2")}
+        description={localizedMessage(isZh, "v2.api-keys.createAnIdentityWithModelAccessRestrictionsAnd")}
+        onClose={() => { setShowForm(false); setCreateForm(emptyCreate); }}
+        footer={(
+          <div className="v2-inspector-footer-actions">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setShowForm(false);
+                setCreateForm(emptyCreate);
+              }}
+            >
+              {localizedMessage(isZh, "v2.providers.cancel")}
+            </Button>
             <Button
               onClick={() =>
                 createMut.mutate({
@@ -1152,61 +1091,211 @@ export default function ApiKeysPage() {
                 createForm.ipAllowlist.some((ip) => !isValidIPOrCIDR(ip))
               }
             >
-              {createMut.isPending ? (isZh ? "创建中..." : "Creating...") : (isZh ? "创建" : "Create")}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setShowForm(false);
-                setCreateForm(emptyCreate);
-              }}
-            >
-              {isZh ? "取消" : "Cancel"}
+              {createMut.isPending ? (localizedMessage(isZh, "v2.providers.creating")) : (localizedMessage(isZh, "v2.api-keys.create"))}
             </Button>
           </div>
-        </div>
-      )}
+        )}
+      >
+        <div className="v2-consumer-form">
+          <div className="space-y-5">
+            <div className="space-y-3">
+              <SectionTitle>{localizedMessage(isZh, "v2.api-keys.1BasicInformation")}</SectionTitle>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel>
+                  <Input
+                    value={createForm.name}
+                    onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
+                    placeholder={localizedMessage(isZh, "v2.api-keys.eGProduction")}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <FieldLabel>{localizedMessage(isZh, "v2.api-keys.keyValidity")}</FieldLabel>
+                  <Select
+                    value={createForm.keyExpiresPreset}
+                    onValueChange={(value: ExpirePreset) =>
+                      setCreateForm((prev) => ({ ...prev, keyExpiresPreset: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {expirePresetOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {localizedMessage(isZh, option.label)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500">
+                {localizedMessage(isZh, "v2.api-keys.theKeyValueIsAutoGeneratedAndShown")}
+              </p>
+            </div>
 
-      {isLoading ? (
-        <div className="py-12 text-center text-sm text-slate-500">{isZh ? "加载中..." : "Loading..."}</div>
-      ) : consumers.length === 0 ? (
-        <div className="glass rounded-2xl p-12 text-center">
-          <KeyRound className="mx-auto h-10 w-10 text-slate-400" />
-          <p className="mt-3 text-sm text-slate-500">{isZh ? "还没有 API Key" : "No API keys yet"}</p>
+            <div className="h-px bg-slate-200/70" />
+
+            <div className="space-y-3">
+              <SectionTitle>{localizedMessage(isZh, "v2.api-keys.2AccessPermission")}</SectionTitle>
+              <div className="grid grid-cols-2 items-start gap-4">
+                <div className="space-y-2">
+                  <FieldLabel
+                    info={
+                      localizedMessage(isZh, "v2.api-keys.whenLeftUnboundAllProtectedModelsAreAccessible")
+                    }
+                  >
+                    {localizedMessage(isZh, "v2.api-keys.bindModels")}
+                  </FieldLabel>
+                  <MultiSelect
+                    options={routeOptions}
+                    values={createForm.routes}
+                    placeholder={
+                      localizedMessage(isZh, "v2.api-keys.selectProtectedModelsThisKeyCanAccess")
+                    }
+                    searchPlaceholder={localizedMessage(isZh, "v2.api-keys.searchModels")}
+                    emptyText={localizedMessage(isZh, "v2.api-keys.noMatchingModels")}
+                    onChange={(next) => setCreateForm((prev) => ({ ...prev, routes: next }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <FieldLabel
+                    info={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoProtocolRestriction")}
+                  >
+                    {localizedMessage(isZh, "v2.api-keys.allowedProtocols")}
+                  </FieldLabel>
+                  <MultiSelect
+                    options={protocolOptions}
+                    values={createForm.protocols}
+                    placeholder={localizedMessage(isZh, "v2.api-keys.selectAllowedProtocols")}
+                    searchPlaceholder={localizedMessage(isZh, "v2.api-keys.searchProtocols")}
+                    emptyText={localizedMessage(isZh, "v2.api-keys.noMatchingProtocols")}
+                    onChange={(next) => setCreateForm((prev) => ({ ...prev, protocols: next }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <FieldLabel
+                    info={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoRestrictionOnSource")}
+                  >
+                    {localizedMessage(isZh, "v2.api-keys.ipAllowlist")}
+                  </FieldLabel>
+                  <IPAllowlistEditor
+                    value={createForm.ipAllowlist}
+                    onChange={(next) => setCreateForm((prev) => ({ ...prev, ipAllowlist: next }))}
+                    isZh={isZh}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="h-px bg-slate-200/70" />
+
+            <div className="space-y-3">
+              <SectionTitle>{localizedMessage(isZh, "v2.api-keys.3AccessQuota")}</SectionTitle>
+              <QuotaEditor
+                value={createForm.quotas}
+                onChange={(next) => setCreateForm((prev) => ({ ...prev, quotas: next }))}
+                isZh={isZh}
+                windowOptions={windowOptions}
+              />
+            </div>
+
+            <div className="h-px bg-slate-200/70" />
+
+            <div className="space-y-3">
+              <SectionTitle info={localizedMessage(isZh, "v2.api-keys.allOptionalLeaveEmptyForNoLimit")}>{localizedMessage(isZh, "v2.api-keys.4ResourceLimits")}</SectionTitle>
+              <LimitsEditor
+                value={createForm.limits}
+                onChange={(next) => setCreateForm((prev) => ({ ...prev, limits: next }))}
+                isZh={isZh}
+              />
+            </div>
+          </div>
         </div>
-      ) : (
-        <div className="grid gap-3">
+      </ResourceEditorDialog>
+
+      <FilterBar summary={localizedMessage(isZh, "common.showing", { visible: filteredConsumers.length, total: consumers.length })}>
+        <label className="v2-search-field"><Search /><Input aria-label={localizedMessage(isZh, "v2.api-keys.searchConsumers")} placeholder={localizedMessage(isZh, "v2.api-keys.searchConsumerModelOrProtocol")} value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>
+        <Select value={filters.status} onValueChange={(status) => setFilters((current) => ({ ...current, status: status as ConsumerFilters["status"] }))}>
+          <SelectTrigger aria-label={localizedMessage(isZh, "v2.providers.filterByStatus")}><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="all">{localizedMessage(isZh, "v2.providers.allStatuses")}</SelectItem><SelectItem value="enabled">{localizedMessage(isZh, "v2.api-keys.enabled")}</SelectItem><SelectItem value="disabled">{localizedMessage(isZh, "v2.api-keys.disabled")}</SelectItem></SelectContent>
+        </Select>
+      </FilterBar>
+
+      <Surface className="v2-table-surface" title={localizedMessage(isZh, "v2.api-keys.consumersAndKeys")} description={localizedMessage(isZh, "v2.api-keys.manageIdentityPermissionsAndQuotasAtTheConsumer")}>
+        <DataTable
+          columns={consumerColumns}
+          rows={pagedConsumers}
+          rowKey={(consumer) => consumer.id}
+          loading={isLoading}
+          onRowClick={startEdit}
+          empty={<EmptyState title={consumers.length ? (localizedMessage(isZh, "v2.api-keys.noMatchingConsumers")) : (localizedMessage(isZh, "v2.api-keys.noConsumersYet"))} description={consumers.length ? (localizedMessage(isZh, "v2.api-keys.adjustTheSearchOrStatusFilter")) : (localizedMessage(isZh, "v2.api-keys.createAConsumerToGenerateItsFirstApi"))} action={!consumers.length ? <Button onClick={() => setShowForm(true)}><Plus />{localizedMessage(isZh, "v2.api-keys.addConsumer")}</Button> : undefined} />}
+        />
+        {filteredConsumers.length > PAGE_SIZE && <div className="v2-pagination"><span>{localizedMessage(isZh, "common.pagination", { page: page + 1, total: totalPages })}</span><div><Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage((current) => current - 1)}><ChevronLeft /></Button><Button variant="outline" size="icon" disabled={page >= totalPages - 1} onClick={() => setPage((current) => current + 1)}><ChevronRight /></Button></div></div>}
+      </Surface>
+
           {pagedConsumers.map((item) => {
             const isEditing = editingId === item.id && editForm;
 
             if (isEditing && editForm) {
               return (
-                <div key={item.id} className="glass rounded-2xl p-5 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-900">{isZh ? "编辑秘钥" : "Edit Key"}</h3>
-                    <button
-                      onClick={() => {
-                        setEditingId(null);
-                        setEditForm(null);
-                      }}
-                      className="cursor-pointer p-1 text-slate-400 hover:text-slate-600"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="space-y-5">
-                    <div className="space-y-3">
-                      <SectionTitle>{isZh ? "1. 基本信息" : "1. Basic Information"}</SectionTitle>
+                <ResourceEditorDialog
+                  key={item.id}
+                  open
+                  title={localizedMessage(isZh, "consumers.edit")}
+                  description={item.name}
+                  onClose={() => {
+                    setEditingId(null);
+                    setEditForm(null);
+                  }}
+                  footer={(
+                    <div className="v2-inspector-footer-actions">
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setEditingId(null);
+                          setEditForm(null);
+                        }}
+                      >
+                        {localizedMessage(isZh, "v2.providers.cancel")}
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          updateMut.mutate({
+                            id: editForm.id,
+                            input: {
+                              name: editForm.name.trim(),
+                              enabled: editForm.enabled,
+                              routes: editForm.routes,
+                              protocols: editForm.protocols,
+                              ip_allowlist: buildAccessListPayload(editForm.ipAllowlist),
+                              quotas: buildQuotasPayload(editForm.quotas),
+                              limits: buildLimitsPayload(editForm.limits),
+                            },
+                          })
+                        }
+                        disabled={updateMut.isPending || editForm.ipAllowlist.some((ip) => !isValidIPOrCIDR(ip))}
+                      >
+                        {updateMut.isPending ? (localizedMessage(isZh, "v2.providers.saving")) : (localizedMessage(isZh, "v2.api-keys.save"))}
+                      </Button>
+                    </div>
+                  )}
+                >
+                  <div className="v2-consumer-form">
+                    <div className="space-y-5">
+                      <div className="space-y-3">
+                      <SectionTitle>{localizedMessage(isZh, "v2.api-keys.1BasicInformation")}</SectionTitle>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
+                          <FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel>
                           <Input
                             value={editForm.name}
                             onChange={(e) => setEditForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
                           />
                         </div>
                         <div className="space-y-2">
-                          <FieldLabel>{isZh ? "状态" : "Status"}</FieldLabel>
+                          <FieldLabel>{localizedMessage(isZh, "v2.providers.status")}</FieldLabel>
                           <button
                             type="button"
                             onClick={() => setEditForm((prev) => (prev ? { ...prev, enabled: !prev.enabled } : prev))}
@@ -1217,58 +1306,56 @@ export default function ApiKeysPage() {
                             ) : (
                               <ToggleLeft className="h-4 w-4 text-slate-400" />
                             )}
-                            {editForm.enabled ? (isZh ? "已启用" : "Enabled") : (isZh ? "已禁用" : "Disabled")}
+                            {editForm.enabled ? (localizedMessage(isZh, "v2.providers.enabled")) : (localizedMessage(isZh, "v2.providers.disabled2"))}
                           </button>
                         </div>
                       </div>
                     </div>
 
-                    <div className="h-px bg-slate-200/70" />
+                      <div className="h-px bg-slate-200/70" />
 
-                    <div className="space-y-3">
-                      <SectionTitle>{isZh ? "2. 访问权限" : "2. Access Permission"}</SectionTitle>
+                      <div className="space-y-3">
+                      <SectionTitle>{localizedMessage(isZh, "v2.api-keys.2AccessPermission")}</SectionTitle>
                       <div className="grid grid-cols-2 items-start gap-4">
                         <div className="space-y-2">
                           <FieldLabel
                     info={
-                      isZh
-                        ? "不绑定时默认允许访问所有受控模型"
-                        : "When left unbound, all protected models are accessible"
+                      localizedMessage(isZh, "v2.api-keys.whenLeftUnboundAllProtectedModelsAreAccessible")
                     }
                   >
-                    {isZh ? "绑定模型" : "Bind Models"}
+                    {localizedMessage(isZh, "v2.api-keys.bindModels")}
                   </FieldLabel>
                           <MultiSelect
                             options={routeOptions}
                             values={editForm.routes}
                             placeholder={
-                              isZh ? "选择可访问的受控模型" : "Select protected models this key can access"
+                              localizedMessage(isZh, "v2.api-keys.selectProtectedModelsThisKeyCanAccess")
                             }
-                            searchPlaceholder={isZh ? "搜索模型..." : "Search models..."}
-                            emptyText={isZh ? "无匹配模型" : "No matching models"}
+                            searchPlaceholder={localizedMessage(isZh, "v2.api-keys.searchModels")}
+                            emptyText={localizedMessage(isZh, "v2.api-keys.noMatchingModels")}
                             onChange={(next) => setEditForm((prev) => (prev ? { ...prev, routes: next } : prev))}
                           />
                         </div>
                         <div className="space-y-2">
                           <FieldLabel
-                            info={isZh ? "留空时不限制可用协议" : "Leaving this empty applies no protocol restriction"}
+                            info={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoProtocolRestriction")}
                           >
-                            {isZh ? "允许协议" : "Allowed protocols"}
+                            {localizedMessage(isZh, "v2.api-keys.allowedProtocols")}
                           </FieldLabel>
                           <MultiSelect
                             options={protocolOptions}
                             values={editForm.protocols}
-                            placeholder={isZh ? "选择允许的协议" : "Select allowed protocols"}
-                            searchPlaceholder={isZh ? "搜索协议..." : "Search protocols..."}
-                            emptyText={isZh ? "无匹配协议" : "No matching protocols"}
+                            placeholder={localizedMessage(isZh, "v2.api-keys.selectAllowedProtocols")}
+                            searchPlaceholder={localizedMessage(isZh, "v2.api-keys.searchProtocols")}
+                            emptyText={localizedMessage(isZh, "v2.api-keys.noMatchingProtocols")}
                             onChange={(next) => setEditForm((prev) => (prev ? { ...prev, protocols: next } : prev))}
                           />
                         </div>
                         <div className="space-y-2">
                           <FieldLabel
-                            info={isZh ? "留空时不限制来源 IP" : "Leaving this empty applies no restriction on source IP"}
+                            info={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoRestrictionOnSource")}
                           >
-                            {isZh ? "IP 白名单" : "IP allowlist"}
+                            {localizedMessage(isZh, "v2.api-keys.ipAllowlist")}
                           </FieldLabel>
                           <IPAllowlistEditor
                             value={editForm.ipAllowlist}
@@ -1279,10 +1366,10 @@ export default function ApiKeysPage() {
                       </div>
                     </div>
 
-                    <div className="h-px bg-slate-200/70" />
+                      <div className="h-px bg-slate-200/70" />
 
-                    <div className="space-y-3">
-                      <SectionTitle>{isZh ? "3. 访问限额" : "3. Access Quota"}</SectionTitle>
+                      <div className="space-y-3">
+                      <SectionTitle>{localizedMessage(isZh, "v2.api-keys.3AccessQuota")}</SectionTitle>
                       <QuotaEditor
                         value={editForm.quotas}
                         onChange={(next) => setEditForm((prev) => (prev ? { ...prev, quotas: next } : prev))}
@@ -1291,142 +1378,26 @@ export default function ApiKeysPage() {
                       />
                     </div>
 
-                    <div className="h-px bg-slate-200/70" />
+                      <div className="h-px bg-slate-200/70" />
 
-                    <div className="space-y-3">
-                      <SectionTitle info={isZh ? "均为可选项，留空表示不做限制" : "All optional; leave empty for no limit"}>{isZh ? "4. 资源限额" : "4. Resource Limits"}</SectionTitle>
+                      <div className="space-y-3">
+                      <SectionTitle info={localizedMessage(isZh, "v2.api-keys.allOptionalLeaveEmptyForNoLimit")}>{localizedMessage(isZh, "v2.api-keys.4ResourceLimits")}</SectionTitle>
                       <LimitsEditor
                         value={editForm.limits}
                         onChange={(next) => setEditForm((prev) => (prev ? { ...prev, limits: next } : prev))}
                         isZh={isZh}
                       />
+                      </div>
                     </div>
+                    <div className="h-px bg-slate-200/70" />
+                    {renderKeysSection(item)}
                   </div>
-                  <div className="flex gap-3">
-                    <Button
-                      onClick={() =>
-                        updateMut.mutate({
-                          id: editForm.id,
-                          input: {
-                            name: editForm.name.trim(),
-                            enabled: editForm.enabled,
-                            routes: editForm.routes,
-                            protocols: editForm.protocols,
-                            ip_allowlist: buildAccessListPayload(editForm.ipAllowlist),
-                            quotas: buildQuotasPayload(editForm.quotas),
-                            limits: buildLimitsPayload(editForm.limits),
-                          },
-                        })
-                      }
-                      disabled={updateMut.isPending || editForm.ipAllowlist.some((ip) => !isValidIPOrCIDR(ip))}
-                    >
-                      {updateMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        setEditingId(null);
-                        setEditForm(null);
-                      }}
-                    >
-                      {isZh ? "取消" : "Cancel"}
-                    </Button>
-                  </div>
-
-                  <div className="h-px bg-slate-200/70" />
-                  {renderKeysSection(item)}
-                </div>
+                </ResourceEditorDialog>
               );
             }
 
-            return (
-              <div key={item.id} className="glass rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100">
-                      <span className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-xl border border-slate-300/70 bg-transparent">
-                        <KeyRound className="h-3.5 w-3.5 text-slate-500" />
-                      </span>
-                    </div>
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="inline-flex h-5 items-center font-semibold text-slate-900">{item.name}</span>
-                        {!item.enabled && (
-                          <Badge variant="danger" className="connect-label-badge">
-                            {isZh ? "已禁用" : "Disabled"}
-                          </Badge>
-                        )}
-                        {renderAccessBadges(item)}
-                        {renderQuotaBadges(item.quotas)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-0.5">
-                    <button
-                      onClick={() => toggleConsumerEnabledMut.mutate({ id: item.id, enabled: !item.enabled })}
-                      title={item.enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
-                      className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
-                    >
-                      {item.enabled ? (
-                        <ToggleRight className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <ToggleLeft className="h-4 w-4 text-slate-400" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => openAddKeyDialog(item)}
-                      title={isZh ? "新增 Key" : "Add key"}
-                      className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-green-50 hover:text-green-600"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => startEdit(item)}
-                      className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => setConsumerToDelete(item)}
-                      className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-
-                {renderKeysSection(item)}
-              </div>
-            );
+            return null;
           })}
-
-          {consumers.length > PAGE_SIZE && (
-            <div className="flex items-center justify-between px-1 pt-1">
-              <span className="text-xs text-slate-500">
-                {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
-              </span>
-              <div className="flex gap-1">
-                <Button
-                  onClick={() => setPage(Math.max(0, page - 1))}
-                  disabled={page === 0}
-                  variant="outline"
-                  size="icon"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
-                  disabled={page >= totalPages - 1}
-                  variant="outline"
-                  size="icon"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       <Dialog
         open={showRevealDialog}
@@ -1437,11 +1408,9 @@ export default function ApiKeysPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{isZh ? "Key 已生成" : "Key Generated"}</DialogTitle>
+            <DialogTitle>{localizedMessage(isZh, "v2.api-keys.keyGenerated")}</DialogTitle>
             <DialogDescription>
-              {isZh
-                ? `「${revealedKey?.name ?? ""}」的完整 Key 仅在此处显示一次，请立即复制并妥善保存，关闭后将无法再次查看明文。`
-                : `The full key for "${revealedKey?.name ?? ""}" is shown only once here. Copy and save it now — it cannot be viewed again after closing.`}
+              {localizedMessage(isZh, "consumers.revealOnce", { name: revealedKey?.name ?? "" })}
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-xl bg-slate-900 px-4 py-3 text-sm break-all text-green-400">
@@ -1455,7 +1424,7 @@ export default function ApiKeysPage() {
                 setCopiedRevealKey(false);
               }}
             >
-              {isZh ? "关闭" : "Close"}
+              {localizedMessage(isZh, "v2.providers.close")}
             </Button>
             <Button
               onClick={async () => {
@@ -1464,7 +1433,7 @@ export default function ApiKeysPage() {
                 setCopiedRevealKey(true);
               }}
             >
-              {copiedRevealKey ? (isZh ? "已复制" : "Copied") : (isZh ? "复制" : "Copy")}
+              {copiedRevealKey ? (localizedMessage(isZh, "v2.api-keys.copied")) : (localizedMessage(isZh, "v2.api-keys.copy"))}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1475,16 +1444,14 @@ export default function ApiKeysPage() {
         onOpenChange={(open) => {
           if (!open) setConsumerToDelete(null);
         }}
-        title={isZh ? "确认删除秘钥" : "Confirm key deletion"}
+        title={localizedMessage(isZh, "v2.api-keys.confirmKeyDeletion")}
         description={
           consumerToDelete
-            ? (isZh
-              ? `此操作不可撤销，将同时删除其秘钥。确认删除「${consumerToDelete.name}」吗？`
-              : `This action cannot be undone and will delete its key. Delete "${consumerToDelete.name}"?`)
+            ? localizedMessage(isZh, "consumers.deleteDescription", { name: consumerToDelete.name })
             : undefined
         }
-        cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={isZh ? "删除" : "Delete"}
+        cancelText={localizedMessage(isZh, "v2.providers.cancel")}
+        confirmText={localizedMessage(isZh, "v2.providers.delete")}
         onConfirm={() => {
           if (!consumerToDelete) return;
           deleteMut.mutate(consumerToDelete.id);
@@ -1497,16 +1464,14 @@ export default function ApiKeysPage() {
         onOpenChange={(open) => {
           if (!open) setKeyToRegenerate(null);
         }}
-        title={isZh ? "确认重新生成 Key" : "Confirm key regeneration"}
+        title={localizedMessage(isZh, "v2.api-keys.confirmKeyRegeneration")}
         description={
           keyToRegenerate
-            ? (isZh
-              ? `重新生成后旧 Key 将立即失效，新 Key 会以相同名称生成，完整值仅显示一次。确认继续吗？`
-              : `Regenerating will immediately invalidate the old key. A new key with the same name will be generated and its full value shown once. Continue?`)
+            ? (localizedMessage(isZh, "v2.api-keys.regeneratingWillImmediatelyInvalidateTheOldKeyA"))
             : undefined
         }
-        cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={isZh ? "重新生成" : "Regenerate"}
+        cancelText={localizedMessage(isZh, "v2.providers.cancel")}
+        confirmText={localizedMessage(isZh, "v2.api-keys.regenerate")}
         onConfirm={() => {
           if (!keyToRegenerate) return;
           regenerateKeyMut.mutate({ consumerId: keyToRegenerate.consumer.id, key: keyToRegenerate.key });
@@ -1519,20 +1484,19 @@ export default function ApiKeysPage() {
         onOpenChange={(open) => {
           if (!open) setKeyToDelete(null);
         }}
-        title={isZh ? "确认删除 Key" : "Confirm key deletion"}
+        title={localizedMessage(isZh, "v2.api-keys.confirmKeyDeletion2")}
         description={
           keyToDelete
             ? ((keyToDelete.consumer.keys?.length ?? 0) <= 1
-              ? (isZh
-                ? `「${keyToDelete.key.name}」是「${keyToDelete.consumer.name}」目前唯一的 Key，删除后该 consumer 将没有可用凭证，无法鉴权。确认删除吗？`
-                : `"${keyToDelete.key.name}" is the only key for "${keyToDelete.consumer.name}". Deleting it leaves this consumer with no usable credential. Delete anyway?`)
-              : (isZh
-                ? `此操作不可撤销。确认删除「${keyToDelete.key.name}」吗？`
-                : `This action cannot be undone. Delete "${keyToDelete.key.name}"?`))
+              ? localizedMessage(isZh, "consumers.deleteOnlyKeyDescription", {
+                  key: keyToDelete.key.name,
+                  consumer: keyToDelete.consumer.name,
+                })
+              : localizedMessage(isZh, "consumers.deleteKeyDescription", { name: keyToDelete.key.name }))
             : undefined
         }
-        cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={isZh ? "删除" : "Delete"}
+        cancelText={localizedMessage(isZh, "v2.providers.cancel")}
+        confirmText={localizedMessage(isZh, "v2.providers.delete")}
         onConfirm={() => {
           if (!keyToDelete) return;
           deleteKeyMut.mutate({ consumerId: keyToDelete.consumer.id, keyId: keyToDelete.key.id });
@@ -1548,24 +1512,22 @@ export default function ApiKeysPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{isZh ? "新增 Key" : "Add Key"}</DialogTitle>
+            <DialogTitle>{localizedMessage(isZh, "v2.api-keys.addKey2")}</DialogTitle>
             <DialogDescription>
-              {isZh
-                ? "Key 值会在创建后自动生成，仅在创建成功后展示一次。"
-                : "The key value is auto-generated and shown exactly once after creation."}
+              {localizedMessage(isZh, "v2.api-keys.theKeyValueIsAutoGeneratedAndShown")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-2">
-              <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
+              <FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel>
               <Input
                 value={addKeyForm.name}
                 onChange={(e) => setAddKeyForm((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder={isZh ? "如：default" : "e.g. default"}
+                placeholder={localizedMessage(isZh, "v2.api-keys.eGDefault")}
               />
             </div>
             <div className="space-y-2">
-              <FieldLabel>{isZh ? "有效期" : "Validity"}</FieldLabel>
+              <FieldLabel>{localizedMessage(isZh, "v2.api-keys.validity")}</FieldLabel>
               <Select
                 value={addKeyForm.expiresPreset}
                 onValueChange={(value: ExpirePreset) => setAddKeyForm((prev) => ({ ...prev, expiresPreset: value }))}
@@ -1576,7 +1538,7 @@ export default function ApiKeysPage() {
                 <SelectContent>
                   {expirePresetOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
-                      {isZh ? option.zh : option.en}
+                      {localizedMessage(isZh, option.label)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1585,7 +1547,7 @@ export default function ApiKeysPage() {
           </div>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setAddKeyDialogFor(null)}>
-              {isZh ? "取消" : "Cancel"}
+              {localizedMessage(isZh, "v2.providers.cancel")}
             </Button>
             <Button
               disabled={addKeyMut.isPending || !addKeyForm.name.trim()}
@@ -1600,7 +1562,7 @@ export default function ApiKeysPage() {
                 });
               }}
             >
-              {addKeyMut.isPending ? (isZh ? "添加中..." : "Adding...") : (isZh ? "添加" : "Add")}
+              {addKeyMut.isPending ? (localizedMessage(isZh, "v2.api-keys.adding")) : (localizedMessage(isZh, "v2.api-keys.add"))}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1614,18 +1576,18 @@ export default function ApiKeysPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{isZh ? "编辑 Key" : "Edit Key"}</DialogTitle>
+            <DialogTitle>{localizedMessage(isZh, "v2.api-keys.editKey2")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-2">
-              <FieldLabel required>{isZh ? "名称" : "Name"}</FieldLabel>
+              <FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel>
               <Input
                 value={editKeyForm.name}
                 onChange={(e) => setEditKeyForm((prev) => ({ ...prev, name: e.target.value }))}
               />
             </div>
             <div className="space-y-2">
-              <FieldLabel>{isZh ? "有效期" : "Validity"}</FieldLabel>
+              <FieldLabel>{localizedMessage(isZh, "v2.api-keys.validity")}</FieldLabel>
               <Select
                 value={editKeyForm.expiresPreset}
                 onValueChange={(value: ExpirePreset) =>
@@ -1638,7 +1600,7 @@ export default function ApiKeysPage() {
                 <SelectContent>
                   {expirePresetOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
-                      {isZh ? option.zh : option.en}
+                      {localizedMessage(isZh, option.label)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1647,7 +1609,7 @@ export default function ApiKeysPage() {
           </div>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setEditKeyDialogFor(null)}>
-              {isZh ? "取消" : "Cancel"}
+              {localizedMessage(isZh, "v2.providers.cancel")}
             </Button>
             <Button
               disabled={updateKeyMut.isPending || !editKeyForm.name.trim()}
@@ -1665,7 +1627,7 @@ export default function ApiKeysPage() {
                 setEditKeyDialogFor(null);
               }}
             >
-              {updateKeyMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
+              {updateKeyMut.isPending ? (localizedMessage(isZh, "v2.providers.saving")) : (localizedMessage(isZh, "v2.api-keys.save"))}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1679,9 +1641,9 @@ export default function ApiKeysPage() {
         title={errorDialog?.title ?? ""}
         description={errorDialog?.description}
         hideCancel
-        confirmText={isZh ? "我知道了" : "OK"}
+        confirmText={localizedMessage(isZh, "v2.providers.ok")}
         onConfirm={() => setErrorDialog(null)}
       />
-    </div>
+    </PageLayout>
   );
 }

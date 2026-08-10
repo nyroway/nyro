@@ -37,23 +37,15 @@ export class AppErrorBoundary extends Component<Props, State> {
     if (!this.state.hasError) return this.props.children;
 
     return (
-      <div className="min-h-screen bg-background px-6 py-10">
-        <div className="mx-auto max-w-xl rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
-          <h1 className="text-lg font-semibold text-slate-900">页面运行异常</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            前端已阻止白屏崩溃。你可以重试，或查看控制台日志定位问题。
-          </p>
+      <div className="v2-error-screen">
+        <div className="v2-error-surface">
+          <span>NYRO CONSOLE</span>
+          <h1>Something went wrong</h1>
+          <p>The console stopped this page from crashing. Try again or check the browser console for details.</p>
           {this.state.errorMessage && (
-            <pre className="mt-4 overflow-x-auto rounded-lg bg-slate-50 p-3 text-xs text-rose-700">
-              {this.state.errorMessage}
-            </pre>
+            <pre>{this.state.errorMessage}</pre>
           )}
-          <button
-            onClick={this.onRetry}
-            className="mt-4 cursor-pointer rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white"
-          >
-            重试
-          </button>
+          <button onClick={this.onRetry}>Try again</button>
         </div>
       </div>
     );

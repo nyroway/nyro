@@ -125,7 +125,7 @@ export function tryPrettyJson(raw: string | null | undefined): string {
  *  same everywhere. */
 const KEY_PREVIEW_LEAD_VISIBLE = 9;
 const KEY_PREVIEW_TRAIL_VISIBLE = 6;
-const KEY_PREVIEW_MASK_LEN = 6;
+const KEY_PREVIEW_MASK_LEN = 28;
 
 export function formatKeyPreview(preview: string | undefined | null): string {
   const trimmed = (preview ?? "").trim();

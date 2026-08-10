@@ -1,10 +1,13 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import type * as React from "react";
-import { backend, IS_TAURI } from "@/lib/backend";
+import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import { normalizePublicGatewayURL } from "@/lib/public-gateway-url";
 import { useLocale } from "@/lib/i18n";
+import { runtimeHTTPURL } from "@/lib/runtime-service-url";
+import type { RuntimeService } from "@/lib/types";
+import { SETTINGS_SECTIONS, type SettingsSectionID } from "@/lib/settings-sections";
 import {
   decodeRetryStatusCodes,
   encodeRetryStatusCodes,
@@ -40,6 +43,10 @@ import {
   type FieldDef,
   type Signal,
 } from "@/lib/observability-schema";
+import { PageHeader } from "@/components/v2/page-header";
+import { PageLayout } from "@/components/v2/page-layout";
+import { SettingsFormSurface } from "@/features/settings/settings-form-surface";
+import { localizedMessage, type MessageKey } from "@/lib/messages";
 
 const PROXY_REQUEST_TIMEOUT_KEY = "proxy.request_timeout";
 const PROXY_CONNECT_TIMEOUT_KEY = "proxy.connect_timeout";
@@ -59,11 +66,13 @@ const OBS_RETENTION_DEFAULT: Record<Signal, string> = {
   traces: "3",
 };
 
-const OBS_SIGNAL_LABEL: Record<Signal, { zh: string; en: string }> = {
-  logs: { zh: "日志", en: "Logs" },
-  metrics: { zh: "指标", en: "Metrics" },
-  traces: { zh: "链路追踪", en: "Traces" },
+const OBS_SIGNAL_LABEL: Record<Signal, MessageKey> = {
+  logs: "settings.signal.logs",
+  metrics: "settings.signal.metrics",
+  traces: "settings.signal.traces",
 };
+
+type ShowSettingsError = (titleKey: MessageKey, error: unknown, params?: Record<string, string | number>) => void;
 
 const EMPTY_SELECT_SENTINEL = "__empty__";
 const GO_DURATION_RE = /^(\d+(\.\d+)?(ns|µs|us|ms|s|m|h))+$/;
@@ -146,7 +155,7 @@ function RetryStatusCodeInput({
       </div>
       <Input
         inputMode="numeric"
-        placeholder={isZh ? "输入状态码（400–599），按 Enter 添加" : "Enter a status code (400–599), then press Enter."}
+        placeholder={localizedMessage(isZh, "v2.settings.enterAStatusCode400599ThenPress")}
         value={draft}
         onChange={(e) => onDraftChange(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -155,42 +164,18 @@ function RetryStatusCodeInput({
       />
       {error && (
         <p className="text-xs text-red-600">
-          {isZh ? `“${error}” 不是有效的状态码，请输入 400–599 之间的整数` : `"${error}" is not a valid status code. Enter an integer between 400–599.`}
+          {localizedMessage(isZh, "settings.invalidStatusCode", { value: error })}
         </p>
       )}
     </div>
   );
 }
 
-function SettingsSection({
-  eyebrow,
-  title,
-  description,
-  appliesTo,
-}: {
-  eyebrow: string;
-  title: string;
-  description: string;
-  appliesTo: string;
-}) {
-  return (
-    <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200/80 pb-3">
-      <div>
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-slate-500">{eyebrow}</p>
-        <h2 className="mt-1 text-lg font-semibold text-slate-900">{title}</h2>
-        <p className="mt-1 text-sm text-slate-500">{description}</p>
-      </div>
-      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
-        {appliesTo}
-      </span>
-    </div>
-  );
-}
-
 export default function SettingsPage() {
-  const { locale } = useLocale();
+  const { locale, t } = useLocale();
   const isZh = locale === "zh-CN";
   const qc = useQueryClient();
+  const [activeSection, setActiveSection] = useState<SettingsSectionID>("forwarding");
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
 
   const { data: proxyRequestTimeoutSetting } = useQuery<string | null>({
@@ -273,9 +258,9 @@ export default function SettingsPage() {
     proxyMaxBodyBytesSetting,
   ]);
 
-  function showErrorDialog(titleZh: string, titleEn: string, error: unknown) {
+  function showErrorDialog(titleKey: MessageKey, error: unknown, params?: Record<string, string | number>) {
     setErrorDialog({
-      title: isZh ? titleZh : titleEn,
+      title: localizedMessage(isZh, titleKey, params),
       description: localizeBackendErrorMessage(error, isZh),
     });
   }
@@ -295,98 +280,61 @@ export default function SettingsPage() {
         qc.invalidateQueries({ queryKey: ["setting", key] });
       }
     },
-    onError: (error: unknown) => showErrorDialog("保存转发参数失败", "Failed to save forwarding settings", error),
+    onError: (error: unknown) => showErrorDialog("settings.error.forwarding", error),
   });
 
-  const builtInOtlpEndpoint = !IS_TAURI && typeof window !== "undefined" ? window.location.origin : null;
+  const { data: runtimeServices = [] } = useQuery<RuntimeService[]>({
+    queryKey: ["runtime-services"],
+    queryFn: () => backend("list_runtime_services"),
+  });
+  const builtInOtlpEndpoint = runtimeHTTPURL(
+    runtimeServices.find((service) => service.id === "otlp-receiver" && service.status === "running")?.listen,
+  );
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">{isZh ? "设置" : "Settings"}</h1>
-        <p className="mt-1 text-sm text-slate-500">{isZh ? "按生效对象管理网关与控制面配置" : "Manage configuration by the process it affects"}</p>
+    <PageLayout header={<PageHeader title={t("page.settings.title")} description={t("page.settings.subtitle")} />}>
+      <div className="v2-settings-layout">
+        <nav className="v2-settings-nav" aria-label={t("page.settings.title")}>
+          <p>{t("settings.dataPlane")}</p>
+          {SETTINGS_SECTIONS.filter((item) => item.group === "data-plane").map((item) => <SettingsNavButton key={item.id} active={activeSection === item.id} onClick={() => setActiveSection(item.id)}>{t(item.label)}</SettingsNavButton>)}
+          <p>{t("settings.controlPlane")}</p>
+          {SETTINGS_SECTIONS.filter((item) => item.group === "control-plane").map((item) => <SettingsNavButton key={item.id} active={activeSection === item.id} onClick={() => setActiveSection(item.id)}>{t(item.label)}</SettingsNavButton>)}
+        </nav>
+
+        <section className="v2-settings-content">
+          {activeSection === "forwarding" && (
+            <SettingsFormSurface title={localizedMessage(isZh, "v2.settings.forwardingSettings")} description={localizedMessage(isZh, "v2.settings.requestTimeoutsConnectionLimitsAndRetryPolicy")}>
+              <div className="v2-setting-stack">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">{localizedMessage(isZh, "v2.settings.requestTimeout")}<HelpHint text={localizedMessage(isZh, "v2.settings.goDurationSyntaxEG120s2mMaps")} /></label>
+                    <Input placeholder={PROXY_REQUEST_TIMEOUT_DEFAULT} value={proxyRequestTimeout} onChange={(e) => setProxyRequestTimeout(e.target.value)} className={requestTimeoutInvalid ? "border-red-400 focus-visible:ring-red-400" : undefined} />
+                    {requestTimeoutInvalid && <p className="text-xs text-red-600">{localizedMessage(isZh, "v2.settings.needsAUnitEG120s2m")}</p>}
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">{localizedMessage(isZh, "v2.settings.connectTimeout")}<HelpHint text={localizedMessage(isZh, "v2.settings.goDurationSyntaxEG30sMapsTo")} /></label>
+                    <Input placeholder={PROXY_CONNECT_TIMEOUT_DEFAULT} value={proxyConnectTimeout} onChange={(e) => setProxyConnectTimeout(e.target.value)} className={connectTimeoutInvalid ? "border-red-400 focus-visible:ring-red-400" : undefined} />
+                    {connectTimeoutInvalid && <p className="text-xs text-red-600">{localizedMessage(isZh, "v2.settings.needsAUnitEG30s1m")}</p>}
+                  </div>
+                  <div className="space-y-1.5"><label className="ml-1 text-xs text-slate-700">{localizedMessage(isZh, "v2.settings.maxRetries")}</label><Input type="number" min={0} placeholder={PROXY_MAX_RETRIES_DEFAULT} value={proxyMaxRetries} onChange={(e) => setProxyMaxRetries(e.target.value)} /></div>
+                  <div className="space-y-1.5"><label className="ml-1 text-xs text-slate-700">{localizedMessage(isZh, "v2.settings.maxBodyBytes")}</label><Input type="number" min={1} placeholder={PROXY_MAX_BODY_BYTES_DEFAULT} value={proxyMaxBodyBytes} onChange={(e) => setProxyMaxBodyBytes(e.target.value)} /></div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">{localizedMessage(isZh, "v2.settings.retryStatusCodes")}<HelpHint text={localizedMessage(isZh, "v2.settings.mapsToProxyRetryOnStatusEG")} /></label>
+                    <RetryStatusCodeInput isZh={isZh} codes={proxyRetryStatusCodes} draft={retryStatusDraft} error={retryStatusError} onDraftChange={setRetryStatusDraft} onAdd={addRetryStatusCodes} onRemove={removeRetryStatusCode} />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button onClick={() => saveProxyMut.mutate()} disabled={saveProxyMut.isPending || !proxyDirty || requestTimeoutInvalid || connectTimeoutInvalid || retryStatusDraft.trim() !== ""} size="sm" className="flex items-center gap-1.5">{saveProxyMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}{localizedMessage(isZh, "v2.api-keys.save")}</Button>
+                  {proxyDirty && <p className="text-xs text-amber-600">{localizedMessage(isZh, "v2.settings.saveToPublishToTheGatewayConfigurationStream")}</p>}
+                </div>
+              </div>
+            </SettingsFormSurface>
+          )}
+          {SIGNALS.includes(activeSection as Signal) && <ObsSignalCard signal={activeSection as Signal} isZh={isZh} builtInOtlpEndpoint={builtInOtlpEndpoint} showErrorDialog={showErrorDialog} />}
+          {activeSection === "public" && <PublicGatewayURLCard isZh={isZh} showErrorDialog={showErrorDialog} />}
+          {activeSection === "retention" && <RetentionSettingsCard isZh={isZh} showErrorDialog={showErrorDialog} />}
+        </section>
       </div>
-
-      <section className="space-y-5">
-        <SettingsSection
-          eyebrow="DATA PLANE"
-          title={isZh ? "数据面" : "Data Plane"}
-          description={isZh ? "转发与遥测导出配置" : "Forwarding and telemetry export configuration"}
-          appliesTo={isZh ? "作用于 Gateway" : "Applies to Gateway"}
-        />
-
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          <div className="glass rounded-2xl p-6 space-y-5">
-          <h3 className="text-lg font-semibold text-slate-900">{isZh ? "转发参数" : "Forwarding Settings"}</h3>
-          <div className="rounded-xl bg-slate-50 p-4 space-y-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
-                  {isZh ? "请求超时" : "Request Timeout"}
-                  <HelpHint text={isZh ? "Go duration 格式，如 120s、2m。对应 proxy.request_timeout" : "Go duration syntax, e.g. 120s, 2m. Maps to proxy.request_timeout"} />
-                </label>
-                <Input placeholder={PROXY_REQUEST_TIMEOUT_DEFAULT} value={proxyRequestTimeout} onChange={(e) => setProxyRequestTimeout(e.target.value)} className={requestTimeoutInvalid ? "border-red-400 focus-visible:ring-red-400" : undefined} />
-                {requestTimeoutInvalid && <p className="text-xs text-red-600">{isZh ? "需要带单位，如 120s、2m" : "Needs a unit, e.g. 120s, 2m"}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
-                  {isZh ? "连接超时" : "Connect Timeout"}
-                  <HelpHint text={isZh ? "Go duration 格式，如 30s。对应 proxy.connect_timeout" : "Go duration syntax, e.g. 30s. Maps to proxy.connect_timeout"} />
-                </label>
-                <Input placeholder={PROXY_CONNECT_TIMEOUT_DEFAULT} value={proxyConnectTimeout} onChange={(e) => setProxyConnectTimeout(e.target.value)} className={connectTimeoutInvalid ? "border-red-400 focus-visible:ring-red-400" : undefined} />
-                {connectTimeoutInvalid && <p className="text-xs text-red-600">{isZh ? "需要带单位，如 30s、1m" : "Needs a unit, e.g. 30s, 1m"}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <label className="ml-1 text-xs text-slate-700">{isZh ? "最大重试次数" : "Max Retries"}</label>
-                <Input type="number" min={0} placeholder={PROXY_MAX_RETRIES_DEFAULT} value={proxyMaxRetries} onChange={(e) => setProxyMaxRetries(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <label className="ml-1 text-xs text-slate-700">{isZh ? "最大请求体（字节）" : "Max Body Bytes"}</label>
-                <Input type="number" min={1} placeholder={PROXY_MAX_BODY_BYTES_DEFAULT} value={proxyMaxBodyBytes} onChange={(e) => setProxyMaxBodyBytes(e.target.value)} />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
-                  {isZh ? "重试状态码" : "Retry Status Codes"}
-                  <HelpHint text={isZh ? "对应 proxy.retry_on_status，例如 429,500,502,503,504" : "Maps to proxy.retry_on_status, e.g. 429,500,502,503,504"} />
-                </label>
-                <RetryStatusCodeInput
-                  isZh={isZh}
-                  codes={proxyRetryStatusCodes}
-                  draft={retryStatusDraft}
-                  error={retryStatusError}
-                  onDraftChange={setRetryStatusDraft}
-                  onAdd={addRetryStatusCodes}
-                  onRemove={removeRetryStatusCode}
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button onClick={() => saveProxyMut.mutate()} disabled={saveProxyMut.isPending || !proxyDirty || requestTimeoutInvalid || connectTimeoutInvalid || retryStatusDraft.trim() !== ""} size="sm" className="flex items-center gap-1.5">
-                {saveProxyMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                {isZh ? "保存" : "Save"}
-              </Button>
-              {proxyDirty && <p className="text-xs text-amber-600">{isZh ? "保存后立即推送到 Gateway 配置流" : "Save to publish to the Gateway configuration stream"}</p>}
-            </div>
-          </div>
-          </div>
-          {SIGNALS.map((signal) => (
-            <ObsSignalCard key={signal} signal={signal} isZh={isZh} builtInOtlpEndpoint={builtInOtlpEndpoint} showErrorDialog={showErrorDialog} />
-          ))}
-        </div>
-      </section>
-
-      <section className="space-y-5">
-        <SettingsSection
-          eyebrow="CONTROL PLANE"
-          title={isZh ? "控制面" : "Control Plane"}
-          description={isZh ? "管理端入口与本地遥测存储" : "Admin entrypoint and local telemetry storage"}
-          appliesTo={isZh ? "作用于 Admin" : "Applies to Admin"}
-        />
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          <PublicGatewayURLCard isZh={isZh} showErrorDialog={showErrorDialog} />
-          <RetentionSettingsCard isZh={isZh} showErrorDialog={showErrorDialog} />
-        </div>
-      </section>
 
       <ConfirmDialog
         open={Boolean(errorDialog)}
@@ -394,14 +342,18 @@ export default function SettingsPage() {
         title={errorDialog?.title ?? ""}
         description={errorDialog?.description}
         hideCancel
-        confirmText={isZh ? "我知道了" : "OK"}
+        confirmText={localizedMessage(isZh, "v2.providers.ok")}
         onConfirm={() => setErrorDialog(null)}
       />
-    </div>
+    </PageLayout>
   );
 }
 
-function PublicGatewayURLCard({ isZh, showErrorDialog }: { isZh: boolean; showErrorDialog: (titleZh: string, titleEn: string, error: unknown) => void }) {
+function SettingsNavButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return <button type="button" className={active ? "active" : undefined} onClick={onClick}>{children}</button>;
+}
+
+function PublicGatewayURLCard({ isZh, showErrorDialog }: { isZh: boolean; showErrorDialog: ShowSettingsError }) {
   const { data: setting } = useQuery<string | null>({
     queryKey: ["setting", PUBLIC_GATEWAY_URL_KEY],
     queryFn: () => backend("get_setting", { key: PUBLIC_GATEWAY_URL_KEY }),
@@ -416,7 +368,7 @@ function PublicGatewayURLForm({
 }: {
   baseline: string;
   isZh: boolean;
-  showErrorDialog: (titleZh: string, titleEn: string, error: unknown) => void;
+  showErrorDialog: ShowSettingsError;
 }) {
   const qc = useQueryClient();
   const [value, setValue] = useState(baseline);
@@ -427,32 +379,28 @@ function PublicGatewayURLForm({
   const saveMut = useMutation({
     mutationFn: () => backend("set_setting", { key: PUBLIC_GATEWAY_URL_KEY, value: normalized ?? "" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["setting", PUBLIC_GATEWAY_URL_KEY] }),
-    onError: (error: unknown) => showErrorDialog("保存公开网关地址失败", "Failed to save public gateway URL", error),
+    onError: (error: unknown) => showErrorDialog("settings.error.publicGateway", error),
   });
 
   return (
-    <div className="glass rounded-2xl p-6 space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold text-slate-900">{isZh ? "公开网关地址" : "Public Gateway URL"}</h3>
-        <p className="mt-1 text-sm text-slate-500">{isZh ? "客户端访问集群的 LB 或 Ingress 根地址；不参与节点路由。" : "The client-facing LB or Ingress root URL; it does not route individual nodes."}</p>
-      </div>
+    <SettingsFormSurface title={localizedMessage(isZh, "v2.settings.publicGatewayUrl")} description={localizedMessage(isZh, "v2.settings.theClientFacingLbOrIngressRootUrl")}>
       <div className="space-y-1.5">
-        <label className="ml-1 text-xs text-slate-700">{isZh ? "根地址" : "Root URL"}</label>
+        <label className="ml-1 text-xs text-slate-700">{localizedMessage(isZh, "v2.settings.rootUrl")}</label>
         <Input placeholder="https://ai.example.com" value={value} onChange={(e) => setValue(e.target.value)} className={invalid ? "border-red-400 focus-visible:ring-red-400" : undefined} />
-        {invalid && <p className="text-xs text-red-600">{isZh ? "请输入不含路径的 http(s) 根地址。" : "Enter an HTTP(S) root URL without a path."}</p>}
+        {invalid && <p className="text-xs text-red-600">{localizedMessage(isZh, "v2.settings.enterAnHttpSRootUrlWithoutA")}</p>}
       </div>
       <div className="flex items-center gap-2">
         <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !dirty || invalid} size="sm" className="flex items-center gap-1.5">
           {saveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-          {isZh ? "保存" : "Save"}
+          {localizedMessage(isZh, "v2.api-keys.save")}
         </Button>
-        {dirty && <p className="text-xs text-amber-600">{isZh ? "保存后供管理端接入信息使用" : "Used by control-plane connection guidance after saving"}</p>}
+        {dirty && <p className="text-xs text-amber-600">{localizedMessage(isZh, "v2.settings.usedByControlPlaneConnectionGuidanceAfterSaving")}</p>}
       </div>
-    </div>
+    </SettingsFormSurface>
   );
 }
 
-function RetentionSettingsCard({ isZh, showErrorDialog }: { isZh: boolean; showErrorDialog: (titleZh: string, titleEn: string, error: unknown) => void }) {
+function RetentionSettingsCard({ isZh, showErrorDialog }: { isZh: boolean; showErrorDialog: ShowSettingsError }) {
   const qc = useQueryClient();
   const retentionKeys = useMemo(() => SIGNALS.map(retentionSettingKey), []);
   const retentionQueries = useQueries({
@@ -478,21 +426,17 @@ function RetentionSettingsCard({ isZh, showErrorDialog }: { isZh: boolean; showE
       ));
     },
     onSuccess: () => { for (const key of retentionKeys) qc.invalidateQueries({ queryKey: ["setting", key] }); },
-    onError: (error: unknown) => showErrorDialog("保存遥测存储策略失败", "Failed to save telemetry storage settings", error),
+    onError: (error: unknown) => showErrorDialog("settings.error.retention", error),
   });
 
   return (
-    <div className="glass rounded-2xl p-6 space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold text-slate-900">{isZh ? "本地遥测保留" : "Local Telemetry Retention"}</h3>
-        <p className="mt-1 text-sm text-slate-500">{isZh ? "内置 Observe SQLite 存储中各类遥测数据的保留天数。" : "Retention days for each telemetry signal in the embedded Observe SQLite store."}</p>
-      </div>
+    <SettingsFormSurface title={localizedMessage(isZh, "v2.settings.localTelemetryRetention")} description={localizedMessage(isZh, "v2.settings.retentionDaysForEachTelemetrySignalInThe")}>
       <div className="space-y-1.5">
-        <p className="ml-1 text-xs font-medium text-slate-600">{isZh ? "保留天数" : "Retention (days)"}</p>
+        <p className="ml-1 text-xs font-medium text-slate-600">{localizedMessage(isZh, "v2.settings.retentionDays")}</p>
         <div className="grid grid-cols-3 gap-3">
           {SIGNALS.map((signal) => (
             <div key={signal} className="space-y-1.5">
-              <label className="ml-1 text-xs text-slate-700">{isZh ? OBS_SIGNAL_LABEL[signal].zh : OBS_SIGNAL_LABEL[signal].en}</label>
+              <label className="ml-1 text-xs text-slate-700">{localizedMessage(isZh, OBS_SIGNAL_LABEL[signal])}</label>
               <Input type="number" min={1} max={365} placeholder={OBS_RETENTION_DEFAULT[signal]} value={retention[signal]} onChange={(e) => setRetention((prev) => ({ ...prev, [signal]: e.target.value }))} />
             </div>
           ))}
@@ -501,11 +445,11 @@ function RetentionSettingsCard({ isZh, showErrorDialog }: { isZh: boolean; showE
       <div className="flex items-center gap-2">
         <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !dirty} size="sm" className="flex items-center gap-1.5">
           {saveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-          {isZh ? "保存" : "Save"}
+          {localizedMessage(isZh, "v2.api-keys.save")}
         </Button>
-        {dirty && <p className="text-xs text-amber-600">{isZh ? "重启 Admin 后生效" : "Restart Admin to apply"}</p>}
+        {dirty && <p className="text-xs text-amber-600">{localizedMessage(isZh, "v2.settings.restartAdminToApply")}</p>}
       </div>
-    </div>
+    </SettingsFormSurface>
   );
 }
 
@@ -513,7 +457,7 @@ interface ObsSignalCardProps {
   signal: Signal;
   isZh: boolean;
   builtInOtlpEndpoint: string | null;
-  showErrorDialog: (titleZh: string, titleEn: string, error: unknown) => void;
+  showErrorDialog: ShowSettingsError;
 }
 
 function ObsSignalCard({ signal, isZh, builtInOtlpEndpoint, showErrorDialog }: ObsSignalCardProps) {
@@ -560,28 +504,20 @@ function ObsSignalCard({ signal, isZh, builtInOtlpEndpoint, showErrorDialog }: O
     },
     onSuccess: (payload) => { for (const key of Object.keys(payload)) qc.invalidateQueries({ queryKey: ["setting", key] }); },
     onError: (error: unknown) => {
-      const title = OBS_SIGNAL_LABEL[signal];
-      showErrorDialog(`保存${title.zh}导出设置失败`, `Failed to save ${title.en} export settings`, error);
+      showErrorDialog("settings.error.signalExport", error, { signal: localizedMessage(isZh, OBS_SIGNAL_LABEL[signal]) });
     },
   });
-  const title = OBS_SIGNAL_LABEL[signal];
+  const title = localizedMessage(isZh, OBS_SIGNAL_LABEL[signal]);
 
   return (
-    <div className="glass rounded-2xl p-6 space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900">{isZh ? title.zh : title.en}</h3>
-          <p className="mt-1 text-sm text-slate-500">{isZh ? "由 Gateway 导出" : "Exported by Gateway"}</p>
-        </div>
-        <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600">Gateway</span>
-      </div>
-      <div className="rounded-xl bg-slate-50 p-4 space-y-3">
+    <SettingsFormSurface title={title} description={localizedMessage(isZh, "v2.settings.exportedByGateway")} badge={<span className="v2-setting-badge">Gateway</span>}>
+      <div className="v2-setting-stack">
         <div className="space-y-1.5">
-          <label className="ml-1 text-xs text-slate-700">{isZh ? "导出引擎" : "Exporter"}</label>
+          <label className="ml-1 text-xs text-slate-700">{localizedMessage(isZh, "v2.settings.exporter")}</label>
           <Select value={emptySelectValue(exporter)} onValueChange={(value) => setExporter(emptySelectState(value))}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value={EMPTY_SELECT_SENTINEL}>{isZh ? "关闭" : "Disabled"}</SelectItem>
+              <SelectItem value={EMPTY_SELECT_SENTINEL}>{localizedMessage(isZh, "v2.settings.disabled")}</SelectItem>
               {defs.map((def) => <SelectItem key={def.kind} value={def.kind}>{exporterKindLabel(def.kind)}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -602,25 +538,25 @@ function ObsSignalCard({ signal, isZh, builtInOtlpEndpoint, showErrorDialog }: O
                   <Input placeholder={field.default || undefined} value={value} onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.name]: e.target.value }))} className={invalid ? "border-red-400 focus-visible:ring-red-400" : undefined} />
                   {activeDef?.kind === "otlp" && field.name === "endpoint" && (
                     <Button type="button" variant="secondary" size="sm" disabled={!builtInOtlpEndpoint} onClick={() => setFieldValues((prev) => ({ ...prev, endpoint: builtInOtlpEndpoint ?? "" }))} className="whitespace-nowrap">
-                      {isZh ? "填入内置地址" : "Use built-in"}
+                      {localizedMessage(isZh, "v2.settings.useBuiltIn")}
                     </Button>
                   )}
                 </div>
               )}
-              {invalid && <p className="text-xs text-red-600">{isZh ? "必填字段不能为空" : "This field is required"}</p>}
+              {invalid && <p className="text-xs text-red-600">{localizedMessage(isZh, "v2.settings.thisFieldIsRequired")}</p>}
             </div>
           );
         })}
-        {!builtInOtlpEndpoint && activeDef?.kind === "otlp" && <p className="text-xs text-slate-500">{isZh ? "桌面模式下暂无法自动识别内置地址，请手动填写。" : "The built-in address can't be auto-detected in desktop mode; enter it manually."}</p>}
-        {notBuiltIn && <p className="text-xs text-amber-600">{isZh ? "该信号不写入内置存储，Stats/Logs 面板无数据，请到外部引擎自带 UI 查看。" : "This signal isn't writing to built-in storage — the Stats/Logs panel will show no data; check the external engine's own UI instead."}</p>}
+        {!builtInOtlpEndpoint && activeDef?.kind === "otlp" && <p className="text-xs text-slate-500">{localizedMessage(isZh, "v2.settings.theBuiltInAddressCanTBeAuto")}</p>}
+        {notBuiltIn && <p className="text-xs text-amber-600">{localizedMessage(isZh, "v2.settings.thisSignalIsnTWritingToBuiltIn")}</p>}
         <div className="flex items-center gap-2">
           <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !dirty || missingRequired} size="sm" className="flex items-center gap-1.5">
             {saveMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-            {isZh ? "保存" : "Save"}
+            {localizedMessage(isZh, "v2.api-keys.save")}
           </Button>
-          {dirty && <p className="text-xs text-amber-600">{isZh ? "重启 Gateway 后生效" : "Restart Gateway to apply"}</p>}
+          {dirty && <p className="text-xs text-amber-600">{localizedMessage(isZh, "v2.settings.restartGatewayToApply")}</p>}
         </div>
       </div>
-    </div>
+    </SettingsFormSurface>
   );
 }

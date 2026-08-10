@@ -82,3 +82,24 @@ func TestAggregateStatsOmitsUnknownDomainDimensions(t *testing.T) {
 		t.Fatalf("routes=%+v upstreams=%+v consumers=%+v", routes, upstreams, consumers)
 	}
 }
+
+func TestAggregateStatsOmitsP95WhenQuantileFallsInOverflowBucket(t *testing.T) {
+	samples := []MetricSample{
+		{
+			Name:        "nyro_request_latency_ms",
+			Kind:        "histogram",
+			HistSum:     10_000,
+			HistCount:   100,
+			HistBounds:  []float64{50, 100, 250},
+			HistBuckets: []uint64{1, 1, 1, 97},
+		},
+	}
+
+	overview, _, _, _, err := AggregateStats(samples, 0)
+	if err != nil {
+		t.Fatalf("AggregateStats() error = %v", err)
+	}
+	if overview.P95DurationMs != nil {
+		t.Fatalf("P95DurationMs = %v, want nil for +Inf overflow bucket", *overview.P95DurationMs)
+	}
+}

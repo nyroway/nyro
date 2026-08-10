@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { localizedMessage } from "@/lib/messages";
 
 function protocolLabel(raw: string | null | undefined): string {
   return prettyName(raw) ?? raw ?? "–";
@@ -121,12 +122,12 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-[min(92vw,960px)] max-h-[88vh] overflow-hidden flex flex-col gap-4"
+        className="v2-log-inspector"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <span>{isZh ? "请求详情" : "Request Detail"}</span>
+            <span>{localizedMessage(isZh, "v2.log-detail-dialog.requestDetail")}</span>
             {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" /> : null}
           </DialogTitle>
           <DialogDescription>
@@ -152,7 +153,7 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
           )}
           {isCrossProtocol ? (
             <Badge variant="outline" className="border-purple-200 bg-purple-50 text-purple-700">
-              {isZh ? "跨协议" : "Cross-Protocol"}
+              {localizedMessage(isZh, "v2.log-detail-dialog.crossProtocol")}
             </Badge>
           ) : null}
           {(log?.upstream_name ?? log?.upstream_id) ? (
@@ -173,7 +174,7 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
           {tps != null ? (
             <span
               className="text-slate-500"
-              title={isZh ? "净生成速度(剥离首字节前等待)" : "Net generation speed (excludes prefill wait)"}
+              title={localizedMessage(isZh, "v2.log-detail-dialog.netGenerationSpeedExcludesPrefillWait")}
             >
               {formatTps(tps)}
             </span>
@@ -196,9 +197,9 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
                 className="h-7 gap-1 px-2 text-xs"
               >
                 {downloaded ? (
-                  <><Check className="h-3.5 w-3.5 text-green-600" /><span className="text-green-600">{isZh ? "已保存" : "Saved"}</span></>
+                  <><Check className="h-3.5 w-3.5 text-green-600" /><span className="text-green-600">{localizedMessage(isZh, "v2.log-detail-dialog.saved")}</span></>
                 ) : (
-                  <><Download className="h-3.5 w-3.5" />{isZh ? "下载" : "Download"}</>
+                  <><Download className="h-3.5 w-3.5" />{localizedMessage(isZh, "v2.log-detail-dialog.download")}</>
                 )}
               </Button>
             </span>
@@ -207,69 +208,65 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
 
         <div className="flex-1 space-y-3 overflow-y-auto pr-1">
           <SectionHeader
-            title={isZh ? "1. 客户端请求" : "1. Client Request"}
-            hint={isZh ? `协议：${protocolLabel(log?.client_protocol)}` : `Protocol: ${protocolLabel(log?.client_protocol)}`}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.1ClientRequest")}
+            hint={localizedMessage(isZh, "logDetail.protocol", { protocol: protocolLabel(log?.client_protocol) })}
           />
           <PayloadBlock
-            title={isZh ? "客户端请求头" : "Client Request Headers"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.clientRequestHeaders")}
             content={log?.client_request_headers}
             isZh={isZh}
           />
           <PayloadBlock
-            title={isZh ? "客户端请求体" : "Client Request Body"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.clientRequestBody")}
             content={log?.client_request_body}
             isZh={isZh}
           />
 
           <SectionHeader
-            title={isZh ? "2. 上游请求" : "2. Upstream Request"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.2UpstreamRequest")}
             hint={isCrossProtocol
-              ? (isZh
-                  ? `Nyro 转换输出 → ${protocolLabel(log?.upstream_protocol)}`
-                  : `Nyro converted → ${protocolLabel(log?.upstream_protocol)}`)
+              ? localizedMessage(isZh, "logDetail.convertedTo", { protocol: protocolLabel(log?.upstream_protocol) })
               : undefined}
           />
           <PayloadBlock
-            title={isZh ? "上游请求头" : "Upstream Request Headers"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.upstreamRequestHeaders")}
             content={log?.upstream_request_headers}
             isZh={isZh}
           />
           <PayloadBlock
-            title={isZh ? "上游请求体" : "Upstream Request Body"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.upstreamRequestBody")}
             content={log?.upstream_request_body}
             isZh={isZh}
           />
 
           <SectionHeader
-            title={isZh ? "3. 上游响应" : "3. Upstream Response"}
-            hint={isZh ? `协议：${protocolLabel(log?.upstream_protocol)}` : `Protocol: ${protocolLabel(log?.upstream_protocol)}`}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.3UpstreamResponse")}
+            hint={localizedMessage(isZh, "logDetail.protocol", { protocol: protocolLabel(log?.upstream_protocol) })}
           />
           <PayloadBlock
-            title={isZh ? "上游响应头" : "Upstream Response Headers"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.upstreamResponseHeaders")}
             content={log?.upstream_response_headers}
             isZh={isZh}
           />
           <PayloadBlock
-            title={isZh ? "上游响应体" : "Upstream Response Body"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.upstreamResponseBody")}
             content={log?.upstream_response_body}
             isZh={isZh}
           />
 
           <SectionHeader
-            title={isZh ? "4. 客户端响应" : "4. Client Response"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.4ClientResponse")}
             hint={isCrossProtocol
-              ? (isZh
-                  ? `Nyro 转换输出 → ${protocolLabel(log?.client_protocol)}`
-                  : `Nyro converted → ${protocolLabel(log?.client_protocol)}`)
+              ? localizedMessage(isZh, "logDetail.convertedTo", { protocol: protocolLabel(log?.client_protocol) })
               : undefined}
           />
           <PayloadBlock
-            title={isZh ? "客户端响应头" : "Client Response Headers"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.clientResponseHeaders")}
             content={log?.client_response_headers}
             isZh={isZh}
           />
           <PayloadBlock
-            title={isZh ? "客户端响应体" : "Client Response Body"}
+            title={localizedMessage(isZh, "v2.log-detail-dialog.clientResponseBody")}
             content={log?.client_response_body}
             isZh={isZh}
           />
@@ -338,12 +335,12 @@ function PayloadBlock({ title, content, isZh }: PayloadBlockProps) {
             {copied ? (
               <>
                 <Check className="h-3.5 w-3.5" />
-                {isZh ? "已复制" : "Copied"}
+                {localizedMessage(isZh, "v2.api-keys.copied")}
               </>
             ) : (
               <>
                 <Copy className="h-3.5 w-3.5" />
-                {isZh ? "复制" : "Copy"}
+                {localizedMessage(isZh, "v2.api-keys.copy")}
               </>
             )}
           </Button>
@@ -351,7 +348,7 @@ function PayloadBlock({ title, content, isZh }: PayloadBlockProps) {
       </div>
       {!collapsed && (
         <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-700">
-          {hasContent ? pretty : <span className="text-slate-400">{isZh ? "（无内容）" : "(empty)"}</span>}
+          {hasContent ? pretty : <span className="text-slate-400">{localizedMessage(isZh, "v2.log-detail-dialog.empty")}</span>}
         </pre>
       )}
       {collapsed && (
@@ -359,7 +356,7 @@ function PayloadBlock({ title, content, isZh }: PayloadBlockProps) {
           className="cursor-pointer px-3 py-1.5 text-[11px] text-slate-400 hover:text-slate-600"
           onClick={() => setCollapsed(false)}
         >
-          {hasContent ? (isZh ? "点击展开" : "click to expand") : (isZh ? "（无内容）" : "(empty)")}
+          {hasContent ? (localizedMessage(isZh, "v2.log-detail-dialog.clickToExpand")) : (localizedMessage(isZh, "v2.log-detail-dialog.empty"))}
         </div>
       )}
     </div>

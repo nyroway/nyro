@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/admin"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -322,11 +323,46 @@ func TestRunE_RejectsConfigSyncFlagsWhenConfigListenerDisabled(t *testing.T) {
 	}
 }
 
-func TestRunE_WarnsForUnauthenticatedNonLoopbackAdminListen(t *testing.T) {
+func TestServeCommandDoesNotExposeAdminTokenFlag(t *testing.T) {
+	if flag := NewCmd().Flags().Lookup("token"); flag != nil {
+		t.Fatalf("serve still exposes removed --token flag: %+v", flag)
+	}
+}
+
+func TestRuntimeServiceSnapshotReflectsServeConfiguration(t *testing.T) {
+	services := runtimeServiceSnapshot(runtimeServiceOptions{
+		controlListen:  "127.0.0.1:19531",
+		proxyListen:    "127.0.0.1:19530",
+		disableProxy:   true,
+		redisListen:    "127.0.0.1:16379",
+		stateDataDir:   "/var/lib/nyro/state",
+		otlpListen:     "127.0.0.1:14318",
+		observeDataDir: "/var/lib/nyro/observe",
+		configBackend:  "postgres",
+		configPath:     "postgres://user:secret@example/nyro",
+	})
+
+	if len(services) != 4 {
+		t.Fatalf("services len = %d, want 4: %+v", len(services), services)
+	}
+	if services[0].StorageBackend != "postgres" || services[0].DataPath != "" {
+		t.Fatalf("control service must expose backend but not postgres DSN: %+v", services[0])
+	}
+	if services[1].Status != admin.ServiceDisabled {
+		t.Fatalf("disabled proxy status = %q, want disabled", services[1].Status)
+	}
+	if services[2].DataPath != "/var/lib/nyro/state/state.db" {
+		t.Fatalf("state data path = %q", services[2].DataPath)
+	}
+	if services[3].DataPath != "/var/lib/nyro/observe/observe.db" {
+		t.Fatalf("observe data path = %q", services[3].DataPath)
+	}
+}
+
+func TestRunE_WarnsForNonLoopbackAdminListen(t *testing.T) {
 	tests := []struct {
 		name     string
 		listen   string
-		token    string
 		wantWarn bool
 	}{
 		{name: "IPv4 loopback", listen: "127.0.0.1:19531"},
@@ -334,7 +370,6 @@ func TestRunE_WarnsForUnauthenticatedNonLoopbackAdminListen(t *testing.T) {
 		{name: "localhost", listen: "localhost:19531"},
 		{name: "IPv4 any", listen: "0.0.0.0:19531", wantWarn: true},
 		{name: "IPv6 any", listen: "[::]:19531", wantWarn: true},
-		{name: "non-loopback with token", listen: "0.0.0.0:19531", token: "secret"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -346,7 +381,6 @@ func TestRunE_WarnsForUnauthenticatedNonLoopbackAdminListen(t *testing.T) {
 			cmd := NewCmd()
 			if err := cmd.ParseFlags([]string{
 				"--listen=" + tt.listen,
-				"--token=" + tt.token,
 				"--sync-listen=",
 				"--dsn=memory://",
 			}); err != nil {
@@ -356,7 +390,7 @@ func TestRunE_WarnsForUnauthenticatedNonLoopbackAdminListen(t *testing.T) {
 				t.Fatal("RunE returned nil error, want memory DSN rejection after exposure check")
 			}
 
-			gotWarn := strings.Contains(logs.String(), "management API is exposed without --token")
+			gotWarn := strings.Contains(logs.String(), "management API is listening on a non-loopback address without built-in authentication")
 			if gotWarn != tt.wantWarn {
 				t.Fatalf("warning present = %v, want %v; logs: %q", gotWarn, tt.wantWarn, logs.String())
 			}

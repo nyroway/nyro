@@ -75,6 +75,8 @@ func MetricSampleFromOTLP(metric *metricsv1.Metric, pointType string, index int)
 		sample.Ts = int64(point.GetTimeUnixNano())
 		sample.HistSum = point.GetSum()
 		sample.HistCount = int64(point.GetCount())
+		sample.HistBounds = append([]float64(nil), point.GetExplicitBounds()...)
+		sample.HistBuckets = append([]uint64(nil), point.GetBucketCounts()...)
 		sample.LabelsJSON = attributesJSON(point.GetAttributes())
 		sample.Kind = "histogram"
 	default:
