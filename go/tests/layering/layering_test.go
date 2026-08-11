@@ -110,6 +110,7 @@ var packageLayer = map[string]int{
 	"internal/platform/state/sqlite":                     layerFoundation,
 	"internal/quota":                                     layerFoundation,
 	"internal/provider":                                  layerFoundation,
+	"internal/telemetry/schema":                          layerFoundation,
 	"internal/version":                                   layerFoundation,
 	"internal/webutil":                                   layerFoundation,
 	"internal/envflag":                                   layerFoundation,
