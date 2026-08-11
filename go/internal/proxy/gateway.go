@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
-	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/router"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
 // Gateway holds the runtime dependencies for dispatching requests. Config reads
@@ -33,8 +33,8 @@ type Gateway struct {
 	// Obs is the OTel provider (logger/meter/tracer). Populated by the data
 	// plane once at startup; nil in unit tests (the dispatcher still works,
 	// the telemetry Stage simply stays inert so nothing is emitted).
-	Obs     *observability.ObsProvider
-	Handles *observability.Handles
+	Obs     *telemetry.Provider
+	Handles *telemetry.Handles
 
 	// UpstreamTransport, when non-nil, replaces the RoundTripper of every
 	// outbound upstream client. Production leaves it nil (real *http.Transport
@@ -72,7 +72,7 @@ func (g *Gateway) chain() *pipeline.Chain {
 	g.chainOnce.Do(func() {
 		stages := append([]pipeline.Stage(nil), g.OuterStages...)
 		stages = append(stages,
-			observability.NewRegisteredStage(),
+			telemetry.NewRegisteredStage(),
 			routeStage{gw: g},
 			accessStage{gw: g},
 			quotaStage{gw: g},

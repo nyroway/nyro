@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
 // captureStage records the Exchange as the chain unwinds, standing in for the
@@ -51,7 +51,7 @@ func newCapturingGateway(t *testing.T, upstreamURL string) (*Gateway, func(*test
 // route, upstream, usage, status, consumer, started, and the LogCtx. The
 // dispatcher fills these in as they become known and the telemetry Stage emits
 // from a defer, guaranteeing it sees the finished picture. (The emit itself is
-// tested in internal/observability/stage_test.go.)
+// tested in internal/telemetry/stage_test.go.)
 func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	upstream := nonStreamUpstream(t)
 	defer upstream.Close()
@@ -69,11 +69,11 @@ func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	}
 
 	ex := captured(t)
-	route, _ := ex.GetExt(observability.ExtRoute).(storage.Route)
+	route, _ := ex.GetExt(telemetry.ExtRoute).(storage.Route)
 	if route.Model != "gpt-4o" {
 		t.Errorf("exchange route = %+v; want model gpt-4o", route)
 	}
-	up, _ := ex.GetExt(observability.ExtUpstream).(storage.Upstream)
+	up, _ := ex.GetExt(telemetry.ExtUpstream).(storage.Upstream)
 	if up.Name != "test" {
 		t.Errorf("exchange upstream = %+v; want name test", up)
 	}
@@ -83,7 +83,7 @@ func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	if ex.Started.Before(startWall) {
 		t.Errorf("exchange started %v before dispatch entry %v", ex.Started, startWall)
 	}
-	lc, _ := ex.GetExt(observability.ExtLogCtx).(observability.LogCtx)
+	lc, _ := ex.GetExt(telemetry.ExtLogCtx).(telemetry.LogCtx)
 	if lc.ClientModel != "gpt-4o" || lc.Method != http.MethodPost {
 		t.Errorf("exchange logctx = %+v; want ClientModel=gpt-4o Method=POST", lc)
 	}
@@ -123,7 +123,7 @@ func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 	if ex.Status != http.StatusNotFound {
 		t.Errorf("exchange status = %d; want 404 (early-exit path must still record it)", ex.Status)
 	}
-	if _, ok := ex.GetExt(observability.ExtRoute).(storage.Route); ok {
+	if _, ok := ex.GetExt(telemetry.ExtRoute).(storage.Route); ok {
 		t.Error("exchange carries a route for a model that does not exist")
 	}
 	if ex.Usage != (ir.Usage{}) {

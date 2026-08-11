@@ -26,7 +26,6 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/dataplane"
-	"github.com/nyroway/nyro/go/internal/observability"
 	infradatabase "github.com/nyroway/nyro/go/internal/platform/database"
 	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
 	infraobserve "github.com/nyroway/nyro/go/internal/platform/observe"
@@ -36,6 +35,7 @@ import (
 	statesqlite "github.com/nyroway/nyro/go/internal/platform/state/sqlite"
 	"github.com/nyroway/nyro/go/internal/proxy"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 	"github.com/nyroway/nyro/go/internal/webui"
 )
 
@@ -250,7 +250,7 @@ func NewCmd() *cobra.Command {
 			seedDefaultObsEndpoint(st.Settings(), otlpAddr)
 		}
 
-		obsCfg, err := observability.LoadConfig(st.Settings().Get)
+		obsCfg, err := telemetry.LoadConfig(st.Settings().Get)
 		if err != nil {
 			return fmt.Errorf("load observability config: %w", err)
 		}
@@ -603,7 +603,7 @@ var obsSeedSignals = []string{"logs", "metrics", "traces"}
 // migration that found nothing to copy), seeds every signal's OTLP endpoint
 // to point at this process's own --otlp-listen, and defaults any still-empty
 // obs_<signal>_exporter to "otlp". This is a real, editable setting written
-// to storage — not an in-memory/runtime override of ObsConfig — so the user
+// to storage — not an in-memory/runtime override of telemetry.Config — so the user
 // can change it later via the WebUI.
 //
 // The seeded value must be a valid absolute URL: provider.go's OTLP builders

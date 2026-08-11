@@ -30,8 +30,8 @@ import (
 	"github.com/nyroway/nyro/go/internal/config"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
-	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/proxy"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
 // certExpiryCheckInterval is how often WatchExpiry re-checks the loaded
@@ -75,12 +75,12 @@ type Options struct {
 // Build returns a ready, storage-free Gateway plus its observability manager
 // (always non-nil on success — telemetry is wired in every mode).
 //
-// It constructs the initial ObsProvider, wraps it in a SwappableProvider, and
-// points the OTel telemetry Stage at it. In config-sync mode it registers the
-// manager's hot-reload callback on the cache BEFORE starting the config
-// stream, so the control-plane-seeded obs settings — which arrive with the
-// first snapshot, after this initial build — are applied instead of being
-// stuck on the stdout default.
+// It constructs the initial telemetry.Provider, wraps it in a
+// SwappableProvider, and points the OTel telemetry Stage at it. In config-sync
+// mode it registers the manager's hot-reload callback on the cache BEFORE
+// starting the config stream, so the control-plane-seeded obs settings — which
+// arrive with the first snapshot, after this initial build — are applied
+// instead of being stuck on the stdout default.
 //
 // The returned Gateway's /readyz reflects cache fill, not storage health. The
 // config-sync client stops when ctx is cancelled; there is no separate stop
@@ -112,11 +112,11 @@ func Build(ctx context.Context, opts Options) (*proxy.Gateway, *ObsManager, erro
 		// the initial resolve sees the real (YAML-declared) obs config and no
 		// hot-reload callback is needed — the cache never swaps again.
 		obsCfg := resolveObsConfig(cache)
-		prov, err := observability.NewProvider(ctx, obsCfg)
+		prov, err := telemetry.NewProvider(ctx, obsCfg)
 		if err != nil {
 			return nil, nil, fmt.Errorf("observability provider: %w", err)
 		}
-		sp := observability.NewSwappableProvider(prov)
+		sp := telemetry.NewSwappableProvider(prov)
 		attachObservability(gw, prov, sp)
 		return gw, newObsManager(ctx, cache, sp, prov, obsCfg), nil
 
@@ -134,11 +134,11 @@ func Build(ctx context.Context, opts Options) (*proxy.Gateway, *ObsManager, erro
 		// plane stuck on the stdout default: no snapshot can be published until
 		// client.Run starts.
 		obsCfg := resolveObsConfig(cache)
-		prov, err := observability.NewProvider(ctx, obsCfg)
+		prov, err := telemetry.NewProvider(ctx, obsCfg)
 		if err != nil {
 			return nil, nil, fmt.Errorf("observability provider: %w", err)
 		}
-		sp := observability.NewSwappableProvider(prov)
+		sp := telemetry.NewSwappableProvider(prov)
 		attachObservability(gw, prov, sp)
 		mgr := newObsManager(ctx, cache, sp, prov, obsCfg)
 		cache.SetOnSwap(mgr.rebuild)
@@ -175,17 +175,17 @@ func servicePort(addr string) string {
 	return port
 }
 
-// attachObservability wires the initial ObsProvider into the Gateway and points
-// the telemetry Stage at the SwappableProvider. gw.Obs/gw.Handles are
+// attachObservability wires the initial telemetry.Provider into the Gateway
+// and points the telemetry Stage at the SwappableProvider. gw.Obs/gw.Handles are
 // informational only (the proxy dispatch path does not read them — telemetry
 // flows entirely through the sp-backed Stage) and reflect the initial provider.
 //
-// RegisterObservability is idempotent and re-pointable, which is what makes it
+// RegisterProvider is idempotent and re-pointable, which is what makes it
 // safe for one process to assemble more than one data plane over its lifetime.
-func attachObservability(gw *proxy.Gateway, prov *observability.ObsProvider, sp *observability.SwappableProvider) {
+func attachObservability(gw *proxy.Gateway, prov *telemetry.Provider, sp *telemetry.SwappableProvider) {
 	gw.Obs = prov
-	gw.Handles = observability.NewHandles(prov.Meter)
-	observability.RegisterObservability(sp)
+	gw.Handles = telemetry.NewHandles(prov.Meter)
+	telemetry.RegisterProvider(sp)
 }
 
 // cacheObsGet returns a get-func that reads obs_* settings from the
@@ -210,15 +210,15 @@ func cacheObsGet(cache *configsync.ConfigCache) func(string) (string, error) {
 // file, or not yet pushed over config-sync), the fixed default in defaultObsGet
 // applies. If the snapshot's observability settings fail to load (e.g. an
 // unregistered exporter kind or another validation error from
-// observability.LoadConfig), the error is logged and the fixed default is used
+// telemetry.LoadConfig), the error is logged and the fixed default is used
 // as well — a malformed obs setting must not prevent the data plane from
 // starting. Process environment variables are never consulted here — a
 // deployment that wants an env var to drive an exporter must reference it
 // explicitly inside config.yaml (e.g. endpoint:
 // "${OTEL_EXPORTER_OTLP_ENDPOINT}"), which config.LoadYAML's ${VAR} expansion
 // already handles.
-func resolveObsConfig(cache *configsync.ConfigCache) observability.ObsConfig {
-	obsCfg, err := observability.LoadConfig(cacheObsGet(cache))
+func resolveObsConfig(cache *configsync.ConfigCache) telemetry.Config {
+	obsCfg, err := telemetry.LoadConfig(cacheObsGet(cache))
 	if err != nil {
 		slog.Error("observability config from snapshot is invalid; falling back to defaults", "error", err)
 		return defaultObsConfig()
@@ -233,12 +233,12 @@ func resolveObsConfig(cache *configsync.ConfigCache) observability.ObsConfig {
 // all: every signal's exporter kind is unset AND every signal's otlp
 // endpoint is unset. This is the "nothing was configured" case that
 // resolveObsConfig falls back to defaultObsGet for. In practice
-// observability.LoadConfig never sets Params["endpoint"] without also
+// telemetry.LoadConfig never sets Params["endpoint"] without also
 // setting Kind (Kind comes from the separate obs_<signal>_exporter key), so
 // the endpoint checks are currently implied by the Kind checks — they are
 // kept explicit anyway to match the "exporter kind empty AND endpoint empty"
 // contract exactly, defensively, in case that invariant ever changes.
-func obsConfigIsEmpty(cfg observability.ObsConfig) bool {
+func obsConfigIsEmpty(cfg telemetry.Config) bool {
 	return cfg.Logs.Kind == "" && cfg.Metrics.Kind == "" && cfg.Traces.Kind == "" &&
 		cfg.Logs.Params["endpoint"] == "" && cfg.Metrics.Params["endpoint"] == "" && cfg.Traces.Params["endpoint"] == ""
 }
@@ -250,11 +250,11 @@ func obsConfigIsEmpty(cfg observability.ObsConfig) bool {
 // does, that indicates a broken exporter registry rather than a bad runtime
 // config, and the safest fallback is every signal disabled rather than
 // crashing the data plane.
-func defaultObsConfig() observability.ObsConfig {
-	cfg, err := observability.LoadConfig(defaultObsGet)
+func defaultObsConfig() telemetry.Config {
+	cfg, err := telemetry.LoadConfig(defaultObsGet)
 	if err != nil {
 		slog.Error("observability default config failed to load (should be unreachable)", "error", err)
-		return observability.ObsConfig{}
+		return telemetry.Config{}
 	}
 	return cfg
 }
@@ -277,13 +277,13 @@ func defaultObsGet(key string) (string, error) {
 // newMetricsServer builds (without starting) the http.Server the ObsManager
 // runs for prometheus scraping: obs.PromHandler mounted at path on a fresh mux,
 // listening on obs.PromListen. path defaults to "/metrics" when empty —
-// defensive, since observability.LoadConfig always fills the prometheus
+// defensive, since telemetry.LoadConfig always fills the prometheus
 // exporter's "path" field from its registry default when the signal is
-// configured, but NewProvider (and therefore ObsProvider) can also be built
-// directly from a hand-assembled ObsConfig that skipped LoadConfig. Split out
-// from the ObsManager's start path so tests can inspect routing/Addr without
-// binding a real network port.
-func newMetricsServer(obs *observability.ObsProvider, path string) *http.Server {
+// configured, but NewProvider (and therefore Provider) can also be built
+// directly from a hand-assembled telemetry.Config that skipped LoadConfig.
+// Split out from the ObsManager's start path so tests can inspect routing/Addr
+// without binding a real network port.
+func newMetricsServer(obs *telemetry.Provider, path string) *http.Server {
 	if path == "" {
 		path = "/metrics"
 	}

@@ -1,4 +1,4 @@
-package observability
+package telemetry
 
 import (
 	"context"
@@ -30,11 +30,11 @@ import (
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
-// ObsProvider assembles the OTel LoggerProvider / MeterProvider / TracerProvider
-// from an ObsConfig, selecting exporters per signal via the exporter registry
-// (exporter.go). It is the entry point for gateway-side observability: callers
-// use Logger, Meter and Tracer directly, and call Shutdown on graceful exit.
-type ObsProvider struct {
+// Provider assembles the OTel LoggerProvider / MeterProvider / TracerProvider
+// from a Config, selecting exporters per signal via telemetry/schema. It is the
+// entry point for gateway-side observability: callers use Logger, Meter and
+// Tracer directly, and call Shutdown on graceful exit.
+type Provider struct {
 	loggerProvider *sdklog.LoggerProvider
 	meterProvider  *sdkmetric.MeterProvider
 	tracerProvider *sdktrace.TracerProvider
@@ -45,7 +45,7 @@ type ObsProvider struct {
 
 	// PromHandler and PromListen are populated when Metrics.Kind ==
 	// schema.ExporterKindPrometheus by the prometheus builder in metricsBuilders.
-	// Nil/empty otherwise; the gateway (Task 6) uses PromHandler!=nil to
+	// Nil/empty otherwise; the data plane uses PromHandler != nil to
 	// decide whether to start a second HTTP server on PromListen.
 	PromHandler http.Handler
 	PromListen  string
@@ -125,9 +125,9 @@ func otlpSignalURL(endpoint, defaultPath string) string {
 // truth for which kinds are valid per signal. Each buildXProvider consults
 // this before looking up its local builderFunc map, so the registry is
 // genuinely checked at construction time, not just trusted implicitly.
-// LoadConfig (Task 2) already validates Kind against the same registry when
+// LoadConfig already validates Kind against the same registry when
 // config comes from disk, but NewProvider is also callable directly (e.g.
-// from tests or future callers) with a hand-built ObsConfig that never went
+// from tests or future callers) with a hand-built Config that never went
 // through LoadConfig, so this guard is not merely redundant belt-and-braces.
 func exporterKindValid(signal schema.Signal, kind schema.ExporterKind) bool {
 	for _, def := range schema.ExportersFor(signal) {
@@ -175,7 +175,7 @@ const defaultPrometheusListen = ":9464"
 // pushed), so it has no PeriodicReader/interval and no separate "exporter"
 // object to wrap — buildMeterProvider type-switches on this to take a
 // different construction path (sdkmetric.WithReader(Reader) directly) and to
-// thread Handler/Listen out to ObsProvider.
+// thread Handler/Listen out to Provider.
 type promReaderResult struct {
 	Reader  sdkmetric.Reader
 	Handler http.Handler
@@ -265,7 +265,7 @@ func tracesBuilders(ctx context.Context) map[schema.ExporterKind]builderFunc {
 // AggregateStats/AggregateHourly sum the projected values — correct for
 // deltas. (Cumulative would double-count:
 // R×(N+1)/2.) See also stats_aggregate.go. This is fixed per-engine: otlp and
-// stdout are DELTA; prometheus (Task 5) uses its own pull Reader, which is
+// stdout are DELTA; prometheus uses its own pull Reader, which is
 // CUMULATIVE by construction — the two temporalities coexist because they
 // never share a MeterProvider (metrics has exactly one configured exporter).
 //
@@ -273,7 +273,7 @@ func tracesBuilders(ctx context.Context) map[schema.ExporterKind]builderFunc {
 // via otel.Set*Provider so libraries instrumented against the OTel API
 // (rather than against this struct's fields) also report. Tests construct
 // their own providers and do not depend on the global.
-func NewProvider(ctx context.Context, cfg ObsConfig) (*ObsProvider, error) {
+func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 	signals := []struct {
 		signal schema.Signal
 		cfg    SignalConfig
@@ -311,7 +311,7 @@ func NewProvider(ctx context.Context, cfg ObsConfig) (*ObsProvider, error) {
 	otel.SetTracerProvider(tp)
 	otel.SetMeterProvider(mp)
 
-	return &ObsProvider{
+	return &Provider{
 		loggerProvider: lp,
 		meterProvider:  mp,
 		tracerProvider: tp,
@@ -364,7 +364,7 @@ func buildLoggerProvider(ctx context.Context, res *resource.Resource, sc SignalC
 // buildMeterProvider constructs the MeterProvider for sc, via the metrics
 // exporter registry, or a no-op provider when the signal is disabled. For
 // prometheus (a pull-model reader), it returns the reader's Handler/Listen so
-// NewProvider can populate ObsProvider.PromHandler/PromListen; for otlp/stdout
+// NewProvider can populate Provider.PromHandler/PromListen; for otlp/stdout
 // (push-model exporters) it returns nil/"" as before.
 func buildMeterProvider(ctx context.Context, res *resource.Resource, sc SignalConfig) (*sdkmetric.MeterProvider, http.Handler, string, error) {
 	if sc.Kind == "" {
@@ -450,12 +450,12 @@ func buildTracerProvider(ctx context.Context, res *resource.Resource, sc SignalC
 // Flush is a placeholder for an explicit push of buffered telemetry. The OTel
 // SDK flushes on Shutdown; per-signal ForceFlush may be wired here in a later
 // task once the exporters' needs become concrete.
-func (p *ObsProvider) Flush(ctx context.Context) error { _ = ctx; return nil }
+func (p *Provider) Flush(ctx context.Context) error { _ = ctx; return nil }
 
 // Shutdown flushes and releases every provider's resources. It is idempotent:
 // the first call flushes and tears down the providers; subsequent calls are
 // no-ops and return the result of the first call.
-func (p *ObsProvider) Shutdown(ctx context.Context) error {
+func (p *Provider) Shutdown(ctx context.Context) error {
 	p.shutdownMu.Lock()
 	defer p.shutdownMu.Unlock()
 	if p.shutdown {

@@ -10,32 +10,32 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
-	"github.com/nyroway/nyro/go/internal/observability"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
-// obsReloadGrace is how long a displaced ObsProvider is kept alive after a
-// hot-reload before being shut down. In-flight requests that already loaded the
-// old SwappableProvider set (e.g. a span started under the previous tracer)
-// finish emitting through it during this window; a request longer than the
-// grace may lose its final span/log export, which is acceptable for the rare
-// event of an operator changing observability config mid-flight.
+// obsReloadGrace is how long a displaced telemetry.Provider is kept alive
+// after a hot-reload before being shut down. In-flight requests that already
+// loaded the old SwappableProvider set (e.g. a span started under the previous
+// tracer) finish emitting through it during this window; a request longer than
+// the grace may lose its final span/log export, which is acceptable for the
+// rare event of an operator changing observability config mid-flight.
 const obsReloadGrace = 30 * time.Second
 
 // ObsManager owns the data plane's hot-reloadable observability pipeline. The OTel
 // provider is built once at startup (in --server mode, from the still-empty
 // cache, so it resolves to the fixed stdout default) and rebuilt whenever a
-// config-sync snapshot changes the resolved ObsConfig — this is what lets the
+// config-sync snapshot changes the resolved telemetry.Config — this is what lets the
 // control-plane-seeded otlp settings, which only arrive AFTER startup over the
 // config stream, actually take effect. The telemetry Stage reads the current
 // pipeline through sp (SwappableProvider) so a rebuild never re-registers it.
 type ObsManager struct {
 	ctx   context.Context
 	cache *configsync.ConfigCache
-	sp    *observability.SwappableProvider
+	sp    *telemetry.SwappableProvider
 
 	mu         sync.Mutex
-	lastCfg    observability.ObsConfig
-	current    *observability.ObsProvider
+	lastCfg    telemetry.Config
+	current    *telemetry.Provider
 	metricsSrv *http.Server // running prometheus scrape server, nil if none
 }
 
@@ -44,7 +44,7 @@ type ObsManager struct {
 // config selected the prometheus metrics exporter. It does NOT register the
 // SetOnSwap callback — the caller does that (only --server mode needs it),
 // after ensuring no snapshot can be published before the callback is in place.
-func newObsManager(ctx context.Context, cache *configsync.ConfigCache, sp *observability.SwappableProvider, initial *observability.ObsProvider, initialCfg observability.ObsConfig) *ObsManager {
+func newObsManager(ctx context.Context, cache *configsync.ConfigCache, sp *telemetry.SwappableProvider, initial *telemetry.Provider, initialCfg telemetry.Config) *ObsManager {
 	m := &ObsManager{
 		ctx:     ctx,
 		cache:   cache,
@@ -75,7 +75,7 @@ func (m *ObsManager) rebuild() {
 		m.mu.Unlock()
 		return
 	}
-	newProv, err := observability.NewProvider(m.ctx, newCfg)
+	newProv, err := telemetry.NewProvider(m.ctx, newCfg)
 	if err != nil {
 		m.mu.Unlock()
 		slog.Error("observability hot-reload: building new provider failed; keeping current pipeline", "error", err)
@@ -110,7 +110,7 @@ func (m *ObsManager) rebuild() {
 // metrics exporter is prometheus (PromHandler != nil); a no-op otherwise. The
 // caller must hold m.mu. Best-effort: a bind/serve failure is logged but never
 // fatal, matching the original startMetricsServer contract.
-func (m *ObsManager) startMetricsLocked(prov *observability.ObsProvider, path string) {
+func (m *ObsManager) startMetricsLocked(prov *telemetry.Provider, path string) {
 	if prov == nil || prov.PromHandler == nil {
 		return
 	}

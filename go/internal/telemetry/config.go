@@ -1,4 +1,4 @@
-package observability
+package telemetry
 
 import (
 	"fmt"
@@ -16,10 +16,10 @@ type SignalConfig struct {
 	Params map[string]string
 }
 
-// ObsConfig is the resolved observability configuration. Each signal is
+// Config is the resolved observability configuration. Each signal is
 // configured entirely independently — there is no shared/global exporter,
 // endpoint, or export interval.
-type ObsConfig struct {
+type Config struct {
 	Logs    SignalConfig
 	Metrics SignalConfig
 	Traces  SignalConfig
@@ -30,7 +30,7 @@ type ObsConfig struct {
 }
 
 // LoadConfig reads observability settings via get (typically
-// s.Settings().Get) and resolves them into an ObsConfig. Each signal is
+// s.Settings().Get) and resolves them into a Config. Each signal is
 // resolved independently:
 //
 //   - obs_<signal>_exporter selects the signal's Kind. Empty/absent means the
@@ -47,7 +47,7 @@ type ObsConfig struct {
 //
 // Retention settings (obs_<signal>_retention_days) configure the embedded
 // Observe store.
-func LoadConfig(get func(string) (string, error)) (ObsConfig, error) {
+func LoadConfig(get func(string) (string, error)) (Config, error) {
 	g := func(k string) string { v, _ := get(k); return v }
 	ret := func(k string, def int) int {
 		if v := g(k); v != "" {
@@ -57,7 +57,7 @@ func LoadConfig(get func(string) (string, error)) (ObsConfig, error) {
 		}
 		return def
 	}
-	cfg := ObsConfig{
+	cfg := Config{
 		LogsRetentionDays:    ret("obs_logs_retention_days", 7),
 		MetricsRetentionDays: ret("obs_metrics_retention_days", 30),
 		TracesRetentionDays:  ret("obs_traces_retention_days", 3),
@@ -65,13 +65,13 @@ func LoadConfig(get func(string) (string, error)) (ObsConfig, error) {
 
 	var err error
 	if cfg.Logs, err = loadSignalConfig(g, schema.SignalLogs); err != nil {
-		return ObsConfig{}, err
+		return Config{}, err
 	}
 	if cfg.Metrics, err = loadSignalConfig(g, schema.SignalMetrics); err != nil {
-		return ObsConfig{}, err
+		return Config{}, err
 	}
 	if cfg.Traces, err = loadSignalConfig(g, schema.SignalTraces); err != nil {
-		return ObsConfig{}, err
+		return Config{}, err
 	}
 
 	return cfg, nil

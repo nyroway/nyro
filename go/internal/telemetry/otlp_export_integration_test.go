@@ -1,4 +1,4 @@
-package observability
+package telemetry
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func TestOTLPLogsExportHitsV1LogsPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	prov, err := NewProvider(context.Background(), ObsConfig{
+	prov, err := NewProvider(context.Background(), Config{
 		Logs: SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": srv.URL}},
 	})
 	if err != nil {
@@ -79,7 +79,7 @@ func TestOTLPLogsHonorsExportInterval(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	prov, err := NewProvider(context.Background(), ObsConfig{
+	prov, err := NewProvider(context.Background(), Config{
 		Logs: SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": srv.URL, "interval": "120ms"}},
 	})
 	if err != nil {

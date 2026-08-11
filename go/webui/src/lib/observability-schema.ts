@@ -1,4 +1,4 @@
-// Manual frontend mirror of go/internal/observability/exporter.go's exporter
+// Manual frontend mirror of go/internal/telemetry/schema/exporter.go's exporter
 // registry (Signal / ExporterKind / FieldDef / ExporterDef / ExportersFor).
 //
 // This is intentionally a static, hand-maintained copy — not fetched from the
@@ -70,7 +70,7 @@ const signalExporters: Record<Signal, ExporterKind[]> = {
 };
 
 // exportersFor returns the exporter engines available for signal, each with
-// its field schema. Mirrors observability.ExportersFor exactly.
+// its field schema. Mirrors schema.ExportersFor exactly.
 export function exportersFor(signal: Signal): ExporterDef[] {
   return signalExporters[signal].map((kind) => ({ kind, fields: exporterFields[kind] }));
 }

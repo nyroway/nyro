@@ -1,4 +1,4 @@
-package observability
+package telemetry
 
 // LogQuery filters and paginates the admin request-audit projection.
 type LogQuery struct {

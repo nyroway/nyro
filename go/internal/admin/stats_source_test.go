@@ -11,8 +11,8 @@ import (
 	metricsv1 "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 
-	"github.com/nyroway/nyro/go/internal/observability"
 	infraobserve "github.com/nyroway/nyro/go/internal/platform/observe"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
 func appendMetric(t *testing.T, store infraobserve.Store, at time.Time, metric *metricsv1.Metric) {
@@ -69,7 +69,7 @@ func TestStatsReadObserveMetrics(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("overview -> %d %s", rec.Code, rec.Body.String())
 	}
-	var overview observability.StatsOverview
+	var overview telemetry.StatsOverview
 	if err := json.Unmarshal(rec.Body.Bytes(), &overview); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestStatsReadObserveMetrics(t *testing.T) {
 	}
 
 	rec = do(router, "GET", "/api/v1/stats/routes", "", nil)
-	var routes []observability.RouteStats
+	var routes []telemetry.RouteStats
 	if err := json.Unmarshal(rec.Body.Bytes(), &routes); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestStatsReadObserveMetrics(t *testing.T) {
 	}
 
 	rec = do(router, "GET", "/api/v1/stats/upstreams", "", nil)
-	var upstreams []observability.UpstreamStats
+	var upstreams []telemetry.UpstreamStats
 	if err := json.Unmarshal(rec.Body.Bytes(), &upstreams); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestStatsReadObserveMetrics(t *testing.T) {
 	}
 
 	rec = do(router, "GET", "/api/v1/stats/consumers", "", nil)
-	var consumers []observability.ConsumerStats
+	var consumers []telemetry.ConsumerStats
 	if err := json.Unmarshal(rec.Body.Bytes(), &consumers); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestStatsHoursWindowExcludesOldObservePoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("routes -> %d %s", rec.Code, rec.Body.String())
 	}
-	var routes []observability.RouteStats
+	var routes []telemetry.RouteStats
 	if err := json.Unmarshal(rec.Body.Bytes(), &routes); err != nil {
 		t.Fatal(err)
 	}

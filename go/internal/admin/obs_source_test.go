@@ -14,11 +14,11 @@ import (
 	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 
-	"github.com/nyroway/nyro/go/internal/observability"
 	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
 	infraobserve "github.com/nyroway/nyro/go/internal/platform/observe"
 	observesqlite "github.com/nyroway/nyro/go/internal/platform/observe/sqlite"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
 func observeAttributes(values map[string]any) []*commonv1.KeyValue {
@@ -102,7 +102,7 @@ func TestLogsReadAndFilterObserveStore(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/logs -> %d %s", rec.Code, rec.Body.String())
 	}
-	var page observability.LogPage
+	var page telemetry.LogPage
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestLogsFindAndClearObserveStore(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("find -> %d %s", rec.Code, rec.Body.String())
 	}
-	var got observability.LogRecord
+	var got telemetry.LogRecord
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestLogsFindAndClearObserveStore(t *testing.T) {
 		t.Fatalf("delete -> %d %s", rec.Code, rec.Body.String())
 	}
 	rec = do(router, "GET", "/api/v1/logs", "", nil)
-	var page observability.LogPage
+	var page telemetry.LogPage
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatal(err)
 	}

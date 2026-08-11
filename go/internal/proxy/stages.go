@@ -3,9 +3,9 @@ package proxy
 import (
 	"net/http"
 
-	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
 // The Stages below are the cross-cutting concerns the dispatcher used to run
@@ -33,7 +33,7 @@ func (s routeStage) Handle(ex *pipeline.Exchange, next func() error) error {
 		writeJSONError(ex.W, http.StatusServiceUnavailable, "no backends for model: "+ex.Req.Model)
 		return nil
 	}
-	ex.SetExt(observability.ExtRoute, *rt)
+	ex.SetExt(telemetry.ExtRoute, *rt)
 	return next()
 }
 
@@ -50,17 +50,17 @@ type accessStage struct{ gw *Gateway }
 func (s accessStage) Name() string { return "access" }
 
 func (s accessStage) Handle(ex *pipeline.Exchange, next func() error) error {
-	route, ok := ex.GetExt(observability.ExtRoute).(storage.Route)
+	route, ok := ex.GetExt(telemetry.ExtRoute).(storage.Route)
 	if !ok {
 		return next() // no route resolved: routeStage already responded
 	}
 
-	lc, _ := ex.GetExt(observability.ExtLogCtx).(observability.LogCtx)
+	lc, _ := ex.GetExt(telemetry.ExtLogCtx).(telemetry.LogCtx)
 	status, msg, release := checkAccess(
 		s.gw.snapshot(), s.gw.Quota, route, ex.R,
 		&ex.ConsumerID, &lc.ConsumerKeyName, &lc.ConsumerKeyPreview,
 	)
-	ex.SetExt(observability.ExtLogCtx, lc)
+	ex.SetExt(telemetry.ExtLogCtx, lc)
 	if status != 0 {
 		writeJSONError(ex.W, status, msg)
 		return nil
