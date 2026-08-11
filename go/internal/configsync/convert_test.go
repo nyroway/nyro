@@ -165,7 +165,7 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 // (obs_<signal>_exporter, obs_<signal>_<engine>_<field>) through the full
 // settings-push path: storage.Settings().Set -> LoadFromStorage/ListAll ->
 // SetSetting -> SnapshotFromStorage (proto) -> SnapshotFromProto -> SettingGet.
-// Existing settings coverage (TestLoadFromStorage_BuildsAllMaps,
+// Existing settings coverage (snapshot.TestLoadFromStorageBuildsAllMaps,
 // TestSnapshotFromProto_Settings, TestSnapshotFromStorage_RoundtripsThroughProto)
 // only exercises generic keys like proxy_url; this proves the new obs key
 // shapes specifically survive the same pipeline unmodified, with no
