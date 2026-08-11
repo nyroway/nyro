@@ -16,10 +16,10 @@
 // ring, so a consumer can have several quotas of the same type at different
 // windows (e.g. requests/1m and requests/1d) sharing one ring.
 //
-// Layer: 0 (foundation) — stdlib only. It lived under internal/proxy/ until
-// storage started importing it for window validation, which made a layer-1
-// package depend on a layer-3 one; hoisting it here removed that inversion.
-// Must not import any other internal package.
+// Layer: 0 (foundation) — stdlib only. It originally lived in the former proxy
+// implementation until storage started importing it for window validation,
+// which made a layer-1 package depend on a layer-3 one; hoisting it here removed
+// that inversion. Must not import any other internal package.
 package quota
 
 import (

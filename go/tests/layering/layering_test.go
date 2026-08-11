@@ -132,12 +132,12 @@ var packageLayer = map[string]int{
 	"internal/telemetry": layerObs,
 
 	// Layer 3 — serve.
-	"internal/router":    layerServe,
-	"internal/proxy":     layerServe,
-	"internal/admin":     layerServe,
-	"internal/dataplane": layerServe,
-	"internal/bootstrap": layerServe,
-	"internal/webui":     layerServe,
+	"internal/router":          layerServe,
+	"internal/gateway":         layerServe,
+	"internal/gateway/runtime": layerServe,
+	"internal/admin":           layerServe,
+	"internal/bootstrap":       layerServe,
+	"internal/webui":           layerServe,
 }
 
 // upwardEdge is a single importer→imported pair that violates the layer rule.
@@ -162,6 +162,20 @@ func TestFoundationSubtreesStayIsolated(t *testing.T) {
 				if !importAllowedByFoundationBoundary(rule, imp) {
 					t.Errorf("foundation boundary: %s imports %s", pkg.name, imp.path)
 				}
+			}
+		}
+	}
+}
+
+func TestGatewayRootDoesNotImportRuntime(t *testing.T) {
+	t.Parallel()
+	for _, pkg := range loadInternalPackages(t) {
+		if pkg.name != "internal/gateway" {
+			continue
+		}
+		for _, imp := range pkg.imports {
+			if packageWithin(imp, "internal/gateway/runtime") {
+				t.Errorf("gateway boundary: %s imports its runtime assembly package %s", pkg.name, imp)
 			}
 		}
 	}
@@ -229,7 +243,7 @@ func TestEveryInternalPackageIsClassified(t *testing.T) {
 
 // pkgInfo is one package and its production imports.
 type pkgInfo struct {
-	name          string   // module-relative, e.g. "internal/proxy"
+	name          string   // module-relative, e.g. "internal/gateway"
 	imports       []string // module-relative internal import paths
 	directImports []directImport
 }

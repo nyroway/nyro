@@ -7,7 +7,7 @@ import (
 )
 
 // ResponseDecoder/Encoder are unused: embeddings takes a verbatim passthrough
-// path in the proxy (no AiResponse round-trip). They exist only to satisfy the
+// path in the Gateway (no AiResponse round-trip). They exist only to satisfy the
 // codec.EndpointHandler interface.
 
 type responseDecoder struct{}

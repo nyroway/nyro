@@ -16,7 +16,7 @@
 //
 // A codec is not an "inbound protocol adapter". The same EndpointHandler
 // serves both directions, and which one it plays is decided per request by
-// internal/proxy/dispatcher.go, not by the package:
+// internal/gateway/dispatcher.go, not by the package:
 //
 //	ingress = the protocol the client spoke
 //	          Decode (client → IR), Format (IR → client)
@@ -43,8 +43,8 @@
 // # Adding an ingress protocol
 //
 // Create the leaf package, declare its ingress routes in Capabilities(), and
-// blank-import it from internal/proxy. There is no route table to edit: the
-// proxy builds one by walking codec.All().
+// blank-import it from internal/gateway. There is no route table to edit: the
+// Gateway builds one by walking codec.All().
 //
 // # Layer and ownership
 //

@@ -1,19 +1,18 @@
-// Package dataplane assembles a ready-to-serve proxy.Gateway from one of the
-// two config sources, together with its observability pipeline.
+// Package runtime assembles a ready-to-serve gateway.Gateway from YAML or
+// config-sync and owns the data plane's telemetry lifecycle.
 //
-// It exists so that `nyro proxy` (standalone data plane) and `nyro serve`
-// (control plane with an embedded data plane) share ONE assembly path. The
-// embedded case differs only in how its config-sync client dials — over an
+// It is shared by the standalone proxy and the data plane embedded in serve.
+// The embedded case differs only in how its config-sync client dials — over an
 // in-process pipe (configsync.ServeInProcess) instead of TCP — so an embedded
 // data plane exercises the same client, cache, snapshot decoding and router
 // wiring as a remote one. Reading storage directly in the embedded case would
 // have been shorter but would have created a second config path free to drift
 // from the distributed one.
 //
-// Layer: 3 (serve) — assembles the data plane for both `nyro proxy` and the
-// embedded plane inside `nyro serve`; may import any lower layer. Nothing
-// below layer 3 may import it.
-package dataplane
+// Layer: 3 (serve) — the Gateway runtime composition root; may import any
+// lower layer and the parent gateway package. Nothing below layer 3 may import
+// it.
+package runtime
 
 import (
 	"context"
@@ -30,7 +29,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/config"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
-	"github.com/nyroway/nyro/go/internal/proxy"
+	"github.com/nyroway/nyro/go/internal/gateway"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
@@ -40,7 +39,8 @@ import (
 const certExpiryCheckInterval = 24 * time.Hour
 
 // Options selects the data plane's config source and how it describes itself
-// to the control plane. Exactly one of ConfigPath or SyncTarget must be set.
+// to the control plane. The CLI requires exactly one of ConfigPath or
+// SyncTarget; Build prefers ConfigPath when both are set.
 type Options struct {
 	// ConfigPath is a standalone YAML config file: the snapshot is built once
 	// at startup and never refreshed. No control plane or database involved.
@@ -85,7 +85,7 @@ type Options struct {
 // The returned Gateway's /readyz reflects cache fill, not storage health. The
 // config-sync client stops when ctx is cancelled; there is no separate stop
 // function to call.
-func Build(ctx context.Context, opts Options) (*proxy.Gateway, *ObsManager, error) {
+func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, error) {
 	switch {
 	case opts.ConfigPath != "":
 		// Standalone YAML: build the config snapshot directly (no DB). The
@@ -106,7 +106,7 @@ func Build(ctx context.Context, opts Options) (*proxy.Gateway, *ObsManager, erro
 		}
 		cache := &configsync.ConfigCache{}
 		cache.Swap(snap)
-		gw := proxy.NewGatewayWithCache(cache)
+		gw := gateway.NewGatewayWithCache(cache)
 
 		// Standalone config is static: the snapshot is already in the cache, so
 		// the initial resolve sees the real (YAML-declared) obs config and no
@@ -123,7 +123,7 @@ func Build(ctx context.Context, opts Options) (*proxy.Gateway, *ObsManager, erro
 	case opts.SyncTarget != "":
 		// config-sync hot-reload: empty cache is filled by the stream.
 		cache := &configsync.ConfigCache{}
-		gw := proxy.NewGatewayWithCache(cache)
+		gw := gateway.NewGatewayWithCache(cache)
 
 		// Build the INITIAL provider from the still-empty cache: it resolves to
 		// the fixed default (logs→stdout, metrics/traces disabled). The real obs
@@ -177,12 +177,12 @@ func servicePort(addr string) string {
 
 // attachObservability wires the initial telemetry.Provider into the Gateway
 // and points the telemetry Stage at the SwappableProvider. gw.Obs/gw.Handles are
-// informational only (the proxy dispatch path does not read them — telemetry
+// informational only (the gateway dispatch path does not read them — telemetry
 // flows entirely through the sp-backed Stage) and reflect the initial provider.
 //
 // RegisterProvider is idempotent and re-pointable, which is what makes it
 // safe for one process to assemble more than one data plane over its lifetime.
-func attachObservability(gw *proxy.Gateway, prov *telemetry.Provider, sp *telemetry.SwappableProvider) {
+func attachObservability(gw *gateway.Gateway, prov *telemetry.Provider, sp *telemetry.SwappableProvider) {
 	gw.Obs = prov
 	gw.Handles = telemetry.NewHandles(prov.Meter)
 	telemetry.RegisterProvider(sp)

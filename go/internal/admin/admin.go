@@ -516,7 +516,7 @@ func parseOptionalInt32(values url.Values, key string) (*int32, error) {
 // testHTTPClient returns the HTTP client used by admin-side upstream discovery
 // and health checks, routed through proxyURL when it's a valid absolute URL.
 // This mirrors the same-purpose logic in the data-plane gateway
-// (internal/proxy/gateway.go's httpClientFor) so an admin test and a real
+// (internal/gateway/gateway.go's httpClientFor) so an admin test and a real
 // request take the same route, but skips caching because these calls are not
 // on the request hot path.
 func testHTTPClient(proxyURL string, timeout time.Duration) *http.Client {

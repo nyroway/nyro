@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/proxy"
+	"github.com/nyroway/nyro/go/internal/gateway"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -120,7 +120,7 @@ func upstreamFor(t *testing.T, cell Cell, scenario string) (tr capturingTranspor
 
 // buildGateway assembles a storage-less gateway with one upstream (cell.Out) and
 // a route mapping routeModel to it, then injects the capturing transport.
-func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey, upstreamModel string) *proxy.Gateway {
+func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey, upstreamModel string) *gateway.Gateway {
 	t.Helper()
 	core := memory.New().Storage()
 	up, err := core.Upstreams().Create(storage.CreateUpstream{
@@ -139,7 +139,7 @@ func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey
 	}); err != nil {
 		t.Fatalf("create route: %v", err)
 	}
-	gw := proxy.NewGateway()
+	gw := gateway.NewGateway()
 	gw.UpstreamTransport = tr
 	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
@@ -154,7 +154,7 @@ func RunCell(t *testing.T, cell Cell, sc Scenario) {
 	t.Helper()
 	tr, model, baseURL, apiKey := upstreamFor(t, cell, sc.Name)
 	gw := buildGateway(t, cell, tr, baseURL, apiKey, model)
-	router := proxy.NewRouter(gw)
+	router := gateway.NewRouter(gw)
 
 	inPath := cell.In.Path
 	if sc.Stream && cell.In.StreamPath != "" {
