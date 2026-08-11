@@ -26,6 +26,7 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 	t.Parallel()
 	llm := foundationBoundary{prefix: "internal/protocol/llm"}
 	platform := foundationBoundary{prefix: "internal/platform", allowThirdParty: true}
+	routerRule := foundationBoundary{prefix: "internal/router"}
 	tests := []struct {
 		name string
 		rule foundationBoundary
@@ -40,6 +41,9 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 		{"platform own subtree", platform, directImport{path: modulePath + "/internal/platform/state"}, true},
 		{"platform third party", platform, directImport{path: "github.com/jackc/pgx/v5"}, true},
 		{"platform protocol", platform, directImport{path: modulePath + "/internal/protocol/llm/spec"}, false},
+		{"router standard library", routerRule, directImport{path: "sort", standard: true}, true},
+		{"router storage", routerRule, directImport{path: modulePath + "/internal/storage"}, false},
+		{"router third party", routerRule, directImport{path: "example.com/dependency"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -63,6 +67,7 @@ type directImport struct {
 var foundationBoundaries = []foundationBoundary{
 	{prefix: "internal/protocol/llm"},
 	{prefix: "internal/platform", allowThirdParty: true},
+	{prefix: "internal/router"},
 }
 
 func importAllowedByFoundationBoundary(rule foundationBoundary, imp directImport) bool {
@@ -109,6 +114,7 @@ var packageLayer = map[string]int{
 	"internal/platform/state/redis":                      layerFoundation,
 	"internal/platform/state/sqlite":                     layerFoundation,
 	"internal/quota":                                     layerFoundation,
+	"internal/router":                                    layerFoundation,
 	"internal/provider":                                  layerFoundation,
 	"internal/telemetry/schema":                          layerFoundation,
 	"internal/version":                                   layerFoundation,
@@ -132,7 +138,6 @@ var packageLayer = map[string]int{
 	"internal/telemetry": layerObs,
 
 	// Layer 3 — serve.
-	"internal/router":          layerServe,
 	"internal/gateway":         layerServe,
 	"internal/gateway/runtime": layerServe,
 	"internal/admin":           layerServe,
@@ -148,9 +153,9 @@ type upwardEdge struct{ from, to string }
 // are removed once their underlying dependency is fixed.
 var knownUpwardEdges = map[upwardEdge]string{}
 
-// TestFoundationSubtreesStayIsolated applies stricter rules inside the two
-// layer-0 subtrees. Numeric layers alone cannot prevent horizontal coupling
-// between packages assigned to the same layer.
+// TestFoundationSubtreesStayIsolated applies stricter rules inside isolated
+// layer-0 packages and subtrees. Numeric layers alone cannot prevent horizontal
+// coupling between packages assigned to the same layer.
 func TestFoundationSubtreesStayIsolated(t *testing.T) {
 	t.Parallel()
 	for _, pkg := range loadInternalPackages(t) {

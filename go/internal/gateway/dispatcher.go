@@ -71,7 +71,8 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress codec.EndpointHandler) 
 	// retrying the same backend up to settings.proxy.max_retries times on a
 	// retry_on_status code or network error, then failing over to the next
 	// backend; stop at the first usable response.
-	ordered := g.Router.Select(route.Upstreams, route.Balance)
+	targets, strategy := routingTargets(route)
+	ordered := g.Router.Select(targets, strategy)
 	ps := resolveProxySettings(g.snapshot())
 	clientModel := req.Model
 	served := false
