@@ -23,7 +23,7 @@ until parity is reached (P0–P6 migration plan).
 | `internal/protocol/llm/` | `protocol/` | Nyro-internal LLM protocol identity, canonical IR, codec interfaces, endpoint registry, and Native/Transform negotiation |
 | `internal/provider/` | `provider/` | `Vendor` interface, 7-step build/parse pipeline, vendor registry |
 | `internal/gateway/` | `proxy/` | Gateway data-plane orchestration, ingress shells, and streaming dual-path (passthrough + IR round-trip) |
-| `internal/router/` | `router/` | model matching, `Model`→`ModelBackend` fan-out, selectors, health |
+| `internal/router/` | `router/` | runtime target selection, weighted/priority/cooldown/latency ordering, health state |
 | `internal/plugin/` | `plugin/` | five-phase lifecycle (`OnRequest`/`OnAccess`/`OnUpstream`/`OnResponse`/`OnLog`) |
 | `internal/admin/` | `admin/` | control plane: keys+quotas, models/routing, providers, OAuth, logs/stats, import/export |
 | `internal/auth/` | `auth/` + `admin/oauth.rs` | inbound API key + quotas; outbound OAuth drivers (Claude/Codex/Vertex) |

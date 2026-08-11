@@ -5,15 +5,13 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 // Key identifies one upstream target for health/latency tracking.
 type Key string
 
-// KeyOf builds the tracking key for a backend (providerID:model).
-func KeyOf(b storage.RouteUpstream) Key { return Key(b.UpstreamID + ":" + b.Model) }
+// KeyOf builds the tracking key for a target (upstreamID:model).
+func KeyOf(target Target) Key { return Key(target.UpstreamID + ":" + target.Model) }
 
 type healthEntry struct {
 	consecFail    int
@@ -38,11 +36,11 @@ func New() *Router {
 	}
 }
 
-// Select returns the model's backends ordered best-first, skipping those in
-// cooldown. If every backend is in cooldown it falls back to all of them (the
+// Select returns the route targets ordered best-first, skipping those in
+// cooldown. If every target is in cooldown it falls back to all of them (the
 // gateway never hard-fails solely due to cooldown). Ordering honours the
-// model's balance strategy.
-func (r *Router) Select(targets []storage.RouteUpstream, balance storage.ModelBalance) []storage.RouteUpstream {
+// requested strategy.
+func (r *Router) Select(targets []Target, strategy Strategy) []Target {
 	if len(targets) <= 1 {
 		return targets
 	}
@@ -50,7 +48,7 @@ func (r *Router) Select(targets []storage.RouteUpstream, balance storage.ModelBa
 	defer r.mu.RUnlock()
 
 	now := time.Now()
-	healthy := make([]storage.RouteUpstream, 0, len(targets))
+	healthy := make([]Target, 0, len(targets))
 	for _, b := range targets {
 		if h, ok := r.health[KeyOf(b)]; ok && now.Before(h.cooldownUntil) {
 			continue
@@ -61,19 +59,19 @@ func (r *Router) Select(targets []storage.RouteUpstream, balance storage.ModelBa
 		healthy = append(healthy, targets...) // all cooling → try anyway
 	}
 
-	switch balance {
-	case storage.BalancePriority:
+	switch strategy {
+	case StrategyPriority:
 		sort.SliceStable(healthy, func(i, j int) bool { return healthy[i].Priority < healthy[j].Priority })
-	case storage.BalanceLatency:
+	case StrategyLatency:
 		sort.SliceStable(healthy, func(i, j int) bool {
 			return r.latency[KeyOf(healthy[i])] < r.latency[KeyOf(healthy[j])]
 		})
-	case storage.BalanceCooldown:
+	case StrategyCooldown:
 		// Least-recently-used first.
 		sort.SliceStable(healthy, func(i, j int) bool {
 			return r.lastUsed[KeyOf(healthy[i])].Before(r.lastUsed[KeyOf(healthy[j])])
 		})
-	case storage.BalanceWeighted, "":
+	case StrategyWeighted, "":
 		healthy = weightedOrder(healthy)
 	}
 	return healthy
@@ -129,35 +127,35 @@ func (r *Router) IsHealthy(k Key) bool {
 	return true
 }
 
-// weightedOrder returns backends in a weighted-random order (higher weight →
-// more likely first). Backends with weight ≤ 0 are treated as weight 1.
-func weightedOrder(backends []storage.RouteUpstream) []storage.RouteUpstream {
-	rem := make([]storage.RouteUpstream, len(backends))
-	copy(rem, backends)
-	out := make([]storage.RouteUpstream, 0, len(backends))
-	for len(rem) > 0 {
+// weightedOrder returns targets in a weighted-random order (higher weight →
+// more likely first). Targets with weight ≤ 0 are treated as weight 1.
+func weightedOrder(targets []Target) []Target {
+	remaining := make([]Target, len(targets))
+	copy(remaining, targets)
+	ordered := make([]Target, 0, len(targets))
+	for len(remaining) > 0 {
 		total := 0
-		for _, b := range rem {
-			w := int(b.Weight)
-			if w <= 0 {
-				w = 1
+		for _, target := range remaining {
+			weight := int(target.Weight)
+			if weight <= 0 {
+				weight = 1
 			}
-			total += w
+			total += weight
 		}
 		pick := rand.Intn(total)
-		cum := 0
-		for i, b := range rem {
-			w := int(b.Weight)
-			if w <= 0 {
-				w = 1
+		cumulative := 0
+		for i, target := range remaining {
+			weight := int(target.Weight)
+			if weight <= 0 {
+				weight = 1
 			}
-			cum += w
-			if pick < cum {
-				out = append(out, b)
-				rem = append(rem[:i], rem[i+1:]...)
+			cumulative += weight
+			if pick < cumulative {
+				ordered = append(ordered, target)
+				remaining = append(remaining[:i], remaining[i+1:]...)
 				break
 			}
 		}
 	}
-	return out
+	return ordered
 }
