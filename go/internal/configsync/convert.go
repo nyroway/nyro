@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strconv"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
@@ -27,10 +28,10 @@ func isDataPlaneSettingKey(key string) bool {
 // SnapshotFromProto converts a wire ConfigSnapshot into the gateway's internal
 // read model. Upstreams, routes (with targets), consumers (keys — prefix+hash
 // only — route grants, and quotas), and settings are all carried into the cache.
-func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
-	b := &Snapshot{}
+func SnapshotFromProto(in *pb.ConfigSnapshot) *configsnapshot.Snapshot {
+	b := &configsnapshot.Builder{}
 	if in == nil {
-		return b.Done()
+		return b.Build()
 	}
 
 	for _, u := range in.GetUpstreams() {
@@ -102,7 +103,7 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *ConfigSnapshot {
 		b.SetSetting(k, v)
 	}
 
-	return b.Done()
+	return b.Build()
 }
 
 // SnapshotFromStorage builds a wire ConfigSnapshot by querying storage once.

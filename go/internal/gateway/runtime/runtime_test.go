@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/configsync"
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
@@ -124,16 +124,16 @@ consumers: []
 	_ = obs.Shutdown(context.Background())
 }
 
-// cacheWithSettings builds a configsync.ConfigCache pre-loaded with the given
+// cacheWithSettings builds a snapshot.Cache pre-loaded with the given
 // obs_* settings, mirroring what a control-plane push (or a standalone YAML
 // snapshot) would populate.
-func cacheWithSettings(settings map[string]string) *configsync.ConfigCache {
-	var b configsync.Snapshot
+func cacheWithSettings(settings map[string]string) *configsnapshot.Cache {
+	var b configsnapshot.Builder
 	for k, v := range settings {
 		b.SetSetting(k, v)
 	}
-	cache := &configsync.ConfigCache{}
-	cache.Swap(b.Done())
+	cache := &configsnapshot.Cache{}
+	cache.Swap(b.Build())
 	return cache
 }
 

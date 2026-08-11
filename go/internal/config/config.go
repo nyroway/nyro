@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/nyroway/nyro/go/internal/configsync"
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -552,17 +552,17 @@ func flattenObservabilitySignal(out map[string]string, signal schema.Signal, exp
 	return nil
 }
 
-// BuildSnapshot constructs a configsync.ConfigSnapshot directly from the YAML
+// BuildSnapshot constructs a snapshot.Snapshot directly from the YAML
 // config (no persistent storage). This is the standalone-mode path: `nyro
-// gateway --config-file` swaps this snapshot into the gateway's cache so config
+// proxy --config` swaps this snapshot into the gateway's cache so config
 // reads work without an admin or DB. It seeds a throwaway in-memory backend
 // via the same ApplyTo used by persistent backends and reads the snapshot
-// back through configsync.LoadFromStorage — there is no separate
+// back through snapshot.LoadFromStorage — there is no separate
 // synthetic-ID construction path to keep in sync.
-func (c *Config) BuildSnapshot() (*configsync.ConfigSnapshot, error) {
+func (c *Config) BuildSnapshot() (*configsnapshot.Snapshot, error) {
 	tmp := memory.New()
 	if err := c.ApplyTo(tmp.Storage()); err != nil {
 		return nil, err
 	}
-	return configsync.LoadFromStorage(tmp.Storage())
+	return configsnapshot.LoadFromStorage(tmp.Storage())
 }

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/configsync"
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
@@ -16,7 +16,7 @@ import (
 // does: an initial provider resolved from cache, a SwappableProvider, and the
 // rebuild callback registered on the cache. Returns the manager and cache so a
 // test can push new snapshots and observe the hot-reload.
-func buildManager(t *testing.T, cache *configsync.ConfigCache) *ObsManager {
+func buildManager(t *testing.T, cache *configsnapshot.Cache) *ObsManager {
 	t.Helper()
 	obsCfg := resolveObsConfig(cache)
 	prov, err := telemetry.NewProvider(context.Background(), obsCfg)
@@ -32,12 +32,12 @@ func buildManager(t *testing.T, cache *configsync.ConfigCache) *ObsManager {
 
 // snapshotWith builds a config snapshot carrying the given settings, mirroring
 // what a control-plane push populates.
-func snapshotWith(settings map[string]string) *configsync.ConfigSnapshot {
-	var b configsync.Snapshot
+func snapshotWith(settings map[string]string) *configsnapshot.Snapshot {
+	var b configsnapshot.Builder
 	for k, v := range settings {
 		b.SetSetting(k, v)
 	}
-	return b.Done()
+	return b.Build()
 }
 
 // TestObsManager_HotReloadSwitchesLogsToOTLP is the regression test for the
@@ -45,7 +45,7 @@ func snapshotWith(settings map[string]string) *configsync.ConfigSnapshot {
 // empty cache (→ stdout logs default), and must switch to the otlp exporter the
 // control plane pushes with the first snapshot — WITHOUT a restart.
 func TestObsManager_HotReloadSwitchesLogsToOTLP(t *testing.T) {
-	cache := &configsync.ConfigCache{} // empty: initial resolve → stdout default
+	cache := &configsnapshot.Cache{} // empty: initial resolve → stdout default
 	mgr := buildManager(t, cache)
 
 	if got := mgr.lastCfg.Logs.Kind; got != schema.ExporterKindStdout {
@@ -78,7 +78,7 @@ func TestObsManager_HotReloadSwitchesLogsToOTLP(t *testing.T) {
 // not change obs settings (the common case — most pushes are upstream/route
 // edits) does not churn the provider.
 func TestObsManager_RebuildIsNoOpWhenConfigUnchanged(t *testing.T) {
-	cache := &configsync.ConfigCache{}
+	cache := &configsnapshot.Cache{}
 	mgr := buildManager(t, cache)
 	initial := mgr.current
 
@@ -96,7 +96,7 @@ func TestObsManager_RebuildIsNoOpWhenConfigUnchanged(t *testing.T) {
 func TestObsManager_PrometheusServerLifecycle(t *testing.T) {
 	addr := freePort(t)
 
-	cache := &configsync.ConfigCache{}
+	cache := &configsnapshot.Cache{}
 	mgr := buildManager(t, cache) // starts with stdout logs, no metrics server
 
 	if mgr.metricsSrv != nil {

@@ -227,6 +227,20 @@ func TestGatewayRootDoesNotImportRuntime(t *testing.T) {
 	}
 }
 
+func TestGatewayRootDoesNotImportConfigSync(t *testing.T) {
+	t.Parallel()
+	for _, pkg := range loadInternalPackages(t) {
+		if pkg.name != "internal/gateway" {
+			continue
+		}
+		for _, imp := range pkg.imports {
+			if packageWithin(imp, "internal/configsync") {
+				t.Errorf("gateway boundary: %s imports config-sync transport package %s", pkg.name, imp)
+			}
+		}
+	}
+}
+
 // TestNoUpwardImports is the actual constraint: no internal package may import
 // a package from a higher layer, except the frozen edges above.
 func TestNoUpwardImports(t *testing.T) {

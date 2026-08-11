@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/configsync"
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/router"
@@ -26,7 +26,7 @@ import (
 // (none/stdout/otlp). Router selects among a route's upstreams and tracks
 // failover.
 type Gateway struct {
-	Cache  *configsync.ConfigCache
+	Cache  *configsnapshot.Cache
 	Quota  *quota.Counter
 	Router *router.Router
 
@@ -82,19 +82,19 @@ func (g *Gateway) chain() *pipeline.Chain {
 	return g.stageChain
 }
 
-// NewGateway builds a Gateway with a fresh, empty ConfigCache. Tests use this
+// NewGateway builds a Gateway with a fresh, empty snapshot Cache. Tests use this
 // and populate the cache directly via Cache.LoadAndSwap / Cache.Swap. Production
 // callers use NewGatewayWithCache through gateway/runtime with a snapshot built
 // from YAML or filled by the config-sync stream.
 func NewGateway() *Gateway {
-	return NewGatewayWithCache(&configsync.ConfigCache{})
+	return NewGatewayWithCache(&configsnapshot.Cache{})
 }
 
-// NewGatewayWithCache builds a Gateway using a caller-provided ConfigCache
+// NewGatewayWithCache builds a Gateway using a caller-provided snapshot Cache
 // (standalone-YAML and config-sync path): the caller builds the snapshot from YAML or
 // from the config-sync stream and swaps it in, so the gateway never needs storage for
 // config. Obs/Handles are attached by gateway/runtime after construction.
-func NewGatewayWithCache(cache *configsync.ConfigCache) *Gateway {
+func NewGatewayWithCache(cache *configsnapshot.Cache) *Gateway {
 	return &Gateway{
 		Cache:  cache,
 		Quota:  quota.New(),
@@ -105,11 +105,11 @@ func NewGatewayWithCache(cache *configsync.ConfigCache) *Gateway {
 // snapshot returns the current config snapshot, falling back to an empty one so
 // callers never see a nil pointer (readers on an empty snapshot simply report
 // "not found", matching storage behavior before any config is loaded).
-func (g *Gateway) snapshot() *configsync.ConfigSnapshot {
+func (g *Gateway) snapshot() *configsnapshot.Snapshot {
 	if s := g.Cache.Load(); s != nil {
 		return s
 	}
-	return &configsync.ConfigSnapshot{}
+	return &configsnapshot.Snapshot{}
 }
 
 // proxySettings is the resolved settings.proxy configuration for the current
@@ -130,7 +130,7 @@ var defaultRetryOnStatus = map[int]bool{429: true, 500: true, 502: true, 503: tr
 // internal/config.flattenSettings under the proxy.* dot-key namespace),
 // applying the config-schema plan's example defaults for anything absent or
 // unparseable.
-func resolveProxySettings(snap *configsync.ConfigSnapshot) proxySettings {
+func resolveProxySettings(snap *configsnapshot.Snapshot) proxySettings {
 	ps := proxySettings{
 		RequestTimeout: 120 * time.Second,
 		ConnectTimeout: 30 * time.Second,

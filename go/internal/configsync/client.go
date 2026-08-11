@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
 	"github.com/nyroway/nyro/go/internal/version"
 )
@@ -30,7 +31,7 @@ import (
 // push model.
 type ConfigClient struct {
 	target string
-	cache  *ConfigCache
+	cache  *configsnapshot.Cache
 
 	// Node identity, generated once at construction and reused across
 	// reconnects so the admin's node registry sees a stable identity rather
@@ -66,7 +67,7 @@ type ConfigClient struct {
 // before constructing the client. When set (see pki.LoadClientTLS), the client
 // authenticates itself to admin with a client certificate and verifies admin's
 // server certificate against the configured CA.
-func NewConfigClient(target string, cache *ConfigCache, servicePort string, tlsConfig *tls.Config) *ConfigClient {
+func NewConfigClient(target string, cache *configsnapshot.Cache, servicePort string, tlsConfig *tls.Config) *ConfigClient {
 	creds := insecure.NewCredentials()
 	if tlsConfig != nil {
 		creds = credentials.NewTLS(tlsConfig)

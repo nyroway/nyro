@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 )
 
 // TestServeInProcess_SubscriberIsLabelledInProcess covers the embedded data
@@ -20,7 +22,7 @@ func TestServeInProcess_SubscriberIsLabelledInProcess(t *testing.T) {
 	dialOpts, shutdown := ServeInProcess(ctx, srv)
 	defer shutdown()
 
-	cache := &ConfigCache{}
+	cache := &configsnapshot.Cache{}
 	client := NewConfigClient(InProcessTarget, cache, "19530", nil)
 	client.SetDialOptions(dialOpts...)
 	go func() { _ = client.Run(ctx) }()

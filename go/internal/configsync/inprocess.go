@@ -41,7 +41,7 @@ const ConnModeInProcess = "inprocess"
 // This is what lets `nyro serve` run an embedded data plane over the SAME
 // config-sync code path as a standalone `nyro proxy`: the embedded proxy builds
 // a real ConfigClient, receives real ConfigSnapshot messages, and fills a real
-// ConfigCache. Only the dial target differs. The alternative — having the
+// snapshot.Cache. Only the dial target differs. The alternative — having the
 // embedded data plane read storage directly — would have created a second
 // config path that could drift from the distributed one.
 //

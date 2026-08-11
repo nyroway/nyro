@@ -19,7 +19,9 @@ until parity is reached (P0–P6 migration plan).
 
 | Path | Rust source | Responsibility |
 |---|---|---|
-| `internal/config/` | `config.rs` | bootstrap config only (live config lives in storage) |
+| `internal/config/` | `config.rs` | standalone YAML loading and storage seeding |
+| `internal/config/snapshot/` | — | immutable runtime config, builder, atomic publication cache, and storage-backed loading |
+| `internal/configsync/` | — | gRPC/protobuf transport, authentication, conversion, and node tracking |
 | `internal/protocol/llm/` | `protocol/` | Nyro-internal LLM protocol identity, canonical IR, codec interfaces, endpoint registry, and Native/Transform negotiation |
 | `internal/provider/` | `provider/` | `Vendor` interface, 7-step build/parse pipeline, vendor registry |
 | `internal/gateway/` | `proxy/` | Gateway data-plane orchestration, ingress shells, and streaming dual-path (passthrough + IR round-trip) |
