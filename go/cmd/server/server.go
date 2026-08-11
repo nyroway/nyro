@@ -25,7 +25,8 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
-	"github.com/nyroway/nyro/go/internal/dataplane"
+	"github.com/nyroway/nyro/go/internal/gateway"
+	gatewayruntime "github.com/nyroway/nyro/go/internal/gateway/runtime"
 	infradatabase "github.com/nyroway/nyro/go/internal/platform/database"
 	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
 	infraobserve "github.com/nyroway/nyro/go/internal/platform/observe"
@@ -33,7 +34,6 @@ import (
 	observesqlite "github.com/nyroway/nyro/go/internal/platform/observe/sqlite"
 	stateredis "github.com/nyroway/nyro/go/internal/platform/state/redis"
 	statesqlite "github.com/nyroway/nyro/go/internal/platform/state/sqlite"
-	"github.com/nyroway/nyro/go/internal/proxy"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 	"github.com/nyroway/nyro/go/internal/webui"
@@ -64,7 +64,7 @@ func defaultDSN() string {
 // `nyro serve` is the single-command deployment: the REST API + WebUI on
 // --listen, and — unless --disable-proxy is set — an embedded data plane on
 // --proxy-listen, so one process is a complete, usable nyro. The embedded data
-// plane is assembled by internal/dataplane over an in-process config-sync
+// plane is assembled by internal/gateway/runtime over an in-process config-sync
 // channel, i.e. the exact code path a remote `nyro proxy` uses; it never reads
 // storage directly.
 //
@@ -377,7 +377,7 @@ func NewCmd() *cobra.Command {
 		var dataPlaneHandler http.Handler
 		var dataPlaneAfterShutdown func()
 		if !disableProxy {
-			gw, obsMgr, err := dataplane.Build(ctx, dataplane.Options{
+			gw, obsMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
 				SyncTarget:   configsync.InProcessTarget,
 				SyncDialOpts: inProcDialOpts,
 				ListenAddr:   proxyAddr,
@@ -385,11 +385,11 @@ func NewCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("embedded data plane: %w", err)
 			}
-			dataPlaneHandler = proxy.NewRouter(gw)
+			dataPlaneHandler = gateway.NewRouter(gw)
 			var shutdownOnce sync.Once
 			dataPlaneAfterShutdown = func() {
 				shutdownOnce.Do(func() {
-					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), dataplane.ShutdownTimeout)
+					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), gatewayruntime.ShutdownTimeout)
 					defer shutdownCancel()
 					if err := obsMgr.Shutdown(shutdownCtx); err != nil {
 						slog.Warn("embedded data plane observability shutdown failed", "error", err)

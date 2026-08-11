@@ -1,4 +1,4 @@
-package proxy
+package gateway
 
 import (
 	"errors"
@@ -22,7 +22,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
-// NewRouter builds the chi router with the proxy routes wired.
+// NewRouter builds the chi router with the Gateway routes wired.
 func NewRouter(gw *Gateway) chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)

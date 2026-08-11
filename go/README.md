@@ -22,7 +22,7 @@ until parity is reached (P0–P6 migration plan).
 | `internal/config/` | `config.rs` | bootstrap config only (live config lives in storage) |
 | `internal/protocol/llm/` | `protocol/` | Nyro-internal LLM protocol identity, canonical IR, codec interfaces, endpoint registry, and Native/Transform negotiation |
 | `internal/provider/` | `provider/` | `Vendor` interface, 7-step build/parse pipeline, vendor registry |
-| `internal/proxy/` | `proxy/` | single `dispatch_pipeline`, ingress shells, streaming dual-path (passthrough + IR round-trip) |
+| `internal/gateway/` | `proxy/` | Gateway data-plane orchestration, ingress shells, and streaming dual-path (passthrough + IR round-trip) |
 | `internal/router/` | `router/` | model matching, `Model`→`ModelBackend` fan-out, selectors, health |
 | `internal/plugin/` | `plugin/` | five-phase lifecycle (`OnRequest`/`OnAccess`/`OnUpstream`/`OnResponse`/`OnLog`) |
 | `internal/admin/` | `admin/` | control plane: keys+quotas, models/routing, providers, OAuth, logs/stats, import/export |

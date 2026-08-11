@@ -4,8 +4,8 @@
 // the upstream response verbatim — there is no AiResponse round-trip.
 //
 // Ported from crates/nyro-core/src/protocol/codec/openai/compatible/embeddings.rs.
-// The Response/Stream codecs are stubs; the proxy takes a verbatim path for
-// this endpoint (see proxy.Dispatch).
+// The Response/Stream codecs are stubs; the Gateway takes a verbatim path for
+// this endpoint (see gateway.Dispatch).
 package embeddings
 
 // BodyKey is the vendor-ingress key under which the original request body is

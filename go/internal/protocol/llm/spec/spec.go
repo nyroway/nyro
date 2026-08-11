@@ -216,7 +216,7 @@ type IngressRoute struct {
 // on it, not in anticipation.
 type EndpointCapabilities struct {
 	// IngressRoutes are the client-facing routes this codec claims.
-	// Consumer: proxy route assembly, which walks codec.All().
+	// Consumer: Gateway route assembly, which walks codec.All().
 	IngressRoutes []IngressRoute
 	// Streaming reports whether the endpoint produces incremental responses.
 	// Consumer: the dispatcher, to decide whether an upstream body is streamed

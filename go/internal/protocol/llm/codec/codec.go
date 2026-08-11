@@ -32,7 +32,7 @@ type RequestDecoder interface {
 // The ingress shell hands over the matched route parameters verbatim and calls
 // DecodeWithPath instead of Decode. Interpreting them is the codec's job: the
 // URL shape is part of the wire protocol, so it belongs to the package that
-// defines the protocol rather than to the proxy.
+// defines the protocol rather than to the Gateway.
 type PathDecoder interface {
 	DecodeWithPath(body []byte, params map[string]string) (*ir.AiRequest, error)
 }

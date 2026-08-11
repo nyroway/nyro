@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/proxy"
+	"github.com/nyroway/nyro/go/internal/gateway"
 )
 
 // TestRecordScenarios is a gated one-off that records real cassettes for the
@@ -72,7 +72,7 @@ func TestRecordScenarios(t *testing.T) {
 					Out: Outbound{Provider: tg.provider, Protocol: tg.protocol},
 				}
 				gw := buildGateway(t, cell, tr, tg.baseURL, tg.key, model)
-				router := proxy.NewRouter(gw)
+				router := gateway.NewRouter(gw)
 				req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(sc.body))
 				req.Header.Set("Content-Type", "application/json")
 				rec := httptest.NewRecorder()

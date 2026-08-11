@@ -62,7 +62,7 @@ func TestRegisteredEndpoints(t *testing.T) {
 }
 
 // TestIngressRoutesAreUniqueAndWellFormed guards the route table that
-// proxy.NewRouter builds from these declarations: chi panics on a duplicate
+// gateway.NewRouter builds from these declarations: chi panics on a duplicate
 // pattern, and a missing method or pattern would silently claim nothing.
 func TestIngressRoutesAreUniqueAndWellFormed(t *testing.T) {
 	t.Parallel()

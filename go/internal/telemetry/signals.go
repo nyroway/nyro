@@ -8,12 +8,12 @@ import (
 // LogCtx carries the per-request fields captured across the dispatch lifecycle
 // (protocols, models, method/path, upstream status/latency) so the telemetry
 // Stage can populate the audit LogRecord + metric/span attributes. Mirrors the Rust
-// LogBuilder shape; fields are EXPORTED so the dispatcher (package proxy) can
+// LogBuilder shape; fields are EXPORTED so the dispatcher (package gateway) can
 // populate them when wiring T3.3.
 //
-// This is the observability copy. The proxy package retains its own unexported
+// This is the observability copy. The gateway package retains its own unexported
 // logCtx for now (T3.3 switches the dispatcher to this one and deletes the
-// proxy original, keeping T3.2 and T3.3 independently green).
+// gateway original, keeping T3.2 and T3.3 independently green).
 type LogCtx struct {
 	ConsumerKeyName    string
 	ConsumerKeyPreview string
@@ -29,7 +29,7 @@ type LogCtx struct {
 }
 
 // NewRequestID returns a short random request identifier ("req_" + 16 hex
-// chars). It is the observability copy of proxy.newRequestID; non-fatal on
+// chars). It is the observability copy of gateway.newRequestID; non-fatal on
 // rand failure (id remains valid, just less random). Used by the telemetry
 // Stage to stamp nyro.log.id on the audit LogRecord.
 func NewRequestID() string {

@@ -14,8 +14,8 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
-	"github.com/nyroway/nyro/go/internal/dataplane"
-	"github.com/nyroway/nyro/go/internal/proxy"
+	"github.com/nyroway/nyro/go/internal/gateway"
+	gatewayruntime "github.com/nyroway/nyro/go/internal/gateway/runtime"
 )
 
 // NewCmd builds the proxy (data-plane) subcommand.
@@ -89,7 +89,7 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		gw, obsMgr, err := dataplane.Build(ctx, dataplane.Options{
+		gw, obsMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
 			ConfigPath: cfgPath,
 			SyncTarget: configSyncAddr,
 			SyncTLS:    configTLS,
@@ -100,14 +100,14 @@ func NewCmd() *cobra.Command {
 			return err
 		}
 		defer func() {
-			shutCtx, shutCancel := context.WithTimeout(context.Background(), dataplane.ShutdownTimeout)
+			shutCtx, shutCancel := context.WithTimeout(context.Background(), gatewayruntime.ShutdownTimeout)
 			defer shutCancel()
 			if err := obsMgr.Shutdown(shutCtx); err != nil {
 				slog.Warn("observability provider shutdown failed", "error", err)
 			}
 		}()
 
-		engine := proxy.NewRouter(gw)
+		engine := gateway.NewRouter(gw)
 		return bootstrap.RunServer(engine, addr)
 	}
 	return cmd

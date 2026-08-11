@@ -1,4 +1,4 @@
-package proxy
+package gateway
 
 import (
 	"encoding/json"
@@ -84,8 +84,8 @@ func (g *Gateway) chain() *pipeline.Chain {
 
 // NewGateway builds a Gateway with a fresh, empty ConfigCache. Tests use this
 // and populate the cache directly via Cache.LoadAndSwap / Cache.Swap. Production
-// callers (cmd/gateway) use NewGatewayWithCache with a snapshot built from YAML
-// or filled by the config-sync stream.
+// callers use NewGatewayWithCache through gateway/runtime with a snapshot built
+// from YAML or filled by the config-sync stream.
 func NewGateway() *Gateway {
 	return NewGatewayWithCache(&configsync.ConfigCache{})
 }
@@ -93,7 +93,7 @@ func NewGateway() *Gateway {
 // NewGatewayWithCache builds a Gateway using a caller-provided ConfigCache
 // (standalone-YAML and config-sync path): the caller builds the snapshot from YAML or
 // from the config-sync stream and swaps it in, so the gateway never needs storage for
-// config. Obs/Handles are attached by cmd/gateway after construction.
+// config. Obs/Handles are attached by gateway/runtime after construction.
 func NewGatewayWithCache(cache *configsync.ConfigCache) *Gateway {
 	return &Gateway{
 		Cache:  cache,
