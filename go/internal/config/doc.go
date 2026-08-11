@@ -9,11 +9,9 @@
 // Layer: 1 (data) — may import internal/protocol/llm, layer 0, storage, and
 // configsync.
 //
-// It also imports observability (layer 2), but only for the exporter-registry
-// contract (Signal, ExporterDef, ExportersFor) used to validate the
-// settings.observability.* YAML block — not for instrumentation. That
-// contract is really layer-0 metadata living inside a layer-2 package; see
-// the layering test's KnownUpwardEdges for the tracking note.
+// It imports telemetry/schema (layer 0) for the exporter registry used to
+// validate the settings.observability.* YAML block. It does not import the
+// telemetry runtime.
 //
 // Must not import layer 3 (proxy, router, admin, dataplane, bootstrap).
 package config

@@ -8,6 +8,8 @@ import (
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 // TestNewProvider_AllDisabled constructs a provider with every signal
@@ -39,9 +41,9 @@ func TestNewProvider_AllDisabled(t *testing.T) {
 // error.
 func TestNewProvider_StdoutAllSignals(t *testing.T) {
 	p, err := NewProvider(context.Background(), ObsConfig{
-		Logs:    SignalConfig{Kind: ExporterKindStdout},
-		Metrics: SignalConfig{Kind: ExporterKindStdout},
-		Traces:  SignalConfig{Kind: ExporterKindStdout},
+		Logs:    SignalConfig{Kind: schema.ExporterKindStdout},
+		Metrics: SignalConfig{Kind: schema.ExporterKindStdout},
+		Traces:  SignalConfig{Kind: schema.ExporterKindStdout},
 	})
 	if err != nil {
 		t.Fatalf("stdout all signals: unexpected error: %v", err)
@@ -63,7 +65,7 @@ func TestNewProvider_StdoutAllSignals(t *testing.T) {
 // "endpoint" Param returns an error rather than silently dropping data.
 func TestNewProvider_OTLPMissingEndpoint(t *testing.T) {
 	_, err := NewProvider(context.Background(), ObsConfig{
-		Logs: SignalConfig{Kind: ExporterKindOTLP},
+		Logs: SignalConfig{Kind: schema.ExporterKindOTLP},
 	})
 	if err == nil {
 		t.Fatal("otlp logs with empty endpoint: want error, got nil")
@@ -78,9 +80,9 @@ func TestNewProvider_OTLPPerSignalMissingEndpoint(t *testing.T) {
 		name string
 		cfg  func() ObsConfig
 	}{
-		{"logs", func() ObsConfig { return ObsConfig{Logs: SignalConfig{Kind: ExporterKindOTLP}} }},
-		{"metrics", func() ObsConfig { return ObsConfig{Metrics: SignalConfig{Kind: ExporterKindOTLP}} }},
-		{"traces", func() ObsConfig { return ObsConfig{Traces: SignalConfig{Kind: ExporterKindOTLP}} }},
+		{"logs", func() ObsConfig { return ObsConfig{Logs: SignalConfig{Kind: schema.ExporterKindOTLP}} }},
+		{"metrics", func() ObsConfig { return ObsConfig{Metrics: SignalConfig{Kind: schema.ExporterKindOTLP}} }},
+		{"traces", func() ObsConfig { return ObsConfig{Traces: SignalConfig{Kind: schema.ExporterKindOTLP}} }},
 	}
 	for _, tc := range cases {
 		if _, err := NewProvider(context.Background(), tc.cfg()); err == nil {
@@ -96,9 +98,9 @@ func TestNewProvider_OTLPPerSignalMissingEndpoint(t *testing.T) {
 func TestNewProvider_OTLPWithEndpoint(t *testing.T) {
 	endpoint := "http://127.0.0.1:65535" // unreachable, but exporter builds fine
 	p, err := NewProvider(context.Background(), ObsConfig{
-		Logs:    SignalConfig{Kind: ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint}},
-		Metrics: SignalConfig{Kind: ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint, "interval": "5s"}},
-		Traces:  SignalConfig{Kind: ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint, "interval": "5s"}},
+		Logs:    SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint}},
+		Metrics: SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint, "interval": "5s"}},
+		Traces:  SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint, "interval": "5s"}},
 	})
 	if err != nil {
 		t.Fatalf("otlp with endpoint: unexpected error: %v", err)
@@ -110,7 +112,7 @@ func TestNewProvider_OTLPWithEndpoint(t *testing.T) {
 // registered in the metricsBuilders map (not just valid per the exporter
 // registry).
 func TestMetricsBuilders_HasPrometheus(t *testing.T) {
-	if _, ok := metricsBuilders(context.Background())[ExporterKindPrometheus]; !ok {
+	if _, ok := metricsBuilders(context.Background())[schema.ExporterKindPrometheus]; !ok {
 		t.Fatal("metricsBuilders: no entry for ExporterKindPrometheus")
 	}
 }
@@ -120,7 +122,7 @@ func TestMetricsBuilders_HasPrometheus(t *testing.T) {
 // populated end-to-end from the configured Params.
 func TestNewProvider_MetricsPrometheus(t *testing.T) {
 	p, err := NewProvider(context.Background(), ObsConfig{
-		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":19464", "path": "/metrics"}},
+		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus, Params: map[string]string{"listen": ":19464", "path": "/metrics"}},
 	})
 	if err != nil {
 		t.Fatalf("metrics Kind=prometheus: unexpected error: %v", err)
@@ -142,7 +144,7 @@ func TestNewProvider_MetricsPrometheus(t *testing.T) {
 // http.ListenAndServe bind an arbitrary port.
 func TestNewProvider_MetricsPrometheusDefaultListen(t *testing.T) {
 	p, err := NewProvider(context.Background(), ObsConfig{
-		Metrics: SignalConfig{Kind: ExporterKindPrometheus},
+		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus},
 	})
 	if err != nil {
 		t.Fatalf("metrics Kind=prometheus (no params): unexpected error: %v", err)
@@ -159,7 +161,7 @@ func TestNewProvider_MetricsPrometheusDefaultListen(t *testing.T) {
 // when scraped, without asserting on specific metric content.
 func TestNewProvider_MetricsPrometheusHandlerServes(t *testing.T) {
 	p, err := NewProvider(context.Background(), ObsConfig{
-		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":19465"}},
+		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus, Params: map[string]string{"listen": ":19465"}},
 	})
 	if err != nil {
 		t.Fatalf("setup: unexpected error: %v", err)
@@ -186,7 +188,7 @@ func TestNewProvider_MetricsPrometheusHandlerServes(t *testing.T) {
 // serves.
 func TestNewProvider_MetricsPrometheusRoundTrip(t *testing.T) {
 	p, err := NewProvider(context.Background(), ObsConfig{
-		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":19466"}},
+		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus, Params: map[string]string{"listen": ":19466"}},
 	})
 	if err != nil {
 		t.Fatalf("setup: unexpected error: %v", err)
@@ -218,7 +220,7 @@ func TestNewProvider_MetricsPrometheusRoundTrip(t *testing.T) {
 // between requests — repeated collects always report the running total.
 func TestNewProvider_MetricsPrometheusCumulative(t *testing.T) {
 	p, err := NewProvider(context.Background(), ObsConfig{
-		Metrics: SignalConfig{Kind: ExporterKindPrometheus, Params: map[string]string{"listen": ":19467"}},
+		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus, Params: map[string]string{"listen": ":19467"}},
 	})
 	if err != nil {
 		t.Fatalf("setup: unexpected error: %v", err)

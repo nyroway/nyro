@@ -26,6 +26,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 // ObsProvider assembles the OTel LoggerProvider / MeterProvider / TracerProvider
@@ -42,7 +44,7 @@ type ObsProvider struct {
 	Tracer trace.Tracer
 
 	// PromHandler and PromListen are populated when Metrics.Kind ==
-	// ExporterKindPrometheus by the prometheus builder in metricsBuilders.
+	// schema.ExporterKindPrometheus by the prometheus builder in metricsBuilders.
 	// Nil/empty otherwise; the gateway (Task 6) uses PromHandler!=nil to
 	// decide whether to start a second HTTP server on PromListen.
 	PromHandler http.Handler
@@ -54,10 +56,9 @@ type ObsProvider struct {
 
 // defaultMetricInterval is used for the metric PeriodicReader export interval
 // (and, for otlp traces, the batch timeout) when the signal's Params carries
-// no "interval" field — e.g. the stdout exporter, whose field schema
-// (exporter.go's stdoutFields) is empty. It matches the otlp exporter's own
-// FieldDef default ("5s"), keeping stdout and otlp on the same cadence by
-// default as before this task's per-signal split.
+// no "interval" field — e.g. the stdout exporter, whose field schema in
+// telemetry/schema is empty. It matches the otlp exporter's own FieldDef
+// default ("5s"), keeping stdout and otlp on the same cadence by default.
 const defaultMetricInterval = 5 * time.Second
 
 // parseDuration parses a duration string, returning ok=false for an empty or
@@ -76,7 +77,7 @@ func parseDuration(s string) (time.Duration, bool) {
 // requireOTLPEndpoint returns params["endpoint"], failing if it is empty.
 // Fail-fast: an otlp exporter without an endpoint would silently drop
 // exported signals, so construction must refuse rather than proceed with "".
-func requireOTLPEndpoint(signal Signal, params map[string]string) (string, error) {
+func requireOTLPEndpoint(signal schema.Signal, params map[string]string) (string, error) {
 	endpoint := params["endpoint"]
 	if endpoint == "" {
 		return "", fmt.Errorf("observability: otlp exporter for signal %q requires an endpoint", signal)
@@ -120,16 +121,16 @@ func otlpSignalURL(endpoint, defaultPath string) string {
 }
 
 // exporterKindValid reports whether kind is registered for signal per the
-// exporter registry (exporter.go's ExportersFor) — the actual source of
+// exporter registry (schema.ExportersFor) — the actual source of
 // truth for which kinds are valid per signal. Each buildXProvider consults
-// this before looking up its local BuilderFunc map, so the registry is
+// this before looking up its local builderFunc map, so the registry is
 // genuinely checked at construction time, not just trusted implicitly.
 // LoadConfig (Task 2) already validates Kind against the same registry when
 // config comes from disk, but NewProvider is also callable directly (e.g.
 // from tests or future callers) with a hand-built ObsConfig that never went
 // through LoadConfig, so this guard is not merely redundant belt-and-braces.
-func exporterKindValid(signal Signal, kind ExporterKind) bool {
-	for _, def := range ExportersFor(signal) {
+func exporterKindValid(signal schema.Signal, kind schema.ExporterKind) bool {
+	for _, def := range schema.ExportersFor(signal) {
 		if def.Kind == kind {
 			return true
 		}
@@ -137,22 +138,22 @@ func exporterKindValid(signal Signal, kind ExporterKind) bool {
 	return false
 }
 
-// logsBuilders returns the registry of BuilderFunc values for the "logs"
-// signal, keyed by exporter kind. Builders close over ctx (BuilderFunc's
-// signature, defined in exporter.go, does not carry one) so exporter
+// logsBuilders returns the registry of builderFunc values for the "logs"
+// signal, keyed by exporter kind. Builders close over ctx (builderFunc's
+// signature does not carry one) so exporter
 // construction still observes the caller's context, matching the pre-registry
 // behavior. Only otlp and stdout are registered; prometheus is not a valid
-// logs exporter (see exporter.go's signalExporters).
-func logsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
-	return map[ExporterKind]BuilderFunc{
-		ExporterKindOTLP: func(params map[string]string) (any, error) {
-			endpoint, err := requireOTLPEndpoint(SignalLogs, params)
+// logs exporter (see telemetry/schema's signal registry).
+func logsBuilders(ctx context.Context) map[schema.ExporterKind]builderFunc {
+	return map[schema.ExporterKind]builderFunc{
+		schema.ExporterKindOTLP: func(params map[string]string) (any, error) {
+			endpoint, err := requireOTLPEndpoint(schema.SignalLogs, params)
 			if err != nil {
 				return nil, err
 			}
 			return otlploghttp.New(ctx, otlploghttp.WithEndpointURL(otlpSignalURL(endpoint, otlpLogsPath)))
 		},
-		ExporterKindStdout: func(params map[string]string) (any, error) {
+		schema.ExporterKindStdout: func(params map[string]string) (any, error) {
 			return stdoutlog.New()
 		},
 	}
@@ -160,7 +161,7 @@ func logsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 
 // defaultPrometheusListen is the fallback listen address used by the
 // prometheus builder when Params["listen"] is empty. It matches
-// exporter.go's prometheusFields "listen" FieldDef Default (":9464").
+// telemetry/schema's prometheus "listen" FieldDef Default (":9464").
 // LoadConfig already fills this default from the registry when config comes
 // from disk, but NewProvider/the builder are also callable directly with a
 // hand-built SignalConfig that never went through LoadConfig (e.g.
@@ -168,7 +169,7 @@ func logsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 // against an empty listen value itself rather than trusting the caller.
 const defaultPrometheusListen = ":9464"
 
-// promReaderResult is what the prometheus BuilderFunc entry in
+// promReaderResult is what the prometheus builderFunc entry in
 // metricsBuilders returns, instead of an sdkmetric.Exporter like the
 // otlp/stdout entries. Prometheus is a pull-model reader (scraped, not
 // pushed), so it has no PeriodicReader/interval and no separate "exporter"
@@ -181,7 +182,7 @@ type promReaderResult struct {
 	Listen  string
 }
 
-// metricsBuilders returns the registry of BuilderFunc values for the
+// metricsBuilders returns the registry of builderFunc values for the
 // "metrics" signal. The otlp/stdout builders use DELTA temporality (see the
 // package-level metric-temporality note below) — this is a fixed property of
 // those engines, not something callers select. The prometheus builder
@@ -193,10 +194,10 @@ type promReaderResult struct {
 // temporality selector to set) — deliberately not wrapped in
 // stdoutmetric/otlpmetrichttp's WithTemporalitySelector(Delta), which does
 // not apply to this reader type anyway.
-func metricsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
-	return map[ExporterKind]BuilderFunc{
-		ExporterKindOTLP: func(params map[string]string) (any, error) {
-			endpoint, err := requireOTLPEndpoint(SignalMetrics, params)
+func metricsBuilders(ctx context.Context) map[schema.ExporterKind]builderFunc {
+	return map[schema.ExporterKind]builderFunc{
+		schema.ExporterKindOTLP: func(params map[string]string) (any, error) {
+			endpoint, err := requireOTLPEndpoint(schema.SignalMetrics, params)
 			if err != nil {
 				return nil, err
 			}
@@ -205,10 +206,10 @@ func metricsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 				otlpmetrichttp.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector),
 			)
 		},
-		ExporterKindStdout: func(params map[string]string) (any, error) {
+		schema.ExporterKindStdout: func(params map[string]string) (any, error) {
 			return stdoutmetric.New(stdoutmetric.WithTemporalitySelector(sdkmetric.DeltaTemporalitySelector))
 		},
-		ExporterKindPrometheus: func(params map[string]string) (any, error) {
+		schema.ExporterKindPrometheus: func(params map[string]string) (any, error) {
 			reg := prometheus.NewRegistry()
 			reader, err := otelprom.New(otelprom.WithRegisterer(reg))
 			if err != nil {
@@ -227,18 +228,18 @@ func metricsBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 	}
 }
 
-// tracesBuilders returns the registry of BuilderFunc values for the "traces"
+// tracesBuilders returns the registry of builderFunc values for the "traces"
 // signal.
-func tracesBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
-	return map[ExporterKind]BuilderFunc{
-		ExporterKindOTLP: func(params map[string]string) (any, error) {
-			endpoint, err := requireOTLPEndpoint(SignalTraces, params)
+func tracesBuilders(ctx context.Context) map[schema.ExporterKind]builderFunc {
+	return map[schema.ExporterKind]builderFunc{
+		schema.ExporterKindOTLP: func(params map[string]string) (any, error) {
+			endpoint, err := requireOTLPEndpoint(schema.SignalTraces, params)
 			if err != nil {
 				return nil, err
 			}
 			return otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(otlpSignalURL(endpoint, otlpTracesPath)))
 		},
-		ExporterKindStdout: func(params map[string]string) (any, error) {
+		schema.ExporterKindStdout: func(params map[string]string) (any, error) {
 			return stdouttrace.New()
 		},
 	}
@@ -274,15 +275,15 @@ func tracesBuilders(ctx context.Context) map[ExporterKind]BuilderFunc {
 // their own providers and do not depend on the global.
 func NewProvider(ctx context.Context, cfg ObsConfig) (*ObsProvider, error) {
 	signals := []struct {
-		signal Signal
+		signal schema.Signal
 		cfg    SignalConfig
 	}{
-		{SignalLogs, cfg.Logs},
-		{SignalMetrics, cfg.Metrics},
-		{SignalTraces, cfg.Traces},
+		{schema.SignalLogs, cfg.Logs},
+		{schema.SignalMetrics, cfg.Metrics},
+		{schema.SignalTraces, cfg.Traces},
 	}
 	for _, s := range signals {
-		if s.cfg.Kind == ExporterKindOTLP {
+		if s.cfg.Kind == schema.ExporterKindOTLP {
 			if _, err := requireOTLPEndpoint(s.signal, s.cfg.Params); err != nil {
 				return nil, err
 			}
@@ -329,12 +330,12 @@ func buildLoggerProvider(ctx context.Context, res *resource.Resource, sc SignalC
 		return sdklog.NewLoggerProvider(sdklog.WithResource(res)), nil
 	}
 
-	if !exporterKindValid(SignalLogs, sc.Kind) {
-		return nil, fmt.Errorf("observability: exporter kind %q is not registered for signal %q", sc.Kind, SignalLogs)
+	if !exporterKindValid(schema.SignalLogs, sc.Kind) {
+		return nil, fmt.Errorf("observability: exporter kind %q is not registered for signal %q", sc.Kind, schema.SignalLogs)
 	}
 	builder, ok := logsBuilders(ctx)[sc.Kind]
 	if !ok {
-		return nil, fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, SignalLogs)
+		return nil, fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, schema.SignalLogs)
 	}
 	raw, err := builder(sc.Params)
 	if err != nil {
@@ -370,12 +371,12 @@ func buildMeterProvider(ctx context.Context, res *resource.Resource, sc SignalCo
 		return sdkmetric.NewMeterProvider(sdkmetric.WithResource(res)), nil, "", nil
 	}
 
-	if !exporterKindValid(SignalMetrics, sc.Kind) {
-		return nil, nil, "", fmt.Errorf("observability: exporter kind %q is not registered for signal %q", sc.Kind, SignalMetrics)
+	if !exporterKindValid(schema.SignalMetrics, sc.Kind) {
+		return nil, nil, "", fmt.Errorf("observability: exporter kind %q is not registered for signal %q", sc.Kind, schema.SignalMetrics)
 	}
 	builder, ok := metricsBuilders(ctx)[sc.Kind]
 	if !ok {
-		return nil, nil, "", fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, SignalMetrics)
+		return nil, nil, "", fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, schema.SignalMetrics)
 	}
 	raw, err := builder(sc.Params)
 	if err != nil {
@@ -416,12 +417,12 @@ func buildTracerProvider(ctx context.Context, res *resource.Resource, sc SignalC
 		return sdktrace.NewTracerProvider(sdktrace.WithResource(res)), nil
 	}
 
-	if !exporterKindValid(SignalTraces, sc.Kind) {
-		return nil, fmt.Errorf("observability: exporter kind %q is not registered for signal %q", sc.Kind, SignalTraces)
+	if !exporterKindValid(schema.SignalTraces, sc.Kind) {
+		return nil, fmt.Errorf("observability: exporter kind %q is not registered for signal %q", sc.Kind, schema.SignalTraces)
 	}
 	builder, ok := tracesBuilders(ctx)[sc.Kind]
 	if !ok {
-		return nil, fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, SignalTraces)
+		return nil, fmt.Errorf("observability: no builder registered for exporter kind %q (signal %q)", sc.Kind, schema.SignalTraces)
 	}
 	raw, err := builder(sc.Params)
 	if err != nil {

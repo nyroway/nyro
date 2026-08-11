@@ -143,20 +143,10 @@ var packageLayer = map[string]int{
 // upwardEdge is a single importer→imported pair that violates the layer rule.
 type upwardEdge struct{ from, to string }
 
-// knownUpwardEdges freezes the upward imports that already existed when this
-// test was written. They are allowed so the test can land green, but the set
-// may only shrink: a new violation fails, and removing one of these without
-// updating the map also fails (TestNoStaleKnownUpwardEdges).
-//
-// Both entries are the same underlying issue: observability owns the exporter
-// registry (Signal, ExporterDef, ExportersFor, IsExporterSettingKey) that
-// layer-1 config validation needs. That registry is layer-0 configuration
-// metadata that happens to live inside a layer-2 runtime package. Splitting it
-// out is the fix; it is out of scope for the pipeline work.
-var knownUpwardEdges = map[upwardEdge]string{
-	{from: "internal/config", to: "internal/observability"}:     "exporter registry used to validate settings.observability.* YAML",
-	{from: "internal/configsync", to: "internal/observability"}: "IsExporterSettingKey used when flattening settings",
-}
+// knownUpwardEdges freezes intentional upward imports. The set is empty: new
+// violations fail, and TestNoStaleKnownUpwardEdges ensures temporary entries
+// are removed once their underlying dependency is fixed.
+var knownUpwardEdges = map[upwardEdge]string{}
 
 // TestFoundationSubtreesStayIsolated applies stricter rules inside the two
 // layer-0 subtrees. Numeric layers alone cannot prevent horizontal coupling
