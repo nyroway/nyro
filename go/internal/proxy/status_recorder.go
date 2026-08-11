@@ -17,7 +17,7 @@ import (
 //
 // The per-request audit row is not written here — the observability Stage
 // emits the structured LogRecord via OTel from the state on the Exchange. See
-// internal/observability/stage.go.
+// internal/telemetry/stage.go.
 type statusRecorder struct {
 	http.ResponseWriter
 	ex          *pipeline.Exchange

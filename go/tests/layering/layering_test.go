@@ -128,8 +128,8 @@ var packageLayer = map[string]int{
 	"internal/config":                      layerData,
 	"internal/schemadump":                  layerData,
 
-	// Layer 2 — observability.
-	"internal/observability": layerObs,
+	// Layer 2 — telemetry runtime.
+	"internal/telemetry": layerObs,
 
 	// Layer 3 — serve.
 	"internal/router":    layerServe,

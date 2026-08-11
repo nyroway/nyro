@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
-	"github.com/nyroway/nyro/go/internal/observability"
+	"github.com/nyroway/nyro/go/internal/telemetry"
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 // buildManager wires an ObsManager the way buildGateway's config-server branch
@@ -18,11 +19,11 @@ import (
 func buildManager(t *testing.T, cache *configsync.ConfigCache) *ObsManager {
 	t.Helper()
 	obsCfg := resolveObsConfig(cache)
-	prov, err := observability.NewProvider(context.Background(), obsCfg)
+	prov, err := telemetry.NewProvider(context.Background(), obsCfg)
 	if err != nil {
 		t.Fatalf("initial NewProvider: %v", err)
 	}
-	sp := observability.NewSwappableProvider(prov)
+	sp := telemetry.NewSwappableProvider(prov)
 	mgr := newObsManager(context.Background(), cache, sp, prov, obsCfg)
 	cache.SetOnSwap(mgr.rebuild)
 	t.Cleanup(func() { _ = mgr.Shutdown(context.Background()) })
@@ -47,7 +48,7 @@ func TestObsManager_HotReloadSwitchesLogsToOTLP(t *testing.T) {
 	cache := &configsync.ConfigCache{} // empty: initial resolve → stdout default
 	mgr := buildManager(t, cache)
 
-	if got := mgr.lastCfg.Logs.Kind; got != observability.ExporterKindStdout {
+	if got := mgr.lastCfg.Logs.Kind; got != schema.ExporterKindStdout {
 		t.Fatalf("initial Logs.Kind = %q; want stdout default", got)
 	}
 	initial := mgr.current
@@ -62,10 +63,10 @@ func TestObsManager_HotReloadSwitchesLogsToOTLP(t *testing.T) {
 		"obs_traces_otlp_endpoint":  "http://127.0.0.1:19531",
 	}))
 
-	if got := mgr.lastCfg.Logs.Kind; got != observability.ExporterKindOTLP {
+	if got := mgr.lastCfg.Logs.Kind; got != schema.ExporterKindOTLP {
 		t.Errorf("after push Logs.Kind = %q; want otlp (hot-reload did not apply)", got)
 	}
-	if got := mgr.lastCfg.Traces.Kind; got != observability.ExporterKindOTLP {
+	if got := mgr.lastCfg.Traces.Kind; got != schema.ExporterKindOTLP {
 		t.Errorf("after push Traces.Kind = %q; want otlp", got)
 	}
 	if mgr.current == initial {

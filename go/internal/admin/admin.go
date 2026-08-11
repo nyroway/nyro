@@ -13,27 +13,27 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
-	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 	"github.com/nyroway/nyro/go/internal/version"
 	"github.com/nyroway/nyro/go/internal/webutil"
 )
 
 // LogSource is the read side for /logs.
 type LogSource interface {
-	Query(context.Context, observability.LogQuery) (observability.LogPage, error)
-	FindByID(context.Context, string) (*observability.LogRecord, error)
+	Query(context.Context, telemetry.LogQuery) (telemetry.LogPage, error)
+	FindByID(context.Context, string) (*telemetry.LogRecord, error)
 	ClearAll(context.Context) (int64, error)
 }
 
 // StatsSource is the read side for /stats/*.
 type StatsSource interface {
-	StatsOverview(context.Context, int64) (observability.StatsOverview, error)
-	StatsByRoute(context.Context, int64) ([]observability.RouteStats, error)
-	StatsByUpstream(context.Context, int64) ([]observability.UpstreamStats, error)
-	StatsByConsumer(context.Context, int64) ([]observability.ConsumerStats, error)
-	StatsHourly(context.Context, int64) ([]observability.StatsHourly, error)
+	StatsOverview(context.Context, int64) (telemetry.StatsOverview, error)
+	StatsByRoute(context.Context, int64) ([]telemetry.RouteStats, error)
+	StatsByUpstream(context.Context, int64) ([]telemetry.UpstreamStats, error)
+	StatsByConsumer(context.Context, int64) ([]telemetry.ConsumerStats, error)
+	StatsHourly(context.Context, int64) ([]telemetry.StatsHourly, error)
 }
 
 // Mount registers the admin REST API under /api/v1 on r. The management API
@@ -350,7 +350,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource) {
 		// ── logs ──
 		g.Get("/logs", func(w http.ResponseWriter, r *http.Request) {
 			query := r.URL.Query()
-			q := observability.LogQuery{
+			q := telemetry.LogQuery{
 				UpstreamID: query.Get("upstream_id"), RouteID: query.Get("route_id"),
 				RouteModel: query.Get("route_model"), ConsumerID: query.Get("consumer_id"),
 			}

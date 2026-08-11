@@ -1,4 +1,4 @@
-package observability
+package telemetry
 
 type StatsOverview struct {
 	TotalRequests     int64    `json:"total_requests"`

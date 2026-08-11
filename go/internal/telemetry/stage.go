@@ -1,4 +1,4 @@
-package observability
+package telemetry
 
 import (
 	"sync/atomic"
@@ -45,7 +45,7 @@ type Stage struct {
 }
 
 // NewStage returns a telemetry Stage reading from target. Passing the pointer
-// rather than the provider is deliberate: RegisterObservability re-points it on
+// rather than the provider is deliberate: RegisterProvider re-points it on
 // a later call, and the Stage picks that up without being rebuilt.
 func NewStage(target *atomic.Pointer[SwappableProvider]) pipeline.Stage {
 	return Stage{target: target}
@@ -195,14 +195,14 @@ func upstreamLogAttrs(lc LogCtx) []log.KeyValue {
 }
 
 // stageTarget is the SwappableProvider the telemetry Stage reads on every
-// request. RegisterObservability re-points it; the Stage loads (never captures)
+// request. RegisterProvider re-points it; the Stage loads (never captures)
 // it, which is what makes repeated registration safe.
 //
 // A nil value means nothing has been registered yet; the Stage then no-ops so a
 // request served before (or without) observability wiring still succeeds.
 var stageTarget atomic.Pointer[SwappableProvider]
 
-// RegisterObservability points the telemetry Stage at sp.
+// RegisterProvider points the telemetry Stage at sp.
 //
 // Calling it more than once per process is safe and idempotent: it simply
 // re-points the target. This matters because a single process can assemble more
@@ -211,13 +211,13 @@ var stageTarget atomic.Pointer[SwappableProvider]
 //
 // This is distinct from hot-reload: an obs config change swaps the pipeline
 // inside sp (SwappableProvider.Swap) without touching the target at all.
-// RegisterObservability is for replacing sp itself.
-func RegisterObservability(sp *SwappableProvider) {
+// RegisterProvider is for replacing sp itself.
+func RegisterProvider(sp *SwappableProvider) {
 	stageTarget.Store(sp)
 }
 
 // NewRegisteredStage returns the telemetry Stage bound to the process-wide
-// target that RegisterObservability points. Building a chain before
+// target that RegisterProvider points. Building a chain before
 // registration is fine: the Stage stays inert until a provider shows up.
 func NewRegisteredStage() pipeline.Stage {
 	return NewStage(&stageTarget)

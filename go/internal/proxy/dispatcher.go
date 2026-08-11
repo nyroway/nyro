@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
@@ -17,6 +16,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/router"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
 // Dispatch is the single orchestration entry point. The ingress shell
@@ -27,7 +27,7 @@ import (
 //
 // Cross-cutting concerns live in Stages, not here: this function is routing,
 // failover, and codec transformation, and nothing else. See internal/pipeline
-// for the chain contract and internal/observability.Stage for the terminal
+// for the chain contract and internal/telemetry.Stage for the terminal
 // telemetry Stage.
 func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiRequest, ingress codec.EndpointHandler) {
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
@@ -43,7 +43,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 	// The recorder writes the status onto the exchange as it happens, so a
 	// Stage emitting from a defer sees what the client actually got.
 	rec.ex = ex
-	ex.SetExt(observability.ExtLogCtx, observability.LogCtx{
+	ex.SetExt(telemetry.ExtLogCtx, telemetry.LogCtx{
 		Method:         r.Method,
 		Path:           r.URL.Path,
 		ClientProtocol: string(ingress.Endpoint().Protocol),
@@ -65,7 +65,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req *ir.AiReq
 func (g *Gateway) forward(ex *pipeline.Exchange, ingress codec.EndpointHandler) {
 	rec := ex.W
 	req := ex.Req
-	route, _ := ex.GetExt(observability.ExtRoute).(storage.Route)
+	route, _ := ex.GetExt(telemetry.ExtRoute).(storage.Route)
 
 	// select + failover: try each backend (ordered by the balance strategy),
 	// retrying the same backend up to settings.proxy.max_retries times on a
@@ -153,15 +153,15 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress codec.EndpointHandler) 
 
 		// usable response (2xx, or a non-retried 4xx/5xx) → serve, no more
 		// failover. Record what the telemetry Stage needs now that it's known.
-		lc, _ := ex.GetExt(observability.ExtLogCtx).(observability.LogCtx)
+		lc, _ := ex.GetExt(telemetry.ExtLogCtx).(telemetry.LogCtx)
 		lc.UpstreamModel = actualModel
 		lc.UpstreamProtocol = string(egressHandler.Endpoint().Protocol)
 		us := int32(resp.StatusCode)
 		lc.UpstreamStatus = &us
 		um := int64(latencyMs)
 		lc.LatencyUpstreamMs = &um
-		ex.SetExt(observability.ExtLogCtx, lc)
-		ex.SetExt(observability.ExtUpstream, *p)
+		ex.SetExt(telemetry.ExtLogCtx, lc)
+		ex.SetExt(telemetry.ExtUpstream, *p)
 		g.Router.Record(router.KeyOf(target), true, latencyMs)
 		switch {
 		case resp.StatusCode >= 400:

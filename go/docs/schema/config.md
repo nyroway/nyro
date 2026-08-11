@@ -177,7 +177,7 @@ uses `routes[].upstreams[].model`.
   `metrics`, `traces`. Each signal picks its own exporter and owns a flat set
   of engine-specific fields; there is no shared/global exporter, endpoint, or
   export interval. The authoritative field schema (per exporter kind, per
-  signal) lives in `go/internal/observability/exporter.go`'s registry
+  signal) lives in `go/internal/telemetry/schema/exporter.go`'s registry
   (`ExportersFor`); this section summarizes it.
   - A signal block that is **absent** means that signal is disabled (no-op
     provider) — this is the normal way to turn a signal off.

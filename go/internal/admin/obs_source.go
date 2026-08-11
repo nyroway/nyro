@@ -5,8 +5,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/platform/observe"
+	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
 // ObserveSource projects the generic Observe store into Nyro's Admin DTOs.
@@ -24,7 +24,7 @@ func stringFilter(key, value string) observe.AttributeFilter {
 	return observe.AttributeFilter{Key: key, StringEquals: &value}
 }
 
-func (s *ObserveSource) Query(ctx context.Context, query observability.LogQuery) (observability.LogPage, error) {
+func (s *ObserveSource) Query(ctx context.Context, query telemetry.LogQuery) (telemetry.LogPage, error) {
 	limit := int(query.Limit)
 	if limit <= 0 {
 		limit = 50
@@ -58,23 +58,23 @@ func (s *ObserveSource) Query(ctx context.Context, query observability.LogQuery)
 		Attributes: filters, Limit: limit, Offset: int(query.Offset), IncludeTotal: true,
 	})
 	if err != nil {
-		return observability.LogPage{}, err
+		return telemetry.LogPage{}, err
 	}
-	items := make([]observability.LogRecord, 0, len(page.Records))
+	items := make([]telemetry.LogRecord, 0, len(page.Records))
 	for _, record := range page.Records {
-		items = append(items, observability.LogRecordFromOTLP(record.Record))
+		items = append(items, telemetry.LogRecordFromOTLP(record.Record))
 	}
-	return observability.LogPage{Items: items, Total: page.Total}, nil
+	return telemetry.LogPage{Items: items, Total: page.Total}, nil
 }
 
-func (s *ObserveSource) FindByID(ctx context.Context, id string) (*observability.LogRecord, error) {
+func (s *ObserveSource) FindByID(ctx context.Context, id string) (*telemetry.LogRecord, error) {
 	page, err := s.store.QueryLogs(ctx, observe.LogQuery{
 		Attributes: []observe.AttributeFilter{stringFilter("nyro.log.id", id)}, Limit: 1,
 	})
 	if err != nil || len(page.Records) == 0 {
 		return nil, err
 	}
-	record := observability.LogRecordFromOTLP(page.Records[0].Record)
+	record := telemetry.LogRecordFromOTLP(page.Records[0].Record)
 	return &record, nil
 }
 
@@ -93,13 +93,13 @@ func (s *ObserveSource) ClearAll(ctx context.Context) (int64, error) {
 	}
 }
 
-func (s *ObserveSource) readMetricSamples(ctx context.Context, hours int64) ([]observability.MetricSample, error) {
+func (s *ObserveSource) readMetricSamples(ctx context.Context, hours int64) ([]telemetry.MetricSample, error) {
 	query := observe.MetricQuery{Limit: 1000}
 	if hours > 0 {
 		query.Start = s.now().Add(-time.Duration(hours) * time.Hour)
 	}
 	names := []string{"nyro_requests_total", "nyro_tokens_total", "nyro_request_latency_ms"}
-	var samples []observability.MetricSample
+	var samples []telemetry.MetricSample
 	for _, name := range names {
 		query.Name = name
 		query.Cursor = ""
@@ -109,7 +109,7 @@ func (s *ObserveSource) readMetricSamples(ctx context.Context, hours int64) ([]o
 				return nil, err
 			}
 			for _, record := range page.Records {
-				sample, err := observability.MetricSampleFromOTLP(record.Metric, record.PointType, record.DataPointIndex)
+				sample, err := telemetry.MetricSampleFromOTLP(record.Metric, record.PointType, record.DataPointIndex)
 				if err != nil {
 					return nil, err
 				}
@@ -124,30 +124,30 @@ func (s *ObserveSource) readMetricSamples(ctx context.Context, hours int64) ([]o
 	return samples, nil
 }
 
-func (s *ObserveSource) aggregate(ctx context.Context, hours int64) (observability.StatsOverview, []observability.RouteStats, []observability.UpstreamStats, []observability.ConsumerStats, error) {
+func (s *ObserveSource) aggregate(ctx context.Context, hours int64) (telemetry.StatsOverview, []telemetry.RouteStats, []telemetry.UpstreamStats, []telemetry.ConsumerStats, error) {
 	samples, err := s.readMetricSamples(ctx, hours)
 	if err != nil {
-		return observability.StatsOverview{}, nil, nil, nil, err
+		return telemetry.StatsOverview{}, nil, nil, nil, err
 	}
-	return observability.AggregateStats(samples, hours)
+	return telemetry.AggregateStats(samples, hours)
 }
 
-func (s *ObserveSource) StatsOverview(ctx context.Context, hours int64) (observability.StatsOverview, error) {
+func (s *ObserveSource) StatsOverview(ctx context.Context, hours int64) (telemetry.StatsOverview, error) {
 	overview, _, _, _, err := s.aggregate(ctx, hours)
 	return overview, err
 }
 
-func (s *ObserveSource) StatsByRoute(ctx context.Context, hours int64) ([]observability.RouteStats, error) {
+func (s *ObserveSource) StatsByRoute(ctx context.Context, hours int64) ([]telemetry.RouteStats, error) {
 	_, routes, _, _, err := s.aggregate(ctx, hours)
 	return routes, err
 }
 
-func (s *ObserveSource) StatsByUpstream(ctx context.Context, hours int64) ([]observability.UpstreamStats, error) {
+func (s *ObserveSource) StatsByUpstream(ctx context.Context, hours int64) ([]telemetry.UpstreamStats, error) {
 	_, _, upstreams, _, err := s.aggregate(ctx, hours)
 	return upstreams, err
 }
 
-func (s *ObserveSource) StatsByConsumer(ctx context.Context, hours int64) ([]observability.ConsumerStats, error) {
+func (s *ObserveSource) StatsByConsumer(ctx context.Context, hours int64) ([]telemetry.ConsumerStats, error) {
 	_, _, _, consumers, err := s.aggregate(ctx, hours)
 	for i := range consumers {
 		consumers[i].LastUsedAt /= int64(time.Millisecond)
@@ -155,10 +155,10 @@ func (s *ObserveSource) StatsByConsumer(ctx context.Context, hours int64) ([]obs
 	return consumers, err
 }
 
-func (s *ObserveSource) StatsHourly(ctx context.Context, hours int64) ([]observability.StatsHourly, error) {
+func (s *ObserveSource) StatsHourly(ctx context.Context, hours int64) ([]telemetry.StatsHourly, error) {
 	samples, err := s.readMetricSamples(ctx, hours)
 	if err != nil {
 		return nil, err
 	}
-	return observability.AggregateHourly(samples, hours)
+	return telemetry.AggregateHourly(samples, hours)
 }

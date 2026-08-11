@@ -1,4 +1,4 @@
-package observability
+package telemetry
 
 import "testing"
 

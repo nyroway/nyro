@@ -1,10 +1,10 @@
-package observability
+package telemetry
 
 import "go.opentelemetry.io/otel/metric"
 
 // Handles owns the named OTel counter/histogram instruments the gateway emits
 // per request. They are created once from a metric.Meter (the one assembled by
-// ObsProvider) and read by the telemetry Stage.
+// Provider) and read by the telemetry Stage.
 //
 // Intentionally no global/init: Handles is constructed by the caller via
 // NewHandles and reaches the Stage through a SwappableProvider, so

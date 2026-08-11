@@ -1,4 +1,4 @@
-package observability
+package telemetry
 
 import (
 	"context"
@@ -79,7 +79,7 @@ func TestStageDerivesSpanContext(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
+	RegisterProvider(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
@@ -118,7 +118,7 @@ func TestStageRecordsMetricsTokensAndSpan(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
+	RegisterProvider(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
@@ -226,7 +226,7 @@ func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
+	RegisterProvider(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
@@ -277,7 +277,7 @@ func TestStage5xxMarksSpanError(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
+	RegisterProvider(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())
@@ -423,7 +423,7 @@ var _ log.Logger = (*captureLogger)(nil)
 // keep imports referenced for the assert helpers above.
 var _ attribute.KeyValue = attribute.KeyValue{}
 
-// TestRegisterObservabilityIsIdempotentAndRepoints pins the contract that
+// TestRegisterProviderIsIdempotentAndRepoints pins the contract that
 // makes an embedded data plane safe: a process may register more than once
 // (`nyro serve` assembles a data plane alongside the control plane, tests
 // assemble many), and doing so must neither double-emit nor keep an old
@@ -434,7 +434,7 @@ var _ attribute.KeyValue = attribute.KeyValue{}
 // records. The Stage holds a single re-pointable target instead, which makes
 // double-emission structurally impossible; the test stays because the
 // re-pointing half of the contract is still load-bearing.
-func TestRegisterObservabilityIsIdempotentAndRepoints(t *testing.T) {
+func TestRegisterProviderIsIdempotentAndRepoints(t *testing.T) {
 	newRecorder := func() (*tracetest.SpanRecorder, trace.Tracer, func()) {
 		rec := tracetest.NewSpanRecorder()
 		tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
@@ -451,8 +451,8 @@ func TestRegisterObservabilityIsIdempotentAndRepoints(t *testing.T) {
 	secondRec, secondTracer, stopSecond := newRecorder()
 	t.Cleanup(stopSecond)
 
-	RegisterObservability(newSwappableFromParts(firstTracer, &captureLogger{}, handles))
-	RegisterObservability(newSwappableFromParts(secondTracer, &captureLogger{}, handles))
+	RegisterProvider(newSwappableFromParts(firstTracer, &captureLogger{}, handles))
+	RegisterProvider(newSwappableFromParts(secondTracer, &captureLogger{}, handles))
 
 	runStage(t, &pipeline.Exchange{Ctx: context.Background(), Started: time.Now()})
 
@@ -480,7 +480,7 @@ func TestStageEmitsOnShortCircuit(t *testing.T) {
 	handles := NewHandles(meterProvider.Meter("nyro-test"))
 
 	cl := &captureLogger{}
-	RegisterObservability(newSwappableFromParts(tracer, cl, handles))
+	RegisterProvider(newSwappableFromParts(tracer, cl, handles))
 	t.Cleanup(func() {
 		_ = tracerProvider.Shutdown(context.Background())
 		_ = meterProvider.Shutdown(context.Background())

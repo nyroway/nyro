@@ -8,7 +8,8 @@ import (
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
-	"github.com/nyroway/nyro/go/internal/observability"
+	"github.com/nyroway/nyro/go/internal/telemetry"
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 func TestBuild_ConfigAndConfigSyncAreMutuallyExclusive(t *testing.T) {
@@ -162,7 +163,7 @@ func TestDefaultObsGet_NoNoneSentinel(t *testing.T) {
 func TestResolveObsConfig_EmptySnapshotFallsBackToDefault(t *testing.T) {
 	cache := cacheWithSettings(nil)
 	cfg := resolveObsConfig(cache)
-	if cfg.Logs.Kind != observability.ExporterKindStdout {
+	if cfg.Logs.Kind != schema.ExporterKindStdout {
 		t.Errorf("Logs.Kind = %q; want stdout default", cfg.Logs.Kind)
 	}
 	if cfg.Metrics.Kind != "" {
@@ -184,7 +185,7 @@ func TestResolveObsConfig_PartialSettingDoesNotFallBack(t *testing.T) {
 		"obs_traces_otlp_endpoint": "http://collector:4318",
 	})
 	cfg := resolveObsConfig(cache)
-	if cfg.Traces.Kind != observability.ExporterKindOTLP {
+	if cfg.Traces.Kind != schema.ExporterKindOTLP {
 		t.Errorf("Traces.Kind = %q; want otlp", cfg.Traces.Kind)
 	}
 	if cfg.Traces.Params["endpoint"] != "http://collector:4318" {
@@ -208,7 +209,7 @@ func TestResolveObsConfig_EndpointOnlyIsNotEmpty(t *testing.T) {
 		"obs_metrics_otlp_endpoint": "http://collector:4318",
 	})
 	cfg := resolveObsConfig(cache)
-	if cfg.Metrics.Kind != observability.ExporterKindOTLP {
+	if cfg.Metrics.Kind != schema.ExporterKindOTLP {
 		t.Errorf("Metrics.Kind = %q; want otlp", cfg.Metrics.Kind)
 	}
 	if cfg.Logs.Kind != "" {
@@ -224,7 +225,7 @@ func TestResolveObsConfig_InvalidExporterFallsBackToDefault(t *testing.T) {
 		"obs_logs_exporter": "prometheus",
 	})
 	cfg := resolveObsConfig(cache)
-	if cfg.Logs.Kind != observability.ExporterKindStdout {
+	if cfg.Logs.Kind != schema.ExporterKindStdout {
 		t.Errorf("Logs.Kind = %q; want the fallback default (stdout)", cfg.Logs.Kind)
 	}
 	if cfg.Metrics.Kind != "" || cfg.Traces.Kind != "" {
@@ -238,7 +239,7 @@ func TestNewMetricsServer_DefaultsPathAndWiresHandler(t *testing.T) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	})
-	obs := &observability.ObsProvider{PromHandler: h, PromListen: ":9464"}
+	obs := &telemetry.Provider{PromHandler: h, PromListen: ":9464"}
 
 	srv := newMetricsServer(obs, "")
 	if srv.Addr != ":9464" {
@@ -257,7 +258,7 @@ func TestNewMetricsServer_DefaultsPathAndWiresHandler(t *testing.T) {
 
 func TestNewMetricsServer_CustomPath(t *testing.T) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-	obs := &observability.ObsProvider{PromHandler: h, PromListen: ":9464"}
+	obs := &telemetry.Provider{PromHandler: h, PromListen: ":9464"}
 
 	srv := newMetricsServer(obs, "/custom-metrics")
 	rr := httptest.NewRecorder()

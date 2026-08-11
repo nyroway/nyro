@@ -1,4 +1,4 @@
-package observability
+package telemetry
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 // disabled (Kind == "", the SignalConfig zero value): no exporters are
 // wired, no error is returned, and the Logger/Meter/Tracer fields are usable.
 func TestNewProvider_AllDisabled(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{})
+	p, err := NewProvider(context.Background(), Config{})
 	if err != nil {
 		t.Fatalf("all disabled: unexpected error: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestNewProvider_AllDisabled(t *testing.T) {
 // signals set to the stdout exporter: the stdout exporters are wired without
 // error.
 func TestNewProvider_StdoutAllSignals(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{
+	p, err := NewProvider(context.Background(), Config{
 		Logs:    SignalConfig{Kind: schema.ExporterKindStdout},
 		Metrics: SignalConfig{Kind: schema.ExporterKindStdout},
 		Traces:  SignalConfig{Kind: schema.ExporterKindStdout},
@@ -64,7 +64,7 @@ func TestNewProvider_StdoutAllSignals(t *testing.T) {
 // TestNewProvider_OTLPMissingEndpoint ensures fail-fast: an otlp Kind with no
 // "endpoint" Param returns an error rather than silently dropping data.
 func TestNewProvider_OTLPMissingEndpoint(t *testing.T) {
-	_, err := NewProvider(context.Background(), ObsConfig{
+	_, err := NewProvider(context.Background(), Config{
 		Logs: SignalConfig{Kind: schema.ExporterKindOTLP},
 	})
 	if err == nil {
@@ -78,11 +78,11 @@ func TestNewProvider_OTLPMissingEndpoint(t *testing.T) {
 func TestNewProvider_OTLPPerSignalMissingEndpoint(t *testing.T) {
 	cases := []struct {
 		name string
-		cfg  func() ObsConfig
+		cfg  func() Config
 	}{
-		{"logs", func() ObsConfig { return ObsConfig{Logs: SignalConfig{Kind: schema.ExporterKindOTLP}} }},
-		{"metrics", func() ObsConfig { return ObsConfig{Metrics: SignalConfig{Kind: schema.ExporterKindOTLP}} }},
-		{"traces", func() ObsConfig { return ObsConfig{Traces: SignalConfig{Kind: schema.ExporterKindOTLP}} }},
+		{"logs", func() Config { return Config{Logs: SignalConfig{Kind: schema.ExporterKindOTLP}} }},
+		{"metrics", func() Config { return Config{Metrics: SignalConfig{Kind: schema.ExporterKindOTLP}} }},
+		{"traces", func() Config { return Config{Traces: SignalConfig{Kind: schema.ExporterKindOTLP}} }},
 	}
 	for _, tc := range cases {
 		if _, err := NewProvider(context.Background(), tc.cfg()); err == nil {
@@ -97,7 +97,7 @@ func TestNewProvider_OTLPPerSignalMissingEndpoint(t *testing.T) {
 // time (export happens async).
 func TestNewProvider_OTLPWithEndpoint(t *testing.T) {
 	endpoint := "http://127.0.0.1:65535" // unreachable, but exporter builds fine
-	p, err := NewProvider(context.Background(), ObsConfig{
+	p, err := NewProvider(context.Background(), Config{
 		Logs:    SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint}},
 		Metrics: SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint, "interval": "5s"}},
 		Traces:  SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": endpoint, "interval": "5s"}},
@@ -121,7 +121,7 @@ func TestMetricsBuilders_HasPrometheus(t *testing.T) {
 // signal set to prometheus, and verifies PromHandler/PromListen are
 // populated end-to-end from the configured Params.
 func TestNewProvider_MetricsPrometheus(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{
+	p, err := NewProvider(context.Background(), Config{
 		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus, Params: map[string]string{"listen": ":19464", "path": "/metrics"}},
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestNewProvider_MetricsPrometheus(t *testing.T) {
 // PromListen (":9464"), not an empty string that would make
 // http.ListenAndServe bind an arbitrary port.
 func TestNewProvider_MetricsPrometheusDefaultListen(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{
+	p, err := NewProvider(context.Background(), Config{
 		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus},
 	})
 	if err != nil {
@@ -160,7 +160,7 @@ func TestNewProvider_MetricsPrometheusDefaultListen(t *testing.T) {
 // a working http.Handler that returns 200 and a Prometheus text-format body
 // when scraped, without asserting on specific metric content.
 func TestNewProvider_MetricsPrometheusHandlerServes(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{
+	p, err := NewProvider(context.Background(), Config{
 		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus, Params: map[string]string{"listen": ":19465"}},
 	})
 	if err != nil {
@@ -182,12 +182,12 @@ func TestNewProvider_MetricsPrometheusHandlerServes(t *testing.T) {
 
 // TestNewProvider_MetricsPrometheusRoundTrip verifies the full
 // reader→registry→handler chain actually works: a counter recorded via the
-// ObsProvider's Meter shows up in the /metrics scrape output by name. This
+// Provider's Meter shows up in the /metrics scrape output by name. This
 // is the "not a hollow scaffold" check — it proves the Reader passed to
 // sdkmetric.WithReader is the same one backing the registry the handler
 // serves.
 func TestNewProvider_MetricsPrometheusRoundTrip(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{
+	p, err := NewProvider(context.Background(), Config{
 		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus, Params: map[string]string{"listen": ":19466"}},
 	})
 	if err != nil {
@@ -219,7 +219,7 @@ func TestNewProvider_MetricsPrometheusRoundTrip(t *testing.T) {
 // summed since counter creation). Prometheus scraping never "consumes" state
 // between requests — repeated collects always report the running total.
 func TestNewProvider_MetricsPrometheusCumulative(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{
+	p, err := NewProvider(context.Background(), Config{
 		Metrics: SignalConfig{Kind: schema.ExporterKindPrometheus, Params: map[string]string{"listen": ":19467"}},
 	})
 	if err != nil {
@@ -254,7 +254,7 @@ func TestNewProvider_MetricsPrometheusCumulative(t *testing.T) {
 
 // TestShutdownIsIdempotent verifies Shutdown can be called twice without error.
 func TestShutdownIsIdempotent(t *testing.T) {
-	p, err := NewProvider(context.Background(), ObsConfig{})
+	p, err := NewProvider(context.Background(), Config{})
 	if err != nil {
 		t.Fatalf("shutdown idempotency: setup error: %v", err)
 	}
