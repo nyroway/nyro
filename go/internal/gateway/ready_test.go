@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/configsync"
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -52,7 +52,7 @@ func TestReadyz(t *testing.T) {
 
 	// Sanity: a hand-built snapshot via Swap also flips ready (the config-sync path).
 	gw3 := NewGateway()
-	gw3.Cache.Swap((&configsync.Snapshot{}).Done())
+	gw3.Cache.Swap((&configsnapshot.Builder{}).Build())
 	r3 := NewRouter(gw3)
 	req3 := httptest.NewRequest("GET", "/readyz", nil)
 	rec3 := httptest.NewRecorder()

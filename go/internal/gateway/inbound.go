@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/configsync"
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
@@ -19,7 +19,7 @@ import (
 // (0, "", nil) to allow, or (statusCode, message, nil) to deny. When a
 // concurrency quota slot was acquired, the third return is a non-nil release
 // func that MUST be called exactly once when the request finishes.
-func checkAccess(snap *configsync.ConfigSnapshot, qc *quota.Counter, route storage.Route, r *http.Request, consumerID *string, keyName *string, keyPreview *string) (int, string, func()) {
+func checkAccess(snap *configsnapshot.Snapshot, qc *quota.Counter, route storage.Route, r *http.Request, consumerID *string, keyName *string, keyPreview *string) (int, string, func()) {
 	if !route.EnableAuth {
 		return 0, "", nil
 	}

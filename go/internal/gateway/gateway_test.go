@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/configsync"
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
@@ -72,7 +72,7 @@ func TestGatewayHTTPClientForProxy(t *testing.T) {
 // TestResolveProxySettings_Defaults verifies the config-schema plan's example
 // defaults apply when settings.proxy.* is absent.
 func TestResolveProxySettings_Defaults(t *testing.T) {
-	snap := (&configsync.Snapshot{}).Done()
+	snap := (&configsnapshot.Builder{}).Build()
 	ps := resolveProxySettings(snap)
 	if ps.RequestTimeout != 120*time.Second {
 		t.Errorf("RequestTimeout = %v, want 120s", ps.RequestTimeout)
@@ -108,7 +108,7 @@ func TestResolveProxySettings_Overrides(t *testing.T) {
 	codes, _ := json.Marshal([]int{408, 429})
 	mustSet("proxy.retry_on_status", string(codes))
 
-	c := &configsync.ConfigCache{}
+	c := &configsnapshot.Cache{}
 	if err := c.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}

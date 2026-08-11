@@ -1,5 +1,6 @@
 // Package runtime assembles a ready-to-serve gateway.Gateway from YAML or
-// config-sync and owns the data plane's telemetry lifecycle.
+// config-sync and owns the data plane's telemetry lifecycle. Snapshot state
+// belongs to config/snapshot; configsync supplies remote updates.
 //
 // It is shared by the standalone proxy and the data plane embedded in serve.
 // The embedded case differs only in how its config-sync client dials — over an
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/nyroway/nyro/go/internal/config"
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/gateway"
@@ -104,7 +106,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, er
 		if err != nil {
 			return nil, nil, fmt.Errorf("build snapshot: %w", err)
 		}
-		cache := &configsync.ConfigCache{}
+		cache := &configsnapshot.Cache{}
 		cache.Swap(snap)
 		gw := gateway.NewGatewayWithCache(cache)
 
@@ -122,7 +124,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, er
 
 	case opts.SyncTarget != "":
 		// config-sync hot-reload: empty cache is filled by the stream.
-		cache := &configsync.ConfigCache{}
+		cache := &configsnapshot.Cache{}
 		gw := gateway.NewGatewayWithCache(cache)
 
 		// Build the INITIAL provider from the still-empty cache: it resolves to
@@ -191,7 +193,7 @@ func attachObservability(gw *gateway.Gateway, prov *telemetry.Provider, sp *tele
 // cacheObsGet returns a get-func that reads obs_* settings from the
 // config-sync-published snapshot, falling back to "" (absent) before the
 // first push lands.
-func cacheObsGet(cache *configsync.ConfigCache) func(string) (string, error) {
+func cacheObsGet(cache *configsnapshot.Cache) func(string) (string, error) {
 	return func(key string) (string, error) {
 		if s := cache.Load(); s != nil {
 			if v, ok := s.SettingGet(key); ok {
@@ -205,7 +207,7 @@ func cacheObsGet(cache *configsync.ConfigCache) func(string) (string, error) {
 // resolveObsConfig reads observability settings from the config snapshot — the
 // data plane's only two data sources are the config file (standalone) and the
 // control-plane push (config-sync); both end up in the same
-// ConfigCache/snapshot shape, so both branches of Build call this identically.
+// snapshot.Cache shape, so both branches of Build call this identically.
 // If the snapshot has no observability settings at all (absent from the config
 // file, or not yet pushed over config-sync), the fixed default in defaultObsGet
 // applies. If the snapshot's observability settings fail to load (e.g. an
@@ -217,7 +219,7 @@ func cacheObsGet(cache *configsync.ConfigCache) func(string) (string, error) {
 // explicitly inside config.yaml (e.g. endpoint:
 // "${OTEL_EXPORTER_OTLP_ENDPOINT}"), which config.LoadYAML's ${VAR} expansion
 // already handles.
-func resolveObsConfig(cache *configsync.ConfigCache) telemetry.Config {
+func resolveObsConfig(cache *configsnapshot.Cache) telemetry.Config {
 	obsCfg, err := telemetry.LoadConfig(cacheObsGet(cache))
 	if err != nil {
 		slog.Error("observability config from snapshot is invalid; falling back to defaults", "error", err)

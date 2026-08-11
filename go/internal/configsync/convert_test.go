@@ -3,13 +3,15 @@ package configsync
 import (
 	"testing"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
+	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
 // protoRoundtrip builds a pb snapshot, converts it to the internal model, and
 // returns the internal snapshot for assertions.
-func protoRoundtrip(t *testing.T, in *pb.ConfigSnapshot) *ConfigSnapshot {
+func protoRoundtrip(t *testing.T, in *pb.ConfigSnapshot) *configsnapshot.Snapshot {
 	t.Helper()
 	got := SnapshotFromProto(in)
 	if got == nil {
@@ -63,11 +65,14 @@ func TestSnapshotFromProto_RoutesWithTargets(t *testing.T) {
 }
 
 func TestSnapshotFromProto_ConsumerKeysAndGrants(t *testing.T) {
+	rawKey := "nyro_tok_configsync_0000"
+	preview := storage.PreviewOf(rawKey)
+	hash := storage.HashKey(rawKey)
 	in := &pb.ConfigSnapshot{
 		Consumers: []*pb.Consumer{{
 			Id: "c-1", Name: "alice", Enabled: true,
 			Keys: []*pb.ConsumerKeyRef{{
-				Id: "k-1", ConsumerId: "c-1", Name: "codex-key", KeyPreview: "sk-abcd", KeyHash: "deadbeef", Enabled: true,
+				Id: "k-1", ConsumerId: "c-1", Name: "codex-key", KeyPreview: preview, KeyHash: hash, Enabled: true,
 			}, {
 				Id: "k-2", ConsumerId: "c-1", KeyPreview: "", KeyHash: "x", // empty preview dropped
 			}},
@@ -79,21 +84,21 @@ func TestSnapshotFromProto_ConsumerKeysAndGrants(t *testing.T) {
 	}
 	snap := protoRoundtrip(t, in)
 
-	entries := snap.keysByPreview["sk-abcd"]
-	if len(entries) != 1 || entries[0].ConsumerID != "c-1" || entries[0].KeyHash != "deadbeef" {
-		t.Errorf("consumer key not carried: %+v", entries)
+	rec := snap.FindKey(rawKey)
+	if rec == nil || rec.ConsumerID != "c-1" || rec.KeyID != "k-1" {
+		t.Fatalf("consumer key not carried: %+v", rec)
 	}
-	if entries[0].Name != "codex-key" {
-		t.Errorf("consumer key name not carried: got %q, want codex-key", entries[0].Name)
+	if rec.Name != "codex-key" {
+		t.Errorf("consumer key name = %q, want codex-key", rec.Name)
 	}
-	if len(entries[0].Routes) != 2 {
-		t.Errorf("route grants not carried: %+v", entries[0].Routes)
+	if len(rec.Routes) != 2 {
+		t.Errorf("route grants not carried: %+v", rec.Routes)
 	}
-	if len(entries[0].Quotas) != 1 || entries[0].Quotas[0].QuotaLimit != 60 {
-		t.Errorf("quotas not carried: %+v", entries[0].Quotas)
+	if len(rec.Quotas) != 1 || rec.Quotas[0].QuotaLimit != 60 {
+		t.Errorf("quotas not carried: %+v", rec.Quotas)
 	}
-	if _, ok := snap.keysByPreview[""]; ok {
-		t.Error("empty key_preview should not be stored")
+	if snap.FindKey("nyro_tok_wrong_0000") != nil {
+		t.Error("wrong key must not match")
 	}
 }
 
@@ -125,7 +130,7 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	}
 
 	// Direct load for comparison.
-	direct, err := LoadFromStorage(st.Storage())
+	direct, err := configsnapshot.LoadFromStorage(st.Storage())
 	if err != nil {
 		t.Fatalf("LoadFromStorage: %v", err)
 	}
@@ -160,7 +165,7 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 // (obs_<signal>_exporter, obs_<signal>_<engine>_<field>) through the full
 // settings-push path: storage.Settings().Set -> LoadFromStorage/ListAll ->
 // SetSetting -> SnapshotFromStorage (proto) -> SnapshotFromProto -> SettingGet.
-// Existing settings coverage (TestLoadFromStorage_BuildsAllMaps,
+// Existing settings coverage (snapshot.TestLoadFromStorageBuildsAllMaps,
 // TestSnapshotFromProto_Settings, TestSnapshotFromStorage_RoundtripsThroughProto)
 // only exercises generic keys like proxy_url; this proves the new obs key
 // shapes specifically survive the same pipeline unmodified, with no

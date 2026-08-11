@@ -5,6 +5,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 )
 
 // startTokenServer starts a token-guarded config-sync server on a free port.
@@ -28,7 +30,7 @@ func subscribes(t *testing.T, addr, token string) bool {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cache := &ConfigCache{}
+	cache := &configsnapshot.Cache{}
 	c := NewConfigClient(addr, cache, "19530", nil)
 	c.initialBackoff = 10 * time.Millisecond
 	c.maxBackoff = 20 * time.Millisecond

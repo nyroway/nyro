@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/configsync"
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
@@ -30,7 +30,7 @@ const obsReloadGrace = 30 * time.Second
 // pipeline through sp (SwappableProvider) so a rebuild never re-registers it.
 type ObsManager struct {
 	ctx   context.Context
-	cache *configsync.ConfigCache
+	cache *configsnapshot.Cache
 	sp    *telemetry.SwappableProvider
 
 	mu         sync.Mutex
@@ -44,7 +44,7 @@ type ObsManager struct {
 // config selected the prometheus metrics exporter. It does NOT register the
 // SetOnSwap callback — the caller does that (only --server mode needs it),
 // after ensuring no snapshot can be published before the callback is in place.
-func newObsManager(ctx context.Context, cache *configsync.ConfigCache, sp *telemetry.SwappableProvider, initial *telemetry.Provider, initialCfg telemetry.Config) *ObsManager {
+func newObsManager(ctx context.Context, cache *configsnapshot.Cache, sp *telemetry.SwappableProvider, initial *telemetry.Provider, initialCfg telemetry.Config) *ObsManager {
 	m := &ObsManager{
 		ctx:     ctx,
 		cache:   cache,

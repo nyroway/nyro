@@ -54,6 +54,28 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 	}
 }
 
+func TestConfigSnapshotBoundaryPolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		imp  directImport
+		want bool
+	}{
+		{"standard library", directImport{path: "sync/atomic", standard: true}, true},
+		{"storage contract", directImport{path: modulePath + "/internal/storage"}, true},
+		{"storage backend", directImport{path: modulePath + "/internal/storage/memory"}, false},
+		{"config sync", directImport{path: modulePath + "/internal/configsync"}, false},
+		{"third party", directImport{path: "google.golang.org/grpc"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := configSnapshotImportAllowed(tt.imp); got != tt.want {
+				t.Fatalf("configSnapshotImportAllowed(%+v) = %v, want %v", tt.imp, got, tt.want)
+			}
+		})
+	}
+}
+
 type foundationBoundary struct {
 	prefix          string
 	allowThirdParty bool
@@ -79,6 +101,10 @@ func importAllowedByFoundationBoundary(rule foundationBoundary, imp directImport
 
 func packageWithin(path, root string) bool {
 	return path == root || strings.HasPrefix(path, root+"/")
+}
+
+func configSnapshotImportAllowed(imp directImport) bool {
+	return imp.standard || imp.path == modulePath+"/internal/storage"
 }
 
 // Layer numbers. Lower may not import higher.
@@ -132,6 +158,7 @@ var packageLayer = map[string]int{
 	"internal/configsync/pki":              layerData,
 	"internal/configsync/pb/configsync/v1": layerData,
 	"internal/config":                      layerData,
+	"internal/config/snapshot":             layerData,
 	"internal/schemadump":                  layerData,
 
 	// Layer 2 — telemetry runtime.
@@ -172,6 +199,20 @@ func TestFoundationSubtreesStayIsolated(t *testing.T) {
 	}
 }
 
+func TestConfigSnapshotStaysIsolated(t *testing.T) {
+	t.Parallel()
+	for _, pkg := range loadInternalPackages(t) {
+		if pkg.name != "internal/config/snapshot" {
+			continue
+		}
+		for _, imp := range pkg.directImports {
+			if !configSnapshotImportAllowed(imp) {
+				t.Errorf("config snapshot boundary: %s imports %s", pkg.name, imp.path)
+			}
+		}
+	}
+}
+
 func TestGatewayRootDoesNotImportRuntime(t *testing.T) {
 	t.Parallel()
 	for _, pkg := range loadInternalPackages(t) {
@@ -181,6 +222,20 @@ func TestGatewayRootDoesNotImportRuntime(t *testing.T) {
 		for _, imp := range pkg.imports {
 			if packageWithin(imp, "internal/gateway/runtime") {
 				t.Errorf("gateway boundary: %s imports its runtime assembly package %s", pkg.name, imp)
+			}
+		}
+	}
+}
+
+func TestGatewayRootDoesNotImportConfigSync(t *testing.T) {
+	t.Parallel()
+	for _, pkg := range loadInternalPackages(t) {
+		if pkg.name != "internal/gateway" {
+			continue
+		}
+		for _, imp := range pkg.imports {
+			if packageWithin(imp, "internal/configsync") {
+				t.Errorf("gateway boundary: %s imports config-sync transport package %s", pkg.name, imp)
 			}
 		}
 	}

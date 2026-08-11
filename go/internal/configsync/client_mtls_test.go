@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/test/bufconn"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
@@ -47,7 +48,7 @@ func TestConfigClient_MTLS_ReceivesOverSecureChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache := &ConfigCache{}
+	cache := &configsnapshot.Cache{}
 	c := NewConfigClient("passthrough:///bufnet", cache, "19530", clientTLS)
 	c.initialBackoff = 20 * time.Millisecond
 	c.maxBackoff = 100 * time.Millisecond
@@ -81,7 +82,7 @@ func TestConfigClient_MTLS_WrongCARejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache := &ConfigCache{}
+	cache := &configsnapshot.Cache{}
 	c := NewConfigClient("passthrough:///bufnet", cache, "19530", clientTLS)
 	c.initialBackoff = 20 * time.Millisecond
 	c.maxBackoff = 50 * time.Millisecond

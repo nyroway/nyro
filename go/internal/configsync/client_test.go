@@ -9,11 +9,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 // newClient builds a ConfigClient pointed at the bufconn env via dialOpts.
-func newClient(cache *ConfigCache, dialOpt grpc.DialOption) *ConfigClient {
+func newClient(cache *configsnapshot.Cache, dialOpt grpc.DialOption) *ConfigClient {
 	c := NewConfigClient("passthrough:///bufnet", cache, "19530", nil)
 	c.initialBackoff = 20 * time.Millisecond
 	c.maxBackoff = 100 * time.Millisecond
@@ -29,7 +30,7 @@ func TestConfigClient_ReceivesAndSwaps(t *testing.T) {
 	srv, dialOpt, stop := bufconnEnv(t, st)
 	defer stop()
 
-	cache := &ConfigCache{}
+	cache := &configsnapshot.Cache{}
 	c := newClient(cache, dialOpt)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -61,7 +62,7 @@ func TestConfigClient_StopsOnContextCancel(t *testing.T) {
 	_, dialOpt, stop := bufconnEnv(t, st)
 	defer stop()
 
-	cache := &ConfigCache{}
+	cache := &configsnapshot.Cache{}
 	c := newClient(cache, dialOpt)
 
 	ctx, cancel := context.WithCancel(context.Background())

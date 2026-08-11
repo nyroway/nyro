@@ -6,8 +6,8 @@
 // settings (server/proxy/observability) + upstreams + routes + consumers
 // (nested keys/routes/quotas).
 //
-// Layer: 1 (data) — may import internal/protocol/llm, layer 0, storage, and
-// configsync.
+// Layer: 1 (data) — may import internal/config/snapshot,
+// internal/protocol/llm, layer 0, and storage.
 //
 // It imports telemetry/schema (layer 0) for the exporter registry used to
 // validate the settings.observability.* YAML block. It does not import the
