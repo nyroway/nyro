@@ -5,8 +5,8 @@ import (
 	"strconv"
 
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
-	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 var dataPlaneProxySettingKeys = map[string]struct{}{
@@ -21,7 +21,7 @@ func isDataPlaneSettingKey(key string) bool {
 	if _, ok := dataPlaneProxySettingKeys[key]; ok {
 		return true
 	}
-	return observability.IsExporterSettingKey(key)
+	return schema.IsExporterSettingKey(key)
 }
 
 // SnapshotFromProto converts a wire ConfigSnapshot into the gateway's internal

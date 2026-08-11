@@ -3,6 +3,8 @@ package observability
 import (
 	"strings"
 	"testing"
+
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 func settingsGetter(kv map[string]string) func(string) (string, error) {
@@ -26,14 +28,14 @@ func TestLoadConfigMapsKnownValues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Logs.Kind != ExporterKindStdout {
+	if cfg.Logs.Kind != schema.ExporterKindStdout {
 		t.Errorf("Logs.Kind: want stdout, got %q", cfg.Logs.Kind)
 	}
 	if cfg.Logs.Params != nil {
 		t.Errorf("Logs.Params: want nil (stdout has no fields), got %v", cfg.Logs.Params)
 	}
 
-	if cfg.Metrics.Kind != ExporterKindOTLP {
+	if cfg.Metrics.Kind != schema.ExporterKindOTLP {
 		t.Errorf("Metrics.Kind: want otlp, got %q", cfg.Metrics.Kind)
 	}
 	if got := cfg.Metrics.Params["endpoint"]; got != "http://collector:4318" {
@@ -46,7 +48,7 @@ func TestLoadConfigMapsKnownValues(t *testing.T) {
 		t.Errorf("Metrics.Params[interval]: got %q", got)
 	}
 
-	if cfg.Traces.Kind != ExporterKindOTLP {
+	if cfg.Traces.Kind != schema.ExporterKindOTLP {
 		t.Errorf("Traces.Kind: want otlp, got %q", cfg.Traces.Kind)
 	}
 	if got := cfg.Traces.Params["endpoint"]; got != "http://collector:4319" {

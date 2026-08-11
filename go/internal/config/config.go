@@ -9,11 +9,11 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
-	"github.com/nyroway/nyro/go/internal/observability"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 // ── settings ──
@@ -30,7 +30,7 @@ type ProxySpec struct {
 // Exporter selects the engine (stdout/otlp); the remaining fields are the
 // engine-specific fields flattened directly into the spec (no nested
 // per-engine block) — see exporterFieldSetters for the exporter→field
-// mapping enforced against internal/observability's registry.
+// mapping enforced against internal/telemetry/schema's registry.
 type ObservabilityLogsSpec struct {
 	Exporter string `yaml:"exporter,omitempty"`
 	Endpoint string `yaml:"endpoint,omitempty"`
@@ -442,8 +442,8 @@ func consumerQuotas(q ConsumerQuotasSpec) []storage.CreateConsumerQuota {
 // shape into the dot-key rows SettingsStore persists. proxy.* uses its own
 // dot-key namespace. observability.* maps onto the
 // obs_<signal>_exporter / obs_<signal>_<engine>_<field> keys
-// internal/observability's LoadConfig consumes, validated against the
-// exporter registry (internal/observability.ExportersFor) as described on
+// internal/telemetry's LoadConfig consumes, validated against the exporter
+// registry (internal/telemetry/schema.ExportersFor) as described on
 // flattenObservabilitySignal.
 func flattenSettings(s SettingsSpec) (map[string]string, error) {
 	out := map[string]string{}
@@ -472,7 +472,7 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 	// YAML — even if written as `logs: {}` — and must declare an exporter;
 	// flattenObservabilitySignal errors otherwise.
 	if l := s.Observability.Logs; l != nil {
-		if err := flattenObservabilitySignal(out, observability.SignalLogs, l.Exporter, map[string]string{
+		if err := flattenObservabilitySignal(out, schema.SignalLogs, l.Exporter, map[string]string{
 			"endpoint": l.Endpoint,
 			"protocol": l.Protocol,
 			"interval": l.Interval,
@@ -481,7 +481,7 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 		}
 	}
 	if m := s.Observability.Metrics; m != nil {
-		if err := flattenObservabilitySignal(out, observability.SignalMetrics, m.Exporter, map[string]string{
+		if err := flattenObservabilitySignal(out, schema.SignalMetrics, m.Exporter, map[string]string{
 			"endpoint": m.Endpoint,
 			"protocol": m.Protocol,
 			"interval": m.Interval,
@@ -492,7 +492,7 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 		}
 	}
 	if t := s.Observability.Traces; t != nil {
-		if err := flattenObservabilitySignal(out, observability.SignalTraces, t.Exporter, map[string]string{
+		if err := flattenObservabilitySignal(out, schema.SignalTraces, t.Exporter, map[string]string{
 			"endpoint": t.Endpoint,
 			"protocol": t.Protocol,
 			"interval": t.Interval,
@@ -509,21 +509,21 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 // <field> key per non-empty field. fields is keyed by FieldDef.Name (e.g.
 // "endpoint", "listen") — every key present in fields with a non-empty value
 // must belong to the selected exporter's field schema
-// (internal/observability.ExportersFor), or this returns an error; this is
+// (internal/telemetry/schema.ExportersFor), or this returns an error; this is
 // what catches YAML like `logs.exporter: stdout` plus a stray
 // `logs.endpoint: ...` (stdout has no endpoint field).
 //
 // exporterName == "" means the block was present in YAML but never set
 // exporter (e.g. `logs: {}`) — always an error, since a present block must
 // pick an engine.
-func flattenObservabilitySignal(out map[string]string, signal observability.Signal, exporterName string, fields map[string]string) error {
+func flattenObservabilitySignal(out map[string]string, signal schema.Signal, exporterName string, fields map[string]string) error {
 	name := string(signal)
 	if exporterName == "" {
 		return fmt.Errorf("observability.%s: exporter is required when the block is present", name)
 	}
 
-	defs := observability.ExportersFor(signal)
-	var def *observability.ExporterDef
+	defs := schema.ExportersFor(signal)
+	var def *schema.ExporterDef
 	for i := range defs {
 		if string(defs[i].Kind) == exporterName {
 			def = &defs[i]

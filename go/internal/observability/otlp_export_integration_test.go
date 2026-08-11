@@ -9,6 +9,8 @@ import (
 	"time"
 
 	otellog "go.opentelemetry.io/otel/log"
+
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 // TestOTLPLogsExportHitsV1LogsPath is the regression test for the endpoint-path
@@ -29,7 +31,7 @@ func TestOTLPLogsExportHitsV1LogsPath(t *testing.T) {
 	defer srv.Close()
 
 	prov, err := NewProvider(context.Background(), ObsConfig{
-		Logs: SignalConfig{Kind: ExporterKindOTLP, Params: map[string]string{"endpoint": srv.URL}},
+		Logs: SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": srv.URL}},
 	})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
@@ -78,7 +80,7 @@ func TestOTLPLogsHonorsExportInterval(t *testing.T) {
 	defer srv.Close()
 
 	prov, err := NewProvider(context.Background(), ObsConfig{
-		Logs: SignalConfig{Kind: ExporterKindOTLP, Params: map[string]string{"endpoint": srv.URL, "interval": "120ms"}},
+		Logs: SignalConfig{Kind: schema.ExporterKindOTLP, Params: map[string]string{"endpoint": srv.URL, "interval": "120ms"}},
 	})
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)

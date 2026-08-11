@@ -19,10 +19,8 @@
 //
 // Layer: 1 (data) — may import internal/protocol/llm, layer 0, and storage.
 //
-// It also imports observability (layer 2) for a single config-contract call
-// (IsExporterSettingKey), not for instrumentation — the same layer-0 metadata
-// that happens to live in a layer-2 package as config does. See the layering
-// test's KnownUpwardEdges for the tracking note.
+// It imports telemetry/schema (layer 0) to identify exporter settings that
+// belong in data-plane snapshots. It does not import the telemetry runtime.
 //
 // Must not import layer 3 (proxy, router, admin, dataplane, bootstrap).
 package configsync

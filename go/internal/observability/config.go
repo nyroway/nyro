@@ -3,6 +3,8 @@ package observability
 import (
 	"fmt"
 	"strconv"
+
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 // SignalConfig is the resolved exporter configuration for a single signal
@@ -10,7 +12,7 @@ import (
 // provider) — there is no "none" sentinel; the zero value SignalConfig{} is
 // the disabled state.
 type SignalConfig struct {
-	Kind   ExporterKind
+	Kind   schema.ExporterKind
 	Params map[string]string
 }
 
@@ -27,27 +29,16 @@ type ObsConfig struct {
 	TracesRetentionDays  int
 }
 
-// signalKeyNames maps each Signal to the key-name segment used in setting
-// keys (obs_<name>_exporter, obs_<name>_<kind>_<field>). It happens to equal
-// string(signal) for all three signals today, but is kept explicit so a
-// future signal whose Signal value diverges from its key name doesn't
-// silently break key parsing.
-var signalKeyNames = map[Signal]string{
-	SignalLogs:    "logs",
-	SignalMetrics: "metrics",
-	SignalTraces:  "traces",
-}
-
 // LoadConfig reads observability settings via get (typically
 // s.Settings().Get) and resolves them into an ObsConfig. Each signal is
 // resolved independently:
 //
 //   - obs_<signal>_exporter selects the signal's Kind. Empty/absent means the
 //     signal is disabled (SignalConfig{} zero value). A non-empty value that
-//     is not a registered exporter for that signal (per ExportersFor) is a
-//     validation error.
+//     is not a registered exporter for that signal (per schema.ExportersFor)
+//     is a validation error.
 //   - obs_<signal>_<kind>_<field> supplies each field the selected kind
-//     accepts (per ExportersFor's FieldDef list), written to
+//     accepts (per schema.ExportersFor's FieldDef list), written to
 //     SignalConfig.Params[field] (unprefixed field name). A field left unset
 //     falls back to its FieldDef.Default if one exists; if it has neither a
 //     setting value nor a default, it is simply absent from Params (fail-fast
@@ -73,13 +64,13 @@ func LoadConfig(get func(string) (string, error)) (ObsConfig, error) {
 	}
 
 	var err error
-	if cfg.Logs, err = loadSignalConfig(g, SignalLogs); err != nil {
+	if cfg.Logs, err = loadSignalConfig(g, schema.SignalLogs); err != nil {
 		return ObsConfig{}, err
 	}
-	if cfg.Metrics, err = loadSignalConfig(g, SignalMetrics); err != nil {
+	if cfg.Metrics, err = loadSignalConfig(g, schema.SignalMetrics); err != nil {
 		return ObsConfig{}, err
 	}
-	if cfg.Traces, err = loadSignalConfig(g, SignalTraces); err != nil {
+	if cfg.Traces, err = loadSignalConfig(g, schema.SignalTraces); err != nil {
 		return ObsConfig{}, err
 	}
 
@@ -87,16 +78,16 @@ func LoadConfig(get func(string) (string, error)) (ObsConfig, error) {
 }
 
 // loadSignalConfig resolves one signal's SignalConfig from settings.
-func loadSignalConfig(g func(string) string, signal Signal) (SignalConfig, error) {
-	name := signalKeyNames[signal]
+func loadSignalConfig(g func(string) string, signal schema.Signal) (SignalConfig, error) {
+	name := string(signal)
 
-	kind := ExporterKind(g(fmt.Sprintf("obs_%s_exporter", name)))
+	kind := schema.ExporterKind(g(fmt.Sprintf("obs_%s_exporter", name)))
 	if kind == "" {
 		return SignalConfig{}, nil
 	}
 
-	defs := ExportersFor(signal)
-	var def *ExporterDef
+	defs := schema.ExportersFor(signal)
+	var def *schema.ExporterDef
 	for i := range defs {
 		if defs[i].Kind == kind {
 			def = &defs[i]
