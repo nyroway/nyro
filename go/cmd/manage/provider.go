@@ -18,7 +18,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
-	"github.com/nyroway/nyro/go/llm/spec"
+	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 )
 
 const (
