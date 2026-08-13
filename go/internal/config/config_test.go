@@ -19,7 +19,7 @@ settings:
     request_timeout: "45s"
     max_retries: 3
     max_body_bytes: 1048576
-  observability:
+  telemetry:
     logs:
       exporter: stdout
 upstreams:
@@ -107,7 +107,7 @@ consumers:
 		t.Error("explicit token not discoverable after ApplyTo")
 	}
 
-	// settings flattened: proxy.* stored verbatim, observability.* mapped onto obs_* keys.
+	// settings flattened: proxy.* stored verbatim, telemetry.* mapped onto obs_* keys.
 	if v, _ := core.Settings().Get("proxy.request_timeout"); v != "45s" {
 		t.Errorf("proxy.request_timeout = %q, want 45s", v)
 	}
@@ -398,9 +398,9 @@ func TestConsumerQuotas_ExpandsAllCategories(t *testing.T) {
 func TestFlattenSettings(t *testing.T) {
 	s := SettingsSpec{
 		Proxy: ProxySpec{RequestTimeout: "120s", MaxRetries: 2, RetryOnStatus: []int{429, 500}, MaxBodyBytes: 1048576},
-		Observability: ObservabilitySpec{
-			Logs:   &ObservabilityLogsSpec{Exporter: "stdout"},
-			Traces: &ObservabilityTracesSpec{Exporter: "otlp", Endpoint: "http://127.0.0.1:4317", Protocol: "grpc"},
+		Telemetry: TelemetrySpec{
+			Logs:   &TelemetryLogsSpec{Exporter: "stdout"},
+			Traces: &TelemetryTracesSpec{Exporter: "otlp", Endpoint: "http://127.0.0.1:4317", Protocol: "grpc"},
 		},
 	}
 	got, err := flattenSettings(s)
@@ -426,7 +426,7 @@ func TestFlattenSettings(t *testing.T) {
 	// Metrics block absent entirely: no obs_metrics_* key of any kind.
 	for k := range got {
 		if strings.HasPrefix(k, "obs_metrics_") {
-			t.Errorf("unset observability.metrics block should not appear in flattened settings, got key %q", k)
+			t.Errorf("unset telemetry.metrics block should not appear in flattened settings, got key %q", k)
 		}
 	}
 	for k := range got {
@@ -444,8 +444,8 @@ func TestFlattenSettings(t *testing.T) {
 
 func TestFlattenSettings_MetricsPrometheusListenAndPath(t *testing.T) {
 	s := SettingsSpec{
-		Observability: ObservabilitySpec{
-			Metrics: &ObservabilityMetricsSpec{Exporter: "prometheus", Listen: ":9464", Path: "/metrics"},
+		Telemetry: TelemetrySpec{
+			Metrics: &TelemetryMetricsSpec{Exporter: "prometheus", Listen: ":9464", Path: "/metrics"},
 		},
 	}
 	got, err := flattenSettings(s)
@@ -465,7 +465,7 @@ func TestFlattenSettings_MetricsPrometheusListenAndPath(t *testing.T) {
 }
 
 func TestFlattenSettings_BlockAbsent_SilentlyClosed(t *testing.T) {
-	// No observability block at all: zero value ObservabilitySpec has all
+	// No telemetry block at all: zero value TelemetrySpec has all
 	// three pointers nil.
 	got, err := flattenSettings(SettingsSpec{})
 	if err != nil {
@@ -473,27 +473,31 @@ func TestFlattenSettings_BlockAbsent_SilentlyClosed(t *testing.T) {
 	}
 	for k := range got {
 		if strings.HasPrefix(k, "obs_") {
-			t.Errorf("no observability blocks present, but got obs key %q", k)
+			t.Errorf("no telemetry blocks present, but got obs key %q", k)
 		}
 	}
 }
 
 func TestFlattenSettings_BlockPresentMissingExporter_Errors(t *testing.T) {
 	s := SettingsSpec{
-		Observability: ObservabilitySpec{
-			Logs: &ObservabilityLogsSpec{}, // present (non-nil) but no exporter set
+		Telemetry: TelemetrySpec{
+			Logs: &TelemetryLogsSpec{}, // present (non-nil) but no exporter set
 		},
 	}
-	if _, err := flattenSettings(s); err == nil {
+	_, err := flattenSettings(s)
+	if err == nil {
 		t.Fatal("expected error for logs block present without exporter, got nil")
+	}
+	if !strings.Contains(err.Error(), "telemetry.logs: exporter is required") {
+		t.Fatalf("flattenSettings error = %q, want telemetry.logs path", err)
 	}
 }
 
 func TestFlattenSettings_FieldNotBelongingToExporter_Errors(t *testing.T) {
 	s := SettingsSpec{
-		Observability: ObservabilitySpec{
+		Telemetry: TelemetrySpec{
 			// stdout has no endpoint field.
-			Logs: &ObservabilityLogsSpec{Exporter: "stdout", Endpoint: "http://127.0.0.1:4317"},
+			Logs: &TelemetryLogsSpec{Exporter: "stdout", Endpoint: "http://127.0.0.1:4317"},
 		},
 	}
 	if _, err := flattenSettings(s); err == nil {
@@ -503,18 +507,22 @@ func TestFlattenSettings_FieldNotBelongingToExporter_Errors(t *testing.T) {
 
 func TestFlattenSettings_UnknownExporter_Errors(t *testing.T) {
 	s := SettingsSpec{
-		Observability: ObservabilitySpec{
-			Traces: &ObservabilityTracesSpec{Exporter: "graphite"},
+		Telemetry: TelemetrySpec{
+			Traces: &TelemetryTracesSpec{Exporter: "graphite"},
 		},
 	}
-	if _, err := flattenSettings(s); err == nil {
+	_, err := flattenSettings(s)
+	if err == nil {
 		t.Fatal("expected error for unregistered exporter kind, got nil")
+	}
+	if !strings.Contains(err.Error(), `telemetry.traces: unknown exporter "graphite"`) {
+		t.Fatalf("flattenSettings error = %q, want telemetry.traces path", err)
 	}
 }
 
 // writeAndLoadYAML writes body to a temp nyro.yaml and loads it through the
 // real LoadYAML path (env-var expansion + yaml.v3 unmarshal), returning the
-// flattened settings map. Used by the observability presence/absence tests
+// flattened settings map. Used by the telemetry presence/absence tests
 // below so the presence-vs-null distinction is exercised through actual YAML
 // parsing rather than constructed Go struct literals.
 func writeAndLoadYAML(t *testing.T, body string) (map[string]string, error) {
@@ -531,46 +539,46 @@ func writeAndLoadYAML(t *testing.T, body string) (map[string]string, error) {
 	return flattenSettings(cfg.Settings)
 }
 
-func TestLoadYAML_ObservabilityBlockAbsent_SilentlyClosed(t *testing.T) {
+func TestLoadYAML_TelemetryBlockAbsent_SilentlyClosed(t *testing.T) {
 	got, err := writeAndLoadYAML(t, "version: 1\n")
 	if err != nil {
 		t.Fatalf("flattenSettings: %v", err)
 	}
 	for k := range got {
 		if strings.HasPrefix(k, "obs_") {
-			t.Errorf("observability block absent from YAML, but got obs key %q", k)
+			t.Errorf("telemetry block absent from YAML, but got obs key %q", k)
 		}
 	}
 }
 
-func TestLoadYAML_ObservabilityLogsEmptyMapping_Errors(t *testing.T) {
-	_, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    logs: {}\n")
+func TestLoadYAML_TelemetryLogsEmptyMapping_Errors(t *testing.T) {
+	_, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  telemetry:\n    logs: {}\n")
 	if err == nil {
 		t.Fatal("expected error for `logs: {}` (present, no exporter), got nil")
 	}
 }
 
-func TestLoadYAML_ObservabilityLogsBareNullKey_Errors(t *testing.T) {
+func TestLoadYAML_TelemetryLogsBareNullKey_Errors(t *testing.T) {
 	// Bare `logs:` with no value decodes as a YAML null scalar. It must be
 	// treated as "block present but empty" (same as `logs: {}`), not "block
 	// absent" — this is the regression the reviewer flagged.
-	_, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    logs:\n")
+	_, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  telemetry:\n    logs:\n")
 	if err == nil {
 		t.Fatal("expected error for bare `logs:` (null, present) missing exporter, got nil")
 	}
 }
 
-func TestLoadYAML_ObservabilityLogsNullWithComment_Errors(t *testing.T) {
+func TestLoadYAML_TelemetryLogsNullWithComment_Errors(t *testing.T) {
 	// `logs:\n  # nothing here\n` also decodes as a null scalar for the logs
 	// key (the comment carries no YAML content) — must error the same way.
-	_, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    logs:\n      # nothing here\n")
+	_, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  telemetry:\n    logs:\n      # nothing here\n")
 	if err == nil {
 		t.Fatal("expected error for `logs:` with only a comment (null, present) missing exporter, got nil")
 	}
 }
 
-func TestLoadYAML_ObservabilityLogsWithExporter_Succeeds(t *testing.T) {
-	got, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    logs:\n      exporter: stdout\n")
+func TestLoadYAML_TelemetryLogsWithExporter_Succeeds(t *testing.T) {
+	got, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  telemetry:\n    logs:\n      exporter: stdout\n")
 	if err != nil {
 		t.Fatalf("flattenSettings: %v", err)
 	}
@@ -579,13 +587,30 @@ func TestLoadYAML_ObservabilityLogsWithExporter_Succeeds(t *testing.T) {
 	}
 }
 
-func TestLoadYAML_ObservabilityMetricsPrometheus_Succeeds(t *testing.T) {
+func TestLoadYAML_ObservabilityKeyRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nyro.yaml")
+	body := "version: 1\nsettings:\n  observability:\n    logs:\n      exporter: stdout\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := LoadYAML(path)
+	if err == nil {
+		t.Fatal("expected settings.observability to be rejected")
+	}
+	if !strings.Contains(err.Error(), "settings.observability was renamed to settings.telemetry") {
+		t.Fatalf("LoadYAML error = %q, want rename guidance", err)
+	}
+}
+
+func TestLoadYAML_TelemetryMetricsPrometheus_Succeeds(t *testing.T) {
 	// Real YAML round-trip for metrics+prometheus (listen+path), matching the
 	// shape documented in docs/schema/config.md. Existing coverage exercised
 	// prometheus fields only via a constructed SettingsSpec literal
 	// (TestFlattenSettings_MetricsPrometheusListenAndPath) and exercised real
 	// YAML parsing only for logs+stdout — this closes that gap.
-	got, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  observability:\n    metrics:\n      exporter: prometheus\n      listen: \":9464\"\n      path: \"/metrics\"\n")
+	got, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  telemetry:\n    metrics:\n      exporter: prometheus\n      listen: \":9464\"\n      path: \"/metrics\"\n")
 	if err != nil {
 		t.Fatalf("flattenSettings: %v", err)
 	}

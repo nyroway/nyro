@@ -26,21 +26,21 @@ type ProxySpec struct {
 	MaxBodyBytes   int64  `yaml:"max_body_bytes,omitempty"`
 }
 
-// ObservabilityLogsSpec is the YAML shape of settings.observability.logs.
+// TelemetryLogsSpec is the YAML shape of settings.telemetry.logs.
 // Exporter selects the engine (stdout/otlp); the remaining fields are the
 // engine-specific fields flattened directly into the spec (no nested
 // per-engine block) — see exporterFieldSetters for the exporter→field
 // mapping enforced against internal/telemetry/schema's registry.
-type ObservabilityLogsSpec struct {
+type TelemetryLogsSpec struct {
 	Exporter string `yaml:"exporter,omitempty"`
 	Endpoint string `yaml:"endpoint,omitempty"`
 	Protocol string `yaml:"protocol,omitempty"`
 	Interval string `yaml:"interval,omitempty"`
 }
 
-// ObservabilityMetricsSpec is the YAML shape of settings.observability.metrics.
+// TelemetryMetricsSpec is the YAML shape of settings.telemetry.metrics.
 // Exporter selects the engine (stdout/otlp/prometheus).
-type ObservabilityMetricsSpec struct {
+type TelemetryMetricsSpec struct {
 	Exporter string `yaml:"exporter,omitempty"`
 	Endpoint string `yaml:"endpoint,omitempty"`
 	Protocol string `yaml:"protocol,omitempty"`
@@ -49,83 +49,104 @@ type ObservabilityMetricsSpec struct {
 	Path     string `yaml:"path,omitempty"`
 }
 
-// ObservabilityTracesSpec is the YAML shape of settings.observability.traces.
+// TelemetryTracesSpec is the YAML shape of settings.telemetry.traces.
 // Exporter selects the engine (stdout/otlp).
-type ObservabilityTracesSpec struct {
+type TelemetryTracesSpec struct {
 	Exporter string `yaml:"exporter,omitempty"`
 	Endpoint string `yaml:"endpoint,omitempty"`
 	Protocol string `yaml:"protocol,omitempty"`
 	Interval string `yaml:"interval,omitempty"`
 }
 
-// ObservabilitySpec holds the three per-signal blocks. Each field is a
+// TelemetrySpec holds the three per-signal blocks. Each field is a
 // pointer so unmarshal can distinguish "block absent from YAML" (nil — the
 // signal is silently disabled) from "block present but empty/incomplete"
 // (non-nil with a zero Exporter — a validation error, since a present block
 // must declare which engine to use).
-type ObservabilitySpec struct {
-	Logs    *ObservabilityLogsSpec    `yaml:"logs,omitempty"`
-	Metrics *ObservabilityMetricsSpec `yaml:"metrics,omitempty"`
-	Traces  *ObservabilityTracesSpec  `yaml:"traces,omitempty"`
+type TelemetrySpec struct {
+	Logs    *TelemetryLogsSpec    `yaml:"logs,omitempty"`
+	Metrics *TelemetryMetricsSpec `yaml:"metrics,omitempty"`
+	Traces  *TelemetryTracesSpec  `yaml:"traces,omitempty"`
 }
 
 // UnmarshalYAML implements custom decoding so that "key present in the YAML
 // document" can be distinguished from "key absent" independently of the
 // value's YAML kind. Standard struct-tag decoding maps both a fully absent
 // `logs:` key and a present-but-null one (bare `logs:`, or `logs:\n  #
-// comment`) to the same nil *ObservabilityLogsSpec, which loses the
+// comment`) to the same nil *TelemetryLogsSpec, which loses the
 // distinction flattenSettings relies on ("present but empty" must error,
 // "absent" must silently disable). Here each of logs/metrics/traces is only
 // left nil when its key does not appear in node.Content at all; if the key
 // is present, the pointer is always allocated (decoding its value when the
 // value is not the YAML null scalar, leaving a zero-value struct — i.e. no
 // exporter set — otherwise), matching `logs: {}` behavior.
-func (o *ObservabilitySpec) UnmarshalYAML(node *yaml.Node) error {
+func (t *TelemetrySpec) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == 0 || node.Tag == "!!null" {
-		// observability key absent, or present but null (bare `observability:`)
+		// telemetry key absent, or present but null (bare `telemetry:`)
 		// — treat as no signal blocks present, same as omitting the key.
-		*o = ObservabilitySpec{}
+		*t = TelemetrySpec{}
 		return nil
 	}
 	if node.Kind != yaml.MappingNode {
-		return fmt.Errorf("observability: expected a mapping, got %v", node.Kind)
+		return fmt.Errorf("telemetry: expected a mapping, got %v", node.Kind)
 	}
-	*o = ObservabilitySpec{}
+	*t = TelemetrySpec{}
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		keyNode, valNode := node.Content[i], node.Content[i+1]
 		switch keyNode.Value {
 		case "logs":
-			spec := &ObservabilityLogsSpec{}
+			spec := &TelemetryLogsSpec{}
 			if valNode.Tag != "!!null" {
 				if err := valNode.Decode(spec); err != nil {
-					return fmt.Errorf("observability.logs: %w", err)
+					return fmt.Errorf("telemetry.logs: %w", err)
 				}
 			}
-			o.Logs = spec
+			t.Logs = spec
 		case "metrics":
-			spec := &ObservabilityMetricsSpec{}
+			spec := &TelemetryMetricsSpec{}
 			if valNode.Tag != "!!null" {
 				if err := valNode.Decode(spec); err != nil {
-					return fmt.Errorf("observability.metrics: %w", err)
+					return fmt.Errorf("telemetry.metrics: %w", err)
 				}
 			}
-			o.Metrics = spec
+			t.Metrics = spec
 		case "traces":
-			spec := &ObservabilityTracesSpec{}
+			spec := &TelemetryTracesSpec{}
 			if valNode.Tag != "!!null" {
 				if err := valNode.Decode(spec); err != nil {
-					return fmt.Errorf("observability.traces: %w", err)
+					return fmt.Errorf("telemetry.traces: %w", err)
 				}
 			}
-			o.Traces = spec
+			t.Traces = spec
 		}
 	}
 	return nil
 }
 
 type SettingsSpec struct {
-	Proxy         ProxySpec         `yaml:"proxy,omitempty"`
-	Observability ObservabilitySpec `yaml:"observability,omitempty"`
+	Proxy     ProxySpec     `yaml:"proxy,omitempty"`
+	Telemetry TelemetrySpec `yaml:"telemetry,omitempty"`
+}
+
+// UnmarshalYAML rejects the removed observability key explicitly. yaml.v3's
+// default struct decoder ignores unknown fields, which would otherwise turn an
+// old config into a silently disabled telemetry pipeline.
+func (s *SettingsSpec) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == "observability" {
+				return fmt.Errorf("settings.observability was renamed to settings.telemetry")
+			}
+		}
+	}
+
+	type plain SettingsSpec
+	var decoded plain
+	if err := node.Decode(&decoded); err != nil {
+		return fmt.Errorf("settings: %w", err)
+	}
+	*s = SettingsSpec(decoded)
+	return nil
 }
 
 // ── upstreams ──
@@ -438,13 +459,13 @@ func consumerQuotas(q ConsumerQuotasSpec) []storage.CreateConsumerQuota {
 	return out
 }
 
-// flattenSettings expands the nested settings.proxy/observability YAML
+// flattenSettings expands the nested settings.proxy/telemetry YAML
 // shape into the dot-key rows SettingsStore persists. proxy.* uses its own
-// dot-key namespace. observability.* maps onto the
+// dot-key namespace. telemetry.* maps onto the
 // obs_<signal>_exporter / obs_<signal>_<engine>_<field> keys
 // internal/telemetry's LoadConfig consumes, validated against the exporter
 // registry (internal/telemetry/schema.ExportersFor) as described on
-// flattenObservabilitySignal.
+// flattenTelemetrySignal.
 func flattenSettings(s SettingsSpec) (map[string]string, error) {
 	out := map[string]string{}
 	setIfNonEmpty := func(key, value string) {
@@ -470,9 +491,9 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 	// closed, no obs_<signal>_* keys produced (LoadConfig treats a missing
 	// obs_<signal>_exporter as disabled). A non-nil block is present in the
 	// YAML — even if written as `logs: {}` — and must declare an exporter;
-	// flattenObservabilitySignal errors otherwise.
-	if l := s.Observability.Logs; l != nil {
-		if err := flattenObservabilitySignal(out, schema.SignalLogs, l.Exporter, map[string]string{
+	// flattenTelemetrySignal errors otherwise.
+	if l := s.Telemetry.Logs; l != nil {
+		if err := flattenTelemetrySignal(out, schema.SignalLogs, l.Exporter, map[string]string{
 			"endpoint": l.Endpoint,
 			"protocol": l.Protocol,
 			"interval": l.Interval,
@@ -480,8 +501,8 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 			return nil, err
 		}
 	}
-	if m := s.Observability.Metrics; m != nil {
-		if err := flattenObservabilitySignal(out, schema.SignalMetrics, m.Exporter, map[string]string{
+	if m := s.Telemetry.Metrics; m != nil {
+		if err := flattenTelemetrySignal(out, schema.SignalMetrics, m.Exporter, map[string]string{
 			"endpoint": m.Endpoint,
 			"protocol": m.Protocol,
 			"interval": m.Interval,
@@ -491,8 +512,8 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 			return nil, err
 		}
 	}
-	if t := s.Observability.Traces; t != nil {
-		if err := flattenObservabilitySignal(out, schema.SignalTraces, t.Exporter, map[string]string{
+	if t := s.Telemetry.Traces; t != nil {
+		if err := flattenTelemetrySignal(out, schema.SignalTraces, t.Exporter, map[string]string{
 			"endpoint": t.Endpoint,
 			"protocol": t.Protocol,
 			"interval": t.Interval,
@@ -504,7 +525,7 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 	return out, nil
 }
 
-// flattenObservabilitySignal validates and flattens one present observability
+// flattenTelemetrySignal validates and flattens one present telemetry
 // signal block into obs_<signal>_exporter plus one obs_<signal>_<exporter>_
 // <field> key per non-empty field. fields is keyed by FieldDef.Name (e.g.
 // "endpoint", "listen") — every key present in fields with a non-empty value
@@ -516,10 +537,10 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 // exporterName == "" means the block was present in YAML but never set
 // exporter (e.g. `logs: {}`) — always an error, since a present block must
 // pick an engine.
-func flattenObservabilitySignal(out map[string]string, signal schema.Signal, exporterName string, fields map[string]string) error {
+func flattenTelemetrySignal(out map[string]string, signal schema.Signal, exporterName string, fields map[string]string) error {
 	name := string(signal)
 	if exporterName == "" {
-		return fmt.Errorf("observability.%s: exporter is required when the block is present", name)
+		return fmt.Errorf("telemetry.%s: exporter is required when the block is present", name)
 	}
 
 	defs := schema.ExportersFor(signal)
@@ -531,7 +552,7 @@ func flattenObservabilitySignal(out map[string]string, signal schema.Signal, exp
 		}
 	}
 	if def == nil {
-		return fmt.Errorf("observability.%s: unknown exporter %q", name, exporterName)
+		return fmt.Errorf("telemetry.%s: unknown exporter %q", name, exporterName)
 	}
 
 	allowed := make(map[string]bool, len(def.Fields))
@@ -545,7 +566,7 @@ func flattenObservabilitySignal(out map[string]string, signal schema.Signal, exp
 			continue
 		}
 		if !allowed[field] {
-			return fmt.Errorf("observability.%s: field %q is not valid for exporter %q", name, field, exporterName)
+			return fmt.Errorf("telemetry.%s: field %q is not valid for exporter %q", name, field, exporterName)
 		}
 		out[fmt.Sprintf("obs_%s_%s_%s", name, exporterName, field)] = value
 	}

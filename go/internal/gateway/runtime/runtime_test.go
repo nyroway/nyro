@@ -70,19 +70,19 @@ consumers:
 	}
 }
 
-// TestBuild_StandaloneReadsObservabilityFromYAML proves settings.observability
+// TestBuild_StandaloneReadsTelemetryFromYAML proves settings.telemetry
 // declared in the YAML file actually reaches the observability provider (it did
 // not before this fix — standalone mode read OTEL_* env vars only and silently
 // ignored the file). traces.exporter: otlp with no endpoint anywhere must trip
 // NewProvider's fail-fast guard — that failure is only possible if the YAML
 // setting was actually read.
-func TestBuild_StandaloneReadsObservabilityFromYAML(t *testing.T) {
+func TestBuild_StandaloneReadsTelemetryFromYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/nyro.yaml"
 	const yaml = `
 version: 1
 settings:
-  observability:
+  telemetry:
     traces:
       exporter: otlp
 upstreams: []
