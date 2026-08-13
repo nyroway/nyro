@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/nyroway/nyro/go/cmd/manage"
 	"github.com/nyroway/nyro/go/cmd/proxy"
+	"github.com/nyroway/nyro/go/cmd/resource"
 	"github.com/nyroway/nyro/go/cmd/server"
 	"github.com/nyroway/nyro/go/cmd/tool"
 	"github.com/nyroway/nyro/go/internal/envflag"
@@ -37,7 +37,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(server.NewCmd())
 	root.AddCommand(tool.NewCmd())
 	root.AddCommand(newVersionCmd())
-	root.AddCommand(manage.ProviderCmd())
+	root.AddCommand(resource.ProviderCmd())
 	envflag.Decorate(root)
 	return root
 }

@@ -1,6 +1,6 @@
-// Package manage implements top-level CLI commands for managing nyro
+// Package resource implements top-level CLI commands for managing nyro
 // control-plane resources through the Admin API.
-package manage
+package resource
 
 import (
 	"bufio"
