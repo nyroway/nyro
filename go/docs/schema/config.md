@@ -16,7 +16,7 @@ settings:
     retry_on_status: [429, 500, 502, 503, 504]
     max_body_bytes: 33554432
 
-  observability:
+  telemetry:
     logs:
       exporter: "stdout"
     metrics:
@@ -173,7 +173,7 @@ uses `routes[].upstreams[].model`.
     `concurrency` maps internally to `consumer_quotas.quota_type = "concurrency"`.
   - `limits`: `max_input_tokens`, `max_output_tokens`,
     `max_request_body_bytes` — per-request caps; omitted/zero means no limit.
-- `settings.observability`: three independent signal blocks — `logs`,
+- `settings.telemetry`: three independent signal blocks — `logs`,
   `metrics`, `traces`. Each signal picks its own exporter and owns a flat set
   of engine-specific fields; there is no shared/global exporter, endpoint, or
   export interval. The authoritative field schema (per exporter kind, per
@@ -204,7 +204,7 @@ uses `routes[].upstreams[].model`.
     rejected — `stdout` takes no fields).
   - `retention` and `data_dir` are **not** part of this gateway YAML layer —
     they are admin-side control-plane configuration and never appear under
-    `settings.observability` here.
+    `settings.telemetry` here.
 
 ## Admin-only settings
 
