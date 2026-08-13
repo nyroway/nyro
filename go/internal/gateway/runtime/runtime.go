@@ -91,7 +91,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, er
 	switch {
 	case opts.ConfigPath != "":
 		// Standalone YAML: build the config snapshot directly (no DB). The
-		// observability config comes from settings.observability in the YAML
+		// observability config comes from settings.telemetry in the YAML
 		// file (flattened into the snapshot by internal/config); if the file
 		// declares nothing, defaults are logs→stdout, metrics/traces→disabled.
 		// See resolveObsConfig — environment variables are never consulted.
