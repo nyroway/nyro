@@ -16,6 +16,11 @@ settings:
     retry_on_status: [429, 500, 502, 503, 504]
     max_body_bytes: 33554432
 
+  # Optional. Omit this block to use process-local memory.
+  state:
+    type: "redis"
+    url: "${NYRO_REDIS_URL}"
+
   telemetry:
     logs:
       exporter: "stdout"
@@ -135,6 +140,25 @@ uses `routes[].upstreams[].model`.
   - `max_body_bytes`: gateway-wide request-body cap in bytes (default
     `33554432`, 32 MiB). This is distinct from
     `consumers[].limits.max_request_body_bytes`, which is a per-consumer cap.
+- `settings.state`: selects the backend used by runtime State consumers. The
+  current consumer is quota enforcement; this block deliberately has no
+  quota-specific or other business sub-blocks.
+  - If the whole block is absent, the gateway uses process-local memory.
+    `state: {type: memory}` is the explicit equivalent and must not include
+    `url`. A present but empty block is rejected.
+  - `type: redis` requires `url`, which must be an absolute `redis://` or
+    `rediss://` URL. Standard URL user information and path syntax carry the
+    Redis username, password, and database, for example
+    `redis://user:password@redis.internal:6379/2`. Prefer an environment
+    variable so credentials are not committed to YAML.
+  - Standalone YAML validates and connects to the selected backend during
+    startup; an unavailable Redis backend fails startup instead of silently
+    falling back to memory. With config-sync, `state.type` and `state.url` are
+    pushed to every data-plane node. A hot-update candidate is retried in the
+    background while the last-known-good backend continues serving.
+  - One pushed Redis URL must be reachable from every subscribed data-plane
+    node. Use shared Redis when quotas must be enforced across replicas;
+    process-local memory gives each node an independent quota view.
 - `upstreams[]`
   - `name` (required, unique): upstream instance name, referenced by routes.
   - `provider` (required): a provider preset id (e.g. `openai`, `deepseek`,
@@ -171,6 +195,10 @@ uses `routes[].upstreams[].model`.
     are validated and persisted but not enforced by the proxy in this version
     (enforcement requires a pricing table, planned for a later version).
     `concurrency` maps internally to `consumer_quotas.quota_type = "concurrency"`.
+    Request and token windows use one-minute buckets and retain at most 24
+    hours of effective history. A clean quota denial returns HTTP `429`; an
+    unavailable State backend returns HTTP `503` so infrastructure failure is
+    not misreported as client overuse.
   - `limits`: `max_input_tokens`, `max_output_tokens`,
     `max_request_body_bytes` — per-request caps; omitted/zero means no limit.
 - `settings.telemetry`: three independent signal blocks — `logs`,
@@ -228,3 +256,11 @@ gateways through config-sync.
 - `--otlp-listen` and `--redis-listen`: loopback listeners for the embedded
   OTLP/HTTP and Redis-compatible servers. Disable them explicitly with
   `--disable-otlp` and `--disable-redis`.
+- Serving the embedded Redis-compatible endpoint and selecting a gateway
+  `settings.state` backend are separate decisions. Starting `nyro serve` does
+  not implicitly rewrite or select `state.url`; configure the embedded
+  listener's reachable URL explicitly when a proxy should use it.
+- The embedded Redis listener defaults to loopback. A non-loopback
+  `--redis-listen` requires `--redis-password` and still carries credentials
+  and State traffic without TLS. Restrict it to a trusted private network, or
+  use an external `rediss://` service for production multi-node deployments.

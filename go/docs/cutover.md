@@ -131,8 +131,10 @@ Streaming responses: diff per-frame after normalizing each SSE payload. Token
 boundaries may differ; compare the concatenated content + final usage.
 
 This is also where the **deferred OAuth acquisition flows** (Claude PKCE /
-Codex / Vertex) get validated against the Rust gateway's wire behavior, and
-where `tpm/tpd` token-quota accounting is wired once usage is captured.
+Codex / Vertex) get validated against the Rust gateway's wire behavior.
+Request/token quota accounting and concurrency enforcement are already wired;
+shadow traffic must validate their observed usage and denial behavior under
+the intended memory or shared Redis State backend.
 
 ## 3. Gradual cutover
 
@@ -163,7 +165,11 @@ After the Go proxy serves 100% cleanly for the agreed bake period:
 - **OAuth acquisition flows** (Claude/Codex/Vertex): framework is in
   `internal/auth`; concrete driver flows + background refresh must be ported
   and validated here.
-- **Token-quota accounting** (`tpm/tpd`): wire usage into the request log.
+- **Budget enforcement**: budget definitions persist, but enforcement still
+  requires pricing data and accounting semantics.
+- **Conversation/API state**: protocol conversion for stateful APIs such as
+  OpenAI Responses and Gemini Interactions still needs an explicit State
+  contract and lifecycle; it must not reuse quota keys implicitly.
 - **Codec edge cases** flagged `TODO(P5)` in each codec (multimodal parts,
   Anthropic cache_control raw round-trip, Gemini schema uppercasing,
   Responses reasoning-item passback, full event sequence).

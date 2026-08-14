@@ -168,6 +168,13 @@ the embedded listeners and point clients at external components.
 
 `state.db` contains `state_kv(key BLOB PRIMARY KEY, value BLOB NOT NULL,
 expires_at_ms INTEGER NULL)` and a partial expiry index on `expires_at_ms`.
+The embedded Redis-compatible server implements the Sorted Set operations
+needed by distributed quota concurrency (`ZADD`, `ZREM`, `ZCARD`, and
+`ZREMRANGEBYSCORE`). Sorted Sets use a private, versioned binary encoding in
+the existing `state_kv.value`; String/TTL semantics and the SQL schema are
+unchanged, so this capability requires no database migration. The embedded
+server remains a deliberately limited Nyro State service, not a general Redis
+replacement.
 
 `observe.db` contains:
 
