@@ -104,10 +104,12 @@ settings:
 ```
 
 `redis://` and TLS-enabled `rediss://` URLs may include username, password,
-and database. An unavailable standalone backend fails startup; a failed
-config-sync hot update keeps the last-known-good backend while retrying. The
-embedded Redis-compatible listener is separately controlled by `nyro serve`
-flags and is intentionally limited to Nyro's State needs. See
+and database. External Redis must be version 7.0 or newer; distributed
+concurrency leases rely on conditional `EXPIRE NX/GT`. An unavailable
+standalone backend fails startup; a failed config-sync hot update keeps the
+last-known-good backend while retrying. The embedded Redis-compatible listener
+is separately controlled by `nyro serve` flags and is intentionally limited to
+Nyro's State needs. See
 [standalone configuration](docs/schema/config.md) and
 [embedded infrastructure databases](docs/schema/database.md).
 

@@ -150,7 +150,8 @@ uses `routes[].upstreams[].model`.
     `rediss://` URL. Standard URL user information and path syntax carry the
     Redis username, password, and database, for example
     `redis://user:password@redis.internal:6379/2`. Prefer an environment
-    variable so credentials are not committed to YAML.
+    variable so credentials are not committed to YAML. External services must
+    be Redis 7.0+ because concurrency leases use conditional `EXPIRE NX/GT`.
   - Standalone YAML validates and connects to the selected backend during
     startup; an unavailable Redis backend fails startup instead of silently
     falling back to memory. With config-sync, `state.type` and `state.url` are
