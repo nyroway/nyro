@@ -158,7 +158,10 @@ func (s *Store) Acquire(ctx context.Context, consumerID string, limit int64, lea
 		pipe.ZRemRangeByScore(ctx, key, "-inf", strconv.FormatInt(now.UnixMilli(), 10))
 		pipe.ZAdd(ctx, key, goredis.Z{Score: float64(deadline.UnixMilli()), Member: leaseID})
 		card = pipe.ZCard(ctx, key)
-		pipe.Expire(ctx, key, leaseTTL+time.Minute)
+		// Never let a later short request expire an existing longer lease. NX
+		// initializes the TTL for a new persistent ZSET; GT only extends it.
+		pipe.ExpireNX(ctx, key, leaseTTL+time.Minute)
+		pipe.ExpireGT(ctx, key, leaseTTL+time.Minute)
 		return nil
 	})
 	if err != nil {
