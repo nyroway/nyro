@@ -113,6 +113,33 @@ func TestRedisStoreConcurrencyLeaseAcrossInstances(t *testing.T) {
 	}
 }
 
+func TestRedisStoreShortAcquireDoesNotShortenExistingLeaseTTL(t *testing.T) {
+	addr, shutdown := startEmbeddedRedis(t)
+	defer shutdown()
+	client := newClient(t, addr)
+	store := newStore(t, client, time.Now)
+	ctx := context.Background()
+
+	lease, allowed, err := store.Acquire(ctx, "consumer", 1, 10*time.Minute)
+	if err != nil || !allowed || lease == nil {
+		t.Fatalf("long Acquire() = %v, %v, %v", lease, allowed, err)
+	}
+	before, err := client.PTTL(ctx, concurrencyKey("consumer")).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, allowed, err := store.Acquire(ctx, "consumer", 1, time.Minute); err != nil || allowed {
+		t.Fatalf("short Acquire() = allowed %v, error %v", allowed, err)
+	}
+	after, err := client.PTTL(ctx, concurrencyKey("consumer")).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after < before-time.Second {
+		t.Fatalf("short acquire reduced key TTL from %v to %v", before, after)
+	}
+}
+
 func TestRedisStoreReturnsInfrastructureErrorsAfterDisconnect(t *testing.T) {
 	addr, shutdown := startEmbeddedRedis(t)
 	client := newClient(t, addr)
