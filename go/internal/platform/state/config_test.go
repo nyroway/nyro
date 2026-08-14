@@ -46,9 +46,9 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
-func TestRedactedURLHidesPassword(t *testing.T) {
-	got := state.RedactedURL("redis://alice:secret@redis.example:6379/1")
-	if strings.Contains(got, "secret") || got != "redis://alice:xxxxx@redis.example:6379/1" {
+func TestRedactedURLHidesPasswordAndQuery(t *testing.T) {
+	got := state.RedactedURL("redis://alice:secret@redis.example:6379/1?client_name=secret-token")
+	if strings.Contains(got, "secret") || strings.Contains(got, "?") || got != "redis://alice:xxxxx@redis.example:6379/1" {
 		t.Fatalf("RedactedURL() = %q", got)
 	}
 }

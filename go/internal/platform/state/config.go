@@ -92,6 +92,10 @@ func RedactedURL(rawURL string) string {
 	if err != nil || parsed.Scheme == "" {
 		return "<invalid>"
 	}
+	// Query options are not needed to identify the endpoint and may contain
+	// operator-supplied secrets that url.URL.Redacted does not mask.
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
 	return parsed.Redacted()
 }
 
