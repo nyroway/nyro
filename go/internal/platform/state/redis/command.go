@@ -78,6 +78,19 @@ func (s *Server) execute(ctx context.Context, conn *connectionState, command [][
 		conn.queued = nil
 		return simpleResponse("OK"), false, nil
 	}
+	if requiresAtomicUpdate(name) {
+		var reply response
+		var closeConnection bool
+		var commandErr error
+		err := s.opts.Store.Update(ctx, func(ops state.Operations) error {
+			reply, closeConnection, commandErr = s.executeDirect(ctx, conn, ops, command)
+			return commandErr
+		})
+		if err != nil {
+			return response{}, false, err
+		}
+		return reply, closeConnection, nil
+	}
 	return s.executeDirect(ctx, conn, s.opts.Store, command)
 }
 
@@ -156,6 +169,9 @@ func (s *Server) executeDirect(ctx context.Context, conn *connectionState, ops s
 		if err != nil {
 			return response{}, false, err
 		}
+		if value.Found && isZSetValue(value.Bytes) {
+			return wrongTypeResponse(), false, nil
+		}
 		return valueResponse(value), false, nil
 	case "set":
 		return s.executeSet(ctx, ops, command)
@@ -198,6 +214,9 @@ func (s *Server) executeDirect(ctx context.Context, conn *connectionState, ops s
 		}
 		items := make([]response, len(values))
 		for i, value := range values {
+			if value.Found && isZSetValue(value.Bytes) {
+				value = state.Value{}
+			}
 			items[i] = valueResponse(value)
 		}
 		return arrayResponse(items), false, nil
@@ -240,6 +259,9 @@ func (s *Server) executeDirect(ctx context.Context, conn *connectionState, ops s
 			return response{}, false, err
 		}
 		if value.Found {
+			if isZSetValue(value.Bytes) {
+				return simpleResponse("zset"), false, nil
+			}
 			return simpleResponse("string"), false, nil
 		}
 		return simpleResponse("none"), false, nil
@@ -297,6 +319,14 @@ func (s *Server) executeDirect(ctx context.Context, conn *connectionState, ops s
 			return response{}, false, err
 		}
 		return integerResponse(boolInt(persisted)), false, nil
+	case "zadd":
+		return executeZAdd(ctx, ops, command)
+	case "zrem":
+		return executeZRem(ctx, ops, command)
+	case "zcard":
+		return executeZCard(ctx, ops, command)
+	case "zremrangebyscore":
+		return executeZRemRangeByScore(ctx, ops, command)
 	default:
 		return errorResponse(fmt.Sprintf("ERR unknown command '%s'", name)), false, nil
 	}
@@ -529,11 +559,134 @@ func (s *Server) executeExpire(ctx context.Context, ops state.Operations, comman
 }
 
 func executeIncrement(ctx context.Context, ops state.Operations, key []byte, delta int64) (response, bool, error) {
+	current, err := ops.Get(ctx, key)
+	if err != nil {
+		return response{}, false, err
+	}
+	if current.Found && isZSetValue(current.Bytes) {
+		return wrongTypeResponse(), false, nil
+	}
 	value, err := ops.IncrBy(ctx, key, delta)
 	if err != nil {
 		return stateError(err)
 	}
 	return integerResponse(value), false, nil
+}
+
+func executeZAdd(ctx context.Context, ops state.Operations, command [][]byte) (response, bool, error) {
+	if len(command) != 4 {
+		return wrongArguments("zadd"), false, nil
+	}
+	score, err := strconv.ParseFloat(string(command[2]), 64)
+	if err != nil || math.IsNaN(score) || math.IsInf(score, 0) {
+		return errorResponse("ERR value is not a valid float"), false, nil
+	}
+	members, _, err := loadZSet(ctx, ops, command[1])
+	if err != nil {
+		return zsetStateError(err)
+	}
+	member := string(command[3])
+	_, existed := members[member]
+	members[member] = score
+	if err := saveZSet(ctx, ops, command[1], members); err != nil {
+		return response{}, false, err
+	}
+	return integerResponse(boolInt(!existed)), false, nil
+}
+
+func executeZRem(ctx context.Context, ops state.Operations, command [][]byte) (response, bool, error) {
+	if len(command) < 3 {
+		return wrongArguments("zrem"), false, nil
+	}
+	members, found, err := loadZSet(ctx, ops, command[1])
+	if err != nil {
+		return zsetStateError(err)
+	}
+	if !found {
+		return integerResponse(0), false, nil
+	}
+	var removed int64
+	for _, rawMember := range command[2:] {
+		member := string(rawMember)
+		if _, ok := members[member]; ok {
+			delete(members, member)
+			removed++
+		}
+	}
+	if err := saveZSet(ctx, ops, command[1], members); err != nil {
+		return response{}, false, err
+	}
+	return integerResponse(removed), false, nil
+}
+
+func executeZCard(ctx context.Context, ops state.Operations, command [][]byte) (response, bool, error) {
+	if len(command) != 2 {
+		return wrongArguments("zcard"), false, nil
+	}
+	members, _, err := loadZSet(ctx, ops, command[1])
+	if err != nil {
+		return zsetStateError(err)
+	}
+	return integerResponse(int64(len(members))), false, nil
+}
+
+func executeZRemRangeByScore(ctx context.Context, ops state.Operations, command [][]byte) (response, bool, error) {
+	if len(command) != 4 {
+		return wrongArguments("zremrangebyscore"), false, nil
+	}
+	minimum, err := parseScoreBound(command[2])
+	if err != nil {
+		return errorResponse("ERR min or max is not a float"), false, nil
+	}
+	maximum, err := parseScoreBound(command[3])
+	if err != nil {
+		return errorResponse("ERR min or max is not a float"), false, nil
+	}
+	members, found, err := loadZSet(ctx, ops, command[1])
+	if err != nil {
+		return zsetStateError(err)
+	}
+	if !found {
+		return integerResponse(0), false, nil
+	}
+	var removed int64
+	for member, score := range members {
+		if score >= minimum && score <= maximum {
+			delete(members, member)
+			removed++
+		}
+	}
+	if err := saveZSet(ctx, ops, command[1], members); err != nil {
+		return response{}, false, err
+	}
+	return integerResponse(removed), false, nil
+}
+
+func parseScoreBound(raw []byte) (float64, error) {
+	value := string(raw)
+	if strings.HasPrefix(value, "(") {
+		return 0, errors.New("exclusive score bounds are unsupported")
+	}
+	switch strings.ToLower(value) {
+	case "-inf":
+		return math.Inf(-1), nil
+	case "+inf":
+		return math.Inf(1), nil
+	}
+	score, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(score) || math.IsInf(score, 0) {
+		return 0, errors.New("invalid score bound")
+	}
+	return score, nil
+}
+
+func requiresAtomicUpdate(name string) bool {
+	switch name {
+	case "incr", "decr", "incrby", "decrby", "zadd", "zrem", "zremrangebyscore":
+		return true
+	default:
+		return false
+	}
 }
 
 func stateError(err error) (response, bool, error) {
@@ -627,6 +780,12 @@ func validateQueuedCommand(command [][]byte) *response {
 		valid = len(command) >= 3 && len(command)%2 == 1
 	case "expire", "pexpire", "expireat", "pexpireat":
 		valid = len(command) == 3 || len(command) == 4
+	case "zadd", "zremrangebyscore":
+		valid = len(command) == 4
+	case "zrem":
+		valid = len(command) >= 3
+	case "zcard":
+		valid = len(command) == 2
 	case "client":
 		if len(command) >= 2 {
 			switch strings.ToLower(string(command[1])) {

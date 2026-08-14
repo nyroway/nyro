@@ -3,6 +3,7 @@ package redis_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
@@ -113,6 +114,142 @@ func TestGoRedisStringAndTTLCommandSubset(t *testing.T) {
 	}
 	if count, err := client.Del(ctx, "a", "a", "missing").Result(); err != nil || count != 1 {
 		t.Fatalf("Del() = %d, %v", count, err)
+	}
+}
+
+func TestGoRedisSortedSetSubsetRESP2AndRESP3(t *testing.T) {
+	for _, protocol := range []int{2, 3} {
+		t.Run(goredisProtocolName(protocol), func(t *testing.T) {
+			addr, shutdown := startServer(t, "")
+			defer shutdown()
+			ctx := context.Background()
+			client := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: protocol})
+			t.Cleanup(func() { _ = client.Close() })
+
+			added, err := client.ZAdd(ctx, "leases", goredis.Z{Score: 1000, Member: "a"}).Result()
+			if err != nil || added != 1 {
+				t.Fatalf("first ZAdd() = %d, %v", added, err)
+			}
+			added, err = client.ZAdd(ctx, "leases", goredis.Z{Score: 2000, Member: "b"}).Result()
+			if err != nil || added != 1 {
+				t.Fatalf("second ZAdd() = %d, %v", added, err)
+			}
+			added, err = client.ZAdd(ctx, "leases", goredis.Z{Score: 2500, Member: "b"}).Result()
+			if err != nil || added != 0 {
+				t.Fatalf("updating ZAdd() = %d, %v", added, err)
+			}
+			if card, err := client.ZCard(ctx, "leases").Result(); err != nil || card != 2 {
+				t.Fatalf("ZCard() = %d, %v", card, err)
+			}
+			if removed, err := client.ZRemRangeByScore(ctx, "leases", "-inf", "1500").Result(); err != nil || removed != 1 {
+				t.Fatalf("ZRemRangeByScore() = %d, %v", removed, err)
+			}
+			if removed, err := client.ZRem(ctx, "leases", "b").Result(); err != nil || removed != 1 {
+				t.Fatalf("ZRem() = %d, %v", removed, err)
+			}
+			if card, err := client.ZCard(ctx, "leases").Result(); err != nil || card != 0 {
+				t.Fatalf("empty ZCard() = %d, %v", card, err)
+			}
+		})
+	}
+}
+
+func TestGoRedisSortedSetTransactionPreservesTTL(t *testing.T) {
+	addr, shutdown := startServer(t, "")
+	defer shutdown()
+	ctx := context.Background()
+	client := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: 3})
+	t.Cleanup(func() { _ = client.Close() })
+
+	var card *goredis.IntCmd
+	_, err := client.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
+		pipe.ZRemRangeByScore(ctx, "leases", "-inf", "1000")
+		pipe.ZAdd(ctx, "leases", goredis.Z{Score: 2000, Member: "member"})
+		card = pipe.ZCard(ctx, "leases")
+		pipe.Expire(ctx, "leases", time.Minute)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("TxPipelined() error = %v", err)
+	}
+	if got, err := card.Result(); err != nil || got != 1 {
+		t.Fatalf("queued ZCard() = %d, %v", got, err)
+	}
+	if ttl, err := client.TTL(ctx, "leases").Result(); err != nil || ttl <= 0 {
+		t.Fatalf("TTL() = %v, %v", ttl, err)
+	}
+}
+
+func TestGoRedisSortedSetTypeBehaviorAndBinaryMember(t *testing.T) {
+	addr, shutdown := startServer(t, "")
+	defer shutdown()
+	ctx := context.Background()
+	client := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: 3})
+	t.Cleanup(func() { _ = client.Close() })
+
+	if err := client.Set(ctx, "plain", "value", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ZAdd(ctx, "plain", goredis.Z{Score: 1, Member: "a"}).Err(); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+		t.Fatalf("ZAdd string error = %v", err)
+	}
+
+	binaryMember := string([]byte{0, 255, 1})
+	if err := client.ZAdd(ctx, "leases", goredis.Z{Score: 1, Member: binaryMember}).Err(); err != nil {
+		t.Fatalf("binary ZAdd() error = %v", err)
+	}
+	if _, err := client.Get(ctx, "leases").Result(); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+		t.Fatalf("Get zset error = %v", err)
+	}
+	values, err := client.MGet(ctx, "leases", "missing").Result()
+	if err != nil || len(values) != 2 || values[0] != nil || values[1] != nil {
+		t.Fatalf("MGet zset = %#v, %v", values, err)
+	}
+	if kind, err := client.Type(ctx, "leases").Result(); err != nil || kind != "zset" {
+		t.Fatalf("Type() = %q, %v", kind, err)
+	}
+	if err := client.Incr(ctx, "leases").Err(); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+		t.Fatalf("Incr zset error = %v", err)
+	}
+	if removed, err := client.ZRem(ctx, "leases", binaryMember).Result(); err != nil || removed != 1 {
+		t.Fatalf("binary ZRem() = %d, %v", removed, err)
+	}
+
+	if err := client.ZAdd(ctx, "overwrite", goredis.Z{Score: 1, Member: "a"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, "overwrite", "string", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if kind, err := client.Type(ctx, "overwrite").Result(); err != nil || kind != "string" {
+		t.Fatalf("overwritten Type() = %q, %v", kind, err)
+	}
+}
+
+func TestGoRedisDirectZAddIsAtomic(t *testing.T) {
+	addr, shutdown := startServer(t, "")
+	defer shutdown()
+	ctx := context.Background()
+	client := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: 3})
+	t.Cleanup(func() { _ = client.Close() })
+
+	const writers = 50
+	errs := make(chan error, writers)
+	for i := 0; i < writers; i++ {
+		go func(index int) {
+			errs <- client.ZAdd(ctx, "leases", goredis.Z{
+				Score:  float64(index),
+				Member: fmt.Sprintf("member-%d", index),
+			}).Err()
+		}(i)
+	}
+	for i := 0; i < writers; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if card, err := client.ZCard(ctx, "leases").Result(); err != nil || card != writers {
+		t.Fatalf("ZCard() = %d, %v; want %d", card, err, writers)
 	}
 }
 
