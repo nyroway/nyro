@@ -19,15 +19,15 @@ import (
 
 // Gateway holds the runtime dependencies for dispatching requests. Config reads
 // (upstreams, routes, consumer keys, proxy settings) go through Cache, an
-// in-memory snapshot published by config-sync or built once from YAML; Quota is the
-// in-memory consumer-quota sliding window. The gateway holds NO storage handle:
+// in-memory snapshot published by config-sync or built once from YAML; Quota is
+// a stable facade over the configured quota State backend. The gateway holds NO storage handle:
 // per-request telemetry flows through the OTel telemetry Stage (Obs/Handles,
 // pointed at a provider once at startup) → configured sink
 // (none/stdout/otlp). Router selects among a route's upstreams and tracks
 // failover.
 type Gateway struct {
 	Cache  *configsnapshot.Cache
-	Quota  *quota.Counter
+	Quota  *quota.Switch
 	Router *router.Router
 
 	// Obs is the OTel provider (logger/meter/tracer). Populated by the data
@@ -87,19 +87,33 @@ func (g *Gateway) chain() *pipeline.Chain {
 // callers use NewGatewayWithCache through gateway/runtime with a snapshot built
 // from YAML or filled by the config-sync stream.
 func NewGateway() *Gateway {
-	return NewGatewayWithCache(&configsnapshot.Cache{})
+	return NewGatewayWithCache(
+		&configsnapshot.Cache{},
+		quota.NewSwitch(quota.NewMemory()),
+	)
 }
 
 // NewGatewayWithCache builds a Gateway using a caller-provided snapshot Cache
 // (standalone-YAML and config-sync path): the caller builds the snapshot from YAML or
 // from the config-sync stream and swaps it in, so the gateway never needs storage for
 // config. Obs/Handles are attached by gateway/runtime after construction.
-func NewGatewayWithCache(cache *configsnapshot.Cache) *Gateway {
+func NewGatewayWithCache(cache *configsnapshot.Cache, quotas *quota.Switch) *Gateway {
+	if cache == nil {
+		cache = &configsnapshot.Cache{}
+	}
+	if quotas == nil {
+		quotas = quota.NewUnavailableSwitch()
+	}
 	return &Gateway{
 		Cache:  cache,
-		Quota:  quota.New(),
+		Quota:  quotas,
 		Router: router.New(),
 	}
+}
+
+// Ready requires both a published configuration and healthy quota State.
+func (g *Gateway) Ready() bool {
+	return g != nil && g.Cache != nil && g.Cache.Ready() && g.Quota != nil && g.Quota.Ready()
 }
 
 // snapshot returns the current config snapshot, falling back to an empty one so

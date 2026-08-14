@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -15,11 +16,11 @@ import (
 // it always allows. Otherwise it resolves the raw token to a consumer key
 // (prefix filter + hash compare against the config snapshot — raw tokens are
 // never persisted), validates expiry and the route grant, then checks the
-// consumer's quotas against the in-memory sliding-window counter. Returns
+// consumer's quotas against quota State. Returns
 // (0, "", nil) to allow, or (statusCode, message, nil) to deny. When a
 // concurrency quota slot was acquired, the third return is a non-nil release
-// func that MUST be called exactly once when the request finishes.
-func checkAccess(snap *configsnapshot.Snapshot, qc *quota.Counter, route storage.Route, r *http.Request, consumerID *string, keyName *string, keyPreview *string) (int, string, func()) {
+// Lease that MUST be released exactly once when the request finishes.
+func checkAccess(snap *configsnapshot.Snapshot, qc *quota.Switch, route storage.Route, r *http.Request, consumerID *string, keyName *string, keyPreview *string) (int, string, quota.Lease) {
 	if !route.EnableAuth {
 		return 0, "", nil
 	}
@@ -50,7 +51,7 @@ func checkAccess(snap *configsnapshot.Snapshot, qc *quota.Counter, route storage
 	if !slices.Contains(rec.Routes, route.Model) {
 		return http.StatusForbidden, "API key is not granted this route", nil
 	}
-	if status, msg := quotaExceeded(qc, rec); status != 0 {
+	if status, msg := quotaExceeded(r.Context(), qc, rec); status != 0 {
 		return status, msg, nil
 	}
 	// Concurrency quota last, so a denied window quota never leaks a slot.
@@ -58,11 +59,14 @@ func checkAccess(snap *configsnapshot.Snapshot, qc *quota.Counter, route storage
 		if q.QuotaType != "concurrency" {
 			continue
 		}
-		if !qc.TryAcquire(rec.ConsumerID, q.QuotaLimit) {
+		lease, allowed, err := qc.Acquire(r.Context(), rec.ConsumerID, q.QuotaLimit, concurrencyLeaseTTL(snap))
+		if err != nil {
+			return http.StatusServiceUnavailable, "quota state unavailable", nil
+		}
+		if !allowed {
 			return http.StatusTooManyRequests, "consumer concurrency quota exceeded", nil
 		}
-		id := rec.ConsumerID
-		return 0, "", func() { qc.Release(id) }
+		return 0, "", lease
 	}
 	return 0, "", nil
 }
@@ -96,7 +100,10 @@ func expired(iso string) bool {
 // (consumerID, quotaType) — token quotas count accumulated past usage and
 // begin enforcing once the dispatcher records usage after a successful
 // upstream response.
-func quotaExceeded(qc *quota.Counter, rec *storage.ConsumerKeyAccessRecord) (int, string) {
+func quotaExceeded(ctx context.Context, qc *quota.Switch, rec *storage.ConsumerKeyAccessRecord) (int, string) {
+	if qc == nil {
+		return http.StatusServiceUnavailable, "quota state unavailable"
+	}
 	for _, q := range rec.Quotas {
 		if q.QuotaType == "concurrency" {
 			continue // enforced via TryAcquire in checkAccess, not a time window
@@ -105,9 +112,21 @@ func quotaExceeded(qc *quota.Counter, rec *storage.ConsumerKeyAccessRecord) (int
 		if err != nil {
 			continue // malformed window: skip rather than block all traffic
 		}
-		if qc.Value(rec.ConsumerID, q.QuotaType, window) >= q.QuotaLimit {
+		value, err := qc.Value(ctx, rec.ConsumerID, q.QuotaType, window)
+		if err != nil {
+			return http.StatusServiceUnavailable, "quota state unavailable"
+		}
+		if value >= q.QuotaLimit {
 			return http.StatusTooManyRequests, "consumer " + q.QuotaType + " quota exceeded"
 		}
 	}
 	return 0, ""
+}
+
+func concurrencyLeaseTTL(snap *configsnapshot.Snapshot) time.Duration {
+	ttl := resolveProxySettings(snap).RequestTimeout + time.Minute
+	if ttl < 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return ttl
 }

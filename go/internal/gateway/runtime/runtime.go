@@ -32,6 +32,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/gateway"
+	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
@@ -108,7 +109,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, er
 		}
 		cache := &configsnapshot.Cache{}
 		cache.Swap(snap)
-		gw := gateway.NewGatewayWithCache(cache)
+		gw := gateway.NewGatewayWithCache(cache, quota.NewSwitch(quota.NewMemory()))
 
 		// Standalone config is static: the snapshot is already in the cache, so
 		// the initial resolve sees the real (YAML-declared) obs config and no
@@ -125,7 +126,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, er
 	case opts.SyncTarget != "":
 		// config-sync hot-reload: empty cache is filled by the stream.
 		cache := &configsnapshot.Cache{}
-		gw := gateway.NewGatewayWithCache(cache)
+		gw := gateway.NewGatewayWithCache(cache, quota.NewSwitch(quota.NewMemory()))
 
 		// Build the INITIAL provider from the still-empty cache: it resolves to
 		// the fixed default (logs→stdout, metrics/traces disabled). The real obs
