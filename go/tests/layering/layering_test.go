@@ -140,6 +140,7 @@ var packageLayer = map[string]int{
 	"internal/platform/state/redis":                      layerFoundation,
 	"internal/platform/state/sqlite":                     layerFoundation,
 	"internal/quota":                                     layerFoundation,
+	"internal/quota/redis":                               layerFoundation,
 	"internal/router":                                    layerFoundation,
 	"internal/provider":                                  layerFoundation,
 	"internal/telemetry/schema":                          layerFoundation,
