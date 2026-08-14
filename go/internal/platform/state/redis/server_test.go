@@ -211,6 +211,12 @@ func TestGoRedisSortedSetTypeBehaviorAndBinaryMember(t *testing.T) {
 	if err := client.Incr(ctx, "leases").Err(); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
 		t.Fatalf("Incr zset error = %v", err)
 	}
+	if err := client.Do(ctx, "SET", "leases", "string", "GET").Err(); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+		t.Fatalf("Set GET zset error = %v", err)
+	}
+	if kind, err := client.Type(ctx, "leases").Result(); err != nil || kind != "zset" {
+		t.Fatalf("Type() after rejected SET GET = %q, %v", kind, err)
+	}
 	if removed, err := client.ZRem(ctx, "leases", binaryMember).Result(); err != nil || removed != 1 {
 		t.Fatalf("binary ZRem() = %d, %v", removed, err)
 	}

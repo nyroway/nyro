@@ -499,6 +499,15 @@ func (s *Server) executeSet(ctx context.Context, ops state.Operations, command [
 			return errorResponse("ERR syntax error"), false, nil
 		}
 	}
+	if opts.GetPrevious {
+		previous, err := ops.Get(ctx, command[1])
+		if err != nil {
+			return response{}, false, err
+		}
+		if previous.Found && isZSetValue(previous.Bytes) {
+			return wrongTypeResponse(), false, nil
+		}
+	}
 	result, err := ops.Set(ctx, command[1], command[2], opts)
 	if err != nil {
 		return stateError(err)
@@ -682,7 +691,7 @@ func parseScoreBound(raw []byte) (float64, error) {
 
 func requiresAtomicUpdate(name string) bool {
 	switch name {
-	case "incr", "decr", "incrby", "decrby", "zadd", "zrem", "zremrangebyscore":
+	case "set", "incr", "decr", "incrby", "decrby", "zadd", "zrem", "zremrangebyscore":
 		return true
 	default:
 		return false
