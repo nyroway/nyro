@@ -89,7 +89,7 @@ func NewCmd() *cobra.Command {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		gw, obsMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
+		gw, runtimeMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
 			ConfigPath: cfgPath,
 			SyncTarget: configSyncAddr,
 			SyncTLS:    configTLS,
@@ -102,8 +102,8 @@ func NewCmd() *cobra.Command {
 		defer func() {
 			shutCtx, shutCancel := context.WithTimeout(context.Background(), gatewayruntime.ShutdownTimeout)
 			defer shutCancel()
-			if err := obsMgr.Shutdown(shutCtx); err != nil {
-				slog.Warn("observability provider shutdown failed", "error", err)
+			if err := runtimeMgr.Shutdown(shutCtx); err != nil {
+				slog.Warn("gateway runtime shutdown failed", "error", err)
 			}
 		}()
 

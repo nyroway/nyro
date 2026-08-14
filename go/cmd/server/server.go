@@ -377,7 +377,7 @@ func NewCmd() *cobra.Command {
 		var dataPlaneHandler http.Handler
 		var dataPlaneAfterShutdown func()
 		if !disableProxy {
-			gw, obsMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
+			gw, runtimeMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
 				SyncTarget:   configsync.InProcessTarget,
 				SyncDialOpts: inProcDialOpts,
 				ListenAddr:   proxyAddr,
@@ -391,8 +391,8 @@ func NewCmd() *cobra.Command {
 				shutdownOnce.Do(func() {
 					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), gatewayruntime.ShutdownTimeout)
 					defer shutdownCancel()
-					if err := obsMgr.Shutdown(shutdownCtx); err != nil {
-						slog.Warn("embedded data plane observability shutdown failed", "error", err)
+					if err := runtimeMgr.Shutdown(shutdownCtx); err != nil {
+						slog.Warn("embedded data plane runtime shutdown failed", "error", err)
 					}
 				})
 			}
