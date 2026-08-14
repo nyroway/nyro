@@ -140,7 +140,11 @@ func NewCmd() *cobra.Command {
 				return errors.New("--redis-listen must not be empty unless --disable-redis is set")
 			}
 			if !configsync.IsLoopbackListenAddress(redisAddr) {
-				return fmt.Errorf("--redis-listen must use a loopback address: %q", redisAddr)
+				if redisPassword == "" {
+					return errors.New("--redis-password is required when --redis-listen is non-loopback")
+				}
+				slog.Warn("embedded Redis is exposed off-host without TLS; credentials and State traffic are plaintext — restrict it to a trusted private network or use external rediss://",
+					"listen", redisAddr)
 			}
 		}
 		if !disableOTLP {

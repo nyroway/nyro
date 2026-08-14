@@ -137,18 +137,71 @@ func TestRunEDisableFlagsAllowUnusedEmptyAddresses(t *testing.T) {
 	}
 }
 
-func TestRunERejectsNonLoopbackEmbeddedInfrastructure(t *testing.T) {
-	for _, flag := range []string{"redis-listen", "otlp-listen"} {
-		t.Run(flag, func(t *testing.T) {
+func TestRunEGuardsEmbeddedInfrastructureExposure(t *testing.T) {
+	tests := []struct {
+		name    string
+		flags   []string
+		wantErr string
+	}{
+		{
+			name:    "non-loopback Redis requires password",
+			flags:   []string{"--redis-listen=0.0.0.0:16379", "--dsn=memory://"},
+			wantErr: "--redis-password",
+		},
+		{
+			name:    "authenticated non-loopback Redis passes network guard",
+			flags:   []string{"--redis-listen=0.0.0.0:16379", "--redis-password=secret", "--dsn=memory://"},
+			wantErr: "unrecognized --dsn",
+		},
+		{
+			name:    "non-loopback OTLP remains rejected",
+			flags:   []string{"--otlp-listen=0.0.0.0:14318", "--dsn=memory://"},
+			wantErr: "loopback",
+		},
+		{
+			name:    "loopback Redis needs no password",
+			flags:   []string{"--redis-listen=127.0.0.1:16379", "--dsn=memory://"},
+			wantErr: "unrecognized --dsn",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			cmd := NewCmd()
-			if err := cmd.ParseFlags([]string{"--" + flag + "=0.0.0.0:1234", "--dsn=memory://"}); err != nil {
+			if err := cmd.ParseFlags(tt.flags); err != nil {
 				t.Fatal(err)
 			}
 			err := cmd.RunE(cmd, nil)
-			if err == nil || !strings.Contains(err.Error(), "loopback") {
-				t.Fatalf("RunE() error = %v, want loopback validation", err)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("RunE() error = %v, want containing %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestRunEWarnsForAuthenticatedNonLoopbackRedisWithoutLeakingPassword(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	cmd := NewCmd()
+	const password = "do-not-log-this"
+	if err := cmd.ParseFlags([]string{
+		"--redis-listen=0.0.0.0:16379",
+		"--redis-password=" + password,
+		"--dsn=memory://",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := cmd.RunE(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "unrecognized --dsn") {
+		t.Fatalf("RunE() error = %v, want later DSN validation", err)
+	}
+	if !strings.Contains(logs.String(), "plaintext") || !strings.Contains(logs.String(), "private network") {
+		t.Fatalf("missing Redis exposure warning: %q", logs.String())
+	}
+	if strings.Contains(logs.String(), password) {
+		t.Fatalf("Redis password leaked in logs: %q", logs.String())
 	}
 }
 
