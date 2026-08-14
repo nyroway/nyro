@@ -13,10 +13,13 @@ import (
 	"time"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
+	"github.com/nyroway/nyro/go/internal/configsync"
 	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
+	platformstate "github.com/nyroway/nyro/go/internal/platform/state"
 	redisserver "github.com/nyroway/nyro/go/internal/platform/state/redis"
 	statesqlite "github.com/nyroway/nyro/go/internal/platform/state/sqlite"
 	"github.com/nyroway/nyro/go/internal/quota"
+	storagememory "github.com/nyroway/nyro/go/internal/storage/memory"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
@@ -122,6 +125,65 @@ func TestBuildStandaloneRedisFailureIsStrictAndRedacted(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret") || !strings.Contains(err.Error(), "xxxxx") {
 		t.Fatalf("Build() error is not redacted: %q", err)
+	}
+}
+
+func TestBuildConfigSyncStateReadinessAndLastKnownGood(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	backend := storagememory.New()
+	store := backend.Storage()
+	if err := store.Settings().Set(platformstate.SettingTypeKey, string(platformstate.KindRedis)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Settings().Set(platformstate.SettingURLKey, "redis://127.0.0.1:1/0"); err != nil {
+		t.Fatal(err)
+	}
+	server := configsync.NewConfigServer(store)
+	dialOptions, stopServer := configsync.ServeInProcess(ctx, server)
+
+	gateway, manager, err := Build(ctx, Options{
+		SyncTarget:   configsync.InProcessTarget,
+		SyncDialOpts: dialOptions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		_ = manager.Shutdown(context.Background())
+		stopServer()
+	})
+
+	waitState(t, 5*time.Second, gateway.Cache.Ready)
+	if gateway.Ready() {
+		t.Fatal("gateway became ready with an unreachable first Redis backend")
+	}
+
+	if err := store.Settings().Set(platformstate.SettingURLKey, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Settings().Set(platformstate.SettingTypeKey, string(platformstate.KindMemory)); err != nil {
+		t.Fatal(err)
+	}
+	server.Notify()
+	waitState(t, 5*time.Second, gateway.Ready)
+
+	const failedHotURL = "redis://127.0.0.1:2/0"
+	if err := store.Settings().Set(platformstate.SettingTypeKey, string(platformstate.KindRedis)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Settings().Set(platformstate.SettingURLKey, failedHotURL); err != nil {
+		t.Fatal(err)
+	}
+	server.Notify()
+	waitState(t, 5*time.Second, func() bool {
+		stateManager := manager.state.(*StateManager)
+		stateManager.mu.Lock()
+		defer stateManager.mu.Unlock()
+		return stateManager.desiredSet && stateManager.desiredCfg.URL == failedHotURL
+	})
+	if !gateway.Ready() {
+		t.Fatal("failed hot-update discarded the last-known-good Memory backend")
 	}
 }
 
