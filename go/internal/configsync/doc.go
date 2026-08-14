@@ -22,8 +22,9 @@
 // Layer: 1 (data) — may import internal/config/snapshot,
 // internal/protocol/llm, layer 0, and storage.
 //
-// It imports telemetry/schema (layer 0) to identify exporter settings that
-// belong in data-plane snapshots. It does not import the telemetry runtime.
+// It imports platform/state and telemetry/schema (layer 0) to identify State
+// and exporter settings that belong in data-plane snapshots. It does not
+// import either runtime.
 //
 // Must not import layer 3 (proxy, router, admin, dataplane, bootstrap).
 package configsync

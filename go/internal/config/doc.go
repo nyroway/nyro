@@ -3,15 +3,15 @@
 // admin/DB.
 //
 // The YAML shape mirrors the config-schema plan's final config.yaml: version +
-// settings (server/proxy/telemetry) + upstreams + routes + consumers
+// settings (server/proxy/state/telemetry) + upstreams + routes + consumers
 // (nested keys/routes/quotas).
 //
 // Layer: 1 (data) — may import internal/config/snapshot,
 // internal/protocol/llm, layer 0, and storage.
 //
-// It imports telemetry/schema (layer 0) for the exporter registry used to
-// validate the settings.telemetry.* YAML block. It does not import the
-// telemetry runtime.
+// It imports platform/state and telemetry/schema (layer 0) to validate the
+// settings.state and settings.telemetry YAML blocks. It does not import either
+// runtime.
 //
 // Must not import layer 3 (proxy, router, admin, dataplane, bootstrap).
 package config

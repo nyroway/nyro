@@ -55,10 +55,7 @@ func ValidateDeclared(kind, rawURL string) (Config, error) {
 
 	switch Kind(kind) {
 	case "":
-		if rawURL != "" {
-			return Config{}, fmt.Errorf("%s is required when %s is set", SettingTypeKey, SettingURLKey)
-		}
-		return Config{Kind: KindMemory}, nil
+		return Config{}, fmt.Errorf("%s is required when State is declared", SettingTypeKey)
 	case KindMemory:
 		if rawURL != "" {
 			return Config{}, fmt.Errorf("%s is not allowed when %s is memory", SettingURLKey, SettingTypeKey)

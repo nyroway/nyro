@@ -4,15 +4,34 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/nyroway/nyro/go/internal/platform/state"
 )
 
 const publicGatewayURLSettingKey = "gateway.public_url"
 
 func normalizeSettingValue(key, value string) (string, error) {
-	if key != publicGatewayURLSettingKey {
+	switch key {
+	case state.SettingTypeKey:
+		value = strings.TrimSpace(value)
+		if value == "" || value == string(state.KindMemory) || value == string(state.KindRedis) {
+			return value, nil
+		}
+		return "", fmt.Errorf("state.type must be memory or redis")
+	case state.SettingURLKey:
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return "", nil
+		}
+		if err := state.ValidateURL(value); err != nil {
+			return "", err
+		}
+		return value, nil
+	case publicGatewayURLSettingKey:
+		return normalizePublicGatewayURL(value)
+	default:
 		return value, nil
 	}
-	return normalizePublicGatewayURL(value)
 }
 
 func normalizePublicGatewayURL(value string) (string, error) {

@@ -54,6 +54,44 @@ func TestAdminPublicGatewayURLSetting(t *testing.T) {
 	}
 }
 
+func TestAdminStateSettings(t *testing.T) {
+	r, _ := newEngine(t, "")
+
+	tests := []struct {
+		name       string
+		key        string
+		value      string
+		wantStatus int
+		want       string
+	}{
+		{name: "trims redis type", key: "state.type", value: " redis ", wantStatus: http.StatusOK, want: "redis"},
+		{name: "rejects unknown type", key: "state.type", value: "etcd", wantStatus: http.StatusBadRequest},
+		{name: "trims redis url", key: "state.url", value: " redis://127.0.0.1:6379/0 ", wantStatus: http.StatusOK, want: "redis://127.0.0.1:6379/0"},
+		{name: "rejects wrong scheme", key: "state.url", value: "http://127.0.0.1:6379", wantStatus: http.StatusBadRequest},
+		{name: "clears url", key: "state.url", value: "", wantStatus: http.StatusOK, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte("{\"value\":" + mustJSON(t, tt.value) + "}")
+			rec := do(r, http.MethodPut, "/api/v1/settings/"+tt.key, "", body)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("PUT → %d %s, want %d", rec.Code, rec.Body.String(), tt.wantStatus)
+			}
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+			var got map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got["value"] != tt.want {
+				t.Errorf("stored value = %q, want %q", got["value"], tt.want)
+			}
+		})
+	}
+}
+
 func TestAdminStatusIncludesVersion(t *testing.T) {
 	r, _ := newEngine(t, "")
 	rec := do(r, http.MethodGet, "/api/v1/status", "", nil)
