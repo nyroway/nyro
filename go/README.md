@@ -26,6 +26,7 @@ until parity is reached (P0–P6 migration plan).
 | `internal/provider/` | `provider/` | `Vendor` interface, 7-step build/parse pipeline, vendor registry |
 | `internal/gateway/` | `proxy/` | Gateway data-plane orchestration, ingress shells, and streaming dual-path (passthrough + IR round-trip) |
 | `internal/router/` | `router/` | runtime target selection, weighted/priority/cooldown/latency ordering, health state |
+| `internal/quota/` | `quota/` | backend-neutral request/token windows and concurrency leases, with memory and Redis implementations |
 | `internal/plugin/` | `plugin/` | five-phase lifecycle (`OnRequest`/`OnAccess`/`OnUpstream`/`OnResponse`/`OnLog`) |
 | `internal/admin/` | `admin/` | control plane: keys+quotas, models/routing, providers, OAuth, logs/stats, import/export |
 | `internal/auth/` | `auth/` + `admin/oauth.rs` | inbound API key + quotas; outbound OAuth drivers (Claude/Codex/Vertex) |
@@ -90,6 +91,25 @@ go run . serve --disable-proxy --sync-listen 127.0.0.1:19532    # control plane 
 go run . proxy --server 127.0.0.1:19532                         # extra data plane node
 go run . proxy --config ./nyro.yaml                             # standalone: no server, no DB
 ```
+
+Quota State defaults to process-local memory. To share request, token, and
+concurrency quota state across gateway replicas, configure the same reachable
+Redis URL on every node (directly in standalone YAML or through config-sync):
+
+```yaml
+settings:
+  state:
+    type: redis
+    url: "${NYRO_REDIS_URL}"
+```
+
+`redis://` and TLS-enabled `rediss://` URLs may include username, password,
+and database. An unavailable standalone backend fails startup; a failed
+config-sync hot update keeps the last-known-good backend while retrying. The
+embedded Redis-compatible listener is separately controlled by `nyro serve`
+flags and is intentionally limited to Nyro's State needs. See
+[standalone configuration](docs/schema/config.md) and
+[embedded infrastructure databases](docs/schema/database.md).
 
 Off-host config-sync needs a join token (`--sync-token`) or mTLS — nyro refuses
 to serve upstream credentials over an unauthenticated plaintext network port.
