@@ -61,8 +61,8 @@ func newObsManager(ctx context.Context, cache *configsnapshot.Cache, sp *telemet
 // rebuild re-resolves observability config from the current cache snapshot and,
 // if it changed, builds a fresh provider, swaps it into sp (so hooks pick it up),
 // reconciles the prometheus scrape server, and schedules the displaced provider
-// for shutdown after a grace period. It is the SetOnSwap callback, invoked
-// synchronously on the config-sync receive goroutine after each snapshot.
+// for shutdown after a grace period. Manager invokes it from the single
+// SetOnSwap callback after each snapshot.
 //
 // A build failure is non-fatal: the current provider keeps serving and the error
 // is logged, so a malformed obs setting pushed by the control plane never breaks

@@ -12,11 +12,22 @@ import (
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
-// buildManager wires an ObsManager the way buildGateway's config-server branch
-// does: an initial provider resolved from cache, a SwappableProvider, and the
-// rebuild callback registered on the cache. Returns the manager and cache so a
-// test can push new snapshots and observe the hot-reload.
-func buildManager(t *testing.T, cache *configsnapshot.Cache) *ObsManager {
+type obsManagerHarness struct {
+	*ObsManager
+	runtime *Manager
+}
+
+func (h *obsManagerHarness) Shutdown(ctx context.Context) error {
+	return h.runtime.Shutdown(ctx)
+}
+
+type telemetryStateNoop struct{}
+
+func (telemetryStateNoop) Apply(*configsnapshot.Snapshot) {}
+func (telemetryStateNoop) Shutdown(context.Context) error { return nil }
+
+// buildManager wires ObsManager behind the unified Manager callback.
+func buildManager(t *testing.T, cache *configsnapshot.Cache) *obsManagerHarness {
 	t.Helper()
 	obsCfg := resolveObsConfig(cache)
 	prov, err := telemetry.NewProvider(context.Background(), obsCfg)
@@ -24,10 +35,11 @@ func buildManager(t *testing.T, cache *configsnapshot.Cache) *ObsManager {
 		t.Fatalf("initial NewProvider: %v", err)
 	}
 	sp := telemetry.NewSwappableProvider(prov)
-	mgr := newObsManager(context.Background(), cache, sp, prov, obsCfg)
-	cache.SetOnSwap(mgr.rebuild)
-	t.Cleanup(func() { _ = mgr.Shutdown(context.Background()) })
-	return mgr
+	obsManager := newObsManager(context.Background(), cache, sp, prov, obsCfg)
+	runtimeManager := newManager(cache, telemetryStateNoop{}, obsManager)
+	harness := &obsManagerHarness{ObsManager: obsManager, runtime: runtimeManager}
+	t.Cleanup(func() { _ = harness.Shutdown(context.Background()) })
+	return harness
 }
 
 // snapshotWith builds a config snapshot carrying the given settings, mirroring

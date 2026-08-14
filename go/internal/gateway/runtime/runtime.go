@@ -75,8 +75,7 @@ type Options struct {
 	ListenAddr string
 }
 
-// Build returns a ready, storage-free Gateway plus its observability manager
-// (always non-nil on success — telemetry is wired in every mode).
+// Build returns a storage-free Gateway plus the unified runtime Manager.
 //
 // It constructs the initial telemetry.Provider, wraps it in a
 // SwappableProvider, and points the OTel telemetry Stage at it. In config-sync
@@ -88,7 +87,7 @@ type Options struct {
 // The returned Gateway's /readyz reflects cache fill, not storage health. The
 // config-sync client stops when ctx is cancelled; there is no separate stop
 // function to call.
-func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, error) {
+func Build(ctx context.Context, opts Options) (*gateway.Gateway, *Manager, error) {
 	switch {
 	case opts.ConfigPath != "":
 		// Standalone YAML: build the config snapshot directly (no DB). The
@@ -109,7 +108,13 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, er
 		}
 		cache := &configsnapshot.Cache{}
 		cache.Swap(snap)
-		gw := gateway.NewGatewayWithCache(cache, quota.NewSwitch(quota.NewMemory()))
+		quotaSwitch := quota.NewUnavailableSwitch()
+		stateManager := newStateManager(ctx, quotaSwitch, stateManagerOptions{})
+		if err := stateManager.ApplyStrict(ctx, snap); err != nil {
+			_ = stateManager.Shutdown(context.Background())
+			return nil, nil, fmt.Errorf("state backend: %w", err)
+		}
+		gw := gateway.NewGatewayWithCache(cache, quotaSwitch)
 
 		// Standalone config is static: the snapshot is already in the cache, so
 		// the initial resolve sees the real (YAML-declared) obs config and no
@@ -117,16 +122,20 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, er
 		obsCfg := resolveObsConfig(cache)
 		prov, err := telemetry.NewProvider(ctx, obsCfg)
 		if err != nil {
+			_ = stateManager.Shutdown(context.Background())
 			return nil, nil, fmt.Errorf("observability provider: %w", err)
 		}
 		sp := telemetry.NewSwappableProvider(prov)
 		attachObservability(gw, prov, sp)
-		return gw, newObsManager(ctx, cache, sp, prov, obsCfg), nil
+		obsManager := newObsManager(ctx, cache, sp, prov, obsCfg)
+		return gw, newManager(cache, stateManager, obsManager), nil
 
 	case opts.SyncTarget != "":
 		// config-sync hot-reload: empty cache is filled by the stream.
 		cache := &configsnapshot.Cache{}
-		gw := gateway.NewGatewayWithCache(cache, quota.NewSwitch(quota.NewMemory()))
+		quotaSwitch := quota.NewUnavailableSwitch()
+		stateManager := newStateManager(ctx, quotaSwitch, stateManagerOptions{})
+		gw := gateway.NewGatewayWithCache(cache, quotaSwitch)
 
 		// Build the INITIAL provider from the still-empty cache: it resolves to
 		// the fixed default (logs→stdout, metrics/traces disabled). The real obs
@@ -139,12 +148,13 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *ObsManager, er
 		obsCfg := resolveObsConfig(cache)
 		prov, err := telemetry.NewProvider(ctx, obsCfg)
 		if err != nil {
+			_ = stateManager.Shutdown(context.Background())
 			return nil, nil, fmt.Errorf("observability provider: %w", err)
 		}
 		sp := telemetry.NewSwappableProvider(prov)
 		attachObservability(gw, prov, sp)
-		mgr := newObsManager(ctx, cache, sp, prov, obsCfg)
-		cache.SetOnSwap(mgr.rebuild)
+		obsManager := newObsManager(ctx, cache, sp, prov, obsCfg)
+		mgr := newManager(cache, stateManager, obsManager)
 
 		client := configsync.NewConfigClient(opts.SyncTarget, cache, servicePort(opts.ListenAddr), opts.SyncTLS)
 		if len(opts.SyncDialOpts) > 0 {

@@ -2,12 +2,21 @@ package runtime
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
+	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
+	redisserver "github.com/nyroway/nyro/go/internal/platform/state/redis"
+	statesqlite "github.com/nyroway/nyro/go/internal/platform/state/sqlite"
+	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
@@ -48,25 +57,71 @@ consumers:
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gw, obs, err := Build(context.Background(), Options{ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
+	gw, manager, err := Build(context.Background(), Options{ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	if obs == nil {
-		t.Error("standalone mode should construct an observability provider")
+	if manager == nil {
+		t.Error("standalone mode should construct a runtime manager")
 	} else {
-		// Drain the stdout log exporter (default sink) so Shutdown is exercised
-		// and the test leaves no dangling periodic-reader goroutine.
-		_ = obs.Shutdown(context.Background())
+		t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 	}
-	if !gw.Cache.Ready() {
-		t.Error("cache should be ready after YAML build")
+	if !gw.Ready() {
+		t.Error("gateway should be ready after YAML build with default Memory State")
 	}
 	if gw.Cache.Load().RouteByModel("gpt-4o") == nil {
 		t.Error("model from YAML not in cache")
 	}
 	if gw.Cache.Load().FindKey("nyro-secret") == nil {
 		t.Error("api key from YAML not in cache")
+	}
+}
+
+func TestBuildStandaloneExplicitMemoryState(t *testing.T) {
+	path := writeRuntimeYAML(t, "settings:\n  state:\n    type: memory\n")
+	gateway, manager, err := Build(context.Background(), Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
+	if !gateway.Ready() {
+		t.Fatal("explicit Memory State gateway is not ready")
+	}
+}
+
+func TestBuildStandaloneRedisSharesQuotaAcrossGateways(t *testing.T) {
+	addr, shutdown := startRuntimeRedis(t)
+	defer shutdown()
+	path := writeRuntimeYAML(t, "settings:\n  state:\n    type: redis\n    url: redis://"+addr+"/0\n")
+
+	gatewayA, managerA, err := Build(context.Background(), Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = managerA.Shutdown(context.Background()) })
+	gatewayB, managerB, err := Build(context.Background(), Options{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = managerB.Shutdown(context.Background()) })
+
+	if err := gatewayA.Quota.Record(context.Background(), "consumer", quota.Usage{Requests: 1, Tokens: 5}); err != nil {
+		t.Fatal(err)
+	}
+	requests, err := gatewayB.Quota.Value(context.Background(), "consumer", "requests", time.Minute)
+	if err != nil || requests != 1 {
+		t.Fatalf("shared requests = %d, %v; want 1, nil", requests, err)
+	}
+}
+
+func TestBuildStandaloneRedisFailureIsStrictAndRedacted(t *testing.T) {
+	path := writeRuntimeYAML(t, "settings:\n  state:\n    type: redis\n    url: redis://alice:secret@127.0.0.1:1/0\n")
+	_, _, err := Build(context.Background(), Options{ConfigPath: path})
+	if err == nil {
+		t.Fatal("Build() error = nil")
+	}
+	if strings.Contains(err.Error(), "secret") || !strings.Contains(err.Error(), "xxxxx") {
+		t.Fatalf("Build() error is not redacted: %q", err)
 	}
 }
 
@@ -117,11 +172,11 @@ consumers: []
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, obs, err := Build(context.Background(), Options{ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
+	_, manager, err := Build(context.Background(), Options{ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
 	if err != nil {
 		t.Fatalf("Build: %v (OTEL_* env vars must not be consulted when the YAML declares nothing)", err)
 	}
-	_ = obs.Shutdown(context.Background())
+	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 }
 
 // cacheWithSettings builds a snapshot.Cache pre-loaded with the given
@@ -275,4 +330,58 @@ func TestNewMetricsServer_CustomPath(t *testing.T) {
 	if rr2.Code == http.StatusOK {
 		t.Error("default /metrics path should not respond when a custom path was configured")
 	}
+}
+
+func writeRuntimeYAML(t *testing.T, settings string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "nyro.yaml")
+	body := "version: 1\n" + settings + "upstreams: []\nroutes: []\nconsumers: []\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func startRuntimeRedis(t *testing.T) (string, func()) {
+	t.Helper()
+	ctx := context.Background()
+	database, err := dbsqlite.Open(ctx, dbsqlite.Options{Path: filepath.Join(t.TempDir(), "state.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := statesqlite.New(ctx, database, statesqlite.Options{CleanupInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := redisserver.New(redisserver.Options{Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	var once sync.Once
+	shutdown := func() {
+		once.Do(func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				t.Errorf("Redis shutdown: %v", err)
+			}
+			if err := <-done; err != nil {
+				t.Errorf("Redis Serve: %v", err)
+			}
+			if err := store.Shutdown(shutdownCtx); err != nil {
+				t.Errorf("State shutdown: %v", err)
+			}
+			if err := database.Close(); err != nil {
+				t.Errorf("database close: %v", err)
+			}
+		})
+	}
+	t.Cleanup(shutdown)
+	return listener.Addr().String(), shutdown
 }
