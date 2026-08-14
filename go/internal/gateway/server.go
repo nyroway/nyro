@@ -30,11 +30,10 @@ func NewRouter(gw *Gateway) chi.Router {
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		webutil.JSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
-	// GET /readyz — readiness probe gated on config-cache fill. The gateway no
-	// longer holds a storage handle (P3c), so readiness is "has a config
-	// snapshot been published (config-sync push / YAML build)?" — nil means not ready.
+	// GET /readyz — readiness requires both a published config snapshot and
+	// healthy quota State.
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if gw.Cache.Load() == nil {
+		if !gw.Ready() {
 			webutil.JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "unready"})
 			return
 		}

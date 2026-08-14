@@ -1,9 +1,13 @@
 package gateway
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/nyroway/nyro/go/internal/pipeline"
+	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
@@ -56,7 +60,7 @@ func (s accessStage) Handle(ex *pipeline.Exchange, next func() error) error {
 	}
 
 	lc, _ := ex.GetExt(telemetry.ExtLogCtx).(telemetry.LogCtx)
-	status, msg, release := checkAccess(
+	status, msg, lease := checkAccess(
 		s.gw.snapshot(), s.gw.Quota, route, ex.R,
 		&ex.ConsumerID, &lc.ConsumerKeyName, &lc.ConsumerKeyPreview,
 	)
@@ -65,14 +69,13 @@ func (s accessStage) Handle(ex *pipeline.Exchange, next func() error) error {
 		writeJSONError(ex.W, status, msg)
 		return nil
 	}
-	if release != nil {
-		defer release()
+	if lease != nil {
+		defer releaseQuotaLease(lease, ex.ConsumerID)
 	}
 	return next()
 }
 
-// quotaStage records the request against the in-memory sliding window on the
-// way out, once usage is known.
+// quotaStage records the completed request usage on the way out.
 //
 // It runs after next so the token count reflects the completed exchange.
 // consumerID is empty for unauthenticated/open requests — those are skipped.
@@ -87,8 +90,23 @@ func (s quotaStage) Handle(ex *pipeline.Exchange, next func() error) error {
 		if ex.ConsumerID == "" {
 			return
 		}
-		s.gw.Quota.Record(ex.ConsumerID, "requests", 1)
-		s.gw.Quota.Record(ex.ConsumerID, "tokens", int64(ex.Usage.PromptTokens+ex.Usage.CompletionTokens))
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		usage := quota.Usage{
+			Requests: 1,
+			Tokens:   int64(ex.Usage.PromptTokens) + int64(ex.Usage.CompletionTokens),
+		}
+		if err := s.gw.Quota.Record(ctx, ex.ConsumerID, usage); err != nil {
+			slog.Error("record quota usage", "consumer_id", ex.ConsumerID, "error", err)
+		}
 	}()
 	return next()
+}
+
+func releaseQuotaLease(lease quota.Lease, consumerID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := lease.Release(ctx); err != nil {
+		slog.Error("release quota lease", "consumer_id", consumerID, "error", err)
+	}
 }
