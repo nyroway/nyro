@@ -1,5 +1,6 @@
 // Package redis exposes a deliberately limited Redis-compatible RESP2/RESP3
-// server over the generic state String-and-TTL interface.
+// server over the generic State String/TTL contract, plus the minimal private
+// Sorted Set subset required by quota concurrency leases.
 package redis
 
 import (
