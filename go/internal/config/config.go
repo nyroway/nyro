@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
+	"github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -24,6 +25,12 @@ type ProxySpec struct {
 	MaxRetries     int    `yaml:"max_retries,omitempty"`
 	RetryOnStatus  []int  `yaml:"retry_on_status,omitempty"`
 	MaxBodyBytes   int64  `yaml:"max_body_bytes,omitempty"`
+}
+
+// StateSpec is the YAML shape of settings.state.
+type StateSpec struct {
+	Type string `yaml:"type,omitempty"`
+	URL  string `yaml:"url,omitempty"`
 }
 
 // TelemetryLogsSpec is the YAML shape of settings.telemetry.logs.
@@ -125,6 +132,7 @@ func (t *TelemetrySpec) UnmarshalYAML(node *yaml.Node) error {
 
 type SettingsSpec struct {
 	Proxy     ProxySpec     `yaml:"proxy,omitempty"`
+	State     *StateSpec    `yaml:"state,omitempty"`
 	Telemetry TelemetrySpec `yaml:"telemetry,omitempty"`
 }
 
@@ -132,10 +140,14 @@ type SettingsSpec struct {
 // default struct decoder ignores unknown fields, which would otherwise turn an
 // old config into a silently disabled telemetry pipeline.
 func (s *SettingsSpec) UnmarshalYAML(node *yaml.Node) error {
+	statePresent := false
 	if node.Kind == yaml.MappingNode {
 		for i := 0; i+1 < len(node.Content); i += 2 {
-			if node.Content[i].Value == "observability" {
+			switch node.Content[i].Value {
+			case "observability":
 				return fmt.Errorf("settings.observability was renamed to settings.telemetry")
+			case "state":
+				statePresent = true
 			}
 		}
 	}
@@ -146,6 +158,9 @@ func (s *SettingsSpec) UnmarshalYAML(node *yaml.Node) error {
 		return fmt.Errorf("settings: %w", err)
 	}
 	*s = SettingsSpec(decoded)
+	if statePresent && s.State == nil {
+		s.State = &StateSpec{}
+	}
 	return nil
 }
 
@@ -485,6 +500,17 @@ func flattenSettings(s SettingsSpec) (map[string]string, error) {
 	}
 	if s.Proxy.MaxBodyBytes > 0 {
 		out["proxy.max_body_bytes"] = fmt.Sprintf("%d", s.Proxy.MaxBodyBytes)
+	}
+
+	if s.State != nil {
+		cfg, err := state.ValidateDeclared(s.State.Type, s.State.URL)
+		if err != nil {
+			return nil, fmt.Errorf("settings.state: %w", err)
+		}
+		out[state.SettingTypeKey] = string(cfg.Kind)
+		if cfg.Kind == state.KindRedis {
+			out[state.SettingURLKey] = cfg.URL
+		}
 	}
 
 	// A nil block means the signal's YAML key was absent entirely: silently

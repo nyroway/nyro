@@ -209,6 +209,8 @@ func TestSnapshotFromStorage_OnlyCarriesDataPlaneSettings(t *testing.T) {
 	settings := map[string]string{
 		"proxy.request_timeout":           "45s",
 		"proxy.max_body_bytes":            "1048576",
+		"state.type":                      "redis",
+		"state.url":                       "redis://:secret@redis.example:6379/0",
 		"obs_logs_exporter":               "stdout",
 		"obs_traces_otlp_endpoint":        "http://collector:4318",
 		"obs_logs_retention_days":         "7",
@@ -232,11 +234,21 @@ func TestSnapshotFromStorage_OnlyCarriesDataPlaneSettings(t *testing.T) {
 	for _, key := range []string{
 		"proxy.request_timeout",
 		"proxy.max_body_bytes",
+		"state.type",
+		"state.url",
 		"obs_logs_exporter",
 		"obs_traces_otlp_endpoint",
 	} {
 		if _, ok := pbSnap.Settings[key]; !ok {
 			t.Errorf("data-plane setting %q was not carried", key)
+		}
+	}
+
+	roundtrip := SnapshotFromProto(pbSnap)
+	for _, key := range []string{"state.type", "state.url"} {
+		want := settings[key]
+		if got, ok := roundtrip.SettingGet(key); !ok || got != want {
+			t.Errorf("roundtrip SettingGet(%q) = %q, %v; want %q, true", key, got, ok, want)
 		}
 	}
 	for _, key := range []string{

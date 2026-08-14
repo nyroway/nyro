@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
@@ -537,6 +538,51 @@ func writeAndLoadYAML(t *testing.T, body string) (map[string]string, error) {
 		t.Fatalf("LoadYAML: %v", err)
 	}
 	return flattenSettings(cfg.Settings)
+}
+
+func TestLoadYAML_StateAbsentUsesNoPersistedKeys(t *testing.T) {
+	got, err := writeAndLoadYAML(t, "version: 1\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got[state.SettingTypeKey]; ok {
+		t.Fatal("unexpected state.type")
+	}
+	if _, ok := got[state.SettingURLKey]; ok {
+		t.Fatal("unexpected state.url")
+	}
+}
+
+func TestLoadYAML_StateRedisFlattens(t *testing.T) {
+	got, err := writeAndLoadYAML(t, "version: 1\nsettings:\n  state:\n    type: redis\n    url: redis://:secret@127.0.0.1:6379/0\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[state.SettingTypeKey] != "redis" || got[state.SettingURLKey] != "redis://:secret@127.0.0.1:6379/0" {
+		t.Fatalf("flattened State = %#v", got)
+	}
+}
+
+func TestLoadYAML_StateInvalidDeclarationsFail(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{name: "empty mapping", body: "version: 1\nsettings:\n  state: {}\n", wantErr: "settings.state"},
+		{name: "bare", body: "version: 1\nsettings:\n  state:\n", wantErr: "settings.state"},
+		{name: "memory with url", body: "version: 1\nsettings:\n  state:\n    type: memory\n    url: redis://127.0.0.1:6379\n", wantErr: "state.url is not allowed"},
+		{name: "redis without url", body: "version: 1\nsettings:\n  state:\n    type: redis\n", wantErr: "state.url is required"},
+		{name: "url without type", body: "version: 1\nsettings:\n  state:\n    url: redis://127.0.0.1:6379\n", wantErr: "state.type is required"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := writeAndLoadYAML(t, tt.body)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("flattenSettings() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
 }
 
 func TestLoadYAML_TelemetryBlockAbsent_SilentlyClosed(t *testing.T) {
