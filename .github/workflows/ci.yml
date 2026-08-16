@@ -116,7 +116,12 @@ jobs:
         run: make go-test
 
       - name: Configure Redis integration user
-        run: docker exec "$NYRO_REDIS_CONTAINER_ID" redis-cli ACL SETUSER nyro on '>nyro' '~*' '+@all'
+        run: >-
+          docker exec "$NYRO_REDIS_CONTAINER_ID" redis-cli ACL SETUSER nyro
+          reset on '>nyro' '~*' '-@all'
+          '+ping' '+watch' '+unwatch' '+multi' '+exec' '+type' '+mget'
+          '+incrby' '+expire' '+del' '+zremrangebyscore' '+zadd' '+zcard'
+          '+zrem' '+auth' '+hello' '+select' '+client'
         env:
           NYRO_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
 
