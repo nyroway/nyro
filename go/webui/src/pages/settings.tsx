@@ -46,6 +46,7 @@ import {
 import { PageHeader } from "@/components/v2/page-header";
 import { PageLayout } from "@/components/v2/page-layout";
 import { SettingsFormSurface } from "@/features/settings/settings-form-surface";
+import { StateSettingsCard } from "@/features/settings/state-settings-card";
 import { localizedMessage, type MessageKey } from "@/lib/messages";
 
 const PROXY_REQUEST_TIMEOUT_KEY = "proxy.request_timeout";
@@ -330,6 +331,7 @@ export default function SettingsPage() {
               </div>
             </SettingsFormSurface>
           )}
+          {activeSection === "state" && <StateSettingsCard isZh={isZh} onError={showErrorDialog} />}
           {SIGNALS.includes(activeSection as Signal) && <ObsSignalCard signal={activeSection as Signal} isZh={isZh} builtInOtlpEndpoint={builtInOtlpEndpoint} showErrorDialog={showErrorDialog} />}
           {activeSection === "public" && <PublicGatewayURLCard isZh={isZh} showErrorDialog={showErrorDialog} />}
           {activeSection === "retention" && <RetentionSettingsCard isZh={isZh} showErrorDialog={showErrorDialog} />}
