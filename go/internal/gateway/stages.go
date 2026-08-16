@@ -75,12 +75,12 @@ func (s accessStage) Handle(ex *pipeline.Exchange, next func() error) error {
 	return next()
 }
 
-// quotaStage records the completed request usage on the way out.
+// quotaStage records completed token usage on the way out.
 //
 // It runs after next so the token count reflects the completed exchange.
 // consumerID is empty for unauthenticated/open requests — those are skipped.
-// A request that failed before usage was captured records zero tokens, so only
-// the request itself counts.
+// Request admission is counted before dispatch by accessStage, including when
+// the admitted request's upstream exchange later fails.
 type quotaStage struct{ gw *Gateway }
 
 func (s quotaStage) Name() string { return "quota" }
@@ -93,20 +93,21 @@ func (s quotaStage) Handle(ex *pipeline.Exchange, next func() error) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		usage := quota.Usage{
-			Requests: 1,
-			Tokens:   int64(ex.Usage.PromptTokens) + int64(ex.Usage.CompletionTokens),
+			Tokens: int64(ex.Usage.PromptTokens) + int64(ex.Usage.CompletionTokens),
 		}
 		if err := s.gw.Quota.Record(ctx, ex.ConsumerID, usage); err != nil {
-			slog.Error("record quota usage", "consumer_id", ex.ConsumerID, "error", err)
+			slog.Error("record quota tokens", "consumer_id", ex.ConsumerID, "error", err)
 		}
 	}()
 	return next()
 }
 
-func releaseQuotaLease(lease quota.Lease, consumerID string) {
+func releaseQuotaLease(lease quota.Lease, consumerID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := lease.Release(ctx); err != nil {
 		slog.Error("release quota lease", "consumer_id", consumerID, "error", err)
+		return err
 	}
+	return nil
 }
