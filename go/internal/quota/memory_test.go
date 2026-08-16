@@ -23,29 +23,20 @@ func (f *fakeClock) Now() time.Time {
 	return f.nowValue
 }
 
-func TestMemoryRecordsUsageAndReadsWindows(t *testing.T) {
+func TestMemoryRecordsTokensAndReadsWindows(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()
 	clock := useFakeClock(store, time.Unix(1_000_000, 0).Truncate(time.Minute))
 
-	if err := store.Record(ctx, "k1", Usage{Requests: 1, Tokens: 150}); err != nil {
+	if err := store.RecordTokens(ctx, "k1", 150); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Record(ctx, "k1", Usage{Requests: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Record(ctx, "k2", Usage{Requests: 1}); err != nil {
-		t.Fatal(err)
-	}
-
-	assertValue(t, store, "k1", "requests", time.Minute, 2)
-	assertValue(t, store, "k1", "tokens", time.Minute, 150)
-	assertValue(t, store, "k1", "requests", MaxWindow, 2)
-	assertValue(t, store, "k2", "requests", time.Minute, 1)
-	assertValue(t, store, "missing", "requests", time.Minute, 0)
+	assertTokenValue(t, store, "k1", time.Minute, 150)
+	assertTokenValue(t, store, "k1", MaxWindow, 150)
+	assertTokenValue(t, store, "missing", time.Minute, 0)
 
 	clock.nowValue = clock.nowValue.Add(5 * time.Second)
-	assertValue(t, store, "k1", "requests", time.Minute, 2)
+	assertTokenValue(t, store, "k1", time.Minute, 150)
 }
 
 func TestMemoryWindowRolloff(t *testing.T) {
@@ -56,17 +47,17 @@ func TestMemoryWindowRolloff(t *testing.T) {
 
 	for i := 0; i < 60; i++ {
 		clock.nowValue = base.Add(time.Duration(i) * time.Minute)
-		if err := store.Record(ctx, "k", Usage{Requests: 1}); err != nil {
+		if err := store.RecordTokens(ctx, "k", 1); err != nil {
 			t.Fatal(err)
 		}
 	}
-	assertValue(t, store, "k", "requests", time.Hour, 60)
+	assertTokenValue(t, store, "k", time.Hour, 60)
 
 	clock.nowValue = base.Add(60 * time.Minute)
-	assertValue(t, store, "k", "requests", time.Hour, 59)
+	assertTokenValue(t, store, "k", time.Hour, 59)
 
 	clock.nowValue = base.Add(25 * time.Hour)
-	assertValue(t, store, "k", "requests", MaxWindow, 0)
+	assertTokenValue(t, store, "k", MaxWindow, 0)
 }
 
 func TestMemoryMinuteAndDayWindowsAreIndependent(t *testing.T) {
@@ -75,17 +66,16 @@ func TestMemoryMinuteAndDayWindowsAreIndependent(t *testing.T) {
 	base := time.Unix(1_000_000, 0).Truncate(time.Minute)
 	clock := useFakeClock(store, base)
 
-	if err := store.Record(ctx, "k", Usage{Requests: 1, Tokens: 100}); err != nil {
+	if err := store.RecordTokens(ctx, "k", 100); err != nil {
 		t.Fatal(err)
 	}
 	clock.nowValue = base.Add(90 * time.Minute)
 
-	assertValue(t, store, "k", "requests", time.Minute, 0)
-	assertValue(t, store, "k", "requests", MaxWindow, 1)
-	assertValue(t, store, "k", "tokens", MaxWindow, 100)
+	assertTokenValue(t, store, "k", time.Minute, 0)
+	assertTokenValue(t, store, "k", MaxWindow, 100)
 }
 
-func TestMemoryConcurrentRecordAndValue(t *testing.T) {
+func TestMemoryConcurrentRecordTokensAndTokenValue(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()
 	const goroutines = 50
@@ -98,7 +88,7 @@ func TestMemoryConcurrentRecordAndValue(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perGoroutine; j++ {
-				if err := store.Record(ctx, "k", Usage{Requests: 1, Tokens: 3}); err != nil {
+				if err := store.RecordTokens(ctx, "k", 3); err != nil {
 					t.Error(err)
 					return
 				}
@@ -107,7 +97,7 @@ func TestMemoryConcurrentRecordAndValue(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perGoroutine; j++ {
-				if _, err := store.Value(ctx, "k", "requests", time.Minute); err != nil {
+				if _, err := store.TokenValue(ctx, "k", time.Minute); err != nil {
 					t.Error(err)
 					return
 				}
@@ -117,8 +107,7 @@ func TestMemoryConcurrentRecordAndValue(t *testing.T) {
 	}
 	wg.Wait()
 
-	assertValue(t, store, "k", "requests", time.Minute, int64(goroutines*perGoroutine))
-	assertValue(t, store, "k", "tokens", time.Minute, int64(goroutines*perGoroutine*3))
+	assertTokenValue(t, store, "k", time.Minute, int64(goroutines*perGoroutine*3))
 	if !readersCompleted.Load() {
 		t.Fatal("readers did not complete")
 	}
@@ -156,7 +145,8 @@ func TestMemoryAdmitRequestChecksAllWindowsAndCountsOnce(t *testing.T) {
 
 func TestMemoryDeniedRequestsDoNotConsumeQuota(t *testing.T) {
 	store := NewMemory()
-	limits := []RequestLimit{{Limit: 1, Window: time.Minute}}
+	clock := useFakeClock(store, time.Unix(1_000_000, 0).Truncate(time.Minute))
+	limits := []RequestLimit{{Limit: 1, Window: time.Minute}, {Limit: 2, Window: time.Hour}}
 	allowed, err := store.AdmitRequest(context.Background(), "consumer", limits)
 	if err != nil || !allowed {
 		t.Fatalf("first admission = %v, %v", allowed, err)
@@ -167,7 +157,11 @@ func TestMemoryDeniedRequestsDoNotConsumeQuota(t *testing.T) {
 			t.Fatalf("denial %d = %v, %v", i, allowed, err)
 		}
 	}
-	assertValue(t, store, "consumer", "requests", time.Minute, 1)
+	clock.nowValue = clock.nowValue.Add(time.Minute)
+	allowed, err = store.AdmitRequest(context.Background(), "consumer", limits)
+	if err != nil || !allowed {
+		t.Fatalf("admission after denials = %v, %v; denials consumed quota", allowed, err)
+	}
 }
 
 func TestMemoryConcurrentAdmissionIsExact(t *testing.T) {
@@ -250,11 +244,11 @@ func TestMemoryGCDropsExpiredRings(t *testing.T) {
 	base := time.Unix(1_000_000, 0).Truncate(time.Minute)
 	clock := useFakeClock(store, base)
 
-	if err := store.Record(ctx, "idle", Usage{Requests: 1}); err != nil {
+	if err := store.RecordTokens(ctx, "idle", 1); err != nil {
 		t.Fatal(err)
 	}
 	clock.nowValue = base.Add(25 * time.Hour)
-	if err := store.Record(ctx, "active", Usage{Requests: 1}); err != nil {
+	if err := store.RecordTokens(ctx, "active", 1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -262,8 +256,8 @@ func TestMemoryGCDropsExpiredRings(t *testing.T) {
 		t.Fatalf("GC() = %d, want 1", got)
 	}
 	store.mu.Lock()
-	_, idlePresent := store.rings[quotaKey{"idle", "requests"}]
-	_, activePresent := store.rings[quotaKey{"active", "requests"}]
+	_, idlePresent := store.rings[quotaKey{"idle", "tokens"}]
+	_, activePresent := store.rings[quotaKey{"active", "tokens"}]
 	store.mu.Unlock()
 	if idlePresent || !activePresent {
 		t.Fatalf("rings after GC: idle=%v active=%v", idlePresent, activePresent)
@@ -299,11 +293,11 @@ func TestMemoryHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := store.Record(ctx, "k", Usage{Requests: 1}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Record() error = %v, want context.Canceled", err)
+	if err := store.RecordTokens(ctx, "k", 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RecordTokens() error = %v, want context.Canceled", err)
 	}
-	if _, err := store.Value(ctx, "k", "requests", time.Minute); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Value() error = %v, want context.Canceled", err)
+	if _, err := store.TokenValue(ctx, "k", time.Minute); !errors.Is(err, context.Canceled) {
+		t.Fatalf("TokenValue() error = %v, want context.Canceled", err)
 	}
 	if _, _, err := store.Acquire(ctx, "k", 1, time.Minute); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Acquire() error = %v, want context.Canceled", err)
@@ -328,13 +322,13 @@ func TestParseWindow(t *testing.T) {
 	}
 }
 
-func assertValue(t *testing.T, store Store, consumerID, quotaType string, window time.Duration, want int64) {
+func assertTokenValue(t *testing.T, store Store, consumerID string, window time.Duration, want int64) {
 	t.Helper()
-	got, err := store.Value(context.Background(), consumerID, quotaType, window)
+	got, err := store.TokenValue(context.Background(), consumerID, window)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
-		t.Errorf("Value(%q, %q, %v) = %d, want %d", consumerID, quotaType, window, got, want)
+		t.Errorf("TokenValue(%q, %v) = %d, want %d", consumerID, window, got, want)
 	}
 }

@@ -16,7 +16,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/quota"
 )
 
-func TestRedisStoreSharesUsageAcrossInstancesAndWindows(t *testing.T) {
+func TestRedisStoreSharesQuotaAcrossInstancesAndWindows(t *testing.T) {
 	addr, shutdown := startEmbeddedRedis(t)
 	defer shutdown()
 	clientA := newClient(t, addr)
@@ -26,23 +26,33 @@ func TestRedisStoreSharesUsageAcrossInstancesAndWindows(t *testing.T) {
 	storeB := newStore(t, clientB, clock.Now)
 	ctx := context.Background()
 
-	if err := storeA.Record(ctx, "consumer", quota.Usage{Requests: 1, Tokens: 150}); err != nil {
+	requestLimit := []quota.RequestLimit{{Limit: 1, Window: quota.MaxWindow}}
+	if allowed, err := storeA.AdmitRequest(ctx, "consumer", requestLimit); err != nil || !allowed {
+		t.Fatalf("first request admission = %v, %v", allowed, err)
+	}
+	if err := storeA.RecordTokens(ctx, "consumer", 150); err != nil {
 		t.Fatal(err)
 	}
-	assertRedisValue(t, storeB, "consumer", "requests", time.Minute, 1)
-	assertRedisValue(t, storeB, "consumer", "tokens", time.Minute, 150)
-	assertRedisValue(t, storeB, "consumer", "requests", quota.MaxWindow, 1)
-	assertRedisValue(t, storeB, "missing", "requests", time.Minute, 0)
+	if allowed, err := storeB.AdmitRequest(ctx, "consumer", requestLimit); err != nil || allowed {
+		t.Fatalf("shared request denial = %v, %v", allowed, err)
+	}
+	assertRedisTokenValue(t, storeB, "consumer", time.Minute, 150)
+	assertRedisTokenValue(t, storeB, "missing", time.Minute, 0)
 
 	clock.now = clock.now.Add(90 * time.Minute)
-	assertRedisValue(t, storeB, "consumer", "requests", time.Minute, 0)
-	assertRedisValue(t, storeB, "consumer", "requests", quota.MaxWindow, 1)
+	assertRedisTokenValue(t, storeB, "consumer", time.Minute, 0)
+	if allowed, err := storeB.AdmitRequest(ctx, "consumer", requestLimit); err != nil || allowed {
+		t.Fatalf("request within max window = %v, %v; want denial", allowed, err)
+	}
 
 	clock.now = clock.now.Add(25 * time.Hour)
-	assertRedisValue(t, storeB, "consumer", "requests", quota.MaxWindow, 0)
+	assertRedisTokenValue(t, storeB, "consumer", quota.MaxWindow, 0)
+	if allowed, err := storeB.AdmitRequest(ctx, "consumer", requestLimit); err != nil || !allowed {
+		t.Fatalf("request after max window = %v, %v; want admission", allowed, err)
+	}
 }
 
-func TestRedisStoreConcurrentRecordIsExact(t *testing.T) {
+func TestRedisStoreConcurrentRecordTokensIsExact(t *testing.T) {
 	addr, shutdown := startEmbeddedRedis(t)
 	defer shutdown()
 	client := newClient(t, addr)
@@ -59,7 +69,7 @@ func TestRedisStoreConcurrentRecordIsExact(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perWriter; j++ {
-				if err := store.Record(ctx, "consumer", quota.Usage{Requests: 1, Tokens: 3}); err != nil {
+				if err := store.RecordTokens(ctx, "consumer", 3); err != nil {
 					errs <- err
 					return
 				}
@@ -74,8 +84,7 @@ func TestRedisStoreConcurrentRecordIsExact(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	assertRedisValue(t, store, "consumer", "requests", time.Minute, writers*perWriter)
-	assertRedisValue(t, store, "consumer", "tokens", time.Minute, writers*perWriter*3)
+	assertRedisTokenValue(t, store, "consumer", time.Minute, writers*perWriter*3)
 }
 
 func TestRedisStoreConcurrencyLeaseAcrossInstances(t *testing.T) {
@@ -152,11 +161,14 @@ func TestRedisStoreReturnsInfrastructureErrorsAfterDisconnect(t *testing.T) {
 	}
 	shutdown()
 
-	if _, err := store.Value(ctx, "consumer", "requests", time.Minute); err == nil {
-		t.Fatal("Value() error = nil after disconnect")
+	if _, err := store.TokenValue(ctx, "consumer", time.Minute); err == nil {
+		t.Fatal("TokenValue() error = nil after disconnect")
 	}
-	if err := store.Record(ctx, "consumer", quota.Usage{Requests: 1}); err == nil {
-		t.Fatal("Record() error = nil after disconnect")
+	if err := store.RecordTokens(ctx, "consumer", 1); err == nil {
+		t.Fatal("RecordTokens() error = nil after disconnect")
+	}
+	if _, err := store.AdmitRequest(ctx, "consumer", []quota.RequestLimit{{Limit: 1, Window: time.Minute}}); err == nil {
+		t.Fatal("AdmitRequest() error = nil after disconnect")
 	}
 	if _, _, err := store.Acquire(ctx, "consumer", 1, time.Minute); err == nil {
 		t.Fatal("Acquire() error = nil after disconnect")
@@ -197,14 +209,14 @@ func newClient(t *testing.T, addr string) *goredis.Client {
 	return client
 }
 
-func assertRedisValue(t *testing.T, store quota.Store, consumerID, quotaType string, window time.Duration, want int64) {
+func assertRedisTokenValue(t *testing.T, store quota.Store, consumerID string, window time.Duration, want int64) {
 	t.Helper()
-	got, err := store.Value(context.Background(), consumerID, quotaType, window)
+	got, err := store.TokenValue(context.Background(), consumerID, window)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
-		t.Fatalf("Value(%q, %q, %v) = %d, want %d", consumerID, quotaType, window, got, want)
+		t.Fatalf("TokenValue(%q, %v) = %d, want %d", consumerID, window, got, want)
 	}
 }
 

@@ -115,7 +115,7 @@ func tokenQuotaExceeded(ctx context.Context, qc *quota.Switch, rec *storage.Cons
 		if err != nil {
 			continue
 		}
-		value, err := qc.Value(ctx, rec.ConsumerID, "tokens", window)
+		value, err := qc.TokenValue(ctx, rec.ConsumerID, window)
 		if err != nil {
 			return http.StatusServiceUnavailable, "quota state unavailable"
 		}

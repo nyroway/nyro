@@ -21,12 +21,6 @@ const (
 	MaxWindow = 24 * time.Hour
 )
 
-// Usage is the completed usage recorded atomically for one exchange.
-type Usage struct {
-	Requests int64
-	Tokens   int64
-}
-
 // RequestLimit is one request-count boundary evaluated during admission.
 type RequestLimit struct {
 	Limit  int64
@@ -41,7 +35,7 @@ type Lease interface {
 // Store is the State contract required by quota enforcement.
 type Store interface {
 	AdmitRequest(context.Context, string, []RequestLimit) (bool, error)
-	Value(context.Context, string, string, time.Duration) (int64, error)
-	Record(context.Context, string, Usage) error
+	TokenValue(context.Context, string, time.Duration) (int64, error)
+	RecordTokens(context.Context, string, int64) error
 	Acquire(context.Context, string, int64, time.Duration) (Lease, bool, error)
 }

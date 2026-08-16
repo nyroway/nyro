@@ -94,8 +94,9 @@ func TestStateManagerFailedHotUpdateKeepsPreviousBackend(t *testing.T) {
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 
 	manager.Apply((&configsnapshot.Builder{}).Build())
-	if err := quotaSwitch.Record(context.Background(), "consumer", quota.Usage{Requests: 1}); err != nil {
-		t.Fatal(err)
+	limits := []quota.RequestLimit{{Limit: 1, Window: time.Minute}}
+	if allowed, err := quotaSwitch.AdmitRequest(context.Background(), "consumer", limits); err != nil || !allowed {
+		t.Fatalf("initial admission = %v, %v", allowed, err)
 	}
 	manager.Apply(stateSnapshot("redis://127.0.0.1:1/0"))
 	select {
@@ -106,9 +107,9 @@ func TestStateManagerFailedHotUpdateKeepsPreviousBackend(t *testing.T) {
 	if !quotaSwitch.Ready() {
 		t.Fatal("failed hot update discarded previous backend")
 	}
-	value, err := quotaSwitch.Value(context.Background(), "consumer", "requests", time.Minute)
-	if err != nil || value != 1 {
-		t.Fatalf("previous backend Value() = %d, %v", value, err)
+	allowed, err := quotaSwitch.AdmitRequest(context.Background(), "consumer", limits)
+	if err != nil || allowed {
+		t.Fatalf("previous backend admission = %v, %v; want shared denial", allowed, err)
 	}
 }
 

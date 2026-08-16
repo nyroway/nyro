@@ -108,12 +108,19 @@ func TestBuildStandaloneRedisSharesQuotaAcrossGateways(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = managerB.Shutdown(context.Background()) })
 
-	if err := gatewayA.Quota.Record(context.Background(), "consumer", quota.Usage{Requests: 1, Tokens: 5}); err != nil {
+	limits := []quota.RequestLimit{{Limit: 1, Window: time.Minute}}
+	if allowed, err := gatewayA.Quota.AdmitRequest(context.Background(), "consumer", limits); err != nil || !allowed {
+		t.Fatalf("gateway A admission = %v, %v", allowed, err)
+	}
+	if allowed, err := gatewayB.Quota.AdmitRequest(context.Background(), "consumer", limits); err != nil || allowed {
+		t.Fatalf("gateway B shared denial = %v, %v", allowed, err)
+	}
+	if err := gatewayA.Quota.RecordTokens(context.Background(), "consumer", 5); err != nil {
 		t.Fatal(err)
 	}
-	requests, err := gatewayB.Quota.Value(context.Background(), "consumer", "requests", time.Minute)
-	if err != nil || requests != 1 {
-		t.Fatalf("shared requests = %d, %v; want 1, nil", requests, err)
+	tokens, err := gatewayB.Quota.TokenValue(context.Background(), "consumer", time.Minute)
+	if err != nil || tokens != 5 {
+		t.Fatalf("shared tokens = %d, %v; want 5, nil", tokens, err)
 	}
 }
 

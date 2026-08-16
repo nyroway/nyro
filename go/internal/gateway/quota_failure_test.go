@@ -39,7 +39,7 @@ func TestQuotaStateErrorsReturn503AndLimitsReturn429(t *testing.T) {
 			name:      "token usage backend failure",
 			quotaType: "tokens",
 			configure: func(store *gatewayQuotaStore) {
-				store.valueErr = backendFailure
+				store.tokenValueErr = backendFailure
 			},
 			wantStatus: http.StatusServiceUnavailable,
 		},
@@ -63,7 +63,7 @@ func TestQuotaStateErrorsReturn503AndLimitsReturn429(t *testing.T) {
 			name:      "token limit reached",
 			quotaType: "tokens",
 			configure: func(store *gatewayQuotaStore) {
-				store.value = 1
+				store.tokenValue = 1
 			},
 			wantStatus: http.StatusTooManyRequests,
 		},
@@ -101,7 +101,7 @@ func TestAuthenticationFailureDoesNotCallQuotaStore(t *testing.T) {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 	store.mu.Lock()
-	calls := store.valueCalls + store.recordCalls + store.admitCalls + store.acquireCalls
+	calls := store.tokenValueCalls + store.recordTokensCalls + store.admitCalls + store.acquireCalls
 	store.mu.Unlock()
 	if calls != 0 {
 		t.Fatalf("quota Store calls = %d, want 0", calls)
@@ -109,7 +109,7 @@ func TestAuthenticationFailureDoesNotCallQuotaStore(t *testing.T) {
 }
 
 func TestQuotaRecordFailureKeepsResponseAndMakesGatewayUnready(t *testing.T) {
-	store := &gatewayQuotaStore{allowed: true, recordErr: errors.New("record failed")}
+	store := &gatewayQuotaStore{allowed: true, recordTokensErr: errors.New("record failed")}
 	engine, key, quotaSwitch := newQuotaTestGateway(t, store, "")
 	rec := makeQuotaRequest(engine, key)
 	if rec.Code != http.StatusOK {
@@ -119,10 +119,10 @@ func TestQuotaRecordFailureKeepsResponseAndMakesGatewayUnready(t *testing.T) {
 		t.Fatal("record failure did not mark State unhealthy")
 	}
 	store.mu.Lock()
-	usage := store.usage
+	tokens := store.tokens
 	store.mu.Unlock()
-	if usage != (quota.Usage{Tokens: 5}) {
-		t.Fatalf("recorded usage = %+v, want requests=0 tokens=5", usage)
+	if tokens != 5 {
+		t.Fatalf("recorded tokens = %d, want 5", tokens)
 	}
 	assertGatewayUnready(t, engine)
 }
@@ -220,10 +220,10 @@ func TestQuotaStageRecordsTokensOnly(t *testing.T) {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
 	}
 	store.mu.Lock()
-	usage := store.usage
+	tokens := store.tokens
 	store.mu.Unlock()
-	if usage != (quota.Usage{Tokens: 5}) {
-		t.Fatalf("usage = %+v, want tokens=5 and requests=0", usage)
+	if tokens != 5 {
+		t.Fatalf("tokens = %d, want 5", tokens)
 	}
 }
 
@@ -322,22 +322,22 @@ func assertGatewayUnready(t *testing.T, handler http.Handler) {
 }
 
 type gatewayQuotaStore struct {
-	mu           sync.Mutex
-	value        int64
-	valueErr     error
-	recordErr    error
-	acquireErr   error
-	admitErr     error
-	admitDenied  bool
-	allowed      bool
-	leaseErr     error
-	usage        quota.Usage
-	events       []string
-	valueCalls   int
-	recordCalls  int
-	admitCalls   int
-	acquireCalls int
-	releaseCalls int
+	mu                sync.Mutex
+	tokenValue        int64
+	tokenValueErr     error
+	recordTokensErr   error
+	acquireErr        error
+	admitErr          error
+	admitDenied       bool
+	allowed           bool
+	leaseErr          error
+	tokens            int64
+	events            []string
+	tokenValueCalls   int
+	recordTokensCalls int
+	admitCalls        int
+	acquireCalls      int
+	releaseCalls      int
 }
 
 func (s *gatewayQuotaStore) AdmitRequest(context.Context, string, []quota.RequestLimit) (bool, error) {
@@ -351,20 +351,20 @@ func (s *gatewayQuotaStore) AdmitRequest(context.Context, string, []quota.Reques
 	return !s.admitDenied, nil
 }
 
-func (s *gatewayQuotaStore) Value(context.Context, string, string, time.Duration) (int64, error) {
+func (s *gatewayQuotaStore) TokenValue(context.Context, string, time.Duration) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.valueCalls++
+	s.tokenValueCalls++
 	s.events = append(s.events, "token-value")
-	return s.value, s.valueErr
+	return s.tokenValue, s.tokenValueErr
 }
 
-func (s *gatewayQuotaStore) Record(_ context.Context, _ string, usage quota.Usage) error {
+func (s *gatewayQuotaStore) RecordTokens(_ context.Context, _ string, tokens int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.recordCalls++
-	s.usage = usage
-	return s.recordErr
+	s.recordTokensCalls++
+	s.tokens = tokens
+	return s.recordTokensErr
 }
 
 func (s *gatewayQuotaStore) Acquire(context.Context, string, int64, time.Duration) (quota.Lease, bool, error) {
