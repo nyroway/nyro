@@ -523,3 +523,56 @@ func TestCoreSettingsSetMany(t *testing.T) {
 		}
 	}
 }
+
+func TestCoreSettingsSetManyAndIncrement(t *testing.T) {
+	b := newTestBackend(t)
+	s := b.Settings()
+
+	first, err := s.SetManyAndIncrement(map[string]string{
+		"state.type": "memory",
+		"state.url":  "",
+	}, "config_epoch")
+	if err != nil || first != 1 {
+		t.Fatalf("first SetManyAndIncrement = %d, %v; want 1", first, err)
+	}
+	second, err := s.SetManyAndIncrement(map[string]string{
+		"state.type": "redis",
+		"state.url":  "redis://127.0.0.1:6379/0",
+	}, "config_epoch")
+	if err != nil || second != 2 {
+		t.Fatalf("second SetManyAndIncrement = %d, %v; want 2", second, err)
+	}
+	if got, err := s.Get("config_epoch"); err != nil || got != "2" {
+		t.Fatalf("config_epoch = %q, %v; want 2", got, err)
+	}
+}
+
+func TestCoreSettingsSetManyAndIncrementRollsBackOnCounterFailure(t *testing.T) {
+	b := newTestBackend(t)
+	s := b.Settings()
+	if err := s.SetMany(map[string]string{"state.type": "memory", "state.url": ""}); err != nil {
+		t.Fatalf("seed state settings: %v", err)
+	}
+	if err := b.DB().Exec(`
+		CREATE TRIGGER fail_config_epoch BEFORE INSERT ON settings
+		WHEN NEW.key = 'config_epoch'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced counter failure');
+		END
+	`).Error; err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	if _, err := s.SetManyAndIncrement(map[string]string{
+		"state.type": "redis",
+		"state.url":  "redis://127.0.0.1:6379/0",
+	}, "config_epoch"); err == nil {
+		t.Fatal("SetManyAndIncrement: want forced failure, got nil")
+	}
+	for key, want := range map[string]string{"state.type": "memory", "state.url": "", "config_epoch": ""} {
+		got, err := s.Get(key)
+		if err != nil || got != want {
+			t.Fatalf("Get(%q) after rollback = %q, %v; want %q", key, got, err, want)
+		}
+	}
+}

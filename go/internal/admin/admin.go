@@ -333,11 +333,12 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource) {
 				badRequest(w, err)
 				return
 			}
-			if err := s.Settings().SetMany(values); err != nil {
+			epoch, err := s.Settings().SetManyAndIncrement(values, "config_epoch")
+			if err != nil {
 				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 				return
 			}
-			bumpEpoch(s)
+			publishEpoch(epoch)
 			webutil.JSON(w, http.StatusOK, map[string]any{"values": values})
 		})
 		g.Get("/settings/{key}", func(w http.ResponseWriter, r *http.Request) {
@@ -641,6 +642,10 @@ func bumpEpoch(s storage.Storage) {
 	n, _ := strconv.ParseInt(v, 10, 64)
 	n++
 	_ = s.Settings().Set("config_epoch", strconv.FormatInt(n, 10))
+	publishEpoch(n)
+}
+
+func publishEpoch(n int64) {
 	// Drive notification through the EpochWatcher when one is wired: it is
 	// the single decision point for whether/when to push, so a write made on
 	// this replica and the same write observed via polling by a peer replica

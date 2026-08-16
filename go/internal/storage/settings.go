@@ -13,5 +13,6 @@ type SettingsStore interface {
 	Get(key string) (string, error)
 	Set(key, value string) error
 	SetMany(values map[string]string) error
+	SetManyAndIncrement(values map[string]string, counterKey string) (int64, error)
 	ListAll() ([]Setting, error)
 }
