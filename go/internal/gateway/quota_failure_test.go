@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,8 +28,16 @@ func TestQuotaStateErrorsReturn503AndLimitsReturn429(t *testing.T) {
 		wantStatus int
 	}{
 		{
-			name:      "usage backend failure",
+			name:      "request admission backend failure",
 			quotaType: "requests",
+			configure: func(store *gatewayQuotaStore) {
+				store.admitErr = backendFailure
+			},
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:      "token usage backend failure",
+			quotaType: "tokens",
 			configure: func(store *gatewayQuotaStore) {
 				store.valueErr = backendFailure
 			},
@@ -42,8 +52,16 @@ func TestQuotaStateErrorsReturn503AndLimitsReturn429(t *testing.T) {
 			wantStatus: http.StatusServiceUnavailable,
 		},
 		{
-			name:      "usage limit reached",
+			name:      "request limit reached",
 			quotaType: "requests",
+			configure: func(store *gatewayQuotaStore) {
+				store.admitDenied = true
+			},
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:      "token limit reached",
+			quotaType: "tokens",
 			configure: func(store *gatewayQuotaStore) {
 				store.value = 1
 			},
@@ -83,7 +101,7 @@ func TestAuthenticationFailureDoesNotCallQuotaStore(t *testing.T) {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 	store.mu.Lock()
-	calls := store.valueCalls + store.recordCalls + store.acquireCalls
+	calls := store.valueCalls + store.recordCalls + store.admitCalls + store.acquireCalls
 	store.mu.Unlock()
 	if calls != 0 {
 		t.Fatalf("quota Store calls = %d, want 0", calls)
@@ -103,10 +121,110 @@ func TestQuotaRecordFailureKeepsResponseAndMakesGatewayUnready(t *testing.T) {
 	store.mu.Lock()
 	usage := store.usage
 	store.mu.Unlock()
-	if usage != (quota.Usage{Requests: 1, Tokens: 5}) {
-		t.Fatalf("recorded usage = %+v, want requests=1 tokens=5", usage)
+	if usage != (quota.Usage{Tokens: 5}) {
+		t.Fatalf("recorded usage = %+v, want requests=0 tokens=5", usage)
 	}
 	assertGatewayUnready(t, engine)
+}
+
+func TestRequestQuotaAdmissionRunsAfterConcurrencyAcquire(t *testing.T) {
+	store := &gatewayQuotaStore{allowed: true}
+	quotas := []storage.CreateConsumerQuota{
+		{QuotaType: "tokens", QuotaLimit: 100, Window: "1m"},
+		{QuotaType: "concurrency", QuotaLimit: 1},
+		{QuotaType: "requests", QuotaLimit: 1, Window: "1m"},
+	}
+	engine, key, _, _ := newQuotaTestGatewayWithQuotas(t, store, quotas)
+	if rec := makeQuotaRequest(engine, key); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	store.mu.Lock()
+	events := append([]string(nil), store.events...)
+	store.mu.Unlock()
+	wantPrefix := []string{"token-value", "concurrency-acquire", "request-admit"}
+	if len(events) < len(wantPrefix) || !slices.Equal(events[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("events = %v, want prefix %v", events, wantPrefix)
+	}
+}
+
+func TestRequestQuotaDenialReleasesConcurrencyLease(t *testing.T) {
+	store := &gatewayQuotaStore{allowed: true, admitDenied: true}
+	quotas := []storage.CreateConsumerQuota{
+		{QuotaType: "concurrency", QuotaLimit: 1},
+		{QuotaType: "requests", QuotaLimit: 1, Window: "1m"},
+	}
+	engine, key, _, upstreamCalls := newQuotaTestGatewayWithQuotas(t, store, quotas)
+	rec := makeQuotaRequest(engine, key)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	store.mu.Lock()
+	releaseCalls := store.releaseCalls
+	store.mu.Unlock()
+	if releaseCalls != 1 {
+		t.Fatalf("release calls = %d, want 1", releaseCalls)
+	}
+	if upstreamCalls.Load() != 0 {
+		t.Fatalf("upstream calls = %d, want 0", upstreamCalls.Load())
+	}
+}
+
+func TestRequestQuotaFailureReleasesLeaseAndReturns503(t *testing.T) {
+	store := &gatewayQuotaStore{allowed: true, admitErr: errors.New("redis failed")}
+	quotas := []storage.CreateConsumerQuota{
+		{QuotaType: "concurrency", QuotaLimit: 1},
+		{QuotaType: "requests", QuotaLimit: 1, Window: "1m"},
+	}
+	engine, key, quotaSwitch, upstreamCalls := newQuotaTestGatewayWithQuotas(t, store, quotas)
+	rec := makeQuotaRequest(engine, key)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	store.mu.Lock()
+	releaseCalls := store.releaseCalls
+	store.mu.Unlock()
+	if releaseCalls != 1 {
+		t.Fatalf("release calls = %d, want 1", releaseCalls)
+	}
+	if quotaSwitch.Ready() {
+		t.Fatal("admission failure kept State ready")
+	}
+	if upstreamCalls.Load() != 0 {
+		t.Fatalf("upstream calls = %d, want 0", upstreamCalls.Load())
+	}
+}
+
+func TestRequestQuotaReleaseFailureReturns503(t *testing.T) {
+	store := &gatewayQuotaStore{allowed: true, admitDenied: true, leaseErr: errors.New("release failed")}
+	quotas := []storage.CreateConsumerQuota{
+		{QuotaType: "concurrency", QuotaLimit: 1},
+		{QuotaType: "requests", QuotaLimit: 1, Window: "1m"},
+	}
+	engine, key, quotaSwitch, upstreamCalls := newQuotaTestGatewayWithQuotas(t, store, quotas)
+	rec := makeQuotaRequest(engine, key)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if quotaSwitch.Ready() {
+		t.Fatal("lease release failure kept State ready")
+	}
+	if upstreamCalls.Load() != 0 {
+		t.Fatalf("upstream calls = %d, want 0", upstreamCalls.Load())
+	}
+}
+
+func TestQuotaStageRecordsTokensOnly(t *testing.T) {
+	store := &gatewayQuotaStore{allowed: true}
+	engine, key, _ := newQuotaTestGateway(t, store, "")
+	if rec := makeQuotaRequest(engine, key); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	store.mu.Lock()
+	usage := store.usage
+	store.mu.Unlock()
+	if usage != (quota.Usage{Tokens: 5}) {
+		t.Fatalf("usage = %+v, want tokens=5 and requests=0", usage)
+	}
 }
 
 func TestQuotaLeaseReleaseFailureKeepsResponseAndMakesGatewayUnready(t *testing.T) {
@@ -127,7 +245,23 @@ func TestQuotaLeaseReleaseFailureKeepsResponseAndMakesGatewayUnready(t *testing.
 
 func newQuotaTestGateway(t *testing.T, quotaStore quota.Store, quotaType string) (http.Handler, string, *quota.Switch) {
 	t.Helper()
+	var quotas []storage.CreateConsumerQuota
+	if quotaType != "" {
+		quotaSpec := storage.CreateConsumerQuota{QuotaType: quotaType, QuotaLimit: 1}
+		if quotaType != "concurrency" {
+			quotaSpec.Window = "1m"
+		}
+		quotas = append(quotas, quotaSpec)
+	}
+	engine, key, quotaSwitch, _ := newQuotaTestGatewayWithQuotas(t, quotaStore, quotas)
+	return engine, key, quotaSwitch
+}
+
+func newQuotaTestGatewayWithQuotas(t *testing.T, quotaStore quota.Store, quotas []storage.CreateConsumerQuota) (http.Handler, string, *quota.Switch, *atomic.Int64) {
+	t.Helper()
+	upstreamCalls := &atomic.Int64{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, "{\"id\":\"r1\",\"object\":\"chat.completion\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}")
 	}))
@@ -149,14 +283,6 @@ func newQuotaTestGateway(t *testing.T, quotaStore quota.Store, quotaType string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var quotas []storage.CreateConsumerQuota
-	if quotaType != "" {
-		quotaSpec := storage.CreateConsumerQuota{QuotaType: quotaType, QuotaLimit: 1}
-		if quotaType != "concurrency" {
-			quotaSpec.Window = "1m"
-		}
-		quotas = append(quotas, quotaSpec)
-	}
 	consumer, err := core.Consumers().Create(storage.CreateConsumer{
 		Name: "test", Keys: []storage.CreateConsumerKey{{Name: "primary"}},
 		Routes: []string{"gpt-4o"}, Quotas: quotas,
@@ -170,7 +296,7 @@ func newQuotaTestGateway(t *testing.T, quotaStore quota.Store, quotaType string)
 	}
 	quotaSwitch := quota.NewSwitch(quotaStore)
 	gateway := NewGatewayWithCache(cache, quotaSwitch)
-	return NewRouter(gateway), consumer.Keys[0].Token, quotaSwitch
+	return NewRouter(gateway), consumer.Keys[0].Token, quotaSwitch, upstreamCalls
 }
 
 func makeQuotaRequest(handler http.Handler, key string) *httptest.ResponseRecorder {
@@ -201,22 +327,35 @@ type gatewayQuotaStore struct {
 	valueErr     error
 	recordErr    error
 	acquireErr   error
+	admitErr     error
+	admitDenied  bool
 	allowed      bool
 	leaseErr     error
 	usage        quota.Usage
+	events       []string
 	valueCalls   int
 	recordCalls  int
+	admitCalls   int
 	acquireCalls int
+	releaseCalls int
 }
 
 func (s *gatewayQuotaStore) AdmitRequest(context.Context, string, []quota.RequestLimit) (bool, error) {
-	return true, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.admitCalls++
+	s.events = append(s.events, "request-admit")
+	if s.admitErr != nil {
+		return false, s.admitErr
+	}
+	return !s.admitDenied, nil
 }
 
 func (s *gatewayQuotaStore) Value(context.Context, string, string, time.Duration) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.valueCalls++
+	s.events = append(s.events, "token-value")
 	return s.value, s.valueErr
 }
 
@@ -232,21 +371,35 @@ func (s *gatewayQuotaStore) Acquire(context.Context, string, int64, time.Duratio
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.acquireCalls++
+	s.events = append(s.events, "concurrency-acquire")
 	if s.acquireErr != nil {
 		return nil, false, s.acquireErr
 	}
 	if !s.allowed {
 		return nil, false, nil
 	}
-	return &gatewayQuotaLease{err: s.leaseErr}, true, nil
+	return &gatewayQuotaLease{
+		err: s.leaseErr,
+		release: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.releaseCalls++
+			s.events = append(s.events, "concurrency-release")
+		},
+	}, true, nil
 }
 
 type gatewayQuotaLease struct {
-	once sync.Once
-	err  error
+	once    sync.Once
+	err     error
+	release func()
 }
 
 func (l *gatewayQuotaLease) Release(context.Context) error {
-	l.once.Do(func() {})
+	l.once.Do(func() {
+		if l.release != nil {
+			l.release()
+		}
+	})
 	return l.err
 }
