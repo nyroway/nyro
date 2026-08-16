@@ -82,6 +82,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout
@@ -104,6 +114,17 @@ jobs:
 
       - name: Go test
         run: make go-test
+
+      - name: Configure Redis integration user
+        run: docker exec "$NYRO_REDIS_CONTAINER_ID" redis-cli ACL SETUSER nyro on '>nyro' '~*' '+@all'
+        env:
+          NYRO_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+
+      - name: Go Redis 7 integration test
+        working-directory: go
+        run: go test ./internal/quota/redis -run TestExternalRedisAtomicAdmission -count=1
+        env:
+          NYRO_TEST_REDIS_URL: redis://nyro:nyro@127.0.0.1:6379/1
 
       # Protocol-conversion matrix (tests/conversion): offline cassette
       # replay with -race. No keys/network — cassettes are recorded locally via

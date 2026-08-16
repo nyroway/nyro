@@ -152,6 +152,12 @@ uses `routes[].upstreams[].model`.
     `redis://user:password@redis.internal:6379/2`. Prefer an environment
     variable so credentials are not committed to YAML. External services must
     be Redis 7.0+ because concurrency leases use conditional `EXPIRE NX/GT`.
+    Before installation, the gateway probes the complete quota path and
+    removes its isolated probe keys. The Redis account must permit `PING`,
+    `WATCH`, `UNWATCH`, `MULTI`, `EXEC`, `MGET`, `INCRBY`, `EXPIRE`, `DEL`,
+    `ZREMRANGEBYSCORE`, `ZADD`, `ZCARD`, and `ZREM`, plus the connection setup
+    commands required by its URL (`AUTH`, `HELLO`, `SELECT`, and `CLIENT` where
+    applicable).
   - Standalone YAML validates and connects to the selected backend during
     startup; an unavailable Redis backend fails startup instead of silently
     falling back to memory. With config-sync, `state.type` and `state.url` are
@@ -197,9 +203,17 @@ uses `routes[].upstreams[].model`.
     (enforcement requires a pricing table, planned for a later version).
     `concurrency` maps internally to `consumer_quotas.quota_type = "concurrency"`.
     Request and token windows use one-minute buckets and retain at most 24
-    hours of effective history. A clean quota denial returns HTTP `429`; an
-    unavailable State backend returns HTTP `503` so infrastructure failure is
-    not misreported as client overuse.
+    hours of effective history. Request admission checks all configured
+    request windows and increments them as one atomic decision. Replicas that
+    use the same Redis therefore enforce one shared request boundary. A clean
+    request denial returns HTTP `429` and does not consume quota; once admitted,
+    a request consumes one count even if its upstream exchange fails. Token
+    quotas remain response-settled historical limits, so concurrent requests
+    can cross a strict token boundary before their responses are recorded.
+    An unavailable State backend returns HTTP `503` so infrastructure failure
+    is not misreported as client overuse. Extreme `WATCH` contention can also
+    fail one request closed with `503`, but does not mark the State backend
+    unhealthy.
   - `limits`: `max_input_tokens`, `max_output_tokens`,
     `max_request_body_bytes` — per-request caps; omitted/zero means no limit.
 - `settings.telemetry`: three independent signal blocks — `logs`,
