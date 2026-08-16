@@ -1,33 +1,114 @@
 package redis
 
-func (s *Server) watch(conn *connectionState, keys [][]byte) {
-	if conn.watched == nil {
-		conn.watched = make(map[string]uint64)
-	}
+import (
+	"context"
+
+	"github.com/nyroway/nyro/go/internal/platform/state"
+)
+
+type watchedKey struct {
+	version uint64
+	found   bool
+}
+
+func (s *Server) watch(ctx context.Context, conn *connectionState, keys [][]byte) error {
+	newKeys := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
 	for _, raw := range keys {
 		key := string(append([]byte(nil), raw...))
-		if _, exists := conn.watched[key]; !exists {
-			conn.watched[key] = s.versions[key]
+		if _, exists := conn.watched[key]; exists {
+			continue
 		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		newKeys = append(newKeys, key)
 	}
+	found := make(map[string]bool, len(newKeys))
+	if err := s.opts.Store.Update(ctx, func(ops state.Operations) error {
+		for _, key := range newKeys {
+			value, err := ops.Get(ctx, []byte(key))
+			if err != nil {
+				return err
+			}
+			found[key] = value.Found
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if conn.watched == nil {
+		conn.watched = make(map[string]watchedKey)
+	}
+	for _, key := range newKeys {
+		s.trackWatchLocked(conn, key, found[key])
+	}
+	return nil
+}
+
+func (s *Server) trackWatchLocked(conn *connectionState, key string, found bool) {
+	if conn.watched == nil {
+		conn.watched = make(map[string]watchedKey)
+	}
+	if _, exists := conn.watched[key]; exists {
+		return
+	}
+	if s.watchers == nil {
+		s.watchers = make(map[string]uint64)
+	}
+	if s.versions == nil {
+		s.versions = make(map[string]uint64)
+	}
+	s.watchers[key]++
+	conn.watched[key] = watchedKey{version: s.versions[key], found: found}
 }
 
 func (s *Server) watchedChanged(conn *connectionState) bool {
-	for key, version := range conn.watched {
-		if s.versions[key] != version {
+	for key, watched := range conn.watched {
+		if s.versions[key] != watched.version {
 			return true
 		}
 	}
 	return false
 }
 
-func clearWatches(conn *connectionState) {
+func (s *Server) watchedExistenceChanged(ctx context.Context, conn *connectionState, ops state.Operations) (bool, error) {
+	for key, watched := range conn.watched {
+		value, err := ops.Get(ctx, []byte(key))
+		if err != nil {
+			return false, err
+		}
+		if value.Found != watched.found {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Server) clearWatches(conn *connectionState) {
+	s.watchMu.Lock()
+	defer s.watchMu.Unlock()
+	s.clearWatchesLocked(conn)
+}
+
+func (s *Server) clearWatchesLocked(conn *connectionState) {
+	for key := range conn.watched {
+		if s.watchers[key] <= 1 {
+			delete(s.watchers, key)
+			delete(s.versions, key)
+			continue
+		}
+		s.watchers[key]--
+	}
 	conn.watched = nil
 }
 
 func (s *Server) bumpVersions(keys []string) {
 	for _, key := range keys {
-		s.versions[key]++
+		if s.watchers[key] > 0 {
+			s.versions[key]++
+		}
 	}
 }
 

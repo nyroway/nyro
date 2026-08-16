@@ -103,6 +103,25 @@ func TestRedisAdmitRequestRejectsMalformedCounter(t *testing.T) {
 	}
 }
 
+func TestRedisAdmitRequestWrongTypeDoesNotPartiallyCommit(t *testing.T) {
+	store, client, clock := newEmbeddedStoreClientAndClock(t)
+	currentMinute := clock.now.Unix() / int64(time.Minute/time.Second)
+	minuteKey := usageKey("consumer", "requests", "m", currentMinute)
+	hourKey := usageKey("consumer", "requests", "h", floorHour(currentMinute))
+	if err := client.ZAdd(context.Background(), minuteKey, goredis.Z{Score: 1, Member: "lease"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	allowed, err := store.AdmitRequest(context.Background(), "consumer", []quota.RequestLimit{{Limit: 2, Window: time.Minute}})
+	if err == nil || allowed {
+		t.Fatalf("AdmitRequest() = %v, %v; want false and WRONGTYPE error", allowed, err)
+	}
+	count, existsErr := client.Exists(context.Background(), hourKey).Result()
+	if existsErr != nil || count != 0 {
+		t.Fatalf("hour counter exists after failed admission = %d, %v", count, existsErr)
+	}
+}
+
 func TestRedisAdmitRequestHonorsCanceledContext(t *testing.T) {
 	store, _ := newEmbeddedStoreWithClock(t)
 	ctx, cancel := context.WithCancel(context.Background())

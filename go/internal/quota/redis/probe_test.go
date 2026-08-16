@@ -31,13 +31,15 @@ func TestProbeExercisesQuotaCapabilitiesAndCleansKeys(t *testing.T) {
 	}
 }
 
-func TestProbeReportsCleanupFailure(t *testing.T) {
+func TestProbeCleansKeysAfterOperationContextCancellation(t *testing.T) {
 	addr, shutdown := startEmbeddedRedis(t)
 	defer shutdown()
 	client := newClient(t, addr)
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
+	clock := &storeClock{now: time.Unix(4_000_000, 0).Truncate(time.Minute)}
 	store, err := New(client, Options{
+		Now: clock.Now,
 		NewLeaseID: func() (string, error) {
 			calls++
 			if calls == 2 {
@@ -50,7 +52,12 @@ func TestProbeReportsCleanupFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = store.Probe(ctx)
-	if err == nil || !strings.Contains(err.Error(), "quota redis: probe cleanup") {
-		t.Fatalf("Probe() error = %v, want cleanup context", err)
+	if err == nil || strings.Contains(err.Error(), "quota redis: probe cleanup") {
+		t.Fatalf("Probe() error = %v, want operation cancellation without cleanup failure", err)
+	}
+	keys := probeKeys("__nyro_probe__:probe-id-1", clock.Now())
+	count, existsErr := client.Exists(context.Background(), keys...).Result()
+	if existsErr != nil || count != 0 {
+		t.Fatalf("probe keys remaining after cancellation = %d, %v", count, existsErr)
 	}
 }

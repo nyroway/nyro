@@ -34,6 +34,9 @@ func (s *Store) AdmitRequest(ctx context.Context, consumerID string, limits []qu
 	allowed, err := retryAdmission(s.maxAdmissionRetries, func() (bool, error) {
 		admitted := false
 		err := s.client.Watch(ctx, func(tx *goredis.Tx) error {
+			if err := requireStringCounters(ctx, tx, watchKeys); err != nil {
+				return err
+			}
 			values, err := tx.MGet(ctx, watchKeys...).Result()
 			if err != nil {
 				return err
@@ -74,6 +77,28 @@ func (s *Store) AdmitRequest(ctx context.Context, consumerID string, limits []qu
 		return false, fmt.Errorf("quota redis: admit request: %w", err)
 	}
 	return allowed, nil
+}
+
+func requireStringCounters(ctx context.Context, tx *goredis.Tx, keys []string) error {
+	commands := make([]*goredis.StatusCmd, len(keys))
+	if _, err := tx.Pipelined(ctx, func(pipe goredis.Pipeliner) error {
+		for i, key := range keys {
+			commands[i] = pipe.Type(ctx, key)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for i, command := range commands {
+		kind, err := command.Result()
+		if err != nil {
+			return err
+		}
+		if kind != "none" && kind != "string" {
+			return fmt.Errorf("quota redis: counter %q has type %s, want string", keys[i], kind)
+		}
+	}
+	return nil
 }
 
 func validateRequestLimits(limits []quota.RequestLimit) error {

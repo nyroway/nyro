@@ -10,7 +10,10 @@ import (
 	"github.com/nyroway/nyro/go/internal/quota"
 )
 
-const probeConsumerPrefix = "__nyro_probe__:"
+const (
+	probeConsumerPrefix = "__nyro_probe__:"
+	probeCleanupTimeout = 2 * time.Second
+)
 
 // Probe verifies every Redis capability required by quota before runtime
 // installs the Store. Probe data is isolated under a unique consumer ID.
@@ -36,7 +39,9 @@ func (s *Store) Probe(ctx context.Context) (resultErr error) {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		if cleanupErr := s.client.Del(ctx, keys...).Err(); cleanupErr != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), probeCleanupTimeout)
+		defer cancel()
+		if cleanupErr := s.client.Del(cleanupCtx, keys...).Err(); cleanupErr != nil {
 			resultErr = errors.Join(resultErr, fmt.Errorf("quota redis: probe cleanup: %w", cleanupErr))
 		}
 	}()

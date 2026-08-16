@@ -110,6 +110,53 @@ func TestRedisWatchAbortsWhenWatchedKeyChanges(t *testing.T) {
 	}
 }
 
+func TestRedisWatchAbortsWhenWatchedKeyExpires(t *testing.T) {
+	for _, protocol := range []int{2, 3} {
+		t.Run(goredisProtocolName(protocol), func(t *testing.T) {
+			addr, shutdown := startServer(t, "")
+			defer shutdown()
+			ctx := context.Background()
+			watcher := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: protocol})
+			observer := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: protocol})
+			t.Cleanup(func() {
+				_ = watcher.Close()
+				_ = observer.Close()
+			})
+
+			if err := watcher.Set(ctx, "expiring", "value", 25*time.Millisecond).Err(); err != nil {
+				t.Fatal(err)
+			}
+			err := watcher.Watch(ctx, func(tx *goredis.Tx) error {
+				deadline := time.Now().Add(2 * time.Second)
+				for {
+					_, getErr := observer.Get(ctx, "expiring").Result()
+					if errors.Is(getErr, goredis.Nil) {
+						break
+					}
+					if getErr != nil {
+						return getErr
+					}
+					if time.Now().After(deadline) {
+						return errors.New("watched key did not expire")
+					}
+					time.Sleep(5 * time.Millisecond)
+				}
+				_, txErr := tx.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
+					pipe.Set(ctx, "must-not-commit", "value", 0)
+					return nil
+				})
+				return txErr
+			}, "expiring")
+			if !errors.Is(err, goredis.TxFailedErr) {
+				t.Fatalf("Watch() error = %v, want redis.TxFailedErr", err)
+			}
+			if _, err := watcher.Get(ctx, "must-not-commit").Result(); !errors.Is(err, goredis.Nil) {
+				t.Fatalf("expired-key transaction committed, GET error = %v", err)
+			}
+		})
+	}
+}
+
 func TestRedisWatchIgnoresUnrelatedMutation(t *testing.T) {
 	addr, shutdown := startServer(t, "")
 	defer shutdown()
@@ -216,6 +263,31 @@ func TestRedisWatchTransactionRules(t *testing.T) {
 	}
 	if got, err := client.Get(ctx, "result").Result(); err != nil || got != "after-discard" {
 		t.Fatalf("GET result = %q, %v", got, err)
+	}
+}
+
+func TestRedisEmptyTransactionReturnsEmptyArray(t *testing.T) {
+	for _, protocol := range []int{2, 3} {
+		t.Run(goredisProtocolName(protocol), func(t *testing.T) {
+			addr, shutdown := startServer(t, "")
+			defer shutdown()
+			ctx := context.Background()
+			client := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: protocol})
+			t.Cleanup(func() { _ = client.Close() })
+			conn := client.Conn()
+			t.Cleanup(func() { _ = conn.Close() })
+
+			if err := conn.Do(ctx, "MULTI").Err(); err != nil {
+				t.Fatal(err)
+			}
+			result, err := conn.Do(ctx, "EXEC").Slice()
+			if err != nil {
+				t.Fatalf("empty EXEC error = %v", err)
+			}
+			if len(result) != 0 {
+				t.Fatalf("empty EXEC result = %#v, want empty array", result)
+			}
+		})
 	}
 }
 

@@ -21,7 +21,7 @@ type connectionState struct {
 	multi         bool
 	multiDirty    bool
 	queued        [][][]byte
-	watched       map[string]uint64
+	watched       map[string]watchedKey
 }
 
 func commandName(command [][]byte) string {
@@ -51,7 +51,7 @@ func (s *Server) execute(ctx context.Context, conn *connectionState, command [][
 			conn.multi = false
 			conn.multiDirty = false
 			conn.queued = nil
-			clearWatches(conn)
+			s.clearWatches(conn)
 			return simpleResponse("OK"), false, nil
 		case "multi":
 			return errorResponse("ERR MULTI calls can not be nested"), false, nil
@@ -85,15 +85,18 @@ func (s *Server) execute(ctx context.Context, conn *connectionState, command [][
 			return wrongArguments(name), false, nil
 		}
 		s.watchMu.Lock()
-		s.watch(conn, command[1:])
+		err := s.watch(ctx, conn, command[1:])
 		s.watchMu.Unlock()
+		if err != nil {
+			return response{}, false, err
+		}
 		return simpleResponse("OK"), false, nil
 	}
 	if name == "unwatch" {
 		if len(command) != 1 {
 			return wrongArguments(name), false, nil
 		}
-		clearWatches(conn)
+		s.clearWatches(conn)
 		return simpleResponse("OK"), false, nil
 	}
 	if keys := mutationKeys(command); len(keys) > 0 {
@@ -125,18 +128,27 @@ func (s *Server) executeTransaction(ctx context.Context, conn *connectionState, 
 	conn.multiDirty = false
 	conn.queued = nil
 	if dirty {
-		clearWatches(conn)
+		s.clearWatches(conn)
 		return errorResponse("EXECABORT Transaction discarded because of previous errors."), false, nil
 	}
 	s.watchMu.Lock()
 	defer s.watchMu.Unlock()
 	if s.watchedChanged(conn) {
-		clearWatches(conn)
+		s.clearWatchesLocked(conn)
 		return nullArrayResponse(), false, nil
 	}
 	replies := make([]response, 0, len(queued))
 	var mutatedKeys []string
+	watchExpired := false
 	err := s.opts.Store.Update(ctx, func(ops state.Operations) error {
+		changed, err := s.watchedExistenceChanged(ctx, conn, ops)
+		if err != nil {
+			return err
+		}
+		if changed {
+			watchExpired = true
+			return nil
+		}
 		for _, queuedCommand := range queued {
 			reply, closeConnection, err := s.executeDirect(ctx, conn, ops, queuedCommand)
 			if err != nil {
@@ -150,9 +162,12 @@ func (s *Server) executeTransaction(ctx context.Context, conn *connectionState, 
 		}
 		return nil
 	})
-	clearWatches(conn)
+	s.clearWatchesLocked(conn)
 	if err != nil {
 		return response{}, false, err
+	}
+	if watchExpired {
+		return nullArrayResponse(), false, nil
 	}
 	s.bumpVersions(mutatedKeys)
 	return arrayResponse(replies), false, nil
