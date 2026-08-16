@@ -154,10 +154,10 @@ uses `routes[].upstreams[].model`.
     be Redis 7.0+ because concurrency leases use conditional `EXPIRE NX/GT`.
     Before installation, the gateway probes the complete quota path and
     removes its isolated probe keys. The Redis account must permit `PING`,
-    `WATCH`, `UNWATCH`, `MULTI`, `EXEC`, `MGET`, `INCRBY`, `EXPIRE`, `DEL`,
-    `ZREMRANGEBYSCORE`, `ZADD`, `ZCARD`, and `ZREM`, plus the connection setup
-    commands required by its URL (`AUTH`, `HELLO`, `SELECT`, and `CLIENT` where
-    applicable).
+    `WATCH`, `UNWATCH`, `MULTI`, `EXEC`, `TYPE`, `MGET`, `INCRBY`, `EXPIRE`,
+    `DEL`, `ZREMRANGEBYSCORE`, `ZADD`, `ZCARD`, and `ZREM`, plus the connection
+    setup commands required by its URL (`AUTH`, `HELLO`, `SELECT`, and `CLIENT`
+    where applicable).
   - Standalone YAML validates and connects to the selected backend during
     startup; an unavailable Redis backend fails startup instead of silently
     falling back to memory. With config-sync, `state.type` and `state.url` are
