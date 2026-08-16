@@ -21,6 +21,15 @@ func (s coreSettingsStore) Set(key, value string) error {
 	return nil
 }
 
+func (s coreSettingsStore) SetMany(values map[string]string) error {
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+	for key, value := range values {
+		s.b.settings[key] = value
+	}
+	return nil
+}
+
 func (s coreSettingsStore) ListAll() ([]storage.Setting, error) {
 	s.b.mu.RLock()
 	defer s.b.mu.RUnlock()

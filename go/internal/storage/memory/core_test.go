@@ -418,3 +418,23 @@ func TestCoreSettingsUpsert(t *testing.T) {
 		t.Fatalf("ListAll = %v, %v; want 1 row", all, err)
 	}
 }
+
+func TestCoreSettingsSetMany(t *testing.T) {
+	s := New().Storage()
+
+	if err := s.Settings().SetMany(map[string]string{
+		"state.type": "redis",
+		"state.url":  "redis://127.0.0.1:6379/0",
+	}); err != nil {
+		t.Fatalf("SetMany: %v", err)
+	}
+	for key, want := range map[string]string{
+		"state.type": "redis",
+		"state.url":  "redis://127.0.0.1:6379/0",
+	} {
+		got, err := s.Settings().Get(key)
+		if err != nil || got != want {
+			t.Fatalf("Get(%q) = %q, %v; want %q", key, got, err, want)
+		}
+	}
+}
