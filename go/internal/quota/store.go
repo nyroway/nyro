@@ -40,6 +40,7 @@ type Lease interface {
 
 // Store is the State contract required by quota enforcement.
 type Store interface {
+	AdmitRequest(context.Context, string, []RequestLimit) (bool, error)
 	Value(context.Context, string, string, time.Duration) (int64, error)
 	Record(context.Context, string, Usage) error
 	Acquire(context.Context, string, int64, time.Duration) (Lease, bool, error)

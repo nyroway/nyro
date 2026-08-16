@@ -123,6 +123,16 @@ func (s *Switch) Value(ctx context.Context, consumerID, quotaType string, window
 	return value, callErr
 }
 
+func (s *Switch) AdmitRequest(ctx context.Context, consumerID string, limits []RequestLimit) (bool, error) {
+	entry, err := s.reference()
+	if err != nil {
+		return false, err
+	}
+	allowed, callErr := entry.store.AdmitRequest(ctx, consumerID, limits)
+	s.finish(entry, callErr)
+	return allowed, callErr
+}
+
 func (s *Switch) Record(ctx context.Context, consumerID string, usage Usage) error {
 	entry, err := s.reference()
 	if err != nil {
@@ -179,7 +189,9 @@ func (s *Switch) finish(entry *switchEntry, operationErr error) {
 }
 
 func isBackendFailure(err error) bool {
-	return err != nil && !errors.Is(err, context.Canceled)
+	return err != nil &&
+		!errors.Is(err, context.Canceled) &&
+		!errors.Is(err, ErrAdmissionContended)
 }
 
 func (s *Switch) retireIfDrainedLocked(entry *switchEntry) func() {

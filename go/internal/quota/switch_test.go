@@ -74,6 +74,39 @@ func TestSwitchCanceledOperationDoesNotPoisonHealth(t *testing.T) {
 	}
 }
 
+func TestSwitchAdmitRequestPreservesHealthOnDenialAndContention(t *testing.T) {
+	backend := &switchFakeStore{admitDenied: true}
+	sw := NewSwitch(backend)
+	allowed, err := sw.AdmitRequest(context.Background(), "consumer", []RequestLimit{{Limit: 1, Window: time.Minute}})
+	if err != nil || allowed {
+		t.Fatalf("denial = %v, %v", allowed, err)
+	}
+	if !sw.Ready() {
+		t.Fatal("clean denial poisoned health")
+	}
+
+	backend.mu.Lock()
+	backend.admitDenied = false
+	backend.admitErr = ErrAdmissionContended
+	backend.mu.Unlock()
+	_, err = sw.AdmitRequest(context.Background(), "consumer", []RequestLimit{{Limit: 1, Window: time.Minute}})
+	if !errors.Is(err, ErrAdmissionContended) {
+		t.Fatalf("error = %v, want ErrAdmissionContended", err)
+	}
+	if !sw.Ready() {
+		t.Fatal("contention poisoned health")
+	}
+}
+
+func TestSwitchAdmitRequestBackendFailureMarksUnhealthy(t *testing.T) {
+	backend := &switchFakeStore{admitErr: errors.New("redis unavailable")}
+	sw := NewSwitch(backend)
+	_, _ = sw.AdmitRequest(context.Background(), "consumer", []RequestLimit{{Limit: 1, Window: time.Minute}})
+	if sw.Ready() {
+		t.Fatal("backend failure kept Switch healthy")
+	}
+}
+
 func TestSwitchRetiresBackendAfterLeaseRelease(t *testing.T) {
 	backend := &switchFakeStore{}
 	sw := NewSwitch(backend)
@@ -149,13 +182,24 @@ func TestSwitchShutdownFailsClosed(t *testing.T) {
 }
 
 type switchFakeStore struct {
-	mu         sync.Mutex
-	value      int64
-	valueErr   error
-	recordErr  error
-	acquireErr error
-	leaseErr   error
-	records    int
+	mu          sync.Mutex
+	value       int64
+	valueErr    error
+	recordErr   error
+	admitErr    error
+	admitDenied bool
+	acquireErr  error
+	leaseErr    error
+	records     int
+}
+
+func (f *switchFakeStore) AdmitRequest(context.Context, string, []RequestLimit) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.admitErr != nil {
+		return false, f.admitErr
+	}
+	return !f.admitDenied, nil
 }
 
 func (f *switchFakeStore) Value(context.Context, string, string, time.Duration) (int64, error) {

@@ -209,6 +209,10 @@ type gatewayQuotaStore struct {
 	acquireCalls int
 }
 
+func (s *gatewayQuotaStore) AdmitRequest(context.Context, string, []quota.RequestLimit) (bool, error) {
+	return true, nil
+}
+
 func (s *gatewayQuotaStore) Value(context.Context, string, string, time.Duration) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
