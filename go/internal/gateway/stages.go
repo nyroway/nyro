@@ -70,7 +70,9 @@ func (s accessStage) Handle(ex *pipeline.Exchange, next func() error) error {
 		return nil
 	}
 	if lease != nil {
-		defer releaseQuotaLease(lease, ex.ConsumerID)
+		defer func() {
+			_ = releaseQuotaLease(lease, ex.ConsumerID)
+		}()
 	}
 	return next()
 }
