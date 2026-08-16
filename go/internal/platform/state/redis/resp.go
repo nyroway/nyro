@@ -99,6 +99,7 @@ const (
 	responseInteger
 	responseArray
 	responseMap
+	responseNullArray
 )
 
 type response struct {
@@ -116,6 +117,7 @@ func bulkResponse(value []byte) response {
 	return response{kind: responseBulk, bytes: append([]byte(nil), value...)}
 }
 func nullResponse() response                  { return response{kind: responseNull} }
+func nullArrayResponse() response             { return response{kind: responseNullArray} }
 func integerResponse(value int64) response    { return response{kind: responseInteger, integer: value} }
 func arrayResponse(items []response) response { return response{kind: responseArray, items: items} }
 func mapResponse(pairs ...response) response  { return response{kind: responseMap, mapData: pairs} }
@@ -167,6 +169,12 @@ func (w *respWriter) write(value response) error {
 			if err := w.write(item); err != nil {
 				return err
 			}
+		}
+	case responseNullArray:
+		if w.proto == 3 {
+			_, _ = w.w.WriteString("_\r\n")
+		} else {
+			_, _ = w.w.WriteString("*-1\r\n")
 		}
 	}
 	return nil

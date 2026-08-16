@@ -42,6 +42,8 @@ type Server struct {
 	stopping bool
 	stopOnce sync.Once
 	connID   atomic.Int64
+	watchMu  sync.Mutex
+	versions map[string]uint64
 }
 
 // New validates options and returns an idle server.
@@ -61,7 +63,11 @@ func New(opts Options) (*Server, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Server{opts: opts, conns: make(map[net.Conn]struct{})}, nil
+	return &Server{
+		opts:     opts,
+		conns:    make(map[net.Conn]struct{}),
+		versions: make(map[string]uint64),
+	}, nil
 }
 
 // Serve takes serving-lifecycle ownership of listener and accepts connections
@@ -103,7 +109,11 @@ func (s *Server) Serve(listener net.Listener) error {
 }
 
 func (s *Server) serveConnection(conn net.Conn) {
+	var connection *connectionState
 	defer func() {
+		if connection != nil {
+			clearWatches(connection)
+		}
 		_ = conn.Close()
 		s.mu.Lock()
 		delete(s.conns, conn)
@@ -111,7 +121,7 @@ func (s *Server) serveConnection(conn net.Conn) {
 		s.wg.Done()
 	}()
 
-	connection := &connectionState{
+	connection = &connectionState{
 		id:            s.connID.Add(1),
 		proto:         2,
 		authenticated: s.opts.Password == "",
