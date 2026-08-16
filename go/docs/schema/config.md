@@ -146,8 +146,8 @@ uses `routes[].upstreams[].model`.
   - If the whole block is absent, the gateway uses process-local memory.
     `state: {type: memory}` is the explicit equivalent and must not include
     `url`. A present but empty block is rejected.
-  - `type: redis` requires `url`, which must be an absolute `redis://` or
-    `rediss://` URL. Standard URL user information and path syntax carry the
+  - `type: redis` requires `url`, which must be an absolute `redis://` URL.
+    Standard URL user information and path syntax carry the
     Redis username, password, and database, for example
     `redis://user:password@redis.internal:6379/2`. Prefer an environment
     variable so credentials are not committed to YAML. External services must
@@ -277,5 +277,5 @@ gateways through config-sync.
   listener's reachable URL explicitly when a proxy should use it.
 - The embedded Redis listener defaults to loopback. A non-loopback
   `--redis-listen` requires `--redis-password` and still carries credentials
-  and State traffic without TLS. Restrict it to a trusted private network, or
-  use an external `rediss://` service for production multi-node deployments.
+  and State traffic without TLS. Restrict it to loopback or a trusted private
+  network, or use an independently encrypted tunnel.

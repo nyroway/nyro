@@ -77,10 +77,11 @@ func ValidateDeclared(kind, rawURL string) (Config, error) {
 // ValidateURL requires an absolute Redis URL with a network host. Fragments
 // are rejected because they are not Redis connection options.
 func ValidateURL(rawURL string) error {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || (parsed.Scheme != "redis" && parsed.Scheme != "rediss") ||
-		parsed.Host == "" || parsed.Hostname() == "" || parsed.Fragment != "" {
-		return fmt.Errorf("%s must be a valid redis:// or rediss:// URL", SettingURLKey)
+	rawURL = strings.TrimSpace(rawURL)
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "redis" || parsed.Host == "" ||
+		parsed.Hostname() == "" || parsed.Fragment != "" || strings.Contains(rawURL, "#") {
+		return fmt.Errorf("%s must be a valid redis:// URL", SettingURLKey)
 	}
 	return nil
 }

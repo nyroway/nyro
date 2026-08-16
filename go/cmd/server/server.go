@@ -143,7 +143,7 @@ func NewCmd() *cobra.Command {
 				if redisPassword == "" {
 					return errors.New("--redis-password is required when --redis-listen is non-loopback")
 				}
-				slog.Warn("embedded Redis is exposed off-host without TLS; credentials and State traffic are plaintext — restrict it to a trusted private network or use external rediss://",
+				slog.Warn("embedded Redis is exposed off-host without TLS; credentials and State traffic are plaintext — restrict it to a trusted private network or an independently encrypted tunnel",
 					"listen", redisAddr)
 			}
 		}

@@ -17,12 +17,13 @@ func TestLoadConfig(t *testing.T) {
 		{name: "absent defaults to memory", want: state.Config{Kind: state.KindMemory}},
 		{name: "explicit memory", values: map[string]string{state.SettingTypeKey: "memory"}, want: state.Config{Kind: state.KindMemory}},
 		{name: "redis", values: map[string]string{state.SettingTypeKey: "redis", state.SettingURLKey: "redis://default:secret@redis.example:6379/2"}, want: state.Config{Kind: state.KindRedis, URL: "redis://default:secret@redis.example:6379/2"}},
-		{name: "redis tls", values: map[string]string{state.SettingTypeKey: "redis", state.SettingURLKey: "rediss://redis.example:6379/0"}, want: state.Config{Kind: state.KindRedis, URL: "rediss://redis.example:6379/0"}},
+		{name: "redis tls is unsupported", values: map[string]string{state.SettingTypeKey: "redis", state.SettingURLKey: "rediss://redis.example:6379/0"}, wantErr: "valid redis:// URL"},
 		{name: "url without type", values: map[string]string{state.SettingURLKey: "redis://redis.example:6379"}, wantErr: "state.type is required"},
 		{name: "memory with url", values: map[string]string{state.SettingTypeKey: "memory", state.SettingURLKey: "redis://redis.example:6379"}, wantErr: "state.url is not allowed"},
 		{name: "redis without url", values: map[string]string{state.SettingTypeKey: "redis"}, wantErr: "state.url is required"},
 		{name: "unknown type", values: map[string]string{state.SettingTypeKey: "etcd"}, wantErr: "unknown state type \"etcd\""},
-		{name: "wrong url scheme", values: map[string]string{state.SettingTypeKey: "redis", state.SettingURLKey: "http://redis.example:6379"}, wantErr: "redis:// or rediss://"},
+		{name: "wrong url scheme", values: map[string]string{state.SettingTypeKey: "redis", state.SettingURLKey: "http://redis.example:6379"}, wantErr: "valid redis:// URL"},
+		{name: "empty fragment", values: map[string]string{state.SettingTypeKey: "redis", state.SettingURLKey: "redis://redis.example:6379#"}, wantErr: "valid redis:// URL"},
 	}
 
 	for _, tt := range tests {
