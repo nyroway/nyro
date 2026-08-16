@@ -467,3 +467,59 @@ func TestCoreSettingsUpsert(t *testing.T) {
 		t.Fatalf("ListAll = %v, %v; want 1 row (no duplicate)", all, err)
 	}
 }
+
+func TestCoreSettingsSetManyRollsBackOnFailure(t *testing.T) {
+	b := newTestBackend(t)
+	s := b.Settings()
+
+	if err := s.Set("state.type", "memory"); err != nil {
+		t.Fatalf("seed state.type: %v", err)
+	}
+	if err := s.Set("state.url", ""); err != nil {
+		t.Fatalf("seed state.url: %v", err)
+	}
+	if err := b.DB().Exec(`
+		CREATE TRIGGER fail_state_url BEFORE INSERT ON settings
+		WHEN NEW.key = 'state.url'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced batch failure');
+		END
+	`).Error; err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	if err := s.SetMany(map[string]string{
+		"state.type": "redis",
+		"state.url":  "redis://127.0.0.1:6379/0",
+	}); err == nil {
+		t.Fatal("SetMany: want forced failure, got nil")
+	}
+
+	for key, want := range map[string]string{"state.type": "memory", "state.url": ""} {
+		got, err := s.Get(key)
+		if err != nil || got != want {
+			t.Fatalf("Get(%q) after rollback = %q, %v; want %q", key, got, err, want)
+		}
+	}
+}
+
+func TestCoreSettingsSetMany(t *testing.T) {
+	b := newTestBackend(t)
+	s := b.Settings()
+
+	if err := s.SetMany(map[string]string{
+		"state.type": "redis",
+		"state.url":  "redis://127.0.0.1:6379/0",
+	}); err != nil {
+		t.Fatalf("SetMany: %v", err)
+	}
+	for key, want := range map[string]string{
+		"state.type": "redis",
+		"state.url":  "redis://127.0.0.1:6379/0",
+	} {
+		got, err := s.Get(key)
+		if err != nil || got != want {
+			t.Fatalf("Get(%q) = %q, %v; want %q", key, got, err, want)
+		}
+	}
+}

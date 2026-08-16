@@ -12,5 +12,6 @@ type Setting struct {
 type SettingsStore interface {
 	Get(key string) (string, error)
 	Set(key, value string) error
+	SetMany(values map[string]string) error
 	ListAll() ([]Setting, error)
 }

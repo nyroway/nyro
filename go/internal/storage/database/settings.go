@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"sort"
 
 	"gorm.io/gorm/clause"
 
@@ -31,6 +32,24 @@ func (s coreSettingsStore) Set(key, value string) error {
 		Columns:   []clause.Column{{Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
 	}).Create(row)
+}
+
+func (s coreSettingsStore) SetMany(values map[string]string) error {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	return s.q.Transaction(func(tx *query.Query) error {
+		store := coreSettingsStore{q: tx}
+		for _, key := range keys {
+			if err := store.Set(key, values[key]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s coreSettingsStore) ListAll() ([]storage.Setting, error) {
