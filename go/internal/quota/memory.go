@@ -5,6 +5,7 @@ package quota
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -125,6 +126,39 @@ func (m *Memory) Record(ctx context.Context, consumerID string, usage Usage) err
 		m.addLocked(consumerID, "tokens", usage.Tokens, now)
 	}
 	return nil
+}
+
+// AdmitRequest atomically checks every request window and counts one request
+// only when all limits allow it.
+func (m *Memory) AdmitRequest(ctx context.Context, consumerID string, limits []RequestLimit) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if len(limits) == 0 {
+		return true, nil
+	}
+	for _, limit := range limits {
+		if limit.Limit <= 0 || limit.Window <= 0 {
+			return false, errors.New("quota: request limit and window must be positive")
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
+	now := indexFor(m.now())
+	requests := m.ringLocked(consumerID, "requests")
+	requests.advance(now)
+	for _, limit := range limits {
+		if requests.sumWindow(limit.Window) >= limit.Limit {
+			return false, nil
+		}
+	}
+	requests.add(1)
+	return true, nil
 }
 
 func (m *Memory) addLocked(consumerID, quotaType string, amount, now int64) {

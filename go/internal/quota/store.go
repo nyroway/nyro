@@ -6,8 +6,13 @@ import (
 	"time"
 )
 
-// ErrUnavailable reports that quota State cannot safely serve operations.
-var ErrUnavailable = errors.New("quota state unavailable")
+var (
+	// ErrUnavailable reports that quota State cannot safely serve operations.
+	ErrUnavailable = errors.New("quota state unavailable")
+	// ErrAdmissionContended reports that request admission exhausted its
+	// conflict retries without proving either admission or denial.
+	ErrAdmissionContended = errors.New("quota request admission contended")
+)
 
 const (
 	// BucketResolution is the precision of usage windows.
@@ -20,6 +25,12 @@ const (
 type Usage struct {
 	Requests int64
 	Tokens   int64
+}
+
+// RequestLimit is one request-count boundary evaluated during admission.
+type RequestLimit struct {
+	Limit  int64
+	Window time.Duration
 }
 
 // Lease reserves one concurrency slot until released.
