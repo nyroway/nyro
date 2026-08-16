@@ -6,6 +6,7 @@ describe("settings navigation", () => {
   it("groups gateway settings under the data plane", () => {
     expect(SETTINGS_SECTIONS.filter((item) => item.group === "data-plane").map((item) => item.id)).toEqual([
       "forwarding",
+      "state",
       "logs",
       "metrics",
       "traces",

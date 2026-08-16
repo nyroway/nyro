@@ -364,6 +364,13 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
         body: { value: args?.value },
         transform: (value) => (value as { value?: string | null }).value ?? null,
       };
+    case "set_settings":
+      return {
+        method: "PUT",
+        url: `${base}/settings`,
+        body: { values: args?.values },
+        transform: (value) => (value as { values?: Record<string, string> }).values ?? {},
+      };
 
     case "get_gateway_status":
       return { method: "GET", url: `${base}/status` };
