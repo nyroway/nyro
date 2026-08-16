@@ -44,6 +44,7 @@ type Server struct {
 	connID   atomic.Int64
 	watchMu  sync.Mutex
 	versions map[string]uint64
+	watchers map[string]uint64
 }
 
 // New validates options and returns an idle server.
@@ -67,6 +68,7 @@ func New(opts Options) (*Server, error) {
 		opts:     opts,
 		conns:    make(map[net.Conn]struct{}),
 		versions: make(map[string]uint64),
+		watchers: make(map[string]uint64),
 	}, nil
 }
 
@@ -112,7 +114,7 @@ func (s *Server) serveConnection(conn net.Conn) {
 	var connection *connectionState
 	defer func() {
 		if connection != nil {
-			clearWatches(connection)
+			s.clearWatches(connection)
 		}
 		_ = conn.Close()
 		s.mu.Lock()
