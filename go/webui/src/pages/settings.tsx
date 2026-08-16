@@ -5,7 +5,7 @@ import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import { normalizePublicGatewayURL } from "@/lib/public-gateway-url";
 import { useLocale } from "@/lib/i18n";
-import { runtimeHTTPURL } from "@/lib/runtime-service-url";
+import { runtimeHTTPURL, runtimeRedisURL } from "@/lib/runtime-service-url";
 import type { RuntimeService } from "@/lib/types";
 import { SETTINGS_SECTIONS, type SettingsSectionID } from "@/lib/settings-sections";
 import {
@@ -291,6 +291,9 @@ export default function SettingsPage() {
   const builtInOtlpEndpoint = runtimeHTTPURL(
     runtimeServices.find((service) => service.id === "otlp-receiver" && service.status === "running")?.listen,
   );
+  const builtInRedisURL = runtimeRedisURL(
+    runtimeServices.find((service) => service.id === "redis-state" && service.status === "running")?.listen,
+  );
 
   return (
     <PageLayout header={<PageHeader title={t("page.settings.title")} description={t("page.settings.subtitle")} />}>
@@ -331,7 +334,7 @@ export default function SettingsPage() {
               </div>
             </SettingsFormSurface>
           )}
-          {activeSection === "state" && <StateSettingsCard isZh={isZh} onError={showErrorDialog} />}
+          {activeSection === "state" && <StateSettingsCard isZh={isZh} onError={showErrorDialog} builtInRedisURL={builtInRedisURL} />}
           {SIGNALS.includes(activeSection as Signal) && <ObsSignalCard signal={activeSection as Signal} isZh={isZh} builtInOtlpEndpoint={builtInOtlpEndpoint} showErrorDialog={showErrorDialog} />}
           {activeSection === "public" && <PublicGatewayURLCard isZh={isZh} showErrorDialog={showErrorDialog} />}
           {activeSection === "retention" && <RetentionSettingsCard isZh={isZh} showErrorDialog={showErrorDialog} />}

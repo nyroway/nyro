@@ -3,10 +3,9 @@ function browserHostname(explicit?: string) {
   return typeof window === "undefined" ? "127.0.0.1" : window.location.hostname;
 }
 
-export function runtimeHTTPURL(listen?: string, currentHostname?: string): string | null {
+function runtimeNetworkAddress(listen?: string, currentHostname?: string): string | null {
   const value = listen?.trim();
   if (!value) return null;
-  if (/^https?:\/\//i.test(value)) return value.replace(/\/$/, "");
 
   let host = "";
   let port = "";
@@ -20,9 +19,23 @@ export function runtimeHTTPURL(listen?: string, currentHostname?: string): strin
     if (separator < 0) return null;
     host = value.slice(0, separator);
     port = value.slice(separator + 1);
+    if (host.includes(":")) return null;
   }
   if (!/^\d+$/.test(port)) return null;
   if (!host || host === "0.0.0.0" || host === "::") host = browserHostname(currentHostname);
   const formattedHost = host.includes(":") ? `[${host}]` : host;
-  return `http://${formattedHost}:${port}`;
+  return `${formattedHost}:${port}`;
+}
+
+export function runtimeHTTPURL(listen?: string, currentHostname?: string): string | null {
+  const value = listen?.trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value.replace(/\/$/, "");
+  const address = runtimeNetworkAddress(value, currentHostname);
+  return address ? `http://${address}` : null;
+}
+
+export function runtimeRedisURL(listen?: string, currentHostname?: string): string | null {
+  const address = runtimeNetworkAddress(listen, currentHostname);
+  return address ? `redis://${address}` : null;
 }
