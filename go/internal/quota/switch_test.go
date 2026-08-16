@@ -14,11 +14,14 @@ func TestUnavailableSwitchFailsClosed(t *testing.T) {
 	if sw.Ready() {
 		t.Fatal("unavailable Switch reports ready")
 	}
-	if _, err := sw.Value(ctx, "k", "requests", time.Minute); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("Value() error = %v, want ErrUnavailable", err)
+	if _, err := sw.TokenValue(ctx, "k", time.Minute); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("TokenValue() error = %v, want ErrUnavailable", err)
 	}
-	if err := sw.Record(ctx, "k", Usage{Requests: 1}); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("Record() error = %v, want ErrUnavailable", err)
+	if err := sw.RecordTokens(ctx, "k", 1); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("RecordTokens() error = %v, want ErrUnavailable", err)
+	}
+	if _, err := sw.AdmitRequest(ctx, "k", []RequestLimit{{Limit: 1, Window: time.Minute}}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("AdmitRequest() error = %v, want ErrUnavailable", err)
 	}
 	if _, _, err := sw.Acquire(ctx, "k", 1, time.Minute); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Acquire() error = %v, want ErrUnavailable", err)
@@ -26,21 +29,21 @@ func TestUnavailableSwitchFailsClosed(t *testing.T) {
 }
 
 func TestSwitchTracksHealthByGeneration(t *testing.T) {
-	backend := &switchFakeStore{value: 7}
+	backend := &switchFakeStore{tokenValue: 7}
 	sw := NewSwitch(backend)
 	if !sw.Ready() {
 		t.Fatal("Switch with backend is not ready")
 	}
 
-	backend.valueErr = errors.New("redis unavailable")
-	if _, err := sw.Value(context.Background(), "k", "requests", time.Minute); err == nil {
-		t.Fatal("Value() error = nil")
+	backend.tokenValueErr = errors.New("redis unavailable")
+	if _, err := sw.TokenValue(context.Background(), "k", time.Minute); err == nil {
+		t.Fatal("TokenValue() error = nil")
 	}
 	if sw.Ready() {
 		t.Fatal("operation error did not mark Switch unhealthy")
 	}
 
-	next := &switchFakeStore{value: 11}
+	next := &switchFakeStore{tokenValue: 11}
 	generation := sw.Swap(next, nil, time.Second)
 	if !sw.Ready() {
 		t.Fatal("Swap() did not restore readiness")
@@ -57,17 +60,17 @@ func TestSwitchTracksHealthByGeneration(t *testing.T) {
 	if !sw.Ready() {
 		t.Fatal("current generation was not restored")
 	}
-	got, err := sw.Value(context.Background(), "k", "requests", time.Minute)
+	got, err := sw.TokenValue(context.Background(), "k", time.Minute)
 	if err != nil || got != 11 {
-		t.Fatalf("Value() after Swap = %d, %v; want 11, nil", got, err)
+		t.Fatalf("TokenValue() after Swap = %d, %v; want 11, nil", got, err)
 	}
 }
 
 func TestSwitchCanceledOperationDoesNotPoisonHealth(t *testing.T) {
-	backend := &switchFakeStore{valueErr: context.Canceled}
+	backend := &switchFakeStore{tokenValueErr: context.Canceled}
 	sw := NewSwitch(backend)
-	if _, err := sw.Value(context.Background(), "k", "requests", time.Minute); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Value() error = %v, want context.Canceled", err)
+	if _, err := sw.TokenValue(context.Background(), "k", time.Minute); !errors.Is(err, context.Canceled) {
+		t.Fatalf("TokenValue() error = %v, want context.Canceled", err)
 	}
 	if !sw.Ready() {
 		t.Fatal("caller cancellation poisoned backend health")
@@ -176,21 +179,21 @@ func TestSwitchShutdownFailsClosed(t *testing.T) {
 	if sw.Ready() {
 		t.Fatal("Shutdown Switch reports ready")
 	}
-	if err := sw.Record(context.Background(), "k", Usage{Requests: 1}); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("Record() error = %v, want ErrUnavailable", err)
+	if err := sw.RecordTokens(context.Background(), "k", 1); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("RecordTokens() error = %v, want ErrUnavailable", err)
 	}
 }
 
 type switchFakeStore struct {
-	mu          sync.Mutex
-	value       int64
-	valueErr    error
-	recordErr   error
-	admitErr    error
-	admitDenied bool
-	acquireErr  error
-	leaseErr    error
-	records     int
+	mu              sync.Mutex
+	tokenValue      int64
+	tokenValueErr   error
+	recordTokensErr error
+	admitErr        error
+	admitDenied     bool
+	acquireErr      error
+	leaseErr        error
+	records         int
 }
 
 func (f *switchFakeStore) AdmitRequest(context.Context, string, []RequestLimit) (bool, error) {
@@ -202,17 +205,17 @@ func (f *switchFakeStore) AdmitRequest(context.Context, string, []RequestLimit) 
 	return !f.admitDenied, nil
 }
 
-func (f *switchFakeStore) Value(context.Context, string, string, time.Duration) (int64, error) {
+func (f *switchFakeStore) TokenValue(context.Context, string, time.Duration) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.value, f.valueErr
+	return f.tokenValue, f.tokenValueErr
 }
 
-func (f *switchFakeStore) Record(context.Context, string, Usage) error {
+func (f *switchFakeStore) RecordTokens(context.Context, string, int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records++
-	return f.recordErr
+	return f.recordTokensErr
 }
 
 func (f *switchFakeStore) Acquire(context.Context, string, int64, time.Duration) (Lease, bool, error) {

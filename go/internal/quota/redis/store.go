@@ -69,12 +69,12 @@ func New(client client, opts Options) (*Store, error) {
 	}, nil
 }
 
-// Record atomically increments current minute and hour buckets.
-func (s *Store) Record(ctx context.Context, consumerID string, usage quota.Usage) error {
+// RecordTokens atomically increments current token minute and hour buckets.
+func (s *Store) RecordTokens(ctx context.Context, consumerID string, tokens int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if usage.Requests == 0 && usage.Tokens == 0 {
+	if tokens == 0 {
 		return nil
 	}
 	now := s.now()
@@ -82,34 +82,27 @@ func (s *Store) Record(ctx context.Context, consumerID string, usage quota.Usage
 	hourEpoch := now.Unix() / int64(time.Hour/time.Second)
 
 	_, err := s.client.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
-		queueUsage := func(quotaType string, amount int64) {
-			if amount == 0 {
-				return
-			}
-			minuteKey := usageKey(consumerID, quotaType, "m", minuteEpoch)
-			hourKey := usageKey(consumerID, quotaType, "h", hourEpoch)
-			pipe.IncrBy(ctx, minuteKey, amount)
-			pipe.Expire(ctx, minuteKey, usageKeyTTL)
-			pipe.IncrBy(ctx, hourKey, amount)
-			pipe.Expire(ctx, hourKey, usageKeyTTL)
-		}
-		queueUsage("requests", usage.Requests)
-		queueUsage("tokens", usage.Tokens)
+		minuteKey := usageKey(consumerID, "tokens", "m", minuteEpoch)
+		hourKey := usageKey(consumerID, "tokens", "h", hourEpoch)
+		pipe.IncrBy(ctx, minuteKey, tokens)
+		pipe.Expire(ctx, minuteKey, usageKeyTTL)
+		pipe.IncrBy(ctx, hourKey, tokens)
+		pipe.Expire(ctx, hourKey, usageKeyTTL)
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("quota redis: record usage: %w", err)
+		return fmt.Errorf("quota redis: record tokens: %w", err)
 	}
 	return nil
 }
 
-// Value sums the exact minute/hour decomposition of a trailing window.
-func (s *Store) Value(ctx context.Context, consumerID, quotaType string, window time.Duration) (int64, error) {
+// TokenValue sums the exact token minute/hour decomposition of a trailing window.
+func (s *Store) TokenValue(ctx context.Context, consumerID string, window time.Duration) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 	currentMinute := s.now().Unix() / int64(time.Minute/time.Second)
-	terms := usageTerms(consumerID, quotaType, currentMinute, window)
+	terms := usageTerms(consumerID, "tokens", currentMinute, window)
 	keys := make([]string, len(terms))
 	for i, term := range terms {
 		keys[i] = term.key

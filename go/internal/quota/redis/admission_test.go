@@ -74,8 +74,8 @@ func TestRedisAdmitRequestChecksMultipleWindows(t *testing.T) {
 }
 
 func TestRedisAdmitRequestDenialDoesNotIncrement(t *testing.T) {
-	store, _ := newEmbeddedStoreWithClock(t)
-	limits := []quota.RequestLimit{{Limit: 1, Window: time.Minute}}
+	store, clock := newEmbeddedStoreWithClock(t)
+	limits := []quota.RequestLimit{{Limit: 1, Window: time.Minute}, {Limit: 2, Window: time.Hour}}
 	if allowed, err := store.AdmitRequest(context.Background(), "consumer", limits); err != nil || !allowed {
 		t.Fatalf("first admission = %v, %v", allowed, err)
 	}
@@ -84,7 +84,11 @@ func TestRedisAdmitRequestDenialDoesNotIncrement(t *testing.T) {
 			t.Fatalf("denial %d = %v, %v", i, allowed, err)
 		}
 	}
-	assertRedisValue(t, store, "consumer", "requests", time.Minute, 1)
+	clock.now = clock.now.Add(time.Minute)
+	allowed, err := store.AdmitRequest(context.Background(), "consumer", limits)
+	if err != nil || !allowed {
+		t.Fatalf("admission after denials = %v, %v; denials consumed quota", allowed, err)
+	}
 }
 
 func TestRedisAdmitRequestRejectsMalformedCounter(t *testing.T) {

@@ -26,6 +26,7 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 	t.Parallel()
 	llm := foundationBoundary{prefix: "internal/protocol/llm"}
 	platform := foundationBoundary{prefix: "internal/platform", allowThirdParty: true}
+	quotaRule := foundationBoundary{prefix: "internal/quota", allowThirdParty: true}
 	routerRule := foundationBoundary{prefix: "internal/router"}
 	tests := []struct {
 		name string
@@ -41,6 +42,12 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 		{"platform own subtree", platform, directImport{path: modulePath + "/internal/platform/state"}, true},
 		{"platform third party", platform, directImport{path: "github.com/jackc/pgx/v5"}, true},
 		{"platform protocol", platform, directImport{path: modulePath + "/internal/protocol/llm/spec"}, false},
+		{"quota standard library", quotaRule, directImport{path: "sync", standard: true}, true},
+		{"quota own subtree", quotaRule, directImport{path: modulePath + "/internal/quota/redis"}, true},
+		{"quota go-redis", quotaRule, directImport{path: "github.com/redis/go-redis/v9"}, true},
+		{"quota platform state", quotaRule, directImport{path: modulePath + "/internal/platform/state"}, false},
+		{"quota storage", quotaRule, directImport{path: modulePath + "/internal/storage"}, false},
+		{"quota gateway", quotaRule, directImport{path: modulePath + "/internal/gateway"}, false},
 		{"router standard library", routerRule, directImport{path: "sort", standard: true}, true},
 		{"router storage", routerRule, directImport{path: modulePath + "/internal/storage"}, false},
 		{"router third party", routerRule, directImport{path: "example.com/dependency"}, false},
@@ -89,6 +96,7 @@ type directImport struct {
 var foundationBoundaries = []foundationBoundary{
 	{prefix: "internal/protocol/llm"},
 	{prefix: "internal/platform", allowThirdParty: true},
+	{prefix: "internal/quota", allowThirdParty: true},
 	{prefix: "internal/router"},
 }
 

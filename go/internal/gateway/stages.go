@@ -92,10 +92,8 @@ func (s quotaStage) Handle(ex *pipeline.Exchange, next func() error) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		usage := quota.Usage{
-			Tokens: int64(ex.Usage.PromptTokens) + int64(ex.Usage.CompletionTokens),
-		}
-		if err := s.gw.Quota.Record(ctx, ex.ConsumerID, usage); err != nil {
+		tokens := int64(ex.Usage.PromptTokens) + int64(ex.Usage.CompletionTokens)
+		if err := s.gw.Quota.RecordTokens(ctx, ex.ConsumerID, tokens); err != nil {
 			slog.Error("record quota tokens", "consumer_id", ex.ConsumerID, "error", err)
 		}
 	}()

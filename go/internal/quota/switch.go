@@ -113,12 +113,12 @@ func (s *Switch) Shutdown() {
 	runCallback(runRetire)
 }
 
-func (s *Switch) Value(ctx context.Context, consumerID, quotaType string, window time.Duration) (int64, error) {
+func (s *Switch) TokenValue(ctx context.Context, consumerID string, window time.Duration) (int64, error) {
 	entry, err := s.reference()
 	if err != nil {
 		return 0, err
 	}
-	value, callErr := entry.store.Value(ctx, consumerID, quotaType, window)
+	value, callErr := entry.store.TokenValue(ctx, consumerID, window)
 	s.finish(entry, callErr)
 	return value, callErr
 }
@@ -133,12 +133,12 @@ func (s *Switch) AdmitRequest(ctx context.Context, consumerID string, limits []R
 	return allowed, callErr
 }
 
-func (s *Switch) Record(ctx context.Context, consumerID string, usage Usage) error {
+func (s *Switch) RecordTokens(ctx context.Context, consumerID string, tokens int64) error {
 	entry, err := s.reference()
 	if err != nil {
 		return err
 	}
-	callErr := entry.store.Record(ctx, consumerID, usage)
+	callErr := entry.store.RecordTokens(ctx, consumerID, tokens)
 	s.finish(entry, callErr)
 	return callErr
 }

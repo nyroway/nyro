@@ -87,8 +87,8 @@ func NewMemory() *Memory {
 	}
 }
 
-// Value returns consumerID's quotaType total within the trailing window.
-func (m *Memory) Value(ctx context.Context, consumerID, quotaType string, window time.Duration) (int64, error) {
+// TokenValue returns consumerID's completed token total within the trailing window.
+func (m *Memory) TokenValue(ctx context.Context, consumerID string, window time.Duration) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -98,7 +98,7 @@ func (m *Memory) Value(ctx context.Context, consumerID, quotaType string, window
 		return 0, err
 	}
 
-	key := quotaKey{consumerID: consumerID, quotaType: quotaType}
+	key := quotaKey{consumerID: consumerID, quotaType: "tokens"}
 	valueRing, ok := m.rings[key]
 	if !ok {
 		return 0, nil
@@ -107,8 +107,8 @@ func (m *Memory) Value(ctx context.Context, consumerID, quotaType string, window
 	return valueRing.sumWindow(window), nil
 }
 
-// Record atomically adds requests and tokens for one completed exchange.
-func (m *Memory) Record(ctx context.Context, consumerID string, usage Usage) error {
+// RecordTokens adds completed token usage for one exchange.
+func (m *Memory) RecordTokens(ctx context.Context, consumerID string, tokens int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -118,12 +118,8 @@ func (m *Memory) Record(ctx context.Context, consumerID string, usage Usage) err
 		return err
 	}
 
-	now := indexFor(m.now())
-	if usage.Requests != 0 {
-		m.addLocked(consumerID, "requests", usage.Requests, now)
-	}
-	if usage.Tokens != 0 {
-		m.addLocked(consumerID, "tokens", usage.Tokens, now)
+	if tokens != 0 {
+		m.addLocked(consumerID, "tokens", tokens, indexFor(m.now()))
 	}
 	return nil
 }
