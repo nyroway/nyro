@@ -10,6 +10,35 @@ import (
 
 const publicGatewayURLSettingKey = "gateway.public_url"
 
+func normalizeSettingValues(values map[string]string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("settings values must not be empty")
+	}
+	normalized := make(map[string]string, len(values))
+	for key, value := range values {
+		next, err := normalizeSettingValue(key, value)
+		if err != nil {
+			return nil, err
+		}
+		normalized[key] = next
+	}
+
+	_, hasType := normalized[state.SettingTypeKey]
+	_, hasURL := normalized[state.SettingURLKey]
+	if hasType != hasURL {
+		return nil, fmt.Errorf("state.type and state.url must be updated together")
+	}
+	if hasType {
+		cfg, err := state.ValidateDeclared(normalized[state.SettingTypeKey], normalized[state.SettingURLKey])
+		if err != nil {
+			return nil, err
+		}
+		normalized[state.SettingTypeKey] = string(cfg.Kind)
+		normalized[state.SettingURLKey] = cfg.URL
+	}
+	return normalized, nil
+}
+
 func normalizeSettingValue(key, value string) (string, error) {
 	switch key {
 	case state.SettingTypeKey:

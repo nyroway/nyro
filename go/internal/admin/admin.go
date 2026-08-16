@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
+	"github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
@@ -319,6 +320,26 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource) {
 			}
 			webutil.JSON(w, http.StatusOK, all)
 		})
+		g.Put("/settings", func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Values map[string]string `json:"values"`
+			}
+			if err := webutil.Decode(r, &body); err != nil {
+				badRequest(w, err)
+				return
+			}
+			values, err := normalizeSettingValues(body.Values)
+			if err != nil {
+				badRequest(w, err)
+				return
+			}
+			if err := s.Settings().SetMany(values); err != nil {
+				webutil.JSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+			bumpEpoch(s)
+			webutil.JSON(w, http.StatusOK, map[string]any{"values": values})
+		})
 		g.Get("/settings/{key}", func(w http.ResponseWriter, r *http.Request) {
 			key := chi.URLParam(r, "key")
 			v, err := s.Settings().Get(key)
@@ -330,6 +351,10 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource) {
 		})
 		g.Put("/settings/{key}", func(w http.ResponseWriter, r *http.Request) {
 			key := chi.URLParam(r, "key")
+			if state.IsSettingKey(key) {
+				badRequest(w, errors.New("state settings must be updated together via PUT /api/v1/settings"))
+				return
+			}
 			var body struct {
 				Value string `json:"value"`
 			}
