@@ -55,38 +55,69 @@ func TestAdminPublicGatewayURLSetting(t *testing.T) {
 }
 
 func TestAdminStateSettings(t *testing.T) {
-	r, _ := newEngine(t, "")
-
-	tests := []struct {
-		name       string
-		key        string
-		value      string
-		wantStatus int
-		want       string
-	}{
-		{name: "trims redis type", key: "state.type", value: " redis ", wantStatus: http.StatusOK, want: "redis"},
-		{name: "rejects unknown type", key: "state.type", value: "etcd", wantStatus: http.StatusBadRequest},
-		{name: "trims redis url", key: "state.url", value: " redis://127.0.0.1:6379/0 ", wantStatus: http.StatusOK, want: "redis://127.0.0.1:6379/0"},
-		{name: "rejects wrong scheme", key: "state.url", value: "http://127.0.0.1:6379", wantStatus: http.StatusBadRequest},
-		{name: "clears url", key: "state.url", value: "", wantStatus: http.StatusOK, want: ""},
+	r, backend := newEngine(t, "")
+	rec := do(r, http.MethodPut, "/api/v1/settings", "", []byte(`{
+		"values": {
+			"state.type": " redis ",
+			"state.url": " redis://user:secret@redis.internal:6379/2 "
+		}
+	}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT batch → %d %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Values map[string]string `json:"values"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"state.type": "redis",
+		"state.url":  "redis://user:secret@redis.internal:6379/2",
+	}
+	for key, wantValue := range want {
+		if response.Values[key] != wantValue {
+			t.Errorf("response %s = %q, want %q", key, response.Values[key], wantValue)
+		}
+		got, err := backend.Storage().Settings().Get(key)
+		if err != nil || got != wantValue {
+			t.Errorf("stored %s = %q, %v; want %q", key, got, err, wantValue)
+		}
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body := []byte("{\"value\":" + mustJSON(t, tt.value) + "}")
-			rec := do(r, http.MethodPut, "/api/v1/settings/"+tt.key, "", body)
-			if rec.Code != tt.wantStatus {
-				t.Fatalf("PUT → %d %s, want %d", rec.Code, rec.Body.String(), tt.wantStatus)
-			}
-			if tt.wantStatus != http.StatusOK {
-				return
-			}
-			var got map[string]string
-			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "missing URL", body: `{"values":{"state.type":"redis"}}`},
+		{name: "missing type", body: `{"values":{"state.url":"redis://redis.internal:6379/0"}}`},
+		{name: "unsupported TLS", body: `{"values":{"state.type":"redis","state.url":"rediss://redis.internal:6379/0"}}`},
+		{name: "memory with URL", body: `{"values":{"state.type":"memory","state.url":"redis://redis.internal:6379/0"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, backend := newEngine(t, "")
+			settings := backend.Storage().Settings()
+			if err := settings.SetMany(map[string]string{"state.type": "memory", "state.url": ""}); err != nil {
 				t.Fatal(err)
 			}
-			if got["value"] != tt.want {
-				t.Errorf("stored value = %q, want %q", got["value"], tt.want)
+			rec := do(r, http.MethodPut, "/api/v1/settings", "", []byte(tc.body))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("PUT batch → %d %s, want 400", rec.Code, rec.Body.String())
+			}
+			for key, wantValue := range map[string]string{"state.type": "memory", "state.url": ""} {
+				got, err := settings.Get(key)
+				if err != nil || got != wantValue {
+					t.Errorf("stored %s after rejection = %q, %v; want %q", key, got, err, wantValue)
+				}
+			}
+		})
+	}
+
+	for _, key := range []string{"state.type", "state.url"} {
+		t.Run("rejects single-key "+key, func(t *testing.T) {
+			rec := do(r, http.MethodPut, "/api/v1/settings/"+key, "", []byte(`{"value":"memory"}`))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("PUT single key → %d %s, want 400", rec.Code, rec.Body.String())
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -128,5 +129,43 @@ func TestBumpEpochFallsBackToBroadcasterWithoutWatcher(t *testing.T) {
 
 	if got := fb.callsCount(); got != 1 {
 		t.Errorf("broadcaster Notify calls = %d; want 1", got)
+	}
+}
+
+func TestStateSettingsBatchPublishesOnce(t *testing.T) {
+	origWatcher := epochWatcherVal
+	origBroadcaster := configBroadcasterVal
+	t.Cleanup(func() {
+		epochWatcherVal = origWatcher
+		configBroadcasterVal = origBroadcaster
+	})
+
+	SetEpochWatcher(nil)
+	fb := &fakeBroadcaster{}
+	SetBroadcaster(fb)
+	r, backend := newEngine(t, "")
+
+	rec := do(r, http.MethodPut, "/api/v1/settings", "", []byte(`{
+		"values":{"state.type":"redis","state.url":"redis://127.0.0.1:6379/0"}
+	}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT batch → %d %s", rec.Code, rec.Body.String())
+	}
+	if got := fb.callsCount(); got != 1 {
+		t.Fatalf("broadcaster calls = %d, want 1", got)
+	}
+	if got := epochSetting(t, backend.Storage()); got != "1" {
+		t.Fatalf("config_epoch = %q, want 1", got)
+	}
+
+	rec = do(r, http.MethodPut, "/api/v1/settings", "", []byte(`{"values":{"state.type":"memory"}}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid PUT batch → %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	if got := fb.callsCount(); got != 1 {
+		t.Fatalf("broadcaster calls after rejection = %d, want 1", got)
+	}
+	if got := epochSetting(t, backend.Storage()); got != "1" {
+		t.Fatalf("config_epoch after rejection = %q, want 1", got)
 	}
 }
