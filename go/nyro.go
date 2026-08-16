@@ -38,6 +38,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(tool.NewCmd())
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(resource.ProviderCmd())
+	root.AddCommand(resource.ModelCmd())
 	envflag.Decorate(root)
 	return root
 }
