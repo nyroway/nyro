@@ -10,6 +10,7 @@ describe("runtimeHTTPURL", () => {
   it("uses the browser hostname for wildcard listeners", () => {
     expect(runtimeHTTPURL(":14318", "console.example.com")).toBe("http://console.example.com:14318");
     expect(runtimeHTTPURL("0.0.0.0:14318", "console.example.com")).toBe("http://console.example.com:14318");
+    expect(runtimeHTTPURL("[::]:14318", "[::1]")).toBe("http://[::1]:14318");
   });
 
   it("preserves explicit HTTP URLs and rejects missing values", () => {
@@ -27,10 +28,13 @@ describe("runtimeRedisURL", () => {
   it("uses the browser hostname for wildcard listeners", () => {
     expect(runtimeRedisURL(":16379", "console.example.com")).toBe("redis://console.example.com:16379");
     expect(runtimeRedisURL("0.0.0.0:16379", "console.example.com")).toBe("redis://console.example.com:16379");
+    expect(runtimeRedisURL("[::]:16379", "[::1]")).toBe("redis://[::1]:16379");
   });
 
   it("rejects malformed or missing listeners", () => {
     expect(runtimeRedisURL("::16379", "console.example.com")).toBeNull();
+    expect(runtimeRedisURL(":0", "console.example.com")).toBeNull();
+    expect(runtimeRedisURL(":65536", "console.example.com")).toBeNull();
     expect(runtimeRedisURL(undefined)).toBeNull();
   });
 });
