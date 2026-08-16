@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, Loader2, RefreshCw, Save, TriangleAlert } from "lucide-react";
+import { Loader2, RefreshCw, Save, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -104,7 +104,6 @@ function StateSettingsForm({
 }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<StateSettingsDraft>(baseline);
-  const [reveal, setReveal] = useState(false);
   const invalid = validateStateSettings(draft) !== null;
   const dirty = !sameStateSettings(draft, baseline);
   const saveMutation = useMutation({
@@ -148,12 +147,10 @@ function StateSettingsForm({
             <StateURLField
               isZh={isZh}
               value={draft.url}
-              reveal={reveal}
               invalid={invalid}
               disabled={saveMutation.isPending}
               builtInRedisURL={builtInRedisURL}
               onChange={(url) => setDraft((current) => ({ ...current, url }))}
-              onToggleReveal={() => setReveal((current) => !current)}
             />
             {!builtInRedisURL && (
               <p className="text-xs text-slate-500">
@@ -194,21 +191,17 @@ function StateSettingsForm({
 export function StateURLField({
   isZh,
   value,
-  reveal,
   invalid,
   disabled,
   builtInRedisURL,
   onChange,
-  onToggleReveal,
 }: {
   isZh: boolean;
   value: string;
-  reveal: boolean;
   invalid: boolean;
   disabled: boolean;
   builtInRedisURL: string | null;
   onChange: (value: string) => void;
-  onToggleReveal: () => void;
 }) {
   return (
     <div className="space-y-1.5">
@@ -216,29 +209,18 @@ export function StateURLField({
         {localizedMessage(isZh, "v2.settings.redisUrl")}
       </label>
       <div className="flex items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <Input
-            type={reveal ? "text" : "password"}
-            value={value}
-            placeholder="redis://user:password@redis.internal:6379/0"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            className={`pr-10${invalid ? " border-red-400 focus-visible:ring-red-400" : ""}`}
-            aria-invalid={invalid}
-            disabled={disabled}
-            onChange={(event) => onChange(event.target.value)}
-          />
-          <button
-            type="button"
-            className="absolute top-1/2 right-3 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-slate-600"
-            aria-label={localizedMessage(isZh, reveal ? "v2.providers.hide" : "v2.providers.show")}
-            disabled={disabled}
-            onClick={onToggleReveal}
-          >
-            {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </button>
-        </div>
+        <Input
+          type="text"
+          value={value}
+          placeholder="redis://user:password@redis.internal:6379/0"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          className={`min-w-0 flex-1${invalid ? " border-red-400 focus-visible:ring-red-400" : ""}`}
+          aria-invalid={invalid}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        />
         <Button
           type="button"
           variant="secondary"
