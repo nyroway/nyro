@@ -150,7 +150,9 @@ uses `routes[].upstreams[].model`.
     Standard URL user information and path syntax carry the
     Redis username, password, and database, for example
     `redis://user:password@redis.internal:6379/2`. Prefer an environment
-    variable so credentials are not committed to YAML. External services must
+    variable so credentials are not committed to YAML. `redis://` is
+    plaintext; use loopback, a trusted private network, or an independently
+    encrypted tunnel. External services must
     be Redis 7.0+ because concurrency leases use conditional `EXPIRE NX/GT`.
     Before installation, the gateway probes the complete quota path and
     removes its isolated probe keys. The Redis account must permit `PING`,

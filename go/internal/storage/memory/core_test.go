@@ -2,6 +2,7 @@ package memory
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -436,5 +437,47 @@ func TestCoreSettingsSetMany(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("Get(%q) = %q, %v; want %q", key, got, err, want)
 		}
+	}
+}
+
+func TestCoreSettingsSetManyAndIncrementIsAtomic(t *testing.T) {
+	s := New().Storage().Settings()
+	const writers = 32
+	epochs := make(chan int64, writers)
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			epoch, err := s.SetManyAndIncrement(map[string]string{
+				"state.type": "redis",
+				"state.url":  "redis://127.0.0.1:6379/0",
+			}, "config_epoch")
+			if err != nil {
+				errs <- err
+				return
+			}
+			epochs <- epoch
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(epochs)
+	for err := range errs {
+		t.Fatalf("SetManyAndIncrement: %v", err)
+	}
+
+	seen := make(map[int64]bool, writers)
+	for epoch := range epochs {
+		seen[epoch] = true
+	}
+	for epoch := int64(1); epoch <= writers; epoch++ {
+		if !seen[epoch] {
+			t.Errorf("missing epoch %d from concurrent writers", epoch)
+		}
+	}
+	if got, err := s.Get("config_epoch"); err != nil || got != "32" {
+		t.Fatalf("config_epoch = %q, %v; want 32", got, err)
 	}
 }

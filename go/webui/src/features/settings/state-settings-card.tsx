@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, Loader2, Save, TriangleAlert } from "lucide-react";
+import { Eye, EyeOff, Loader2, RefreshCw, Save, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,32 @@ export function StateSettingsCard({
     })),
   });
 
-  if (queries.some((query) => query.isPending)) {
+  if (queries.some((query) => query.isError)) {
+    return (
+      <SettingsFormSurface
+        title={localizedMessage(isZh, "v2.settings.stateStorage")}
+        description={localizedMessage(isZh, "v2.settings.stateStorageDescription")}
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-red-600">
+            {localizedMessage(isZh, "v2.settings.stateLoadError")}
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="flex items-center gap-1.5"
+            onClick={() => queries.forEach((query) => { void query.refetch(); })}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {localizedMessage(isZh, "common.refresh")}
+          </Button>
+        </div>
+      </SettingsFormSurface>
+    );
+  }
+
+  if (queries.some((query) => query.isPending || query.isFetching)) {
     return (
       <SettingsFormSurface
         title={localizedMessage(isZh, "v2.settings.stateStorage")}
@@ -78,7 +103,7 @@ function StateSettingsForm({
   const invalid = validateStateSettings(draft) !== null;
   const dirty = !sameStateSettings(draft, baseline);
   const saveMutation = useMutation({
-    mutationFn: () => backend<Record<string, string>>("set_settings", { values: stateSettingsPayload(draft) }),
+    mutationFn: (values: Record<string, string>) => backend<Record<string, string>>("set_settings", { values }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["setting", STATE_TYPE_KEY] });
       queryClient.invalidateQueries({ queryKey: ["setting", STATE_URL_KEY] });
@@ -99,6 +124,7 @@ function StateSettingsForm({
           </label>
           <Select
             value={draft.type}
+            disabled={saveMutation.isPending}
             onValueChange={(value) => setDraft((current) => ({
               ...current,
               type: value === "redis" ? "redis" : "memory",
@@ -119,6 +145,7 @@ function StateSettingsForm({
               value={draft.url}
               reveal={reveal}
               invalid={invalid}
+              disabled={saveMutation.isPending}
               onChange={(url) => setDraft((current) => ({ ...current, url }))}
               onToggleReveal={() => setReveal((current) => !current)}
             />
@@ -134,7 +161,7 @@ function StateSettingsForm({
             size="sm"
             className="flex items-center gap-1.5"
             disabled={saveMutation.isPending || !dirty || invalid}
-            onClick={() => saveMutation.mutate()}
+            onClick={() => saveMutation.mutate(stateSettingsPayload(draft))}
           >
             {saveMutation.isPending
               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -155,6 +182,7 @@ export function StateURLField({
   value,
   reveal,
   invalid,
+  disabled,
   onChange,
   onToggleReveal,
 }: {
@@ -162,6 +190,7 @@ export function StateURLField({
   value: string;
   reveal: boolean;
   invalid: boolean;
+  disabled: boolean;
   onChange: (value: string) => void;
   onToggleReveal: () => void;
 }) {
@@ -180,12 +209,14 @@ export function StateURLField({
           spellCheck={false}
           className={`pr-10${invalid ? " border-red-400 focus-visible:ring-red-400" : ""}`}
           aria-invalid={invalid}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         />
         <button
           type="button"
           className="absolute top-1/2 right-3 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-slate-600"
           aria-label={localizedMessage(isZh, reveal ? "v2.providers.hide" : "v2.providers.show")}
+          disabled={disabled}
           onClick={onToggleReveal}
         >
           {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

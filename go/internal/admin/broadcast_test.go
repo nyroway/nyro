@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -167,5 +168,49 @@ func TestStateSettingsBatchPublishesOnce(t *testing.T) {
 	}
 	if got := epochSetting(t, backend.Storage()); got != "1" {
 		t.Fatalf("config_epoch after rejection = %q, want 1", got)
+	}
+}
+
+func TestConcurrentStateSettingsBatchesPublishLatestEpoch(t *testing.T) {
+	origWatcher := epochWatcherVal
+	origBroadcaster := configBroadcasterVal
+	t.Cleanup(func() {
+		epochWatcherVal = origWatcher
+		configBroadcasterVal = origBroadcaster
+	})
+
+	r, backend := newEngine(t, "")
+	notifier := &fakeBroadcaster{}
+	watcher := configsync.NewEpochWatcher(backend.Storage().Settings(), notifier)
+	SetEpochWatcher(watcher)
+	SetBroadcaster(nil)
+
+	const writers = 32
+	statuses := make(chan int, writers)
+	var wg sync.WaitGroup
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := do(r, http.MethodPut, "/api/v1/settings", "", []byte(`{
+				"values":{"state.type":"redis","state.url":"redis://127.0.0.1:6379/0"}
+			}`))
+			statuses <- rec.Code
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	for status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("concurrent PUT status = %d, want 200", status)
+		}
+	}
+	if got := epochSetting(t, backend.Storage()); got != "32" {
+		t.Fatalf("config_epoch = %q, want 32", got)
+	}
+	before := notifier.callsCount()
+	watcher.Observe(writers)
+	if got := notifier.callsCount(); got != before {
+		t.Fatalf("latest epoch was not observed: notifications changed from %d to %d", before, got)
 	}
 }

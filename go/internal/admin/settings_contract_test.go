@@ -2,11 +2,29 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/nyroway/nyro/go/internal/storage"
+	"github.com/nyroway/nyro/go/internal/storage/memory"
 	"github.com/nyroway/nyro/go/internal/version"
 )
+
+type settingsOverrideStorage struct {
+	storage.Storage
+	settings storage.SettingsStore
+}
+
+func (s settingsOverrideStorage) Settings() storage.SettingsStore { return s.settings }
+
+type failingIncrementSettings struct{ storage.SettingsStore }
+
+func (s failingIncrementSettings) SetManyAndIncrement(map[string]string, string) (int64, error) {
+	return 0, errors.New("forced atomic settings failure")
+}
 
 func TestAdminPublicGatewayURLSetting(t *testing.T) {
 	r, _ := newEngine(t, "")
@@ -77,11 +95,11 @@ func TestAdminStateSettings(t *testing.T) {
 	}
 	for key, wantValue := range want {
 		if response.Values[key] != wantValue {
-			t.Errorf("response %s = %q, want %q", key, response.Values[key], wantValue)
+			t.Errorf("response %s did not preserve the submitted value", key)
 		}
 		got, err := backend.Storage().Settings().Get(key)
 		if err != nil || got != wantValue {
-			t.Errorf("stored %s = %q, %v; want %q", key, got, err, wantValue)
+			t.Errorf("stored %s did not preserve the submitted value: %v", key, err)
 		}
 	}
 
@@ -120,6 +138,29 @@ func TestAdminStateSettings(t *testing.T) {
 				t.Fatalf("PUT single key → %d %s, want 400", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestAdminStateSettingsAtomicFailureDoesNotPersist(t *testing.T) {
+	backend := memory.New()
+	base := backend.Storage()
+	wrapped := settingsOverrideStorage{
+		Storage:  base,
+		settings: failingIncrementSettings{SettingsStore: base.Settings()},
+	}
+	r := chi.NewRouter()
+	Mount(r, wrapped, nil, nil)
+
+	rec := do(r, http.MethodPut, "/api/v1/settings", "", []byte(`{
+		"values":{"state.type":"redis","state.url":"redis://127.0.0.1:6379/0"}
+	}`))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("PUT batch → %d, want 500", rec.Code)
+	}
+	for _, key := range []string{"state.type", "state.url", "config_epoch"} {
+		if got, err := base.Settings().Get(key); err != nil || got != "" {
+			t.Fatalf("%s changed after atomic failure", key)
+		}
 	}
 }
 
