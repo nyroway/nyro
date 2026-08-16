@@ -103,8 +103,10 @@ settings:
     url: "${NYRO_REDIS_URL}"
 ```
 
-`redis://` and TLS-enabled `rediss://` URLs may include username, password,
-and database. External Redis must be version 7.0 or newer. Startup probes the
+Only `redis://` URLs are currently supported; they may include username,
+password, and database. Because the connection is plaintext, use loopback, a
+trusted private network, or an independently encrypted tunnel. External Redis
+must be version 7.0 or newer. Startup probes the
 request, token, and concurrency quota paths before installing the backend;
 the Redis account must permit the commands documented in the standalone
 configuration reference. An unavailable or incapable standalone backend fails

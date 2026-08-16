@@ -573,6 +573,7 @@ func TestLoadYAML_StateInvalidDeclarationsFail(t *testing.T) {
 		{name: "bare", body: "version: 1\nsettings:\n  state:\n", wantErr: "settings.state"},
 		{name: "memory with url", body: "version: 1\nsettings:\n  state:\n    type: memory\n    url: redis://127.0.0.1:6379\n", wantErr: "state.url is not allowed"},
 		{name: "redis without url", body: "version: 1\nsettings:\n  state:\n    type: redis\n", wantErr: "state.url is required"},
+		{name: "redis tls is unsupported", body: "version: 1\nsettings:\n  state:\n    type: redis\n    url: rediss://127.0.0.1:6379\n", wantErr: "valid redis:// URL"},
 		{name: "url without type", body: "version: 1\nsettings:\n  state:\n    url: redis://127.0.0.1:6379\n", wantErr: "state.type is required"},
 	}
 	for _, tt := range tests {
