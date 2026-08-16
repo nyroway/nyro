@@ -30,9 +30,11 @@ type ShowSettingsError = (titleKey: MessageKey, error: unknown) => void;
 export function StateSettingsCard({
   isZh,
   onError,
+  builtInRedisURL,
 }: {
   isZh: boolean;
   onError: ShowSettingsError;
+  builtInRedisURL: string | null;
 }) {
   const queries = useQueries({
     queries: [STATE_TYPE_KEY, STATE_URL_KEY].map((key) => ({
@@ -84,6 +86,7 @@ export function StateSettingsCard({
       baseline={baseline}
       isZh={isZh}
       onError={onError}
+      builtInRedisURL={builtInRedisURL}
     />
   );
 }
@@ -92,10 +95,12 @@ function StateSettingsForm({
   baseline,
   isZh,
   onError,
+  builtInRedisURL,
 }: {
   baseline: StateSettingsDraft;
   isZh: boolean;
   onError: ShowSettingsError;
+  builtInRedisURL: string | null;
 }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<StateSettingsDraft>(baseline);
@@ -146,9 +151,18 @@ function StateSettingsForm({
               reveal={reveal}
               invalid={invalid}
               disabled={saveMutation.isPending}
+              builtInRedisURL={builtInRedisURL}
               onChange={(url) => setDraft((current) => ({ ...current, url }))}
               onToggleReveal={() => setReveal((current) => !current)}
             />
+            {!builtInRedisURL && (
+              <p className="text-xs text-slate-500">
+                {localizedMessage(isZh, "v2.settings.builtInRedisUnavailable")}
+              </p>
+            )}
+            <p className="text-xs text-slate-500">
+              {localizedMessage(isZh, "v2.settings.builtInRedisAddressNote")}
+            </p>
             <p className="flex items-start gap-1.5 text-xs text-amber-700">
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {localizedMessage(isZh, "v2.settings.redisPlaintextWarning")}
@@ -183,6 +197,7 @@ export function StateURLField({
   reveal,
   invalid,
   disabled,
+  builtInRedisURL,
   onChange,
   onToggleReveal,
 }: {
@@ -191,6 +206,7 @@ export function StateURLField({
   reveal: boolean;
   invalid: boolean;
   disabled: boolean;
+  builtInRedisURL: string | null;
   onChange: (value: string) => void;
   onToggleReveal: () => void;
 }) {
@@ -199,28 +215,41 @@ export function StateURLField({
       <label className="ml-1 text-xs text-slate-700">
         {localizedMessage(isZh, "v2.settings.redisUrl")}
       </label>
-      <div className="relative">
-        <Input
-          type={reveal ? "text" : "password"}
-          value={value}
-          placeholder="redis://user:password@redis.internal:6379/0"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          className={`pr-10${invalid ? " border-red-400 focus-visible:ring-red-400" : ""}`}
-          aria-invalid={invalid}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
-        />
-        <button
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Input
+            type={reveal ? "text" : "password"}
+            value={value}
+            placeholder="redis://user:password@redis.internal:6379/0"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            className={`pr-10${invalid ? " border-red-400 focus-visible:ring-red-400" : ""}`}
+            aria-invalid={invalid}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          <button
+            type="button"
+            className="absolute top-1/2 right-3 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-slate-600"
+            aria-label={localizedMessage(isZh, reveal ? "v2.providers.hide" : "v2.providers.show")}
+            disabled={disabled}
+            onClick={onToggleReveal}
+          >
+            {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
+        <Button
           type="button"
-          className="absolute top-1/2 right-3 -translate-y-1/2 cursor-pointer text-slate-400 hover:text-slate-600"
-          aria-label={localizedMessage(isZh, reveal ? "v2.providers.hide" : "v2.providers.show")}
-          disabled={disabled}
-          onClick={onToggleReveal}
+          variant="secondary"
+          size="sm"
+          className="whitespace-nowrap"
+          aria-label={localizedMessage(isZh, "v2.settings.useBuiltIn")}
+          disabled={disabled || !builtInRedisURL}
+          onClick={() => { if (builtInRedisURL) onChange(builtInRedisURL); }}
         >
-          {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-        </button>
+          {localizedMessage(isZh, "v2.settings.useBuiltIn")}
+        </Button>
       </div>
       {invalid && (
         <p className="text-xs text-red-600">

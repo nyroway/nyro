@@ -12,6 +12,7 @@ describe("state settings card", () => {
       value: "redis://redis.internal:6379/2",
       invalid: false,
       disabled: false,
+      builtInRedisURL: null,
       onChange: vi.fn(),
       onToggleReveal: vi.fn(),
     };
@@ -23,6 +24,31 @@ describe("state settings card", () => {
     const revealed = renderToStaticMarkup(createElement(StateURLField, { ...props, reveal: true }));
     expect(revealed).toContain('type="text"');
     expect(revealed).toContain('aria-label="Hide"');
+  });
+
+  it("enables the built-in shortcut only when a usable address is available", () => {
+    const props = {
+      isZh: false,
+      value: "",
+      reveal: false,
+      invalid: true,
+      disabled: false,
+      onChange: vi.fn(),
+      onToggleReveal: vi.fn(),
+    };
+    const button = (markup: string) => markup.match(/<button[^>]*aria-label="Use built-in"[^>]*>/)?.[0] ?? "";
+
+    const unavailable = renderToStaticMarkup(createElement(StateURLField, {
+      ...props,
+      builtInRedisURL: null,
+    }));
+    expect(button(unavailable)).toContain(' disabled=""');
+
+    const available = renderToStaticMarkup(createElement(StateURLField, {
+      ...props,
+      builtInRedisURL: "redis://127.0.0.1:16379",
+    }));
+    expect(button(available)).not.toContain(' disabled=""');
   });
 
   it("blocks editing when either stored setting cannot be loaded", () => {
@@ -46,7 +72,7 @@ describe("state settings card", () => {
     const markup = renderToStaticMarkup(createElement(
       QueryClientProvider,
       { client },
-      createElement(StateSettingsCard, { isZh: false, onError: vi.fn() }),
+      createElement(StateSettingsCard, { isZh: false, onError: vi.fn(), builtInRedisURL: null }),
     ));
     expect(markup).toContain("could not be loaded");
     expect(markup).not.toContain('type="password"');
@@ -60,7 +86,11 @@ describe("state settings card", () => {
     const markup = renderToStaticMarkup(createElement(
       QueryClientProvider,
       { client },
-      createElement(StateSettingsCard, { isZh: false, onError: vi.fn() }),
+      createElement(StateSettingsCard, {
+        isZh: false,
+        onError: vi.fn(),
+        builtInRedisURL: "redis://127.0.0.1:16379",
+      }),
     ));
     expect(markup).toContain('type="password"');
   });
