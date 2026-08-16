@@ -104,11 +104,20 @@ settings:
 ```
 
 `redis://` and TLS-enabled `rediss://` URLs may include username, password,
-and database. External Redis must be version 7.0 or newer; distributed
-concurrency leases rely on conditional `EXPIRE NX/GT`. An unavailable
-standalone backend fails startup; a failed config-sync hot update keeps the
-last-known-good backend while retrying. The embedded Redis-compatible listener
-is separately controlled by `nyro serve` flags and is intentionally limited to
+and database. External Redis must be version 7.0 or newer. Startup probes the
+request, token, and concurrency quota paths before installing the backend;
+the Redis account must permit the commands documented in the standalone
+configuration reference. An unavailable or incapable standalone backend fails
+startup; a failed config-sync hot update keeps the last-known-good backend
+while retrying.
+
+Request quotas are admitted atomically across replicas that share Redis. A
+clean `429` denial does not consume quota, while an admitted request counts
+even if its upstream exchange fails. Token quotas remain response-settled, so
+concurrent requests can exceed a strict token boundary before usage arrives.
+Extreme Redis `WATCH` contention can fail one request closed with `503`
+without marking State unhealthy. The embedded Redis-compatible listener is
+separately controlled by `nyro serve` flags and is intentionally limited to
 Nyro's State needs. See
 [standalone configuration](docs/schema/config.md) and
 [embedded infrastructure databases](docs/schema/database.md).
