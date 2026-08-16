@@ -22,21 +22,30 @@ import (
 
 const usageKeyTTL = quota.MaxWindow + time.Hour
 
+const defaultMaxAdmissionRetries = 256
+
+type client interface {
+	goredis.Cmdable
+	Watch(context.Context, func(*goredis.Tx) error, ...string) error
+}
+
 // Options provides deterministic seams for time and lease IDs.
 type Options struct {
-	Now        func() time.Time
-	NewLeaseID func() (string, error)
+	Now                 func() time.Time
+	NewLeaseID          func() (string, error)
+	MaxAdmissionRetries int
 }
 
 // Store implements quota.Store over a caller-owned Redis client.
 type Store struct {
-	client     goredis.Cmdable
-	now        func() time.Time
-	newLeaseID func() (string, error)
+	client              client
+	now                 func() time.Time
+	newLeaseID          func() (string, error)
+	maxAdmissionRetries int
 }
 
 // New constructs a Redis quota Store. It does not Ping or close client.
-func New(client goredis.Cmdable, opts Options) (*Store, error) {
+func New(client client, opts Options) (*Store, error) {
 	if client == nil {
 		return nil, errors.New("quota redis: client is required")
 	}
@@ -46,7 +55,18 @@ func New(client goredis.Cmdable, opts Options) (*Store, error) {
 	if opts.NewLeaseID == nil {
 		opts.NewLeaseID = randomLeaseID
 	}
-	return &Store{client: client, now: opts.Now, newLeaseID: opts.NewLeaseID}, nil
+	if opts.MaxAdmissionRetries < 0 {
+		return nil, errors.New("quota redis: max admission retries must not be negative")
+	}
+	if opts.MaxAdmissionRetries == 0 {
+		opts.MaxAdmissionRetries = defaultMaxAdmissionRetries
+	}
+	return &Store{
+		client:              client,
+		now:                 opts.Now,
+		newLeaseID:          opts.NewLeaseID,
+		maxAdmissionRetries: opts.MaxAdmissionRetries,
+	}, nil
 }
 
 // Record atomically increments current minute and hour buckets.
@@ -98,6 +118,13 @@ func (s *Store) Value(ctx context.Context, consumerID, quotaType string, window 
 	if err != nil {
 		return 0, fmt.Errorf("quota redis: read usage: %w", err)
 	}
+	return sumUsageTerms(values, terms)
+}
+
+func sumUsageTerms(values []any, terms []usageTerm) (int64, error) {
+	if len(values) != len(terms) {
+		return 0, errors.New("quota redis: counter result length mismatch")
+	}
 	var total int64
 	for index, value := range values {
 		if value == nil {
@@ -110,11 +137,11 @@ func (s *Store) Value(ctx context.Context, consumerID, quotaType string, window 
 		case []byte:
 			raw = string(typed)
 		default:
-			return 0, fmt.Errorf("quota redis: counter %q has unexpected type %T", keys[index], value)
+			return 0, fmt.Errorf("quota redis: counter %q has unexpected type %T", terms[index].key, value)
 		}
 		amount, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("quota redis: counter %q is malformed: %w", keys[index], err)
+			return 0, fmt.Errorf("quota redis: counter %q is malformed: %w", terms[index].key, err)
 		}
 		if terms[index].coefficient < 0 {
 			if amount == math.MinInt64 {
