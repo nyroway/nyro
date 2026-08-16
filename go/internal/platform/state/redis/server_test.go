@@ -80,6 +80,145 @@ func TestGoRedisPasswordAndTransactionPipeline(t *testing.T) {
 	}
 }
 
+func TestRedisWatchAbortsWhenWatchedKeyChanges(t *testing.T) {
+	for _, protocol := range []int{2, 3} {
+		t.Run(goredisProtocolName(protocol), func(t *testing.T) {
+			addr, shutdown := startServer(t, "")
+			defer shutdown()
+			ctx := context.Background()
+			watcher := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: protocol})
+			writer := goredis.NewClient(&goredis.Options{Addr: addr, Protocol: protocol})
+			t.Cleanup(func() {
+				_ = watcher.Close()
+				_ = writer.Close()
+			})
+
+			err := watcher.Watch(ctx, func(tx *goredis.Tx) error {
+				if err := writer.Set(ctx, "quota-key", "changed", 0).Err(); err != nil {
+					return err
+				}
+				_, err := tx.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
+					pipe.Incr(ctx, "quota-key")
+					return nil
+				})
+				return err
+			}, "quota-key")
+			if !errors.Is(err, goredis.TxFailedErr) {
+				t.Fatalf("Watch() error = %v, want redis.TxFailedErr", err)
+			}
+		})
+	}
+}
+
+func TestRedisWatchIgnoresUnrelatedMutation(t *testing.T) {
+	addr, shutdown := startServer(t, "")
+	defer shutdown()
+	ctx := context.Background()
+	watcher := goredis.NewClient(&goredis.Options{Addr: addr})
+	writer := goredis.NewClient(&goredis.Options{Addr: addr})
+	t.Cleanup(func() {
+		_ = watcher.Close()
+		_ = writer.Close()
+	})
+
+	err := watcher.Watch(ctx, func(tx *goredis.Tx) error {
+		if err := writer.Set(ctx, "other", "changed", 0).Err(); err != nil {
+			return err
+		}
+		_, err := tx.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
+			pipe.Set(ctx, "watched", "committed", 0)
+			return nil
+		})
+		return err
+	}, "watched")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := watcher.Get(ctx, "watched").Result(); err != nil || got != "committed" {
+		t.Fatalf("GET watched = %q, %v", got, err)
+	}
+}
+
+func TestRedisUnwatchAllowsTransactionAfterMutation(t *testing.T) {
+	addr, shutdown := startServer(t, "")
+	defer shutdown()
+	ctx := context.Background()
+	clientA := goredis.NewClient(&goredis.Options{Addr: addr})
+	clientB := goredis.NewClient(&goredis.Options{Addr: addr})
+	t.Cleanup(func() {
+		_ = clientA.Close()
+		_ = clientB.Close()
+	})
+
+	if err := clientA.Watch(ctx, func(tx *goredis.Tx) error {
+		if err := clientB.Set(ctx, "guard", "changed", 0).Err(); err != nil {
+			return err
+		}
+		if err := tx.Unwatch(ctx).Err(); err != nil {
+			return err
+		}
+		_, err := tx.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
+			pipe.Set(ctx, "result", "committed", 0)
+			return nil
+		})
+		return err
+	}, "guard"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := clientA.Get(ctx, "result").Result(); err != nil || got != "committed" {
+		t.Fatalf("GET result = %q, %v", got, err)
+	}
+}
+
+func TestRedisWatchTransactionRules(t *testing.T) {
+	addr, shutdown := startServer(t, "")
+	defer shutdown()
+	ctx := context.Background()
+	client := goredis.NewClient(&goredis.Options{Addr: addr})
+	writer := goredis.NewClient(&goredis.Options{Addr: addr})
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = writer.Close()
+	})
+
+	pipe := client.TxPipeline()
+	pipe.Do(ctx, "WATCH", "guard")
+	pipe.Set(ctx, "must-not-commit", "value", 0)
+	if _, err := pipe.Exec(ctx); err == nil || !strings.Contains(err.Error(), "EXECABORT") {
+		t.Fatalf("WATCH inside MULTI error = %v, want EXECABORT", err)
+	}
+	if _, err := client.Get(ctx, "must-not-commit").Result(); !errors.Is(err, goredis.Nil) {
+		t.Fatalf("dirty transaction committed key, Get error = %v", err)
+	}
+
+	conn := client.Conn()
+	t.Cleanup(func() { _ = conn.Close() })
+	if err := conn.Do(ctx, "WATCH", "guard").Err(); err != nil {
+		t.Fatalf("WATCH error = %v", err)
+	}
+	if err := conn.Do(ctx, "MULTI").Err(); err != nil {
+		t.Fatalf("MULTI error = %v", err)
+	}
+	if err := conn.Do(ctx, "DISCARD").Err(); err != nil {
+		t.Fatalf("DISCARD error = %v", err)
+	}
+	if err := writer.Set(ctx, "guard", "changed", 0).Err(); err != nil {
+		t.Fatalf("mutate guard: %v", err)
+	}
+	if err := conn.Do(ctx, "MULTI").Err(); err != nil {
+		t.Fatalf("second MULTI error = %v", err)
+	}
+	if got, err := conn.Do(ctx, "SET", "result", "after-discard").Result(); err != nil || got != "QUEUED" {
+		t.Fatalf("queued SET = %v, %v", got, err)
+	}
+	if _, err := conn.Do(ctx, "EXEC").Result(); err != nil {
+		t.Fatalf("EXEC after DISCARD error = %v", err)
+	}
+	if got, err := client.Get(ctx, "result").Result(); err != nil || got != "after-discard" {
+		t.Fatalf("GET result = %q, %v", got, err)
+	}
+}
+
 func TestGoRedisStringAndTTLCommandSubset(t *testing.T) {
 	addr, shutdown := startServer(t, "")
 	defer shutdown()

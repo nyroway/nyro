@@ -21,6 +21,7 @@ type connectionState struct {
 	multi         bool
 	multiDirty    bool
 	queued        [][][]byte
+	watched       map[string]uint64
 }
 
 func commandName(command [][]byte) string {
@@ -50,10 +51,11 @@ func (s *Server) execute(ctx context.Context, conn *connectionState, command [][
 			conn.multi = false
 			conn.multiDirty = false
 			conn.queued = nil
+			clearWatches(conn)
 			return simpleResponse("OK"), false, nil
 		case "multi":
 			return errorResponse("ERR MULTI calls can not be nested"), false, nil
-		case "auth", "hello", "quit":
+		case "auth", "hello", "quit", "watch", "unwatch":
 			conn.multiDirty = true
 			return errorResponse("ERR command is not allowed inside MULTI"), false, nil
 		default:
@@ -78,7 +80,25 @@ func (s *Server) execute(ctx context.Context, conn *connectionState, command [][
 		conn.queued = nil
 		return simpleResponse("OK"), false, nil
 	}
-	if requiresAtomicUpdate(name) {
+	if name == "watch" {
+		if len(command) < 2 {
+			return wrongArguments(name), false, nil
+		}
+		s.watchMu.Lock()
+		s.watch(conn, command[1:])
+		s.watchMu.Unlock()
+		return simpleResponse("OK"), false, nil
+	}
+	if name == "unwatch" {
+		if len(command) != 1 {
+			return wrongArguments(name), false, nil
+		}
+		clearWatches(conn)
+		return simpleResponse("OK"), false, nil
+	}
+	if keys := mutationKeys(command); len(keys) > 0 {
+		s.watchMu.Lock()
+		defer s.watchMu.Unlock()
 		var reply response
 		var closeConnection bool
 		var commandErr error
@@ -89,6 +109,7 @@ func (s *Server) execute(ctx context.Context, conn *connectionState, command [][
 		if err != nil {
 			return response{}, false, err
 		}
+		s.bumpVersions(keys)
 		return reply, closeConnection, nil
 	}
 	return s.executeDirect(ctx, conn, s.opts.Store, command)
@@ -104,9 +125,17 @@ func (s *Server) executeTransaction(ctx context.Context, conn *connectionState, 
 	conn.multiDirty = false
 	conn.queued = nil
 	if dirty {
+		clearWatches(conn)
 		return errorResponse("EXECABORT Transaction discarded because of previous errors."), false, nil
 	}
+	s.watchMu.Lock()
+	defer s.watchMu.Unlock()
+	if s.watchedChanged(conn) {
+		clearWatches(conn)
+		return nullArrayResponse(), false, nil
+	}
 	replies := make([]response, 0, len(queued))
+	var mutatedKeys []string
 	err := s.opts.Store.Update(ctx, func(ops state.Operations) error {
 		for _, queuedCommand := range queued {
 			reply, closeConnection, err := s.executeDirect(ctx, conn, ops, queuedCommand)
@@ -117,12 +146,15 @@ func (s *Server) executeTransaction(ctx context.Context, conn *connectionState, 
 				return errors.New("connection command queued in transaction")
 			}
 			replies = append(replies, reply)
+			mutatedKeys = append(mutatedKeys, mutationKeys(queuedCommand)...)
 		}
 		return nil
 	})
+	clearWatches(conn)
 	if err != nil {
 		return response{}, false, err
 	}
+	s.bumpVersions(mutatedKeys)
 	return arrayResponse(replies), false, nil
 }
 
@@ -687,15 +719,6 @@ func parseScoreBound(raw []byte) (float64, error) {
 		return 0, errors.New("invalid score bound")
 	}
 	return score, nil
-}
-
-func requiresAtomicUpdate(name string) bool {
-	switch name {
-	case "set", "incr", "decr", "incrby", "decrby", "zadd", "zrem", "zremrangebyscore":
-		return true
-	default:
-		return false
-	}
 }
 
 func stateError(err error) (response, bool, error) {
