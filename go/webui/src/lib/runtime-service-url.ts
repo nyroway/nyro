@@ -1,6 +1,6 @@
 function browserHostname(explicit?: string) {
-  if (explicit) return explicit;
-  return typeof window === "undefined" ? "127.0.0.1" : window.location.hostname;
+  const hostname = explicit || (typeof window === "undefined" ? "127.0.0.1" : window.location.hostname);
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
 }
 
 function runtimeNetworkAddress(listen?: string, currentHostname?: string): string | null {
@@ -22,6 +22,8 @@ function runtimeNetworkAddress(listen?: string, currentHostname?: string): strin
     if (host.includes(":")) return null;
   }
   if (!/^\d+$/.test(port)) return null;
+  const portNumber = Number(port);
+  if (portNumber < 1 || portNumber > 65535) return null;
   if (!host || host === "0.0.0.0" || host === "::") host = browserHostname(currentHostname);
   const formattedHost = host.includes(":") ? `[${host}]` : host;
   return `${formattedHost}:${port}`;
