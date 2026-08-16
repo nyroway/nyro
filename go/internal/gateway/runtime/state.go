@@ -356,6 +356,9 @@ func newRedisStateBackend(ctx context.Context, cfg platformstate.Config) (stateB
 		return stateBackend{}, err
 	}
 	store, err := quotaredis.New(client, quotaredis.Options{})
+	if err == nil {
+		err = store.Probe(ctx)
+	}
 	if err != nil {
 		_ = client.Close()
 		return stateBackend{}, err
