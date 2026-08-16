@@ -124,6 +124,126 @@ func TestMemoryConcurrentRecordAndValue(t *testing.T) {
 	}
 }
 
+func TestMemoryAdmitRequestChecksAllWindowsAndCountsOnce(t *testing.T) {
+	store := NewMemory()
+	clock := useFakeClock(store, time.Unix(1_000_000, 0).Truncate(time.Minute))
+	limits := []RequestLimit{
+		{Limit: 2, Window: time.Minute},
+		{Limit: 3, Window: time.Hour},
+	}
+
+	for i := 0; i < 2; i++ {
+		allowed, err := store.AdmitRequest(context.Background(), "consumer", limits)
+		if err != nil || !allowed {
+			t.Fatalf("admission %d = %v, %v", i, allowed, err)
+		}
+	}
+	allowed, err := store.AdmitRequest(context.Background(), "consumer", limits)
+	if err != nil || allowed {
+		t.Fatalf("third admission = %v, %v; want clean denial", allowed, err)
+	}
+
+	clock.nowValue = clock.nowValue.Add(time.Minute)
+	allowed, err = store.AdmitRequest(context.Background(), "consumer", limits)
+	if err != nil || !allowed {
+		t.Fatalf("admission after minute rollover = %v, %v", allowed, err)
+	}
+	allowed, err = store.AdmitRequest(context.Background(), "consumer", limits)
+	if err != nil || allowed {
+		t.Fatalf("fourth hourly admission = %v, %v; want clean denial", allowed, err)
+	}
+}
+
+func TestMemoryDeniedRequestsDoNotConsumeQuota(t *testing.T) {
+	store := NewMemory()
+	limits := []RequestLimit{{Limit: 1, Window: time.Minute}}
+	allowed, err := store.AdmitRequest(context.Background(), "consumer", limits)
+	if err != nil || !allowed {
+		t.Fatalf("first admission = %v, %v", allowed, err)
+	}
+	for i := 0; i < 10; i++ {
+		allowed, err = store.AdmitRequest(context.Background(), "consumer", limits)
+		if err != nil || allowed {
+			t.Fatalf("denial %d = %v, %v", i, allowed, err)
+		}
+	}
+	assertValue(t, store, "consumer", "requests", time.Minute, 1)
+}
+
+func TestMemoryConcurrentAdmissionIsExact(t *testing.T) {
+	store := NewMemory()
+	const attempts = 100
+	const limit = 17
+	var allowed atomic.Int64
+	var wg sync.WaitGroup
+
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, err := store.AdmitRequest(context.Background(), "consumer", []RequestLimit{{Limit: limit, Window: time.Minute}})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if ok {
+				allowed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := allowed.Load(); got != limit {
+		t.Fatalf("allowed = %d, want %d", got, limit)
+	}
+}
+
+func TestMemoryAdmitRequestHonorsCanceledContext(t *testing.T) {
+	store := NewMemory()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	allowed, err := store.AdmitRequest(ctx, "consumer", []RequestLimit{{Limit: 1, Window: time.Minute}})
+	if !errors.Is(err, context.Canceled) || allowed {
+		t.Fatalf("AdmitRequest() = %v, %v; want false, context.Canceled", allowed, err)
+	}
+	if len(store.rings) != 0 {
+		t.Fatalf("canceled admission created %d rings", len(store.rings))
+	}
+}
+
+func TestMemoryAdmitRequestWithNoLimitsDoesNotCreateRing(t *testing.T) {
+	store := NewMemory()
+	allowed, err := store.AdmitRequest(context.Background(), "consumer", nil)
+	if err != nil || !allowed {
+		t.Fatalf("AdmitRequest() = %v, %v; want true, nil", allowed, err)
+	}
+	if len(store.rings) != 0 {
+		t.Fatalf("empty admission created %d rings", len(store.rings))
+	}
+}
+
+func TestMemoryAdmitRequestValidatesBeforeCounting(t *testing.T) {
+	store := NewMemory()
+	invalid := []RequestLimit{
+		{Limit: 2, Window: time.Minute},
+		{Limit: 0, Window: time.Hour},
+	}
+	if allowed, err := store.AdmitRequest(context.Background(), "consumer", invalid); err == nil || allowed {
+		t.Fatalf("invalid admission = %v, %v; want false and error", allowed, err)
+	}
+	if len(store.rings) != 0 {
+		t.Fatalf("invalid admission created %d rings", len(store.rings))
+	}
+
+	valid := []RequestLimit{{Limit: 2, Window: time.Minute}}
+	for i := 0; i < 2; i++ {
+		allowed, err := store.AdmitRequest(context.Background(), "consumer", valid)
+		if err != nil || !allowed {
+			t.Fatalf("valid admission %d = %v, %v", i, allowed, err)
+		}
+	}
+}
+
 func TestMemoryGCDropsExpiredRings(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()
