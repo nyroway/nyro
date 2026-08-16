@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -121,6 +122,35 @@ func TestBuildStandaloneRedisSharesQuotaAcrossGateways(t *testing.T) {
 	tokens, err := gatewayB.Quota.TokenValue(context.Background(), "consumer", time.Minute)
 	if err != nil || tokens != 5 {
 		t.Fatalf("shared tokens = %d, %v; want 5, nil", tokens, err)
+	}
+}
+
+func TestNewRedisStateBackendRejectsServerThatOnlyPassesPing(t *testing.T) {
+	addr, shutdown := startRuntimeRedisWithOptions(t, true)
+	defer shutdown()
+	backend, err := newRedisStateBackend(context.Background(), platformstate.Config{
+		Kind: platformstate.KindRedis,
+		URL:  "redis://" + addr + "/0",
+	})
+	if err == nil {
+		retireBackend(backend)
+		t.Fatal("newRedisStateBackend() error = nil")
+	}
+	if backend.store != nil {
+		t.Fatal("failed probe returned an installable Store")
+	}
+}
+
+func TestBuildStandaloneRedisProbeFailureIsStrictAndRedacted(t *testing.T) {
+	addr, shutdown := startRuntimeRedisWithOptions(t, true)
+	defer shutdown()
+	path := writeRuntimeYAML(t, "settings:\n  state:\n    type: redis\n    url: redis://"+addr+"/0\n")
+	_, _, err := Build(context.Background(), Options{ConfigPath: path})
+	if err == nil {
+		t.Fatal("Build() error = nil")
+	}
+	if strings.Contains(err.Error(), "updates disabled") || !strings.Contains(err.Error(), "initialize state backend redis") {
+		t.Fatalf("Build() exposed raw probe failure: %q", err)
 	}
 }
 
@@ -412,6 +442,10 @@ func writeRuntimeYAML(t *testing.T, settings string) string {
 }
 
 func startRuntimeRedis(t *testing.T) (string, func()) {
+	return startRuntimeRedisWithOptions(t, false)
+}
+
+func startRuntimeRedisWithOptions(t *testing.T, failUpdates bool) (string, func()) {
 	t.Helper()
 	ctx := context.Background()
 	database, err := dbsqlite.Open(ctx, dbsqlite.Options{Path: filepath.Join(t.TempDir(), "state.db")})
@@ -422,7 +456,11 @@ func startRuntimeRedis(t *testing.T) (string, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := redisserver.New(redisserver.Options{Store: store})
+	var redisStore platformstate.Store = store
+	if failUpdates {
+		redisStore = failingUpdateStateStore{Store: store}
+	}
+	server, err := redisserver.New(redisserver.Options{Store: redisStore})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,4 +491,12 @@ func startRuntimeRedis(t *testing.T) (string, func()) {
 	}
 	t.Cleanup(shutdown)
 	return listener.Addr().String(), shutdown
+}
+
+type failingUpdateStateStore struct {
+	platformstate.Store
+}
+
+func (failingUpdateStateStore) Update(context.Context, func(platformstate.Operations) error) error {
+	return errors.New("updates disabled")
 }
