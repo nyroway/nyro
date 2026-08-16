@@ -1,6 +1,6 @@
 import type { MessageKey } from "./messages";
 
-export type SettingsSectionID = "forwarding" | "logs" | "metrics" | "traces" | "public" | "retention";
+export type SettingsSectionID = "forwarding" | "state" | "logs" | "metrics" | "traces" | "public" | "retention";
 
 export const SETTINGS_SECTIONS: ReadonlyArray<{
   id: SettingsSectionID;
@@ -8,6 +8,7 @@ export const SETTINGS_SECTIONS: ReadonlyArray<{
   label: MessageKey;
 }> = [
   { id: "forwarding", group: "data-plane", label: "settings.forwarding" },
+  { id: "state", group: "data-plane", label: "settings.stateStorage" },
   { id: "logs", group: "data-plane", label: "settings.logsExport" },
   { id: "metrics", group: "data-plane", label: "settings.metricsExport" },
   { id: "traces", group: "data-plane", label: "settings.tracesExport" },
