@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { StateSettingsCard, StateURLField } from "./state-settings-card";
 
 describe("state settings card", () => {
-  it("hides the complete Redis URL until explicitly revealed", () => {
+  it("renders the complete Redis URL as a normal text input", () => {
     const props = {
       isZh: false,
       value: "redis://redis.internal:6379/2",
@@ -14,27 +14,22 @@ describe("state settings card", () => {
       disabled: false,
       builtInRedisURL: null,
       onChange: vi.fn(),
-      onToggleReveal: vi.fn(),
     };
 
-    const hidden = renderToStaticMarkup(createElement(StateURLField, { ...props, reveal: false }));
-    expect(hidden).toContain('type="password"');
-    expect(hidden).toContain('aria-label="Show"');
-
-    const revealed = renderToStaticMarkup(createElement(StateURLField, { ...props, reveal: true }));
-    expect(revealed).toContain('type="text"');
-    expect(revealed).toContain('aria-label="Hide"');
+    const markup = renderToStaticMarkup(createElement(StateURLField, props));
+    expect(markup).toContain('type="text"');
+    expect(markup).not.toContain('type="password"');
+    expect(markup).not.toContain('aria-label="Show"');
+    expect(markup).not.toContain('aria-label="Hide"');
   });
 
   it("enables the built-in shortcut only when a usable address is available", () => {
     const props = {
       isZh: false,
       value: "",
-      reveal: false,
       invalid: true,
       disabled: false,
       onChange: vi.fn(),
-      onToggleReveal: vi.fn(),
     };
     const button = (markup: string) => markup.match(/<button[^>]*aria-label="Use built-in"[^>]*>/)?.[0] ?? "";
 
@@ -78,7 +73,7 @@ describe("state settings card", () => {
     expect(markup).not.toContain('type="password"');
   });
 
-  it("renders a successfully loaded Redis setting as hidden", () => {
+  it("renders a successfully loaded Redis setting as text", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     client.setQueryData(["setting", "state.type"], "redis");
     client.setQueryData(["setting", "state.url"], "redis://redis.internal:6379/0");
@@ -92,6 +87,7 @@ describe("state settings card", () => {
         builtInRedisURL: "redis://127.0.0.1:16379",
       }),
     ));
-    expect(markup).toContain('type="password"');
+    expect(markup).toContain('type="text"');
+    expect(markup).not.toContain('type="password"');
   });
 });
