@@ -174,7 +174,7 @@ func (c *storeClock) Now() time.Time {
 	return c.now
 }
 
-func newStore(t *testing.T, client goredis.Cmdable, now func() time.Time) *Store {
+func newStore(t *testing.T, client client, now func() time.Time) *Store {
 	t.Helper()
 	store, err := New(client, Options{Now: now})
 	if err != nil {
@@ -250,6 +250,19 @@ func startEmbeddedRedis(t *testing.T) (string, func()) {
 		})
 	}
 	t.Cleanup(shutdown)
+	readyClient := goredis.NewClient(&goredis.Options{
+		Addr:        listener.Addr().String(),
+		Protocol:    3,
+		DialTimeout: time.Second,
+		ReadTimeout: time.Second,
+	})
+	if err := readyClient.Ping(ctx).Err(); err != nil {
+		_ = readyClient.Close()
+		t.Fatalf("wait for embedded Redis: %v", err)
+	}
+	if err := readyClient.Close(); err != nil {
+		t.Fatalf("close readiness client: %v", err)
+	}
 	return listener.Addr().String(), shutdown
 }
 
