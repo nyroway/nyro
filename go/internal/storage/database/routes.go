@@ -3,6 +3,8 @@ package database
 import (
 	"context"
 
+	"gorm.io/gen/field"
+
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/model"
 	"github.com/nyroway/nyro/go/internal/storage/query"
@@ -143,6 +145,17 @@ func createRouteUpstreams(ctx context.Context, tx *query.Query, routeID string, 
 		if err := tx.RouteUpstream.WithContext(ctx).Create(ru); err != nil {
 			return nil, err
 		}
+		// gorm-gen's Create skips bool zero values with a default:true tag, so
+		// Enabled=false is silently omitted and the DB uses the column default.
+		// Apply it explicitly via UpdateSimple when the binding is disabled.
+		if !enabled {
+			if _, err := tx.RouteUpstream.WithContext(ctx).
+				Where(tx.RouteUpstream.ID.Eq(ru.ID)).
+				UpdateSimple(tx.RouteUpstream.Enabled.Value(false)); err != nil {
+				return nil, err
+			}
+			ru.Enabled = false
+		}
 		out = append(out, routeUpstreamFromModel(ru))
 	}
 	return out, nil
@@ -152,27 +165,36 @@ func (s routeStore) Update(id string, in storage.UpdateRoute) (storage.Route, er
 	ctx := context.Background()
 	var out storage.Route
 	err := s.q.Transaction(func(tx *query.Query) error {
-		r, err := tx.Route.WithContext(ctx).Where(tx.Route.ID.Eq(id)).First()
-		if err != nil {
+		if _, err := tx.Route.WithContext(ctx).Where(tx.Route.ID.Eq(id)).First(); err != nil {
 			return err
 		}
+		// Use UpdateSimple with explicit column assignments instead of Save(r) on a
+		// mutated struct. Save skips columns whose value equals the Go zero value:
+		// Enabled=false, EnableAuth=false, EnablePayload=false are all zero for
+		// bool, so Save would silently omit them — leaving the previous value in
+		// the database even after an explicit disable/toggle-off request.
+		rq := tx.Route
+		assigns := []field.AssignExpr{rq.UpdatedAt.Value(nowISO())}
 		if in.Model != nil {
-			r.Model = *in.Model
+			assigns = append(assigns, rq.Model.Value(*in.Model))
 		}
 		if in.Balance != nil {
-			r.Balance = string(*in.Balance)
+			assigns = append(assigns, rq.Balance.Value(string(*in.Balance)))
 		}
 		if in.EnableAuth != nil {
-			r.EnableAuth = *in.EnableAuth
+			assigns = append(assigns, rq.EnableAuth.Value(*in.EnableAuth))
 		}
 		if in.EnablePayload != nil {
-			r.EnablePayload = *in.EnablePayload
+			assigns = append(assigns, rq.EnablePayload.Value(*in.EnablePayload))
 		}
 		if in.Enabled != nil {
-			r.Enabled = *in.Enabled
+			assigns = append(assigns, rq.Enabled.Value(*in.Enabled))
 		}
-		r.UpdatedAt = nowISO()
-		if err := tx.Route.WithContext(ctx).Save(r); err != nil {
+		if _, err := rq.WithContext(ctx).Where(rq.ID.Eq(id)).UpdateSimple(assigns...); err != nil {
+			return err
+		}
+		r, err := tx.Route.WithContext(ctx).Where(tx.Route.ID.Eq(id)).First()
+		if err != nil {
 			return err
 		}
 

@@ -132,6 +132,15 @@ func (s consumerStore) Create(in storage.CreateConsumer) (storage.Consumer, erro
 		if err := tx.Consumer.WithContext(ctx).Create(c); err != nil {
 			return err
 		}
+		// gorm-gen's Create skips bool zero values with a default:true tag.
+		// Apply Enabled=false explicitly when the consumer is created disabled.
+		if !c.Enabled {
+			if _, err := tx.Consumer.WithContext(ctx).
+				Where(tx.Consumer.ID.Eq(c.ID)).
+				UpdateSimple(tx.Consumer.Enabled.Value(false)); err != nil {
+				return err
+			}
+		}
 
 		// Collect the created keys directly (with their one-time raw Token);
 		// re-reading via loadDetails below would return them without Token,
@@ -213,6 +222,16 @@ func createConsumerKey(ctx context.Context, tx *query.Query, consumerID string, 
 	}
 	if err := tx.ConsumerKey.WithContext(ctx).Create(k); err != nil {
 		return storage.ConsumerKey{}, err
+	}
+	// KeyPlaintext is not tracked by gen, so we cannot enumerate all columns
+	// in a Select list for Create. Instead, apply Enabled=false via UpdateSimple
+	// after the insert when the key is created disabled.
+	if !k.Enabled {
+		if _, err := tx.ConsumerKey.WithContext(ctx).
+			Where(tx.ConsumerKey.ID.Eq(k.ID)).
+			UpdateSimple(tx.ConsumerKey.Enabled.Value(false)); err != nil {
+			return storage.ConsumerKey{}, err
+		}
 	}
 	out := consumerKeyFromModel(k)
 	out.Token = raw

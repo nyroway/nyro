@@ -3,6 +3,8 @@ package database
 import (
 	"context"
 
+	"gorm.io/gen/field"
+
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/model"
 	"github.com/nyroway/nyro/go/internal/storage/query"
@@ -65,39 +67,47 @@ func (s upstreamStore) Create(in storage.CreateUpstream) (storage.Upstream, erro
 
 func (s upstreamStore) Update(id string, in storage.UpdateUpstream) (storage.Upstream, error) {
 	ctx := context.Background()
-	m, err := s.q.Upstream.WithContext(ctx).Where(s.q.Upstream.ID.Eq(id)).First()
-	if err != nil {
+	// Use UpdateSimple with explicit column assignments instead of Save(m) on a
+	// mutated struct. Save skips columns whose value equals the Go zero value,
+	// so Enabled=false (zero for bool, DB default:true) would be silently
+	// omitted — leaving the upstream enabled even after an explicit disable.
+	if _, err := s.q.Upstream.WithContext(ctx).Where(s.q.Upstream.ID.Eq(id)).First(); err != nil {
 		return storage.Upstream{}, err
 	}
+	q := s.q.Upstream
+	assigns := []field.AssignExpr{q.UpdatedAt.Value(nowISO())}
 	if in.Name != nil {
-		m.Name = *in.Name
+		assigns = append(assigns, q.Name.Value(*in.Name))
 	}
 	if in.Provider != nil {
-		m.Provider = *in.Provider
+		assigns = append(assigns, q.Provider.Value(*in.Provider))
 	}
 	if in.Protocol != nil {
-		m.Protocol = *in.Protocol
+		assigns = append(assigns, q.Protocol.Value(*in.Protocol))
 	}
 	if in.BaseURL != nil {
-		m.BaseURL = *in.BaseURL
+		assigns = append(assigns, q.BaseURL.Value(*in.BaseURL))
 	}
 	if in.CredentialsJSON != nil {
-		m.CredentialsJSON = jsonRaw(*in.CredentialsJSON)
+		assigns = append(assigns, q.CredentialsJSON.Value(jsonRaw(*in.CredentialsJSON)))
 	}
 	if in.ModelsJSON != nil {
-		m.ModelsJSON = jsonRaw(*in.ModelsJSON)
+		assigns = append(assigns, q.ModelsJSON.Value(jsonRaw(*in.ModelsJSON)))
 	}
 	if in.ModelsURL != nil {
-		m.ModelsURL = *in.ModelsURL
+		assigns = append(assigns, q.ModelsURL.Value(*in.ModelsURL))
 	}
 	if in.ProxyURL != nil {
-		m.ProxyURL = *in.ProxyURL
+		assigns = append(assigns, q.ProxyURL.Value(*in.ProxyURL))
 	}
 	if in.Enabled != nil {
-		m.Enabled = *in.Enabled
+		assigns = append(assigns, q.Enabled.Value(*in.Enabled))
 	}
-	m.UpdatedAt = nowISO()
-	if err := s.q.Upstream.WithContext(ctx).Save(m); err != nil {
+	if _, err := q.WithContext(ctx).Where(q.ID.Eq(id)).UpdateSimple(assigns...); err != nil {
+		return storage.Upstream{}, err
+	}
+	m, err := q.WithContext(ctx).Where(q.ID.Eq(id)).First()
+	if err != nil {
 		return storage.Upstream{}, err
 	}
 	return upstreamFromModel(m), nil
