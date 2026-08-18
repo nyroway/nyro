@@ -65,6 +65,33 @@ func TestUpstreamCRUD(t *testing.T) {
 	}
 }
 
+func TestUpstreamCreateDisabled(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	disabled := false
+	created, err := s.Upstreams().Create(storage.CreateUpstream{
+		Name:     "disabled-upstream",
+		Protocol: "openai-chatcompletions",
+		BaseURL:  "https://api.openai.com/v1",
+		Enabled:  &disabled,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created.Enabled {
+		t.Fatalf("created.Enabled = %v; want false", created.Enabled)
+	}
+
+	got, err := s.Upstreams().Get(created.ID)
+	if err != nil || got == nil {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	if got.Enabled {
+		t.Fatalf("got.Enabled = %v; want false to persist across re-read", got.Enabled)
+	}
+}
+
 func TestRouteCreateWithNestedUpstreams(t *testing.T) {
 	b := newTestBackend(t)
 	var s storage.Storage = b
@@ -171,6 +198,62 @@ func TestConsumerCreateWithKeysRoutesQuotas(t *testing.T) {
 	// Wrong key must not match.
 	if rec, err := s.Auth().FindKey("nyro_wrong"); err != nil || rec != nil {
 		t.Fatalf("FindKey(wrong) = %+v, %v; want nil,nil", rec, err)
+	}
+}
+
+func TestConsumerCreateDisabled(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	disabled := false
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{
+		Name:    "disabled-consumer",
+		Enabled: &disabled,
+	})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+	if consumer.Enabled {
+		t.Fatalf("consumer.Enabled = %v; want false", consumer.Enabled)
+	}
+
+	got, err := s.Consumers().Get(consumer.ID)
+	if err != nil || got == nil {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	if got.Enabled {
+		t.Fatalf("got.Enabled = %v; want false to persist across re-read", got.Enabled)
+	}
+}
+
+func TestConsumerCreateWithDisabledKey(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	disabled := false
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{
+		Name: "consumer-with-disabled-key",
+		Keys: []storage.CreateConsumerKey{{
+			Name:    "primary",
+			Enabled: &disabled,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+	if len(consumer.Keys) != 1 {
+		t.Fatalf("consumer.Keys = %+v; want 1", consumer.Keys)
+	}
+	if consumer.Keys[0].Enabled {
+		t.Fatalf("consumer.Keys[0].Enabled = %v; want false", consumer.Keys[0].Enabled)
+	}
+
+	got, err := s.Consumers().Get(consumer.ID)
+	if err != nil || got == nil || len(got.Keys) != 1 {
+		t.Fatalf("Get = %+v, %v; want 1 key", got, err)
+	}
+	if got.Keys[0].Enabled {
+		t.Fatalf("got.Keys[0].Enabled = %v; want false to persist across re-read", got.Keys[0].Enabled)
 	}
 }
 
@@ -356,6 +439,36 @@ func TestConsumerAddKey(t *testing.T) {
 
 	if _, err := s.Consumers().AddKey("does-not-exist", storage.CreateConsumerKey{Name: "x"}); err == nil {
 		t.Fatal("AddKey with unknown consumerID: want error, got nil")
+	}
+}
+
+func TestConsumerAddDisabledKey(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	consumer, err := s.Consumers().Create(storage.CreateConsumer{Name: "acme"})
+	if err != nil {
+		t.Fatalf("Create consumer: %v", err)
+	}
+
+	disabled := false
+	key, err := s.Consumers().AddKey(consumer.ID, storage.CreateConsumerKey{
+		Name:    "disabled",
+		Enabled: &disabled,
+	})
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	if key.Enabled {
+		t.Fatalf("key.Enabled = %v; want false", key.Enabled)
+	}
+
+	got, err := s.Consumers().Get(consumer.ID)
+	if err != nil || got == nil || len(got.Keys) != 1 {
+		t.Fatalf("Get = %+v, %v; want 1 key", got, err)
+	}
+	if got.Keys[0].Enabled {
+		t.Fatalf("got.Keys[0].Enabled = %v; want false to persist across re-read", got.Keys[0].Enabled)
 	}
 }
 

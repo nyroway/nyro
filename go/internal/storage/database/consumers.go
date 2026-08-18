@@ -132,14 +132,16 @@ func (s consumerStore) Create(in storage.CreateConsumer) (storage.Consumer, erro
 		if err := tx.Consumer.WithContext(ctx).Create(c); err != nil {
 			return err
 		}
-		// gorm-gen's Create skips bool zero values with a default:true tag.
-		// Apply Enabled=false explicitly when the consumer is created disabled.
-		if !c.Enabled {
+		// gorm-gen's Create skips bool zero values with a default:true tag and
+		// may write the DB default back into c.Enabled. Use the pre-create
+		// value so an explicit Enabled=false is not lost.
+		if !enabled {
 			if _, err := tx.Consumer.WithContext(ctx).
 				Where(tx.Consumer.ID.Eq(c.ID)).
 				UpdateSimple(tx.Consumer.Enabled.Value(false)); err != nil {
 				return err
 			}
+			c.Enabled = false
 		}
 
 		// Collect the created keys directly (with their one-time raw Token);
@@ -224,14 +226,15 @@ func createConsumerKey(ctx context.Context, tx *query.Query, consumerID string, 
 		return storage.ConsumerKey{}, err
 	}
 	// KeyPlaintext is not tracked by gen, so we cannot enumerate all columns
-	// in a Select list for Create. Instead, apply Enabled=false via UpdateSimple
-	// after the insert when the key is created disabled.
-	if !k.Enabled {
+	// in a Select list for Create. Use the pre-create enabled value because
+	// Create may write the DB default back into k.Enabled.
+	if !enabled {
 		if _, err := tx.ConsumerKey.WithContext(ctx).
 			Where(tx.ConsumerKey.ID.Eq(k.ID)).
 			UpdateSimple(tx.ConsumerKey.Enabled.Value(false)); err != nil {
 			return storage.ConsumerKey{}, err
 		}
+		k.Enabled = false
 	}
 	out := consumerKeyFromModel(k)
 	out.Token = raw
