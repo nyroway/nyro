@@ -59,21 +59,27 @@ func (s upstreamStore) Create(in storage.CreateUpstream) (storage.Upstream, erro
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
-	q := s.q.Upstream
-	if err := q.WithContext(ctx).Create(m); err != nil {
-		return storage.Upstream{}, err
-	}
-	// gorm-gen's Create skips bool zero values with a default:true tag. Apply
-	// Enabled=false explicitly and sync the returned model when requested.
-	if !enabled {
-		if _, err := q.WithContext(ctx).
-			Where(q.ID.Eq(m.ID)).
-			UpdateSimple(q.Enabled.Value(false)); err != nil {
-			return storage.Upstream{}, err
+	var out storage.Upstream
+	err := s.q.Transaction(func(tx *query.Query) error {
+		q := tx.Upstream
+		if err := q.WithContext(ctx).Create(m); err != nil {
+			return err
 		}
-		m.Enabled = false
-	}
-	return upstreamFromModel(m), nil
+		// gorm-gen's Create skips bool zero values with a default:true tag. Apply
+		// Enabled=false explicitly in the same transaction so a failed follow-up
+		// write cannot leave an enabled upstream behind.
+		if !enabled {
+			if _, err := q.WithContext(ctx).
+				Where(q.ID.Eq(m.ID)).
+				UpdateSimple(q.Enabled.Value(false)); err != nil {
+				return err
+			}
+			m.Enabled = false
+		}
+		out = upstreamFromModel(m)
+		return nil
+	})
+	return out, err
 }
 
 func (s upstreamStore) Update(id string, in storage.UpdateUpstream) (storage.Upstream, error) {
