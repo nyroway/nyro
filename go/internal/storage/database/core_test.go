@@ -92,6 +92,40 @@ func TestUpstreamCreateDisabled(t *testing.T) {
 	}
 }
 
+func TestUpstreamUpdateDisablesUpstream(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	created, err := s.Upstreams().Create(storage.CreateUpstream{
+		Name:     "upstream-to-disable",
+		Protocol: "openai-chatcompletions",
+		BaseURL:  "https://api.openai.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !created.Enabled {
+		t.Fatalf("created.Enabled = %v; want true before update", created.Enabled)
+	}
+
+	disabled := false
+	updated, err := s.Upstreams().Update(created.ID, storage.UpdateUpstream{Enabled: &disabled})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Enabled {
+		t.Fatalf("updated.Enabled = %v; want false", updated.Enabled)
+	}
+
+	got, err := s.Upstreams().Get(created.ID)
+	if err != nil || got == nil {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	if got.Enabled {
+		t.Fatalf("got.Enabled = %v; want false to persist across re-read", got.Enabled)
+	}
+}
+
 func TestRouteCreateWithNestedUpstreams(t *testing.T) {
 	b := newTestBackend(t)
 	var s storage.Storage = b
@@ -137,6 +171,82 @@ func TestRouteCreateWithNestedUpstreams(t *testing.T) {
 	}
 	if got, err := s.Routes().Get(route.ID); err != nil || got != nil {
 		t.Fatalf("Get after delete = %+v, %v", got, err)
+	}
+}
+
+func TestRouteCreateWithDisabledUpstreamTarget(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	up, err := s.Upstreams().Create(storage.CreateUpstream{Name: "disabled-target-upstream"})
+	if err != nil {
+		t.Fatalf("create upstream: %v", err)
+	}
+
+	disabled := false
+	route, err := s.Routes().Create(storage.CreateRoute{
+		Model: "gpt-4o-disabled-target",
+		Upstreams: []storage.CreateRouteUpstream{{
+			UpstreamID: up.ID,
+			Model:      "gpt-4o-disabled-target",
+			Enabled:    &disabled,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Create route: %v", err)
+	}
+	if len(route.Upstreams) != 1 {
+		t.Fatalf("route.Upstreams = %+v; want 1 target", route.Upstreams)
+	}
+	if route.Upstreams[0].Enabled {
+		t.Fatalf("route.Upstreams[0].Enabled = %v; want false", route.Upstreams[0].Enabled)
+	}
+
+	got, err := s.Routes().Get(route.ID)
+	if err != nil || got == nil || len(got.Upstreams) != 1 {
+		t.Fatalf("Get = %+v, %v; want 1 target", got, err)
+	}
+	if got.Upstreams[0].Enabled {
+		t.Fatalf("got.Upstreams[0].Enabled = %v; want false to persist across re-read", got.Upstreams[0].Enabled)
+	}
+}
+
+func TestRouteUpdateDisablesBoolFields(t *testing.T) {
+	b := newTestBackend(t)
+	var s storage.Storage = b
+
+	enablePayload := true
+	route, err := s.Routes().Create(storage.CreateRoute{
+		Model:         "gpt-4o-disable-bools",
+		EnableAuth:    true,
+		EnablePayload: &enablePayload,
+	})
+	if err != nil {
+		t.Fatalf("Create route: %v", err)
+	}
+	if !route.Enabled || !route.EnableAuth || route.EnablePayload == nil || !*route.EnablePayload {
+		t.Fatalf("route = %+v; want bool fields enabled before update", route)
+	}
+
+	disabled := false
+	updated, err := s.Routes().Update(route.ID, storage.UpdateRoute{
+		Enabled:       &disabled,
+		EnableAuth:    &disabled,
+		EnablePayload: &disabled,
+	})
+	if err != nil {
+		t.Fatalf("Update route: %v", err)
+	}
+	if updated.Enabled || updated.EnableAuth || updated.EnablePayload == nil || *updated.EnablePayload {
+		t.Fatalf("updated = %+v; want bool fields disabled", updated)
+	}
+
+	got, err := s.Routes().Get(route.ID)
+	if err != nil || got == nil {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	if got.Enabled || got.EnableAuth || got.EnablePayload == nil || *got.EnablePayload {
+		t.Fatalf("got = %+v; want disabled bool fields to persist across re-read", got)
 	}
 }
 
