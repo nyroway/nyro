@@ -8,18 +8,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/webutil"
-
-	// Blank imports run each codec's init(), which registers its
-	// EndpointHandler. Adding an ingress protocol is a line here and nothing
-	// else: the routes come from the handler's own Capabilities().
 	"github.com/nyroway/nyro/go/internal/llm"
-	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/anthropic/messages"
-	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/gemini/generatecontent"
-	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/chatcompletions"
-	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/embeddings"
-	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/responses"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/webutil"
 )
 
 // NewRouter builds the chi router with the Gateway routes wired.
@@ -44,14 +35,16 @@ func NewRouter(gw *Gateway) chi.Router {
 	r.Get("/v1/models", func(w http.ResponseWriter, r *http.Request) { handleModelsList(w, r, gw) })
 
 	// Ingress routes are declared by the codecs themselves, so this loop is the
-	// whole route table: every registered handler gets the (method, pattern)
+	// whole route table: every explicitly composed codec gets the (method, pattern)
 	// pairs from its Capabilities().
-	for _, h := range codec.All() {
-		h := h
-		for _, route := range h.Capabilities().IngressRoutes {
-			r.MethodFunc(route.Method, route.Pattern, func(w http.ResponseWriter, r *http.Request) {
-				handleProxy(w, r, gw, h)
-			})
+	if gw.Protocols != nil {
+		for _, h := range gw.Protocols.IngressEndpoints() {
+			h := h
+			for _, route := range h.Capabilities().IngressRoutes {
+				r.MethodFunc(route.Method, route.Pattern, func(w http.ResponseWriter, r *http.Request) {
+					handleProxy(w, r, gw, h)
+				})
+			}
 		}
 	}
 	return r
@@ -76,7 +69,7 @@ func routeParams(r *http.Request) map[string]string {
 // handleProxy is the ingress shell: it decodes the wire body into IR (letting
 // the codec read the URL when its protocol puts the model there), then hands
 // off to Dispatch.
-func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, h codec.EndpointHandler) {
+func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, h protocol.IngressCodec) {
 	limit := resolveProxySettings(gw.snapshot()).MaxBodyBytes
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	body, err := io.ReadAll(r.Body)
@@ -91,21 +84,16 @@ func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, h codec.En
 	}
 
 	switch h := h.(type) {
-	case codec.ChatEndpointHandler:
+	case protocol.ChatIngressCodec:
 		var req *llm.ChatRequest
-		dec := h.MakeRequestDecoder()
-		if pd, ok := dec.(codec.ChatPathDecoder); ok {
-			req, err = pd.DecodeWithPath(body, routeParams(r))
-		} else {
-			req, err = dec.Decode(body)
-		}
+		req, err = h.DecodeRequest(protocol.IngressRequest{Body: body, Params: routeParams(r)})
 		if err == nil {
 			gw.Dispatch(w, r, req, h)
 			return
 		}
-	case codec.EmbeddingEndpointHandler:
+	case protocol.EmbeddingIngressCodec:
 		var req *llm.EmbeddingRequest
-		req, err = h.MakeRequestDecoder().Decode(body)
+		req, err = h.DecodeRequest(protocol.IngressRequest{Body: body, Params: routeParams(r)})
 		if err == nil {
 			gw.Dispatch(w, r, req, h)
 			return

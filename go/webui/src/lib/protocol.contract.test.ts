@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { PROTOCOL_TABLE, resolveProtocol } from "./protocol";
 
 // protocols.json is the single source of protocol identity, shared with the Go
-// backend (go/internal/protocol/llm/spec/protocols.json). Neither side reads it
+// backend (go/internal/llm/protocol/protocols.json). Neither side reads it
 // at runtime: this test and the Go contract_test.go each assert their own table matches it,
 // so a change made on one side and forgotten on the other fails a test rather
 // than drifting silently — which is exactly how the displayName suffixes and
@@ -40,7 +40,7 @@ const contractPath = path.resolve(
 const contract = JSON.parse(readFileSync(contractPath, "utf8")) as Contract;
 const selectable = contract.protocols.filter((p) => p.selectable);
 
-describe("protocol identity contract (internal/protocol/llm/spec/protocols.json)", () => {
+describe("protocol identity contract (internal/llm/protocol/protocols.json)", () => {
   it("PROTOCOL_TABLE is exactly the selectable subset of the contract", () => {
     expect(PROTOCOL_TABLE).toHaveLength(selectable.length);
     for (const p of selectable) {

@@ -1,6 +1,6 @@
 /**
  * Protocol utilities — mirrors the backend protocol identity model
- * (go/internal/protocol/llm/spec).
+ * (go/internal/llm/protocol).
  *
  * A Protocol identifies one concrete wire-format API surface (an
  * "interface"), family-prefixed but vendor-orthogonal in use. IDs are
@@ -12,7 +12,7 @@
  * UI only surfaces the Protocol display name; the version is an internal
  * implementation detail not shown to users.
  *
- * Keep this table in sync with go/internal/protocol/llm/spec/spec.go's ParseProtocol and
+ * Keep this table in sync with go/internal/llm/protocol/protocol.go's ParseProtocol and
  * DisplayName. Each protocol has at most ONE alias, permanently bound.
  */
 

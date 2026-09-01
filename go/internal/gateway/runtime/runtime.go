@@ -32,6 +32,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/gateway"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
@@ -45,6 +46,8 @@ const certExpiryCheckInterval = 24 * time.Hour
 // to the control plane. The CLI requires exactly one of ConfigPath or
 // SyncTarget; Build prefers ConfigPath when both are set.
 type Options struct {
+	Protocols *protocol.Catalog
+
 	// ConfigPath is a standalone YAML config file: the snapshot is built once
 	// at startup and never refreshed. No control plane or database involved.
 	ConfigPath string
@@ -114,7 +117,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *Manager, error
 			_ = stateManager.Shutdown(context.Background())
 			return nil, nil, fmt.Errorf("state backend: %w", err)
 		}
-		gw := gateway.NewGatewayWithCache(cache, quotaSwitch)
+		gw := gateway.NewGatewayWithCache(cache, quotaSwitch, opts.Protocols)
 
 		// Standalone config is static: the snapshot is already in the cache, so
 		// the initial resolve sees the real (YAML-declared) obs config and no
@@ -135,7 +138,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *Manager, error
 		cache := &configsnapshot.Cache{}
 		quotaSwitch := quota.NewUnavailableSwitch()
 		stateManager := newStateManager(ctx, quotaSwitch, stateManagerOptions{})
-		gw := gateway.NewGatewayWithCache(cache, quotaSwitch)
+		gw := gateway.NewGatewayWithCache(cache, quotaSwitch, opts.Protocols)
 
 		// Build the INITIAL provider from the still-empty cache: it resolves to
 		// the fixed default (logs→stdout, metrics/traces disabled). The real obs

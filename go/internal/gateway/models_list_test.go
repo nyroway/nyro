@@ -44,7 +44,7 @@ func TestModelsList(t *testing.T) {
 	}
 	token := consumer.Keys[0].Token
 
-	gw := NewGateway()
+	gw := NewGateway(testProtocolCatalog(t))
 	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}

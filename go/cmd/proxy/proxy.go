@@ -88,8 +88,13 @@ func NewCmd() *cobra.Command {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		protocols, err := bootstrap.NewLLMProtocolCatalog()
+		if err != nil {
+			return fmt.Errorf("compose LLM protocols: %w", err)
+		}
 
 		gw, runtimeMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
+			Protocols:  protocols,
 			ConfigPath: cfgPath,
 			SyncTarget: configSyncAddr,
 			SyncTLS:    configTLS,

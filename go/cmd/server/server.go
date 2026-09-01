@@ -374,14 +374,19 @@ func NewCmd() *cobra.Command {
 		if configsync.IsLoopbackListenAddress(addr) {
 			engine.Use(admin.LoopbackHostGuard)
 		}
+		protocols, err := bootstrap.NewLLMProtocolCatalog()
+		if err != nil {
+			return fmt.Errorf("compose LLM protocols: %w", err)
+		}
 		observeSource := admin.NewObserveSource(observeStore)
-		admin.Mount(engine, st, observeSource, observeSource)
+		admin.Mount(engine, st, observeSource, observeSource, protocols)
 		webui.Mount(engine, webuiDir)
 
 		var dataPlaneHandler http.Handler
 		var dataPlaneAfterShutdown func()
 		if !disableProxy {
 			gw, runtimeMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
+				Protocols:    protocols,
 				SyncTarget:   configsync.InProcessTarget,
 				SyncDialOpts: inProcDialOpts,
 				ListenAddr:   proxyAddr,

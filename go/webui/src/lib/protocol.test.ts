@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { protocolDisplayName, resolveProtocol } from "./protocol";
 
 // The protocol table, the alias set, and the rejected-identifier list are all
-// asserted against internal/protocol/llm/spec/protocols.json in
+// asserted against internal/llm/protocol/protocols.json in
 // protocol.contract.test.ts. What
 // is left here is the behaviour around them: how resolveProtocol normalises its
 // input, and what the accessors return for input that is not a protocol at all.

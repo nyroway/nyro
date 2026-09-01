@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/llm"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/router"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -30,7 +29,7 @@ import (
 // failover, and codec transformation, and nothing else. See internal/pipeline
 // for the chain contract and internal/telemetry.Stage for the terminal
 // telemetry Stage.
-func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req llm.ModelRequest, ingress codec.EndpointHandler) {
+func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req llm.ModelRequest, ingress protocol.IngressCodec) {
 	stream := requestStreams(req)
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	ex := &pipeline.Exchange{
@@ -64,7 +63,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req llm.Model
 
 // forward is the chain's terminal: select a backend, transform, call the
 // upstream, and write the response. It runs only if no Stage short-circuited.
-func (g *Gateway) forward(ex *pipeline.Exchange, ingress codec.EndpointHandler) {
+func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) {
 	rec := ex.W
 	req := ex.Req
 	route, _ := ex.GetExt(telemetry.ExtRoute).(storage.Route)
@@ -93,10 +92,14 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress codec.EndpointHandler) 
 		// than the client, encode upstream requests with the egress codec and
 		// decode upstream responses with it, then format for the client with
 		// the ingress codec (cross-protocol transform).
-		egressHandler := ingress
-		if proto, parseErr := spec.ParseProtocol(p.Protocol); parseErr == nil {
-			if ep, ok := codec.EndpointFor(proto); ok && ep != ingress.Endpoint() {
-				if h, found := codec.Get(ep); found {
+		egressHandler, found := g.Protocols.Egress(ingress.Endpoint())
+		if !found {
+			writeJSONError(rec, http.StatusInternalServerError, "no egress codec for endpoint "+ingress.Endpoint().String())
+			return
+		}
+		if proto, parseErr := protocol.ParseProtocol(p.Protocol); parseErr == nil {
+			if ep, ok := g.Protocols.EndpointFor(proto); ok && ep != ingress.Endpoint() {
+				if h, found := g.Protocols.Egress(ep); found {
 					egressHandler = h
 				}
 			}
@@ -171,11 +174,16 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress codec.EndpointHandler) 
 		} else {
 			switch req := req.(type) {
 			case *llm.EmbeddingRequest:
-				// Embedding responses do not yet have a canonical response model.
+				if ingress.Endpoint() != egressHandler.Endpoint() ||
+					!ingress.Capabilities().OpaquePassthrough ||
+					!egressHandler.Capabilities().OpaquePassthrough {
+					writeJSONError(rec, http.StatusBadGateway, "embedding response requires same-endpoint opaque passthrough")
+					break
+				}
 				copyResponse(rec, resp)
 			case *llm.ChatRequest:
-				decHandler, decOK := egressHandler.(codec.ChatEndpointHandler)
-				encHandler, encOK := ingress.(codec.ChatEndpointHandler)
+				decHandler, decOK := egressHandler.(protocol.ChatEgressCodec)
+				encHandler, encOK := ingress.(protocol.ChatIngressCodec)
 				if !decOK || !encOK {
 					writeJSONError(rec, http.StatusBadGateway, "chat codec does not support selected endpoint")
 					break
@@ -203,23 +211,23 @@ func requestStreams(req llm.ModelRequest) bool {
 	return ok && chat.Stream.Enabled
 }
 
-func encodeRequest(handler codec.EndpointHandler, req llm.ModelRequest) (codec.OutboundRequest, error) {
+func encodeRequest(handler protocol.EgressCodec, req llm.ModelRequest) (protocol.WireRequest, error) {
 	endpoint := handler.Endpoint()
 	switch req := req.(type) {
 	case *llm.ChatRequest:
-		chatHandler, ok := handler.(codec.ChatEndpointHandler)
+		chatHandler, ok := handler.(protocol.ChatEgressCodec)
 		if !ok {
-			return codec.OutboundRequest{}, fmt.Errorf("endpoint %s does not support chat", endpoint)
+			return protocol.WireRequest{}, fmt.Errorf("endpoint %s does not support chat", endpoint)
 		}
-		return chatHandler.MakeRequestEncoder().Encode(req)
+		return chatHandler.EncodeRequest(req)
 	case *llm.EmbeddingRequest:
-		embeddingHandler, ok := handler.(codec.EmbeddingEndpointHandler)
+		embeddingHandler, ok := handler.(protocol.EmbeddingEgressCodec)
 		if !ok {
-			return codec.OutboundRequest{}, fmt.Errorf("endpoint %s does not support embedding", endpoint)
+			return protocol.WireRequest{}, fmt.Errorf("endpoint %s does not support embedding", endpoint)
 		}
-		return embeddingHandler.MakeRequestEncoder().Encode(req)
+		return embeddingHandler.EncodeRequest(req)
 	default:
-		return codec.OutboundRequest{}, fmt.Errorf("unsupported llm request %T", req)
+		return protocol.WireRequest{}, fmt.Errorf("unsupported llm request %T", req)
 	}
 }
 
@@ -227,7 +235,7 @@ func encodeRequest(handler codec.EndpointHandler, req llm.ModelRequest) (codec.O
 // client), so the dispatcher can fail over before committing a response. The
 // outbound already has the full URL set; auth applies the provider's outbound
 // authentication headers last, after the codec-set headers.
-func (g *Gateway) callUpstream(client *http.Client, r *http.Request, outbound codec.OutboundRequest, auth provider.Authenticator) (*http.Response, error) {
+func (g *Gateway) callUpstream(client *http.Client, r *http.Request, outbound protocol.WireRequest, auth provider.Authenticator) (*http.Response, error) {
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), outbound.Method, outbound.Path, bytes.NewReader(outbound.Body))
 	if err != nil {
 		return nil, err
@@ -260,7 +268,7 @@ func runtimeFromUpstream(u storage.Upstream) provider.UpstreamRuntime {
 // serveStream decodes upstream SSE → IR deltas → re-encodes to client SSE in
 // real time, flushing after each frame. Every delta is also handed to the
 // chain's StreamStages before it is re-encoded.
-func (g *Gateway) serveStream(ex *pipeline.Exchange, upstream io.Reader, decHandler codec.ChatEndpointHandler, encHandler codec.ChatEndpointHandler) {
+func (g *Gateway) serveStream(ex *pipeline.Exchange, upstream io.Reader, decHandler protocol.ChatEgressCodec, encHandler protocol.ChatIngressCodec) {
 	w := ex.W
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -271,8 +279,8 @@ func (g *Gateway) serveStream(ex *pipeline.Exchange, upstream io.Reader, decHand
 		flusher.Flush()
 	}
 
-	dec := decHandler.MakeStreamResponseDecoder()
-	enc := encHandler.MakeStreamResponseEncoder()
+	dec := decHandler.NewStreamDecoder()
+	enc := encHandler.NewStreamEncoder()
 
 	reader := bufio.NewReaderSize(upstream, 64*1024)
 
@@ -324,31 +332,40 @@ func (g *Gateway) serveStream(ex *pipeline.Exchange, upstream io.Reader, decHand
 }
 
 // serveNonStream decodes the full upstream body → ChatResponse → formats it.
-func (g *Gateway) serveNonStream(ex *pipeline.Exchange, upstream io.Reader, decHandler codec.ChatEndpointHandler, encHandler codec.ChatEndpointHandler) {
+func (g *Gateway) serveNonStream(ex *pipeline.Exchange, upstream io.Reader, decHandler protocol.ChatEgressCodec, encHandler protocol.ChatIngressCodec) {
 	w := ex.W
 	raw, err := io.ReadAll(upstream)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "read upstream: "+err.Error())
 		return
 	}
-	resp, err := decHandler.MakeResponseDecoder().Parse(raw)
+	resp, err := decHandler.DecodeResponse(protocol.WireResponse{Status: http.StatusOK, Body: raw})
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "parse upstream: "+err.Error())
 		return
 	}
 	ex.Resp = resp
-	out, err := encHandler.MakeResponseEncoder().Format(resp)
+	out, err := encHandler.EncodeResponse(resp)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "format response: "+err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	for key, value := range out.Headers {
+		w.Header().Set(key, value)
+	}
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	status := out.Status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
 	ex.Usage = resp.Usage
-	_, _ = w.Write(out)
+	_, _ = w.Write(out.Body)
 }
 
-func writeSSE(w io.Writer, frames []codec.SSE, flusher http.Flusher) {
+func writeSSE(w io.Writer, frames []protocol.Event, flusher http.Flusher) {
 	for _, f := range frames {
 		_, _ = w.Write(f.Bytes())
 	}

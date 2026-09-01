@@ -13,9 +13,15 @@ package layering_test
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -24,8 +30,8 @@ const modulePath = "github.com/nyroway/nyro/go"
 
 func TestFoundationBoundaryPolicy(t *testing.T) {
 	t.Parallel()
-	legacyLLMProtocol := foundationBoundary{
-		prefix:        "internal/protocol/llm",
+	llmProtocol := foundationBoundary{
+		prefix:        "internal/llm/protocol",
 		allowInternal: []string{"internal/llm"},
 	}
 	platform := foundationBoundary{prefix: "internal/platform", allowThirdParty: true}
@@ -37,12 +43,12 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 		imp  directImport
 		want bool
 	}{
-		{"legacy llm protocol may import llm", legacyLLMProtocol, directImport{path: modulePath + "/internal/llm"}, true},
-		{"legacy llm protocol rejects provider", legacyLLMProtocol, directImport{path: modulePath + "/internal/provider"}, false},
+		{"llm protocol may import llm", llmProtocol, directImport{path: modulePath + "/internal/llm"}, true},
+		{"llm protocol rejects provider", llmProtocol, directImport{path: modulePath + "/internal/provider"}, false},
 		{"platform standard library", platform, directImport{path: "database/sql", standard: true}, true},
 		{"platform own subtree", platform, directImport{path: modulePath + "/internal/platform/state"}, true},
 		{"platform third party", platform, directImport{path: "github.com/jackc/pgx/v5"}, true},
-		{"platform protocol", platform, directImport{path: modulePath + "/internal/protocol/llm/spec"}, false},
+		{"platform protocol", platform, directImport{path: modulePath + "/internal/llm/protocol"}, false},
 		{"quota standard library", quotaRule, directImport{path: "sync", standard: true}, true},
 		{"quota own subtree", quotaRule, directImport{path: modulePath + "/internal/quota/redis"}, true},
 		{"quota go-redis", quotaRule, directImport{path: "github.com/redis/go-redis/v9"}, true},
@@ -138,7 +144,7 @@ type directImport struct {
 }
 
 var foundationBoundaries = []foundationBoundary{
-	{prefix: "internal/protocol/llm", allowInternal: []string{"internal/llm"}},
+	{prefix: "internal/llm/protocol", allowInternal: []string{"internal/llm"}},
 	{prefix: "internal/platform", allowThirdParty: true},
 	{prefix: "internal/quota", allowThirdParty: true},
 	{prefix: "internal/router"},
@@ -185,34 +191,32 @@ const (
 // forces a deliberate layering decision rather than silently defaulting.
 var packageLayer = map[string]int{
 	// Layer 0 — foundation.
-	"internal/kernel":                                    layerFoundation,
-	"internal/llm":                                       layerFoundation,
-	"internal/pipeline":                                  layerFoundation,
-	"internal/protocol/llm":                              layerFoundation,
-	"internal/protocol/llm/codec":                        layerFoundation,
-	"internal/protocol/llm/codec/anthropic/messages":     layerFoundation,
-	"internal/protocol/llm/codec/gemini/generatecontent": layerFoundation,
-	"internal/protocol/llm/codec/openai/chatcompletions": layerFoundation,
-	"internal/protocol/llm/codec/openai/embeddings":      layerFoundation,
-	"internal/protocol/llm/codec/openai/responses":       layerFoundation,
-	"internal/protocol/llm/spec":                         layerFoundation,
-	"internal/platform/database":                         layerFoundation,
-	"internal/platform/database/postgres":                layerFoundation,
-	"internal/platform/database/sqlite":                  layerFoundation,
-	"internal/platform/observe":                          layerFoundation,
-	"internal/platform/observe/otlphttp":                 layerFoundation,
-	"internal/platform/observe/sqlite":                   layerFoundation,
-	"internal/platform/state":                            layerFoundation,
-	"internal/platform/state/redis":                      layerFoundation,
-	"internal/platform/state/sqlite":                     layerFoundation,
-	"internal/quota":                                     layerFoundation,
-	"internal/quota/redis":                               layerFoundation,
-	"internal/router":                                    layerFoundation,
-	"internal/provider":                                  layerFoundation,
-	"internal/telemetry/schema":                          layerFoundation,
-	"internal/version":                                   layerFoundation,
-	"internal/webutil":                                   layerFoundation,
-	"internal/envflag":                                   layerFoundation,
+	"internal/kernel":                              layerFoundation,
+	"internal/llm":                                 layerFoundation,
+	"internal/llm/protocol":                        layerFoundation,
+	"internal/llm/protocol/anthropic/messages":     layerFoundation,
+	"internal/llm/protocol/gemini/generatecontent": layerFoundation,
+	"internal/llm/protocol/openai/chatcompletions": layerFoundation,
+	"internal/llm/protocol/openai/embeddings":      layerFoundation,
+	"internal/llm/protocol/openai/responses":       layerFoundation,
+	"internal/pipeline":                            layerFoundation,
+	"internal/platform/database":                   layerFoundation,
+	"internal/platform/database/postgres":          layerFoundation,
+	"internal/platform/database/sqlite":            layerFoundation,
+	"internal/platform/observe":                    layerFoundation,
+	"internal/platform/observe/otlphttp":           layerFoundation,
+	"internal/platform/observe/sqlite":             layerFoundation,
+	"internal/platform/state":                      layerFoundation,
+	"internal/platform/state/redis":                layerFoundation,
+	"internal/platform/state/sqlite":               layerFoundation,
+	"internal/quota":                               layerFoundation,
+	"internal/quota/redis":                         layerFoundation,
+	"internal/router":                              layerFoundation,
+	"internal/provider":                            layerFoundation,
+	"internal/telemetry/schema":                    layerFoundation,
+	"internal/version":                             layerFoundation,
+	"internal/webutil":                             layerFoundation,
+	"internal/envflag":                             layerFoundation,
 
 	// Layer 1 — data.
 	"internal/storage":                     layerData,
@@ -306,6 +310,75 @@ func TestLLMModelUsesOnlyStandardLibrary(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestLLMPluginsUseExplicitComposition(t *testing.T) {
+	t.Parallel()
+	root := moduleRoot(t)
+	for _, sourceRoot := range []string{"internal", "cmd"} {
+		err := filepath.WalkDir(filepath.Join(root, sourceRoot), func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if bytes.Contains(raw, []byte("Code generated")) && bytes.Contains(raw, []byte("DO NOT EDIT")) {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			file, err := parser.ParseFile(token.NewFileSet(), path, raw, 0)
+			if err != nil {
+				return err
+			}
+			restrictedSource := packageWithin(filepath.ToSlash(filepath.Dir(rel)), "internal/llm/protocol") ||
+				packageWithin(filepath.ToSlash(filepath.Dir(rel)), "internal/llm/provider") ||
+				packageWithin(filepath.ToSlash(filepath.Dir(rel)), "internal/bootstrap")
+			for _, declaration := range file.Decls {
+				fn, ok := declaration.(*ast.FuncDecl)
+				if ok && fn.Recv == nil && fn.Name.Name == "init" &&
+					(packageWithin(filepath.ToSlash(filepath.Dir(rel)), "internal/llm/protocol") ||
+						packageWithin(filepath.ToSlash(filepath.Dir(rel)), "internal/llm/provider")) {
+					t.Errorf("implicit registration: %s declares func init", rel)
+				}
+			}
+			for _, imported := range file.Imports {
+				if imported.Name == nil || imported.Name.Name != "_" {
+					continue
+				}
+				importPath, err := strconv.Unquote(imported.Path.Value)
+				if err != nil {
+					return err
+				}
+				pluginImport := packageWithin(importPath, modulePath+"/internal/llm/protocol") ||
+					packageWithin(importPath, modulePath+"/internal/llm/provider")
+				if restrictedSource || pluginImport {
+					t.Errorf("implicit composition: %s blank-imports %s", rel, importPath)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan %s: %v", sourceRoot, err)
+		}
+	}
+}
+
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("go", "env", "GOMOD").Output()
+	if err != nil {
+		t.Fatalf("go env GOMOD: %v", err)
+	}
+	return filepath.Dir(strings.TrimSpace(string(out)))
 }
 
 func TestGatewayRootDoesNotImportRuntime(t *testing.T) {

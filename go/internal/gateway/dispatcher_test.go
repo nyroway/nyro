@@ -42,7 +42,7 @@ func newTestGateway(t *testing.T, upstreamURL string) *Gateway {
 // same LoadAndSwap the config-sync loader uses.
 func newTestGatewayFromStorage(t *testing.T, s storage.Storage) *Gateway {
 	t.Helper()
-	gw := NewGateway()
+	gw := NewGateway(testProtocolCatalog(t))
 	if err := gw.Cache.LoadAndSwap(s); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
@@ -73,7 +73,7 @@ func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol
 		Model:     "gpt-4o",
 		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "gpt-4o"}},
 	})
-	gw := NewGateway()
+	gw := NewGateway(testProtocolCatalog(t))
 	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}

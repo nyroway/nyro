@@ -15,7 +15,7 @@
 // their outbound half. That is how a cache hit or a rejected request ends the
 // exchange without a special-cased outcome enum.
 //
-// Layer: 0 (foundation) — may import internal/protocol/llm only. Stages
+// Layer: 0 (foundation) — may import internal/llm/protocol only. Stages
 // themselves live with the subsystem they belong to (observability owns its
 // Stage, proxy owns authn/authz/quota), so this package holds the contract and
 // nothing else.

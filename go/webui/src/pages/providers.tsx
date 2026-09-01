@@ -229,7 +229,7 @@ const emptyCreate: ProviderFormState = {
   credentials: {},
 };
 const PAGE_SIZE = 7;
-// Labels mirror go/internal/protocol/llm/spec's Protocol.DisplayName(). TODO: fold into
+// Labels mirror go/internal/llm/protocol's Protocol.DisplayName(). TODO: fold into
 // PROTOCOL_TABLE once the protocol table is served by the admin API.
 const protocolOptions = [
   { label: "Anthropic Messages", value: "anthropic-messages" },

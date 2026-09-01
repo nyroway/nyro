@@ -65,7 +65,7 @@ func newObserveEngine(t *testing.T) (chi.Router, *observesqlite.Store) {
 	t.Cleanup(func() { _ = store.Shutdown(context.Background()) })
 	source := NewObserveSource(store)
 	router := chi.NewRouter()
-	Mount(router, memory.New().Storage(), source, source)
+	Mount(router, memory.New().Storage(), source, source, testProtocolCatalog(t))
 	return router, store
 }
 

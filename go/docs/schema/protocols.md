@@ -26,11 +26,11 @@ package path = strings.ReplaceAll(id, "-", "/")
   rather than company-branded.
 - **api** is the vendor's own API name, lowercased with all separators removed.
 - There is **exactly one `-`**, and the api segment must not contain another —
-  the ID↔path bijection depends on it. `internal/protocol/llm/codec/layout_test.go` asserts every
-  registered handler's package path matches its protocol ID.
+  the ID↔path bijection depends on it. `internal/bootstrap/llm_protocols_test.go`
+  asserts every explicitly composed codec's package path matches its protocol ID.
 
 The HTTP ingress path (`/v1/chat/completions`) is unrelated to the package
-path; it is declared by each codec in its `EndpointCapabilities.IngressRoutes`.
+path; it is declared by each ingress codec in its `Capabilities.IngressRoutes`.
 
 ## Alias rule
 
@@ -78,21 +78,21 @@ selectable protocols in config and the WebUI.
 - This schema has no released consumers yet, so there is no back-compat alias
   set: each protocol has exactly the alias listed above, and dropped identifiers
   are rejected as unknown protocols. The authoritative list of protocols and
-  rejected identifiers is `internal/protocol/llm/spec/protocols.json` — the contract shared with
-  the WebUI; both `internal/protocol/llm/spec/contract_test.go` and
+  rejected identifiers is `internal/llm/protocol/protocols.json` — the contract shared with
+  the WebUI; both `internal/llm/protocol/contract_test.go` and
   `webui/src/lib/protocol.contract.test.ts` assert their tables match it, so the
   two hand-maintained copies cannot drift.
 - The former `openai-compatible` "family" (which grouped chat-completions and
   embeddings) is removed; every protocol is now interface-level, unifying the
   concept across the whole set.
 - `openai-embeddings` currently has a working codec
-  (`internal/protocol/llm/codec/openai/embeddings`) and e2e tests. It is defined but kept
+  (`internal/llm/protocol/openai/embeddings`) and e2e tests. It is defined but kept
   commented/unexposed for now so this iteration can focus on the chat protocols;
   re-expose it (and confirm the `/v1/embeddings` ingress) when embeddings work
   resumes.
 - A protocol is independent of transport (authentication, URL structure, query
   params); transport is owned by the provider's auth scheme and URL
-  construction. `ProtocolEndpoint.Version` is the version segment of the
+  construction. `Endpoint.Version` is the version segment of the
   vendor's **URL path**; when a vendor versions the wire format on some other
   axis (Anthropic's `anthropic-version: 2023-06-01` header) that axis belongs to
   the codec and the Authenticator, which is why the endpoint is
