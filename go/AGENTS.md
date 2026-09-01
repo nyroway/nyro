@@ -25,41 +25,41 @@ Unless a task explicitly requires it, do not change existing behavior, public AP
 
 ## Core Architecture Principle
 
-> Everything that varies is a lifecycle-managed module behind a narrow, typed capability interface; system invariants stay in the microkernel.
+> Everything that varies is explicitly composed behind a narrow, typed capability; resource-owning components are lifecycle-managed, system-wide invariants stay in the microkernel, and domain invariants stay in trusted runtimes.
 
 "Everything is a plugin" is shorthand for this principle. It does not mean that every piece of code must be a plugin, nor does it imply the use of Go dynamic plugins.
 
-Capabilities that vary by deployment, protocol, provider, policy, or runtime environment should live behind module boundaries.
+Capabilities that vary by deployment, protocol, provider, policy, or runtime environment should live behind explicit module or immutable catalog boundaries. Stateless codecs and strategies do not need artificial lifecycle hooks.
 
-Rules that define system semantics, security, consistency, and execution order must remain under microkernel control and must not be delegated to arbitrary modules.
+System-wide lifecycle and activation rules remain under microkernel control. Rules that require domain knowledge, including LLM request execution and stream semantics, remain under the corresponding trusted runtime and must not be delegated to arbitrary modules.
 
 ## Microkernel Responsibilities
 
-The microkernel retains only the system invariants that must remain consistent across implementations, including:
+The microkernel retains only workload-neutral runtime invariants:
 
-- the Canonical IR and core capability contracts;
-- module registration, dependency resolution, initialization, startup, replacement, and shutdown;
-- request, response, and streaming-event orchestration;
-- request context, cancellation, timeout, and resource-release semantics;
-- unified error classification, propagation, and external error mapping;
-- mandatory security enforcement and processing-stage ordering;
-- authority over routing, retry, failover, and termination decisions;
-- extension namespaces, ownership, and passthrough safety rules;
-- configuration snapshot validation, activation, and consistency guarantees;
-- consistent propagation of observability context through the execution path.
+- component identity and dependency-graph validation;
+- deterministic dependency ordering;
+- lifecycle startup, rollback, retirement, and shutdown;
+- typed runtime-generation construction and atomic activation;
+- request leases that keep retiring generations alive until their users release them;
+- readiness and runtime-generation status.
 
-The microkernel must not directly depend on a concrete:
+The microkernel must use only the Go standard library. It must not depend on:
 
-- northbound protocol;
-- provider or vendor API;
-- database, cache, or state backend;
-- quota implementation;
-- telemetry exporter;
-- routing algorithm;
-- administrative transport;
-- desktop, server, or WebUI runtime environment.
+- a Canonical IR or workload type;
+- request, response, streaming, routing, retry, failover, or error semantics;
+- a northbound protocol, provider, or vendor API;
+- configuration parsing or synchronization;
+- authentication, authorization, quota, telemetry, storage, or transport;
+- an administrative, desktop, server, or WebUI runtime environment.
 
-The microkernel may depend on stable, narrow, typed capability interfaces. Dependencies must not be hidden behind global variables, string-based service locators, or unconstrained generic maps.
+Domain-neutrality is a dependency rule, not permission to use untyped abstractions. Dependencies must not be hidden behind global variables, string-based service locators, or unconstrained generic maps.
+
+## Trusted Runtime Responsibilities
+
+A trusted runtime owns the invariants that require knowledge of one workload. The LLM runtime owns the Canonical LLM IR, request and stream execution, mandatory pipeline ordering, normalized error semantics, extension ownership, routing, retry, failover, and termination decisions.
+
+Trusted runtimes may use explicitly supplied modules at declared extension points, but modules must not control or bypass runtime invariants. Future workload runtimes, including MCP, must define their own domain invariants without adding workload knowledge to the microkernel.
 
 ## Variable Capabilities and Module Boundaries
 
@@ -81,14 +81,45 @@ Every module must:
 
 - expose capabilities through explicit typed interfaces;
 - declare dependencies explicitly rather than retrieving them from hidden global state;
-- let a unified lifecycle owner create and close runtime resources;
+- let a unified lifecycle owner create and close runtime resources when it owns any;
 - validate configuration and dependencies before activation;
 - return explicit errors for unsupported capabilities;
-- never bypass microkernel-defined security, routing, quota, error, or stream-state semantics.
+- never bypass trusted-runtime-defined security, routing, quota, error, or stream-state semantics.
 
-Modules are compiled into the Nyro binary by default and selected through registries and configuration.
+Modules are compiled into the Nyro binary by default and selected through explicitly assembled immutable catalogs and configuration.
 
 Do not use Go `buildmode=plugin` or `.so`-based dynamic plugins unless a separately approved design demonstrates a concrete requirement that static registration cannot satisfy.
+
+## Explicit Composition and Registration
+
+Every concrete module outside the microkernel must be assembled explicitly by a composition root.
+
+The microkernel must not import module packages or discover implementations through package side effects. Trusted runtimes depend on narrow capability contracts and must not import concrete implementations.
+
+Module packages must expose ordinary Go values and functions, such as descriptors, constructors, or explicit registration functions. Importing a module package must not register, start, or activate the module.
+
+Do not use:
+
+- blank imports whose purpose is to trigger registration;
+- package `init()` functions for module registration or dependency wiring;
+- mutable global registries populated as an import side effect;
+- hidden service discovery based on package initialization;
+- configuration loading, I/O, goroutine startup, or resource acquisition from `init()`.
+
+A composition root, normally under `cmd/` or `internal/bootstrap`, must:
+
+- enumerate the concrete modules compiled into the executable;
+- construct an explicit module catalog;
+- provide module configuration and dependencies;
+- build a typed runtime candidate from the catalogs and pass its lifecycle component graph to the generation host;
+- validate duplicate capabilities and missing dependencies before activation;
+- start modules in dependency order and close them in reverse order.
+
+Configuration selects and configures modules from the explicitly assembled catalog. Configuration must not cause otherwise unreferenced code to register or execute implicitly.
+
+Build-specific or generated module catalogs are allowed when they remain ordinary, deterministic Go code and make the complete module set inspectable. Explicit composition does not require all wiring to live in one large `main.go`.
+
+Tests must assemble their required modules explicitly. A test must not depend on unrelated imports or execution order to populate a global registry.
 
 ## Constraints During the Current Migration Stage
 
@@ -100,6 +131,10 @@ Until a unified module host and lifecycle mechanism exist:
 - do not introduce temporary service locators, global containers, or another plugin framework;
 - do not scatter lifecycle management across unrelated business packages;
 - do not add more concrete protocol, provider, storage, or strategy branches to core orchestration code.
+
+Existing `init()`-based codec and provider registration is migration debt. Preserve it where necessary for compatibility, but do not add new implicit registrations.
+
+New modules must use explicit composition. Existing implicit registrations should be replaced incrementally as their corresponding vertical slices migrate to the module host; do not rewrite all registries in an unrelated change.
 
 When adding a capability expected to vary over time, first identify its stable contract, then connect it through an existing boundary. Do not design a general framework solely for hypothetical future implementations.
 
@@ -171,7 +206,7 @@ Pipeline and routing are responsible for:
 - managing retry, failover, and termination conditions;
 - propagating request context, cancellation, timeout, and telemetry information.
 
-The microkernel controls the mandatory order of processing stages. Modules may participate only at declared extension points and may not arbitrarily change system invariants.
+The trusted LLM runtime controls the mandatory order of processing stages. Modules may participate only at declared extension points and may not arbitrarily change domain invariants.
 
 ### Provider Driver
 
@@ -360,6 +395,7 @@ Lifecycle management must:
 
 - be owned by the component that owns the resource;
 - accept and propagate `context.Context`;
+- begin cleanup even when the close context is already canceled and return promptly when it is done;
 - support idempotent shutdown;
 - release already-created resources when initialization fails;
 - shut down in reverse dependency order;
