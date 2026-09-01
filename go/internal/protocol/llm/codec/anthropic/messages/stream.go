@@ -3,8 +3,8 @@ package messages
 import (
 	"encoding/json"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // streamResponseDecoder implements codec.StreamResponseDecoder for Anthropic
@@ -19,15 +19,15 @@ type streamResponseDecoder struct {
 	cacheCreationTokens *uint32
 }
 
-func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, error) {
+func (d *streamResponseDecoder) ParseChunk(payload string) ([]llm.StreamDelta, error) {
 	if payload == "" {
 		return nil, nil
 	}
 	var ev streamEvent
 	if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-		return []ir.StreamDelta{&ir.UnknownDelta{Raw: payload}}, nil
+		return []llm.StreamDelta{&llm.UnknownDelta{Raw: payload}}, nil
 	}
-	var out []ir.StreamDelta
+	var out []llm.StreamDelta
 	switch ev.Type {
 	case "message_start":
 		var p messageStartPayload
@@ -36,12 +36,12 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 			d.inputTokens = p.Message.Usage.InputTokens
 			d.cacheReadTokens = p.Message.Usage.CacheReadTokens
 			d.cacheCreationTokens = p.Message.Usage.CacheCreationTokens
-			out = append(out, &ir.MessageStartDelta{ID: p.Message.ID, Model: p.Message.Model})
+			out = append(out, &llm.MessageStartDelta{ID: p.Message.ID, Model: p.Message.Model})
 		}
 	case "content_block_start":
 		var p contentBlockStartPayload
 		if json.Unmarshal([]byte(payload), &p) == nil && p.ContentBlock.Type == "tool_use" {
-			out = append(out, &ir.ToolCallStartDelta{Index: p.Index, ID: p.ContentBlock.ID, Name: p.ContentBlock.Name})
+			out = append(out, &llm.ToolCallStartDelta{Index: p.Index, ID: p.ContentBlock.ID, Name: p.ContentBlock.Name})
 		}
 	case "content_block_delta":
 		var p contentBlockDeltaPayload
@@ -50,13 +50,13 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 			_ = json.Unmarshal(p.Delta, &dp)
 			switch dp.Type {
 			case "text_delta":
-				out = append(out, &ir.TextDelta{Text: dp.Text})
+				out = append(out, &llm.TextDelta{Text: dp.Text})
 			case "thinking_delta":
-				out = append(out, &ir.ThinkingDelta{Text: dp.Thinking})
+				out = append(out, &llm.ThinkingDelta{Text: dp.Thinking})
 			case "input_json_delta":
-				out = append(out, &ir.ToolCallDeltaDelta{Index: p.Index, Arguments: dp.PartialJSON})
+				out = append(out, &llm.ToolCallDeltaDelta{Index: p.Index, Arguments: dp.PartialJSON})
 			case "signature_delta":
-				out = append(out, &ir.ThinkingSignatureDelta{Signature: dp.Signature})
+				out = append(out, &llm.ThinkingSignatureDelta{Signature: dp.Signature})
 			}
 		}
 	case "message_delta":
@@ -84,7 +84,7 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 			}
 		}
 	case "message_stop":
-		out = append(out, &ir.UsageDelta{Usage: ir.Usage{
+		out = append(out, &llm.UsageDelta{Usage: llm.Usage{
 			PromptTokens:        d.inputTokens,
 			CompletionTokens:    d.outputTokens,
 			TotalTokens:         d.inputTokens + d.outputTokens,
@@ -93,22 +93,22 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 		}})
 		if !d.done {
 			d.done = true
-			out = append(out, &ir.DoneDelta{StopReason: d.stop})
+			out = append(out, &llm.DoneDelta{StopReason: d.stop})
 		}
 	default:
 		// Forward unknown events verbatim (server_tool_use, citations_delta,
 		// web_search_tool_result, future events) — "no silent drops" principle.
-		out = append(out, &ir.UnknownDelta{Raw: payload})
+		out = append(out, &llm.UnknownDelta{Raw: payload})
 	}
 	return out, nil
 }
 
-func (d *streamResponseDecoder) Finish() []ir.StreamDelta {
+func (d *streamResponseDecoder) Finish() []llm.StreamDelta {
 	if d.done {
 		return nil
 	}
 	d.done = true
-	return []ir.StreamDelta{&ir.DoneDelta{StopReason: d.stop}}
+	return []llm.StreamDelta{&llm.DoneDelta{StopReason: d.stop}}
 }
 
 // streamResponseEncoder implements codec.StreamResponseEncoder for Anthropic,
@@ -119,10 +119,10 @@ type streamResponseEncoder struct {
 	openType  string // "", "text", "thinking", "tool_use"
 	openIndex uint
 	nextIndex uint
-	usage     ir.Usage
+	usage     llm.Usage
 }
 
-func (e *streamResponseEncoder) FormatDeltas(deltas []ir.StreamDelta) ([]codec.SSE, error) {
+func (e *streamResponseEncoder) FormatDeltas(deltas []llm.StreamDelta) ([]codec.SSE, error) {
 	var out []codec.SSE
 	for _, d := range deltas {
 		out = append(out, e.formatDelta(d)...)
@@ -132,13 +132,13 @@ func (e *streamResponseEncoder) FormatDeltas(deltas []ir.StreamDelta) ([]codec.S
 
 // FormatDone is a no-op for Anthropic: the terminal message_delta (with usage)
 // and message_stop are emitted when the DoneDelta is processed in FormatDeltas.
-func (e *streamResponseEncoder) FormatDone(_ ir.Usage) ([]codec.SSE, error) {
+func (e *streamResponseEncoder) FormatDone(_ llm.Usage) ([]codec.SSE, error) {
 	return nil, nil
 }
 
-func (e *streamResponseEncoder) formatDelta(d ir.StreamDelta) []codec.SSE {
+func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) []codec.SSE {
 	switch v := d.(type) {
-	case *ir.MessageStartDelta:
+	case *llm.MessageStartDelta:
 		e.id, e.model = v.ID, v.Model
 		e.created = nowUnix()
 		var p messageStartPayload
@@ -146,24 +146,24 @@ func (e *streamResponseEncoder) formatDelta(d ir.StreamDelta) []codec.SSE {
 		p.Message.ID = v.ID
 		p.Message.Model = v.Model
 		return []codec.SSE{sse("message_start", p), sse("ping", streamEvent{Type: "ping"})}
-	case *ir.TextDelta:
+	case *llm.TextDelta:
 		out := e.ensureBlock("text", contentBlock{Type: "text"})
 		return append(out, deltaSSE(e.openIndex, deltaPayload{Type: "text_delta", Text: v.Text}))
-	case *ir.ThinkingDelta:
+	case *llm.ThinkingDelta:
 		out := e.ensureBlock("thinking", contentBlock{Type: "thinking"})
 		return append(out, deltaSSE(e.openIndex, deltaPayload{Type: "thinking_delta", Thinking: v.Text}))
-	case *ir.ThinkingSignatureDelta:
+	case *llm.ThinkingSignatureDelta:
 		return []codec.SSE{deltaSSE(e.openIndex, deltaPayload{Type: "signature_delta", Signature: v.Signature})}
-	case *ir.ToolCallStartDelta:
+	case *llm.ToolCallStartDelta:
 		return e.ensureBlock("tool_use", contentBlock{Type: "tool_use", ID: v.ID, Name: v.Name, Input: json.RawMessage("{}")})
-	case *ir.ToolCallDeltaDelta:
+	case *llm.ToolCallDeltaDelta:
 		return []codec.SSE{deltaSSE(e.openIndex, deltaPayload{Type: "input_json_delta", PartialJSON: v.Arguments})}
-	case *ir.UsageDelta:
+	case *llm.UsageDelta:
 		e.usage = v.Usage
 		return nil
-	case *ir.DoneDelta:
+	case *llm.DoneDelta:
 		return e.terminate(v.StopReason)
-	case *ir.UnknownDelta:
+	case *llm.UnknownDelta:
 		return []codec.SSE{{Data: v.Raw}}
 	}
 	return nil

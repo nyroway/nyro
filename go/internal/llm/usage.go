@@ -1,4 +1,4 @@
-package ir
+package llm
 
 // ServerToolUsage counts server-side tool calls (web search, web fetch).
 type ServerToolUsage struct {

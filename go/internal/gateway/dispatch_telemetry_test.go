@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
@@ -126,7 +126,7 @@ func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 	if _, ok := ex.GetExt(telemetry.ExtRoute).(storage.Route); ok {
 		t.Error("exchange carries a route for a model that does not exist")
 	}
-	if ex.Usage != (ir.Usage{}) {
+	if ex.Usage != (llm.Usage{}) {
 		t.Errorf("exchange usage = %+v; want zero on the early-exit path", ex.Usage)
 	}
 }

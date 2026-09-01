@@ -17,10 +17,10 @@ func (MessagesHandler) Capabilities() spec.EndpointCapabilities {
 	}
 }
 
-func (MessagesHandler) MakeRequestDecoder() codec.RequestDecoder   { return requestDecoder{} }
-func (MessagesHandler) MakeRequestEncoder() codec.RequestEncoder   { return requestEncoder{} }
-func (MessagesHandler) MakeResponseDecoder() codec.ResponseDecoder { return responseDecoder{} }
-func (MessagesHandler) MakeResponseEncoder() codec.ResponseEncoder { return responseEncoder{} }
+func (MessagesHandler) MakeRequestDecoder() codec.ChatRequestDecoder   { return requestDecoder{} }
+func (MessagesHandler) MakeRequestEncoder() codec.ChatRequestEncoder   { return requestEncoder{} }
+func (MessagesHandler) MakeResponseDecoder() codec.ChatResponseDecoder { return responseDecoder{} }
+func (MessagesHandler) MakeResponseEncoder() codec.ChatResponseEncoder { return responseEncoder{} }
 
 func (MessagesHandler) MakeStreamResponseDecoder() codec.StreamResponseDecoder {
 	return &streamResponseDecoder{}

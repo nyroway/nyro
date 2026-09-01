@@ -3,7 +3,7 @@ package chatcompletions
 import (
 	"strings"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 const (
@@ -20,15 +20,15 @@ type thinkState struct {
 // processThinkTags splits inline `<think>...</think>` tags from text content
 // across chunk boundaries, emitting ThinkingDelta inside tags and TextDelta
 // outside. Ported from Rust stream.rs think-tag state machine.
-func processThinkTags(text string, ts *thinkState) []ir.StreamDelta {
+func processThinkTags(text string, ts *thinkState) []llm.StreamDelta {
 	ts.buf += text
-	var out []ir.StreamDelta
+	var out []llm.StreamDelta
 	for {
 		if !ts.inThink {
 			idx := strings.Index(ts.buf, thinkOpen)
 			if idx >= 0 {
 				if idx > 0 {
-					out = append(out, &ir.TextDelta{Text: ts.buf[:idx]})
+					out = append(out, &llm.TextDelta{Text: ts.buf[:idx]})
 				}
 				ts.buf = ts.buf[idx+len(thinkOpen):]
 				ts.inThink = true
@@ -37,7 +37,7 @@ func processThinkTags(text string, ts *thinkState) []ir.StreamDelta {
 			// No full tag; check if buf ends with a prefix of <think>.
 			safe := len(ts.buf) - longestSuffixPrefix(ts.buf, thinkOpen)
 			if safe > 0 {
-				out = append(out, &ir.TextDelta{Text: ts.buf[:safe]})
+				out = append(out, &llm.TextDelta{Text: ts.buf[:safe]})
 				ts.buf = ts.buf[safe:]
 			}
 			return out
@@ -46,7 +46,7 @@ func processThinkTags(text string, ts *thinkState) []ir.StreamDelta {
 		idx := strings.Index(ts.buf, thinkClose)
 		if idx >= 0 {
 			if idx > 0 {
-				out = append(out, &ir.ThinkingDelta{Text: ts.buf[:idx]})
+				out = append(out, &llm.ThinkingDelta{Text: ts.buf[:idx]})
 			}
 			ts.buf = ts.buf[idx+len(thinkClose):]
 			ts.inThink = false
@@ -54,7 +54,7 @@ func processThinkTags(text string, ts *thinkState) []ir.StreamDelta {
 		}
 		safe := len(ts.buf) - longestSuffixPrefix(ts.buf, thinkClose)
 		if safe > 0 {
-			out = append(out, &ir.ThinkingDelta{Text: ts.buf[:safe]})
+			out = append(out, &llm.ThinkingDelta{Text: ts.buf[:safe]})
 			ts.buf = ts.buf[safe:]
 		}
 		return out
@@ -62,16 +62,16 @@ func processThinkTags(text string, ts *thinkState) []ir.StreamDelta {
 }
 
 // flushThink emits any remaining buffered text (called on stream end).
-func flushThink(ts *thinkState) []ir.StreamDelta {
+func flushThink(ts *thinkState) []llm.StreamDelta {
 	if ts.buf == "" {
 		return nil
 	}
 	text := ts.buf
 	ts.buf = ""
 	if ts.inThink {
-		return []ir.StreamDelta{&ir.ThinkingDelta{Text: text}}
+		return []llm.StreamDelta{&llm.ThinkingDelta{Text: text}}
 	}
-	return []ir.StreamDelta{&ir.TextDelta{Text: text}}
+	return []llm.StreamDelta{&llm.TextDelta{Text: text}}
 }
 
 // longestSuffixPrefix returns the length of the longest suffix of s that is a

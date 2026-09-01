@@ -10,8 +10,8 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
@@ -74,8 +74,8 @@ func (s Stage) Handle(ex *pipeline.Exchange, next func() error) error {
 // OnDelta accumulates streaming usage. The dispatcher also tracks usage for
 // the response it writes; this keeps the telemetry view correct for exchanges
 // that end mid-stream.
-func (s Stage) OnDelta(ex *pipeline.Exchange, d ir.StreamDelta) {
-	if u, ok := d.(*ir.UsageDelta); ok {
+func (s Stage) OnDelta(ex *pipeline.Exchange, d llm.StreamDelta) {
+	if u, ok := d.(*llm.UsageDelta); ok {
 		ex.Usage = u.Usage
 	}
 }
@@ -172,7 +172,7 @@ func (s Stage) emit(ex *pipeline.Exchange, active *activeSet, span trace.Span) {
 }
 
 // cacheRead returns the cache-read token count, treating a nil pointer as 0.
-func cacheRead(u ir.Usage) int64 {
+func cacheRead(u llm.Usage) int64 {
 	if u.CacheReadTokens != nil {
 		return int64(*u.CacheReadTokens)
 	}

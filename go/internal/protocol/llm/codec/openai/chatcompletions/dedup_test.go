@@ -3,16 +3,16 @@ package chatcompletions
 import (
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 func TestNormalizeToolCallIDs(t *testing.T) {
 	t.Parallel()
-	msgs := []ir.Message{
-		{Role: ir.RoleAssistant, ToolCalls: []ir.ToolCall{{ID: "call_a", Name: "Bash"}}},
-		{Role: ir.RoleTool, ToolCallID: "call_a", Content: &ir.TextContent{Text: "result1"}},
-		{Role: ir.RoleAssistant, ToolCalls: []ir.ToolCall{{ID: "call_a", Name: "Bash"}}}, // duplicate
-		{Role: ir.RoleTool, ToolCallID: "call_a", Content: &ir.TextContent{Text: "result2"}},
+	msgs := []llm.Message{
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call_a", Name: "Bash"}}},
+		{Role: llm.RoleTool, ToolCallID: "call_a", Content: &llm.TextContent{Text: "result1"}},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call_a", Name: "Bash"}}}, // duplicate
+		{Role: llm.RoleTool, ToolCallID: "call_a", Content: &llm.TextContent{Text: "result2"}},
 	}
 	out := normalizeToolCallIDs(msgs)
 	// First occurrence keeps original ID.
@@ -28,18 +28,18 @@ func TestNormalizeToolCallIDs(t *testing.T) {
 		t.Errorf("tool_result ID %q should match remapped %q", out[3].ToolCallID, out[2].ToolCalls[0].ID)
 	}
 	// Non-duplicate case: no-op.
-	clean := []ir.Message{
-		{Role: ir.RoleUser, Content: &ir.TextContent{Text: "hi"}},
+	clean := []llm.Message{
+		{Role: llm.RoleUser, Content: &llm.TextContent{Text: "hi"}},
 	}
 	result := normalizeToolCallIDs(clean)
-	if len(result) != 1 || result[0].Role != ir.RoleUser {
+	if len(result) != 1 || result[0].Role != llm.RoleUser {
 		t.Error("normalize should be a no-op for messages without tool calls")
 	}
 
 	// Orphan pruning: last assistant with tool_calls that have no results.
-	orphan := []ir.Message{
-		{Role: ir.RoleUser, Content: &ir.TextContent{Text: "hi"}},
-		{Role: ir.RoleAssistant, ToolCalls: []ir.ToolCall{{ID: "orphan_call", Name: "Bash"}}},
+	orphan := []llm.Message{
+		{Role: llm.RoleUser, Content: &llm.TextContent{Text: "hi"}},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "orphan_call", Name: "Bash"}}},
 	}
 	normalized := normalizeToolCallIDs(orphan)
 	if len(normalized[1].ToolCalls) != 0 {

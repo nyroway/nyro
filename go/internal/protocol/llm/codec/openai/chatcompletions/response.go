@@ -4,19 +4,19 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 // responseDecoder implements codec.ResponseDecoder for non-streaming chat
 // completions.
 type responseDecoder struct{}
 
-func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
+func (responseDecoder) Parse(body []byte) (*llm.ChatResponse, error) {
 	var w chatCompletion
 	if err := json.Unmarshal(body, &w); err != nil {
 		return nil, err
 	}
-	resp := ir.NewAiResponse(w.ID, w.Model)
+	resp := llm.NewChatResponse(w.ID, w.Model)
 	if len(w.Choices) > 0 {
 		c := w.Choices[0]
 		resp.Content = textContent(c.Message.Content)
@@ -26,7 +26,7 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 			resp.ReasoningContent = c.Message.Reasoning
 		}
 		for _, tc := range c.Message.ToolCalls {
-			resp.ToolCalls = append(resp.ToolCalls, ir.ToolCall{
+			resp.ToolCalls = append(resp.ToolCalls, llm.ToolCall{
 				ID:        tc.ID,
 				Name:      tc.Function.Name,
 				Arguments: tc.Function.Arguments,
@@ -46,7 +46,7 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 // completions.
 type responseEncoder struct{}
 
-func (responseEncoder) Format(resp *ir.AiResponse) ([]byte, error) {
+func (responseEncoder) Format(resp *llm.ChatResponse) ([]byte, error) {
 	msg := chatMessage{Role: "assistant"}
 	if resp.Content != "" {
 		msg.Content = mustJSONString(resp.Content)
@@ -82,11 +82,11 @@ func textContent(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	return ir.ToText(decodeContent(raw))
+	return llm.ToText(decodeContent(raw))
 }
 
-func usageFromWire(u chatUsage) ir.Usage {
-	result := ir.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+func usageFromWire(u chatUsage) llm.Usage {
+	result := llm.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
 	if u.PromptTokensDetails != nil {
 		ct := u.PromptTokensDetails.CachedTokens
 		result.CacheReadTokens = &ct
@@ -94,7 +94,7 @@ func usageFromWire(u chatUsage) ir.Usage {
 	return result
 }
 
-func usageToWire(u ir.Usage) chatUsage {
+func usageToWire(u llm.Usage) chatUsage {
 	return chatUsage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
 }
 

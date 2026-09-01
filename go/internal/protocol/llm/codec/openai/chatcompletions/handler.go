@@ -21,10 +21,14 @@ func (ChatCompletionsHandler) Capabilities() spec.EndpointCapabilities {
 	}
 }
 
-func (ChatCompletionsHandler) MakeRequestDecoder() codec.RequestDecoder   { return requestDecoder{} }
-func (ChatCompletionsHandler) MakeRequestEncoder() codec.RequestEncoder   { return requestEncoder{} }
-func (ChatCompletionsHandler) MakeResponseDecoder() codec.ResponseDecoder { return responseDecoder{} }
-func (ChatCompletionsHandler) MakeResponseEncoder() codec.ResponseEncoder { return responseEncoder{} }
+func (ChatCompletionsHandler) MakeRequestDecoder() codec.ChatRequestDecoder { return requestDecoder{} }
+func (ChatCompletionsHandler) MakeRequestEncoder() codec.ChatRequestEncoder { return requestEncoder{} }
+func (ChatCompletionsHandler) MakeResponseDecoder() codec.ChatResponseDecoder {
+	return responseDecoder{}
+}
+func (ChatCompletionsHandler) MakeResponseEncoder() codec.ChatResponseEncoder {
+	return responseEncoder{}
+}
 
 func (ChatCompletionsHandler) MakeStreamResponseDecoder() codec.StreamResponseDecoder {
 	return &streamResponseDecoder{}

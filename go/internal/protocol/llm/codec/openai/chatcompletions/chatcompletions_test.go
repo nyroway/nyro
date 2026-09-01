@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 )
 
@@ -36,7 +36,7 @@ func TestRequestRoundTrip(t *testing.T) {
 	if req.Model != "gpt-4o" {
 		t.Errorf("model=%q", req.Model)
 	}
-	if len(req.Messages) != 1 || ir.ToText(req.Messages[0].Content) != "hi" {
+	if len(req.Messages) != 1 || llm.ToText(req.Messages[0].Content) != "hi" {
 		t.Errorf("messages wrong: %+v", req.Messages)
 	}
 	if req.Generation.Temperature == nil || *req.Generation.Temperature != 0.7 {
@@ -51,7 +51,7 @@ func TestRequestRoundTrip(t *testing.T) {
 	if len(req.Tools) != 1 || req.Tools[0].Name != "get_weather" {
 		t.Errorf("tools=%+v", req.Tools)
 	}
-	if _, ok := req.ToolChoice.(*ir.AutoToolChoice); !ok {
+	if _, ok := req.ToolChoice.(*llm.AutoToolChoice); !ok {
 		t.Errorf("tool_choice type=%T", req.ToolChoice)
 	}
 
@@ -90,14 +90,14 @@ func TestStreamDecode(t *testing.T) {
 		}
 		for _, dl := range deltas {
 			switch v := dl.(type) {
-			case *ir.MessageStartDelta:
+			case *llm.MessageStartDelta:
 				sawStart = true
 				if v.ID != "c1" || v.Model != "gpt-4o" {
 					t.Errorf("start=%+v", v)
 				}
-			case *ir.TextDelta:
+			case *llm.TextDelta:
 				text.WriteString(v.Text)
-			case *ir.DoneDelta:
+			case *llm.DoneDelta:
 				sawDone = true
 				if v.StopReason != "stop" {
 					t.Errorf("stop=%q", v.StopReason)
@@ -119,9 +119,9 @@ func TestStreamDecode(t *testing.T) {
 func TestStreamEncode(t *testing.T) {
 	t.Parallel()
 	e := &streamResponseEncoder{}
-	deltas := []ir.StreamDelta{
-		&ir.MessageStartDelta{ID: "c1", Model: "gpt-4o"},
-		&ir.TextDelta{Text: "Hi"},
+	deltas := []llm.StreamDelta{
+		&llm.MessageStartDelta{ID: "c1", Model: "gpt-4o"},
+		&llm.TextDelta{Text: "Hi"},
 	}
 	sse, err := e.FormatDeltas(deltas)
 	if err != nil {
@@ -131,7 +131,7 @@ func TestStreamEncode(t *testing.T) {
 		t.Fatalf("got %d frames, want 2", len(sse))
 	}
 
-	done, err := e.FormatDone(ir.Usage{PromptTokens: 5, CompletionTokens: 2, TotalTokens: 7})
+	done, err := e.FormatDone(llm.Usage{PromptTokens: 5, CompletionTokens: 2, TotalTokens: 7})
 	if err != nil {
 		t.Fatalf("done: %v", err)
 	}

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 )
 
@@ -39,7 +39,7 @@ func TestRequestRoundTrip(t *testing.T) {
 	if req.System != "be brief" {
 		t.Errorf("system=%q", req.System)
 	}
-	if len(req.Messages) != 1 || ir.ToText(req.Messages[0].Content) != "hi" {
+	if len(req.Messages) != 1 || llm.ToText(req.Messages[0].Content) != "hi" {
 		t.Errorf("messages=%+v", req.Messages)
 	}
 	if !req.Stream.Enabled {
@@ -130,7 +130,7 @@ func TestStreamToolCallStopReason(t *testing.T) {
 	}
 	var stop string
 	for _, dl := range deltas {
-		if v, ok := dl.(*ir.DoneDelta); ok {
+		if v, ok := dl.(*llm.DoneDelta); ok {
 			stop = v.StopReason
 		}
 	}
@@ -154,9 +154,9 @@ func TestResponseEncoderFinishReason(t *testing.T) {
 		"max_tokens": "MAX_TOKENS",
 	}
 	for in, want := range cases {
-		resp := ir.NewAiResponse("id", "m")
+		resp := llm.NewChatResponse("id", "m")
 		resp.StopReason = in
-		resp.ToolCalls = []ir.ToolCall{{Name: "f", Arguments: "{}"}}
+		resp.ToolCalls = []llm.ToolCall{{Name: "f", Arguments: "{}"}}
 		out, err := responseEncoder{}.Format(resp)
 		if err != nil {
 			t.Fatalf("format %q: %v", in, err)
@@ -195,10 +195,10 @@ func TestGeminiFunctionResponseWrapping(t *testing.T) {
 func TestThoughtSignatureEncoding(t *testing.T) {
 	t.Parallel()
 	enc := func(sig string) string {
-		req := &ir.AiRequest{Model: "m", Messages: []ir.Message{{
-			Role: ir.RoleAssistant,
-			Content: &ir.BlocksContent{Blocks: []ir.ContentBlock{
-				&ir.ToolUseBlock{ID: "c1", Name: "get_weather", Input: json.RawMessage(`{"city":"Paris"}`), ThoughtSignature: sig},
+		req := &llm.ChatRequest{Model: "m", Messages: []llm.Message{{
+			Role: llm.RoleAssistant,
+			Content: &llm.BlocksContent{Blocks: []llm.ContentBlock{
+				&llm.ToolUseBlock{ID: "c1", Name: "get_weather", Input: json.RawMessage(`{"city":"Paris"}`), ThoughtSignature: sig},
 			}},
 		}}}
 		out, err := requestEncoder{}.Encode(req)
@@ -232,11 +232,11 @@ func TestStreamDecode(t *testing.T) {
 		}
 		for _, dl := range deltas {
 			switch v := dl.(type) {
-			case *ir.TextDelta:
+			case *llm.TextDelta:
 				text.WriteString(v.Text)
-			case *ir.UsageDelta:
+			case *llm.UsageDelta:
 				total = v.Usage.TotalTokens
-			case *ir.DoneDelta:
+			case *llm.DoneDelta:
 				sawDone = true
 				if v.StopReason != "stop" {
 					t.Errorf("stop=%q", v.StopReason)
@@ -258,16 +258,16 @@ func TestStreamDecode(t *testing.T) {
 func TestStreamEncode(t *testing.T) {
 	t.Parallel()
 	e := &streamResponseEncoder{}
-	deltas := []ir.StreamDelta{
-		&ir.TextDelta{Text: "Hi"},
-		&ir.UsageDelta{Usage: ir.Usage{PromptTokens: 1, CompletionTokens: 2, TotalTokens: 3}},
-		&ir.DoneDelta{StopReason: "STOP"},
+	deltas := []llm.StreamDelta{
+		&llm.TextDelta{Text: "Hi"},
+		&llm.UsageDelta{Usage: llm.Usage{PromptTokens: 1, CompletionTokens: 2, TotalTokens: 3}},
+		&llm.DoneDelta{StopReason: "STOP"},
 	}
 	frames, err := e.FormatDeltas(deltas)
 	if err != nil {
 		t.Fatalf("format: %v", err)
 	}
-	done, _ := e.FormatDone(ir.Usage{})
+	done, _ := e.FormatDone(llm.Usage{})
 	all := append(append([]codec.SSE{}, frames...), done...)
 
 	var joined strings.Builder

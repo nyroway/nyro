@@ -1,4 +1,4 @@
-package ir
+package llm
 
 // MediaSource is the data source for an image or audio content block.
 // Sealed union; dispatch via type switch. Ported from MediaSource.

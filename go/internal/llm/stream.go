@@ -1,8 +1,8 @@
-package ir
+package llm
 
 // StreamDelta is a single parsed delta from a streaming response. The stream
 // parser emits a sequence of StreamDelta values; the accumulator coalesces
-// them into a complete AiResponse.
+// them into a complete ChatResponse.
 //
 // Sealed union; dispatch via type switch. Ported from StreamDelta.
 type StreamDelta interface{ streamDelta() }
@@ -66,7 +66,7 @@ type DoneDelta struct{ StopReason string }
 func (*DoneDelta) streamDelta() {}
 
 // StreamErrorDelta is a mid-stream error detected by the parser.
-type StreamErrorDelta struct{ Error *AiError }
+type StreamErrorDelta struct{ Error *Error }
 
 func (*StreamErrorDelta) streamDelta() {}
 

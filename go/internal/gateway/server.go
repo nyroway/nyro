@@ -14,12 +14,12 @@ import (
 	// Blank imports run each codec's init(), which registers its
 	// EndpointHandler. Adding an ingress protocol is a line here and nothing
 	// else: the routes come from the handler's own Capabilities().
+	"github.com/nyroway/nyro/go/internal/llm"
 	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/anthropic/messages"
 	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/gemini/generatecontent"
 	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/chatcompletions"
 	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/embeddings"
 	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/responses"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // NewRouter builds the chi router with the Gateway routes wired.
@@ -58,7 +58,7 @@ func NewRouter(gw *Gateway) chi.Router {
 }
 
 // routeParams collects the parameters chi matched for the current route, so a
-// PathDecoder can read the parts of the URL its protocol puts there.
+// ChatPathDecoder can read the parts of the URL its protocol puts there.
 func routeParams(r *http.Request) map[string]string {
 	rctx := chi.RouteContext(r.Context())
 	if rctx == nil {
@@ -90,17 +90,29 @@ func handleProxy(w http.ResponseWriter, r *http.Request, gw *Gateway, h codec.En
 		return
 	}
 
-	var req *ir.AiRequest
-	dec := h.MakeRequestDecoder()
-	if pd, ok := dec.(codec.PathDecoder); ok {
-		req, err = pd.DecodeWithPath(body, routeParams(r))
-	} else {
-		req, err = dec.Decode(body)
-	}
-	if err != nil {
-		webutil.Error(w, http.StatusBadRequest, "decode request: "+err.Error(), "GATEWAY_ERROR")
+	switch h := h.(type) {
+	case codec.ChatEndpointHandler:
+		var req *llm.ChatRequest
+		dec := h.MakeRequestDecoder()
+		if pd, ok := dec.(codec.ChatPathDecoder); ok {
+			req, err = pd.DecodeWithPath(body, routeParams(r))
+		} else {
+			req, err = dec.Decode(body)
+		}
+		if err == nil {
+			gw.Dispatch(w, r, req, h)
+			return
+		}
+	case codec.EmbeddingEndpointHandler:
+		var req *llm.EmbeddingRequest
+		req, err = h.MakeRequestDecoder().Decode(body)
+		if err == nil {
+			gw.Dispatch(w, r, req, h)
+			return
+		}
+	default:
+		webutil.Error(w, http.StatusInternalServerError, "unsupported endpoint workload", "GATEWAY_ERROR")
 		return
 	}
-
-	gw.Dispatch(w, r, req, h)
+	webutil.Error(w, http.StatusBadRequest, "decode request: "+err.Error(), "GATEWAY_ERROR")
 }

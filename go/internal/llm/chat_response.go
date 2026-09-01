@@ -1,4 +1,4 @@
-package ir
+package llm
 
 import "encoding/json"
 
@@ -48,9 +48,9 @@ type UnknownItem struct{ Raw json.RawMessage }
 
 func (*UnknownItem) responseItem() {}
 
-// AiResponse is the unified egress IR produced by codec response parsers and
-// the accumulator. Ported from AiResponse.
-type AiResponse struct {
+// ChatResponse is the canonical response produced by chat response codecs and
+// stream accumulation.
+type ChatResponse struct {
 	ID                 string
 	Model              string
 	Content            string // primary text (convenience; also in items)
@@ -60,14 +60,14 @@ type AiResponse struct {
 	Items              []ResponseItem // optional (nil = absent)
 	StopReason         string         // optional
 	Usage              Usage
-	Error              *AiError // optional
+	Error              *Error // optional
 	Vendor             VendorExtensions
 }
 
-// NewAiResponse constructs an AiResponse with id and model.
-func NewAiResponse(id, model string) *AiResponse {
-	return &AiResponse{ID: id, Model: model}
+// NewChatResponse constructs a ChatResponse with id and model.
+func NewChatResponse(id, model string) *ChatResponse {
+	return &ChatResponse{ID: id, Model: model}
 }
 
 // IsError reports whether the response carries a normalized error.
-func (r *AiResponse) IsError() bool { return r.Error != nil }
+func (r *ChatResponse) IsError() bool { return r.Error != nil }

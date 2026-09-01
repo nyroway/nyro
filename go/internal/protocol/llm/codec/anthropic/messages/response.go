@@ -4,18 +4,18 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 // responseDecoder parses a non-streaming Anthropic message response.
 type responseDecoder struct{}
 
-func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
+func (responseDecoder) Parse(body []byte) (*llm.ChatResponse, error) {
 	var w response
 	if err := json.Unmarshal(body, &w); err != nil {
 		return nil, err
 	}
-	resp := ir.NewAiResponse(w.ID, w.Model)
+	resp := llm.NewChatResponse(w.ID, w.Model)
 	resp.StopReason = w.StopReason
 	for _, b := range w.Content {
 		switch b.Type {
@@ -31,10 +31,10 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 			if args == "" {
 				args = "{}"
 			}
-			resp.ToolCalls = append(resp.ToolCalls, ir.ToolCall{ID: b.ID, Name: b.Name, Arguments: args})
+			resp.ToolCalls = append(resp.ToolCalls, llm.ToolCall{ID: b.ID, Name: b.Name, Arguments: args})
 		}
 	}
-	resp.Usage = ir.Usage{
+	resp.Usage = llm.Usage{
 		PromptTokens:        w.Usage.InputTokens,
 		CompletionTokens:    w.Usage.OutputTokens,
 		TotalTokens:         w.Usage.InputTokens + w.Usage.OutputTokens,
@@ -47,7 +47,7 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 // responseEncoder formats an IR response as an Anthropic message.
 type responseEncoder struct{}
 
-func (responseEncoder) Format(resp *ir.AiResponse) ([]byte, error) {
+func (responseEncoder) Format(resp *llm.ChatResponse) ([]byte, error) {
 	var blocks []contentBlock
 	if resp.ReasoningContent != "" {
 		blocks = append(blocks, contentBlock{Type: "thinking", Thinking: resp.ReasoningContent})

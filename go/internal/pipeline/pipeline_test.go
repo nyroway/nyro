@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 // recorder is a Stage that appends to a shared trace on the way in and on the
@@ -42,7 +42,7 @@ type streamRecorder struct {
 	deltas *int
 }
 
-func (s streamRecorder) OnDelta(ex *Exchange, d ir.StreamDelta) { *s.deltas++ }
+func (s streamRecorder) OnDelta(ex *Exchange, d llm.StreamDelta) { *s.deltas++ }
 
 func TestRunOrderUnwindsInReverse(t *testing.T) {
 	var got []string
@@ -148,8 +148,8 @@ func TestEmitDeltaOnlyReachesStreamStages(t *testing.T) {
 		streamRecorder{recorder: recorder{name: "streaming", trace: &got}, deltas: &deltas},
 	)
 	ex := &Exchange{}
-	c.EmitDelta(ex, &ir.UsageDelta{})
-	c.EmitDelta(ex, &ir.UsageDelta{})
+	c.EmitDelta(ex, &llm.UsageDelta{})
+	c.EmitDelta(ex, &llm.UsageDelta{})
 
 	if deltas != 2 {
 		t.Errorf("stream stage saw %d deltas, want 2", deltas)
@@ -161,7 +161,7 @@ func TestEmitDeltaOnlyReachesStreamStages(t *testing.T) {
 
 func TestEmitDeltaOnNilChainIsNoop(t *testing.T) {
 	var c *Chain
-	c.EmitDelta(&Exchange{}, &ir.UsageDelta{}) // must not panic
+	c.EmitDelta(&Exchange{}, &llm.UsageDelta{}) // must not panic
 }
 
 func TestNewChainCopiesStages(t *testing.T) {

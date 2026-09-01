@@ -1,4 +1,4 @@
-package ir
+package llm
 
 // ReasoningEffort is the effort level for reasoning / thinking models.
 // Sealed union: discrete levels plus a token-budget variant.

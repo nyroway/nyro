@@ -1,4 +1,4 @@
-package ir
+package llm
 
 // CacheTtl is a prompt-cache time-to-live hint. The default is 5 minutes.
 // Ported from CacheTtl (serde rename_all = "snake_case").

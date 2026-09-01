@@ -1,4 +1,4 @@
-package ir
+package llm
 
 import "encoding/json"
 
@@ -8,7 +8,7 @@ import "encoding/json"
 //
 // Populated by the ingress decoder; consumed by the egress encoder. When Nyro
 // translates between protocols, the source ProtocolExt is discarded and the
-// encoder relies solely on the core AiRequest fields.
+// encoder relies solely on the core ChatRequest fields.
 // Ported from protocol/ir/ext.rs.
 type ProtocolExt interface{ protocolExt() }
 

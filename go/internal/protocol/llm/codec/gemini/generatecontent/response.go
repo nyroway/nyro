@@ -3,18 +3,18 @@ package generatecontent
 import (
 	"encoding/json"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 // responseDecoder parses a non-streaming Gemini generateContent response.
 type responseDecoder struct{}
 
-func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
+func (responseDecoder) Parse(body []byte) (*llm.ChatResponse, error) {
 	var w response
 	if err := json.Unmarshal(body, &w); err != nil {
 		return nil, err
 	}
-	resp := ir.NewAiResponse(w.ResponseID, w.ModelVersion)
+	resp := llm.NewChatResponse(w.ResponseID, w.ModelVersion)
 	if len(w.Candidates) > 0 {
 		c := w.Candidates[0]
 		resp.StopReason = normalizeGeminiFinishReason(c.FinishReason)
@@ -25,7 +25,7 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 				if args == "" {
 					args = "{}"
 				}
-				resp.ToolCalls = append(resp.ToolCalls, ir.ToolCall{Name: p.FunctionCall.Name, Arguments: args})
+				resp.ToolCalls = append(resp.ToolCalls, llm.ToolCall{Name: p.FunctionCall.Name, Arguments: args})
 			case p.Thought:
 				resp.ReasoningContent += p.Text
 			default:
@@ -43,7 +43,7 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 		}
 	}
 	if w.UsageMetadata != nil {
-		resp.Usage = ir.Usage{
+		resp.Usage = llm.Usage{
 			PromptTokens:     w.UsageMetadata.PromptTokenCount,
 			CompletionTokens: w.UsageMetadata.CandidatesTokenCount,
 			TotalTokens:      w.UsageMetadata.TotalTokenCount,
@@ -55,7 +55,7 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 // responseEncoder formats an IR response as a Gemini generateContent response.
 type responseEncoder struct{}
 
-func (responseEncoder) Format(resp *ir.AiResponse) ([]byte, error) {
+func (responseEncoder) Format(resp *llm.ChatResponse) ([]byte, error) {
 	var parts []part
 	if resp.ReasoningContent != "" {
 		parts = append(parts, part{Text: resp.ReasoningContent, Thought: true})

@@ -3,8 +3,8 @@ package chatcompletions
 import (
 	"encoding/json"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // streamResponseDecoder implements codec.StreamResponseDecoder for OpenAI
@@ -19,41 +19,41 @@ type streamResponseDecoder struct {
 	think   thinkState
 }
 
-func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, error) {
+func (d *streamResponseDecoder) ParseChunk(payload string) ([]llm.StreamDelta, error) {
 	if payload == "[DONE]" {
 		if d.done {
 			return nil, nil
 		}
 		d.done = true
-		return []ir.StreamDelta{&ir.DoneDelta{StopReason: d.stop}}, nil
+		return []llm.StreamDelta{&llm.DoneDelta{StopReason: d.stop}}, nil
 	}
 
 	var w chatCompletionChunk
 	if err := json.Unmarshal([]byte(payload), &w); err != nil {
 		// Keep-alive (":") or unparseable line — preserve verbatim.
-		return []ir.StreamDelta{&ir.UnknownDelta{Raw: payload}}, nil
+		return []llm.StreamDelta{&llm.UnknownDelta{Raw: payload}}, nil
 	}
 
-	var out []ir.StreamDelta
+	var out []llm.StreamDelta
 	if !d.started && (w.ID != "" || w.Model != "") {
 		d.id, d.model, d.started = w.ID, w.Model, true
-		out = append(out, &ir.MessageStartDelta{ID: w.ID, Model: w.Model})
+		out = append(out, &llm.MessageStartDelta{ID: w.ID, Model: w.Model})
 	}
 	for _, c := range w.Choices {
 		if c.Delta.Content != "" {
 			out = append(out, processThinkTags(c.Delta.Content, &d.think)...)
 		}
 		if c.Delta.ReasoningContent != "" {
-			out = append(out, &ir.ThinkingDelta{Text: c.Delta.ReasoningContent})
+			out = append(out, &llm.ThinkingDelta{Text: c.Delta.ReasoningContent})
 		} else if c.Delta.Reasoning != "" {
-			out = append(out, &ir.ThinkingDelta{Text: c.Delta.Reasoning})
+			out = append(out, &llm.ThinkingDelta{Text: c.Delta.Reasoning})
 		}
 		for _, tc := range c.Delta.ToolCalls {
 			if tc.ID != "" || tc.Function.Name != "" {
-				out = append(out, &ir.ToolCallStartDelta{Index: tc.Index, ID: tc.ID, Name: tc.Function.Name})
+				out = append(out, &llm.ToolCallStartDelta{Index: tc.Index, ID: tc.ID, Name: tc.Function.Name})
 			}
 			if tc.Function.Arguments != "" {
-				out = append(out, &ir.ToolCallDeltaDelta{Index: tc.Index, Arguments: tc.Function.Arguments})
+				out = append(out, &llm.ToolCallDeltaDelta{Index: tc.Index, Arguments: tc.Function.Arguments})
 			}
 		}
 		if c.FinishReason != nil {
@@ -61,24 +61,24 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 		}
 	}
 	if w.Usage != nil {
-		out = append(out, &ir.UsageDelta{Usage: usageFromWire(*w.Usage)})
+		out = append(out, &llm.UsageDelta{Usage: usageFromWire(*w.Usage)})
 	}
 	// Emit Done as soon as a finish_reason arrives (robust even if the
 	// provider omits the [DONE] sentinel); [DONE] then becomes a no-op.
 	if d.stop != "" && !d.done {
 		d.done = true
-		out = append(out, &ir.DoneDelta{StopReason: d.stop})
+		out = append(out, &llm.DoneDelta{StopReason: d.stop})
 	}
 	return out, nil
 }
 
-func (d *streamResponseDecoder) Finish() []ir.StreamDelta {
+func (d *streamResponseDecoder) Finish() []llm.StreamDelta {
 	out := flushThink(&d.think)
 	if d.done {
 		return out
 	}
 	d.done = true
-	return append(out, &ir.DoneDelta{StopReason: d.stop})
+	return append(out, &llm.DoneDelta{StopReason: d.stop})
 }
 
 // streamResponseEncoder implements codec.StreamResponseEncoder for OpenAI
@@ -89,7 +89,7 @@ type streamResponseEncoder struct {
 	created int64
 }
 
-func (e *streamResponseEncoder) FormatDeltas(deltas []ir.StreamDelta) ([]codec.SSE, error) {
+func (e *streamResponseEncoder) FormatDeltas(deltas []llm.StreamDelta) ([]codec.SSE, error) {
 	var out []codec.SSE
 	for _, d := range deltas {
 		out = append(out, e.formatDelta(d)...)
@@ -97,7 +97,7 @@ func (e *streamResponseEncoder) FormatDeltas(deltas []ir.StreamDelta) ([]codec.S
 	return out, nil
 }
 
-func (e *streamResponseEncoder) FormatDone(usage ir.Usage) ([]codec.SSE, error) {
+func (e *streamResponseEncoder) FormatDone(usage llm.Usage) ([]codec.SSE, error) {
 	var out []codec.SSE
 	if usage.PromptTokens != 0 || usage.CompletionTokens != 0 || usage.TotalTokens != 0 {
 		c := e.baseChunk()
@@ -109,9 +109,9 @@ func (e *streamResponseEncoder) FormatDone(usage ir.Usage) ([]codec.SSE, error) 
 	return out, nil
 }
 
-func (e *streamResponseEncoder) formatDelta(d ir.StreamDelta) []codec.SSE {
+func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) []codec.SSE {
 	switch v := d.(type) {
-	case *ir.MessageStartDelta:
+	case *llm.MessageStartDelta:
 		e.id, e.model = v.ID, v.Model
 		e.created = nowUnix()
 		c := chatCompletionChunk{
@@ -119,25 +119,25 @@ func (e *streamResponseEncoder) formatDelta(d ir.StreamDelta) []codec.SSE {
 			Choices: []chatChunkChoice{{Index: 0, Delta: chatDelta{Role: "assistant"}}},
 		}
 		return []codec.SSE{e.chunk(c)}
-	case *ir.TextDelta:
+	case *llm.TextDelta:
 		c := e.baseChunk()
 		c.Choices = []chatChunkChoice{{Index: 0, Delta: chatDelta{Content: v.Text}}}
 		return []codec.SSE{e.chunk(c)}
-	case *ir.ThinkingDelta:
+	case *llm.ThinkingDelta:
 		c := e.baseChunk()
 		c.Choices = []chatChunkChoice{{Index: 0, Delta: chatDelta{ReasoningContent: v.Text}}}
 		return []codec.SSE{e.chunk(c)}
-	case *ir.ToolCallStartDelta:
+	case *llm.ToolCallStartDelta:
 		tc := chatDeltaToolCall{Index: v.Index, ID: v.ID, Type: "function", Function: chatToolCallFn{Name: v.Name}}
 		c := e.baseChunk()
 		c.Choices = []chatChunkChoice{{Index: 0, Delta: chatDelta{ToolCalls: []chatDeltaToolCall{tc}}}}
 		return []codec.SSE{e.chunk(c)}
-	case *ir.ToolCallDeltaDelta:
+	case *llm.ToolCallDeltaDelta:
 		tc := chatDeltaToolCall{Index: v.Index, Function: chatToolCallFn{Arguments: v.Arguments}}
 		c := e.baseChunk()
 		c.Choices = []chatChunkChoice{{Index: 0, Delta: chatDelta{ToolCalls: []chatDeltaToolCall{tc}}}}
 		return []codec.SSE{e.chunk(c)}
-	case *ir.DoneDelta:
+	case *llm.DoneDelta:
 		fr := toOpenAIFinishReason(v.StopReason)
 		c := e.baseChunk()
 		c.Choices = []chatChunkChoice{{Index: 0, FinishReason: &fr}}
