@@ -3,15 +3,15 @@ package messages
 import (
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 // feed runs the decoder over a sequence of SSE data payloads and returns the
 // final aggregated UsageDelta (the one emitted at message_stop).
-func feed(t *testing.T, payloads []string) ir.Usage {
+func feed(t *testing.T, payloads []string) llm.Usage {
 	t.Helper()
 	d := &streamResponseDecoder{}
-	var last ir.Usage
+	var last llm.Usage
 	seen := false
 	for _, p := range payloads {
 		deltas, err := d.ParseChunk(p)
@@ -19,7 +19,7 @@ func feed(t *testing.T, payloads []string) ir.Usage {
 			t.Fatalf("ParseChunk(%q): %v", p, err)
 		}
 		for _, dl := range deltas {
-			if u, ok := dl.(*ir.UsageDelta); ok {
+			if u, ok := dl.(*llm.UsageDelta); ok {
 				last = u.Usage
 				seen = true
 			}

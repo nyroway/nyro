@@ -4,21 +4,21 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // requestEncoder implements codec.RequestEncoder for Gemini. The model lives in
 // the egress URL path, not the body.
 type requestEncoder struct{}
 
-func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
+func (requestEncoder) Encode(req *llm.ChatRequest) (codec.OutboundRequest, error) {
 	w := request{}
 	if req.System != "" {
 		w.SystemInstruction = &content{Parts: []part{{Text: req.System}}}
 	}
 	for _, m := range req.Messages {
-		if m.Role == ir.RoleSystem {
+		if m.Role == llm.RoleSystem {
 			continue
 		}
 		w.Contents = append(w.Contents, encodeContent(m))
@@ -41,7 +41,7 @@ func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 		b, _ := json.Marshal(map[string]uint32{"thinkingBudget": *req.Reasoning.BudgetTokens})
 		gc.ThinkingConfig = b
 	}
-	if e, ok := req.Ext.(*ir.GoogleExt); ok {
+	if e, ok := req.Ext.(*llm.GoogleExt); ok {
 		gc.TopK = e.TopK
 		gc.CandidateCount = e.CandidateCount
 		gc.ResponseLogprobs = e.ResponseLogprobs
@@ -100,23 +100,23 @@ func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 	}, nil
 }
 
-func encodeContent(m ir.Message) content {
-	if m.Role == ir.RoleTool {
+func encodeContent(m llm.Message) content {
+	if m.Role == llm.RoleTool {
 		// functionResponse (Gemini keys results by function name, not call id).
 		return content{Role: "user", Parts: []part{{FunctionResponse: &functionResp{
-			Name: m.ToolCallID, Response: geminiFunctionResponse(mustJSONRaw(ir.ToText(m.Content))),
+			Name: m.ToolCallID, Response: geminiFunctionResponse(mustJSONRaw(llm.ToText(m.Content))),
 		}}}}
 	}
 	role := "user"
-	if m.Role == ir.RoleAssistant {
+	if m.Role == llm.RoleAssistant {
 		role = "model"
 	}
 	var parts []part
-	if bc, ok := m.Content.(*ir.BlocksContent); ok {
+	if bc, ok := m.Content.(*llm.BlocksContent); ok {
 		for _, b := range bc.Blocks {
 			parts = append(parts, encodeBlock(b))
 		}
-	} else if tc, ok := m.Content.(*ir.TextContent); ok && tc.Text != "" {
+	} else if tc, ok := m.Content.(*llm.TextContent); ok && tc.Text != "" {
 		parts = append(parts, part{Text: tc.Text})
 	}
 	for _, tc := range m.ToolCalls {
@@ -129,13 +129,13 @@ func encodeContent(m ir.Message) content {
 	return content{Role: role, Parts: parts}
 }
 
-func encodeBlock(b ir.ContentBlock) part {
+func encodeBlock(b llm.ContentBlock) part {
 	switch v := b.(type) {
-	case *ir.TextBlock:
+	case *llm.TextBlock:
 		return part{Text: v.Text}
-	case *ir.ThinkingBlock:
+	case *llm.ThinkingBlock:
 		return part{Text: v.Thinking, Thought: true}
-	case *ir.ToolUseBlock:
+	case *llm.ToolUseBlock:
 		input := v.Input
 		if len(input) == 0 {
 			input = json.RawMessage("{}")
@@ -149,10 +149,10 @@ func encodeBlock(b ir.ContentBlock) part {
 			sig = skipThoughtSignature
 		}
 		return part{FunctionCall: &functionCall{Name: v.Name, Args: input}, ThoughtSignature: sig}
-	case *ir.ToolResultBlock:
+	case *llm.ToolResultBlock:
 		return part{FunctionResponse: &functionResp{Name: v.ToolUseID, Response: geminiFunctionResponse(v.Content)}}
-	case *ir.ImageBlock:
-		if img, ok := v.Source.(*ir.Base64Media); ok {
+	case *llm.ImageBlock:
+		if img, ok := v.Source.(*llm.Base64Media); ok {
 			return part{InlineData: &inlineData{MimeType: img.MediaType, Data: img.Data}}
 		}
 	}

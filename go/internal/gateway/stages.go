@@ -24,17 +24,18 @@ type routeStage struct{ gw *Gateway }
 func (s routeStage) Name() string { return "route" }
 
 func (s routeStage) Handle(ex *pipeline.Exchange, next func() error) error {
-	rt := s.gw.snapshot().RouteByModel(ex.Req.Model)
+	model := ex.Req.ModelID()
+	rt := s.gw.snapshot().RouteByModel(model)
 	if rt == nil {
-		writeJSONError(ex.W, http.StatusNotFound, "model not found: "+ex.Req.Model)
+		writeJSONError(ex.W, http.StatusNotFound, "model not found: "+model)
 		return nil
 	}
 	if !rt.Enabled {
-		writeJSONError(ex.W, http.StatusServiceUnavailable, "model disabled: "+ex.Req.Model)
+		writeJSONError(ex.W, http.StatusServiceUnavailable, "model disabled: "+model)
 		return nil
 	}
 	if len(rt.Upstreams) == 0 {
-		writeJSONError(ex.W, http.StatusServiceUnavailable, "no backends for model: "+ex.Req.Model)
+		writeJSONError(ex.W, http.StatusServiceUnavailable, "no backends for model: "+model)
 		return nil
 	}
 	ex.SetExt(telemetry.ExtRoute, *rt)

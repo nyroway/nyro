@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 )
 
@@ -32,10 +32,10 @@ func TestRequestRoundTrip(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	// instructions → system message
-	if len(req.Messages) != 2 || req.Messages[0].Role != ir.RoleSystem || ir.ToText(req.Messages[0].Content) != "be brief" {
+	if len(req.Messages) != 2 || req.Messages[0].Role != llm.RoleSystem || llm.ToText(req.Messages[0].Content) != "be brief" {
 		t.Errorf("system message wrong: %+v", req.Messages)
 	}
-	if ir.ToText(req.Messages[1].Content) != "hi" {
+	if llm.ToText(req.Messages[1].Content) != "hi" {
 		t.Errorf("user text wrong: %+v", req.Messages[1])
 	}
 	if !req.Stream.Enabled {
@@ -120,7 +120,7 @@ func TestStreamStopReason(t *testing.T) {
 		for _, e := range events {
 			deltas, _ := d.ParseChunk(e)
 			for _, dl := range deltas {
-				if v, ok := dl.(*ir.DoneDelta); ok {
+				if v, ok := dl.(*llm.DoneDelta); ok {
 					stop = v.StopReason
 				}
 			}
@@ -159,16 +159,16 @@ func TestReasoningRoundTrip(t *testing.T) {
 }
 
 // TestImageRequestEncoding guards that an image block survives request encoding
-// as an input_image part — ir.ToText alone dropped it.
+// as an input_image part — llm.ToText alone dropped it.
 func TestImageRequestEncoding(t *testing.T) {
 	t.Parallel()
-	req := &ir.AiRequest{
+	req := &llm.ChatRequest{
 		Model: "m",
-		Messages: []ir.Message{{
-			Role: ir.RoleUser,
-			Content: &ir.BlocksContent{Blocks: []ir.ContentBlock{
-				&ir.TextBlock{Text: "what is this"},
-				&ir.ImageBlock{Source: &ir.Base64Media{MediaType: "image/png", Data: "AAAA"}},
+		Messages: []llm.Message{{
+			Role: llm.RoleUser,
+			Content: &llm.BlocksContent{Blocks: []llm.ContentBlock{
+				&llm.TextBlock{Text: "what is this"},
+				&llm.ImageBlock{Source: &llm.Base64Media{MediaType: "image/png", Data: "AAAA"}},
 			}},
 		}},
 	}
@@ -196,13 +196,13 @@ func TestStreamDecode(t *testing.T) {
 		deltas, _ := d.ParseChunk(e)
 		for _, dl := range deltas {
 			switch v := dl.(type) {
-			case *ir.MessageStartDelta:
+			case *llm.MessageStartDelta:
 				sawStart = true
-			case *ir.TextDelta:
+			case *llm.TextDelta:
 				text.WriteString(v.Text)
-			case *ir.UsageDelta:
+			case *llm.UsageDelta:
 				total = v.Usage.TotalTokens
-			case *ir.DoneDelta:
+			case *llm.DoneDelta:
 				sawDone = true
 			}
 		}
@@ -215,11 +215,11 @@ func TestStreamDecode(t *testing.T) {
 func TestStreamEncode(t *testing.T) {
 	t.Parallel()
 	e := &streamResponseEncoder{}
-	deltas := []ir.StreamDelta{
-		&ir.MessageStartDelta{ID: "r1", Model: "gpt-4o"},
-		&ir.TextDelta{Text: "Hi"},
-		&ir.UsageDelta{Usage: ir.Usage{PromptTokens: 1, CompletionTokens: 2, TotalTokens: 3}},
-		&ir.DoneDelta{StopReason: "completed"},
+	deltas := []llm.StreamDelta{
+		&llm.MessageStartDelta{ID: "r1", Model: "gpt-4o"},
+		&llm.TextDelta{Text: "Hi"},
+		&llm.UsageDelta{Usage: llm.Usage{PromptTokens: 1, CompletionTokens: 2, TotalTokens: 3}},
+		&llm.DoneDelta{StopReason: "completed"},
 	}
 	frames, err := e.FormatDeltas(deltas)
 	if err != nil {

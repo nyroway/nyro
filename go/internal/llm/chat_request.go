@@ -1,11 +1,11 @@
-package ir
+package llm
 
-// AiRequest is the unified ingress IR consumed by all codec encoders and the
-// dispatcher. Ported from AiRequest.
+// ChatRequest is the canonical request shared by supported chat-style model
+// protocols.
 //
 // Fields map the FIELD_HOMING categories: [IR] core fields live directly on
 // the struct; protocol-specific fields live on the matching ProtocolExt.
-type AiRequest struct {
+type ChatRequest struct {
 	// ── Core ──
 	Model    string
 	Messages []Message
@@ -33,16 +33,24 @@ type AiRequest struct {
 	Meta RequestMetadata
 }
 
-// NewAiRequest constructs an AiRequest with the minimal required fields.
-func NewAiRequest(model string, messages []Message) *AiRequest {
-	return &AiRequest{
+// NewChatRequest constructs a ChatRequest with the minimal required fields.
+func NewChatRequest(model string, messages []Message) *ChatRequest {
+	return &ChatRequest{
 		Model:    model,
 		Messages: messages,
 	}
 }
 
+func (*ChatRequest) Workload() Workload { return WorkloadChat }
+
+// ModelID returns the model selected for the request.
+func (r *ChatRequest) ModelID() string { return r.Model }
+
+// SetModelID replaces the model selected for the request.
+func (r *ChatRequest) SetModelID(model string) { r.Model = model }
+
 // Modalities returns the OpenAIChatExt modalities, if present.
-func (r *AiRequest) Modalities() []string {
+func (r *ChatRequest) Modalities() []string {
 	if e, ok := r.Ext.(*OpenAIChatExt); ok {
 		return e.Modalities
 	}

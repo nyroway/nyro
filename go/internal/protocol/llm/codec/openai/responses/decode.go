@@ -5,13 +5,12 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 type requestDecoder struct{}
 
-func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
+func (requestDecoder) Decode(body []byte) (*llm.ChatRequest, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(body, &obj); err != nil {
 		return nil, err
@@ -21,10 +20,9 @@ func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
 		return nil, errors.New("missing 'model'")
 	}
 
-	req := ir.NewAiRequest(model, nil)
-	req.Meta.SourceProtocol = &spec.OpenAIResponsesV1
+	req := llm.NewChatRequest(model, nil)
 	req.Stream.Enabled = boolField(obj, "stream")
-	req.Generation = ir.GenerationConfig{
+	req.Generation = llm.GenerationConfig{
 		Temperature: floatField(obj, "temperature"),
 		MaxTokens:   uintField(obj, "max_output_tokens"),
 		TopP:        floatField(obj, "top_p"),
@@ -32,7 +30,7 @@ func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
 	req.ParallelToolCalls = boolPtrField(obj, "parallel_tool_calls")
 
 	if inst := strField(obj, "instructions"); inst != "" {
-		req.Messages = append(req.Messages, ir.Message{Role: ir.RoleSystem, Content: &ir.TextContent{Text: inst}})
+		req.Messages = append(req.Messages, llm.Message{Role: llm.RoleSystem, Content: &llm.TextContent{Text: inst}})
 	}
 
 	// input: string or []item
@@ -42,7 +40,7 @@ func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
 	}
 	var inputStr string
 	if json.Unmarshal(inputRaw, &inputStr) == nil {
-		req.Messages = append(req.Messages, ir.Message{Role: ir.RoleUser, Content: &ir.TextContent{Text: inputStr}})
+		req.Messages = append(req.Messages, llm.Message{Role: llm.RoleUser, Content: &llm.TextContent{Text: inputStr}})
 	} else {
 		var items []inputItem
 		if err := json.Unmarshal(inputRaw, &items); err != nil {
@@ -64,7 +62,7 @@ func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
 		if json.Unmarshal(raw, &tools) == nil {
 			for _, t := range tools {
 				if t.Type == "function" || t.Type == "" {
-					req.Tools = append(req.Tools, ir.ToolSpec{
+					req.Tools = append(req.Tools, llm.ToolSpec{
 						Name: t.Name, Description: t.Description, Parameters: t.Parameters, Strict: t.Strict,
 					})
 				}
@@ -88,7 +86,7 @@ func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
 }
 
 // decodeInputItem maps a Responses input item to an IR message.
-func decodeInputItem(it inputItem) (ir.Message, bool) {
+func decodeInputItem(it inputItem) (llm.Message, bool) {
 	switch it.Type {
 	case "message":
 		return decodeMessageItem(it)
@@ -97,35 +95,35 @@ func decodeInputItem(it inputItem) (ir.Message, bool) {
 		if args == "" {
 			args = "{}"
 		}
-		return ir.Message{
-			Role:      ir.RoleAssistant,
-			Content:   &ir.TextContent{},
-			ToolCalls: []ir.ToolCall{{ID: it.CallID, Name: it.Name, Arguments: args}},
+		return llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   &llm.TextContent{},
+			ToolCalls: []llm.ToolCall{{ID: it.CallID, Name: it.Name, Arguments: args}},
 		}, it.CallID != "" && it.Name != ""
 	case "function_call_output":
-		return ir.Message{
-			Role: ir.RoleTool, ToolCallID: it.CallID,
-			Content: &ir.TextContent{Text: outputText(it.Output)},
+		return llm.Message{
+			Role: llm.RoleTool, ToolCallID: it.CallID,
+			Content: &llm.TextContent{Text: outputText(it.Output)},
 		}, it.CallID != ""
 	case "reasoning", "web_search_call", "file_search_call", "computer_call":
-		return ir.Message{}, false // TODO(P5): reasoning passback / built-in calls
+		return llm.Message{}, false // TODO(P5): reasoning passback / built-in calls
 	}
-	return ir.Message{}, false
+	return llm.Message{}, false
 }
 
 // decodeMessageItem parses a message item's content (string or text blocks).
-func decodeMessageItem(it inputItem) (ir.Message, bool) {
-	role := ir.RoleUser
+func decodeMessageItem(it inputItem) (llm.Message, bool) {
+	role := llm.RoleUser
 	switch it.Role {
 	case "system", "developer":
-		role = ir.RoleSystem
+		role = llm.RoleSystem
 	case "assistant":
-		role = ir.RoleAssistant
+		role = llm.RoleAssistant
 	}
 	// content may be a string or an array of {type, text} blocks.
 	var s string
 	if json.Unmarshal(it.Content, &s) == nil {
-		return ir.Message{Role: role, Content: &ir.TextContent{Text: s}}, s != ""
+		return llm.Message{Role: role, Content: &llm.TextContent{Text: s}}, s != ""
 	}
 	var blocks []struct {
 		Type string `json:"type"`
@@ -140,11 +138,11 @@ func decodeMessageItem(it inputItem) (ir.Message, bool) {
 		}
 		text := strings.Join(texts, "")
 		if text == "" {
-			return ir.Message{}, false
+			return llm.Message{}, false
 		}
-		return ir.Message{Role: role, Content: &ir.TextContent{Text: text}}, true
+		return llm.Message{Role: role, Content: &llm.TextContent{Text: text}}, true
 	}
-	return ir.Message{}, false
+	return llm.Message{}, false
 }
 
 // outputText extracts text from a function_call_output's output field.
@@ -156,16 +154,16 @@ func outputText(raw json.RawMessage) string {
 	return string(raw)
 }
 
-func decodeEffort(s string) ir.ReasoningEffort {
+func decodeEffort(s string) llm.ReasoningEffort {
 	switch s {
 	case "low":
-		return &ir.ReasoningLow{}
+		return &llm.ReasoningLow{}
 	case "high":
-		return &ir.ReasoningHigh{}
+		return &llm.ReasoningHigh{}
 	case "":
 		return nil
 	}
-	return &ir.ReasoningMedium{}
+	return &llm.ReasoningMedium{}
 }
 
 // ── field helpers ──

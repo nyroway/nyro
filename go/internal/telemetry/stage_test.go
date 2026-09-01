@@ -15,8 +15,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
@@ -48,7 +48,7 @@ func runStage(t *testing.T, ex *pipeline.Exchange) {
 }
 
 // newExchange builds an Exchange carrying the state the dispatcher publishes.
-func newExchange(route storage.Route, upstream storage.Upstream, consumerID string, usage ir.Usage, started time.Time, status int, lc LogCtx) *pipeline.Exchange {
+func newExchange(route storage.Route, upstream storage.Upstream, consumerID string, usage llm.Usage, started time.Time, status int, lc LogCtx) *pipeline.Exchange {
 	ex := &pipeline.Exchange{
 		Ctx:        context.Background(),
 		Usage:      usage,
@@ -128,7 +128,7 @@ func TestStageRecordsMetricsTokensAndSpan(t *testing.T) {
 	model := storage.Route{ID: "m1", Model: "gpt-test"}
 	provider := storage.Upstream{ID: "p1", Name: "openai"}
 	cacheRead := uint32(7)
-	usage := ir.Usage{PromptTokens: 100, CompletionTokens: 50, CacheReadTokens: &cacheRead}
+	usage := llm.Usage{PromptTokens: 100, CompletionTokens: 50, CacheReadTokens: &cacheRead}
 	started := time.Now().Add(-25 * time.Millisecond) // pretend 25ms elapsed upstream
 	lc := LogCtx{
 		ClientProtocol:   "openai",
@@ -243,7 +243,7 @@ func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 		UpstreamStatus:    &upstreamStatus,
 		LatencyUpstreamMs: &upstreamLatency,
 	}
-	runStage(t, newExchange(route, upstream, "ak", ir.Usage{}, time.Now().Add(-5*time.Millisecond), 200, lc))
+	runStage(t, newExchange(route, upstream, "ak", llm.Usage{}, time.Now().Add(-5*time.Millisecond), 200, lc))
 
 	if len(cl.records) != 1 {
 		t.Fatalf("case 1 emitted log records: want 1, got %d", len(cl.records))
@@ -254,7 +254,7 @@ func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 
 	// --- case 2: nil pointers → attributes must be absent. ---
 	cl.records = nil
-	runStage(t, newExchange(route, upstream, "ak", ir.Usage{}, time.Now().Add(-5*time.Millisecond), 200, LogCtx{}))
+	runStage(t, newExchange(route, upstream, "ak", llm.Usage{}, time.Now().Add(-5*time.Millisecond), 200, LogCtx{}))
 
 	if len(cl.records) != 1 {
 		t.Fatalf("case 2 emitted log records: want 1, got %d", len(cl.records))
@@ -286,7 +286,7 @@ func TestStage5xxMarksSpanError(t *testing.T) {
 	runStage(t, newExchange(
 		storage.Route{ID: "m", Model: "gpt-test"},
 		storage.Upstream{ID: "p", Name: "openai"},
-		"ak", ir.Usage{}, time.Now().Add(-10*time.Millisecond), 503, LogCtx{},
+		"ak", llm.Usage{}, time.Now().Add(-10*time.Millisecond), 503, LogCtx{},
 	))
 
 	ended := spanRecorder.Ended()

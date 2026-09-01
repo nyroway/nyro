@@ -26,7 +26,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 // Stage is one step in the chain. Handle runs once per request.
@@ -54,7 +54,7 @@ type Stage interface {
 // are never called per frame.
 type StreamStage interface {
 	Stage
-	OnDelta(ex *Exchange, d ir.StreamDelta)
+	OnDelta(ex *Exchange, d llm.StreamDelta)
 }
 
 // Exchange is the per-request state threaded through the chain: one
@@ -81,18 +81,18 @@ type Exchange struct {
 	W http.ResponseWriter
 	R *http.Request
 
-	// Req is the decoded request in canonical IR form, set before the chain
-	// runs. Stages may mutate it inbound (injecting tools, rewriting the
-	// model) and every later Stage sees the change.
-	Req *ir.AiRequest
+	// Req is the decoded workload request, set before the chain runs. Common
+	// stages use its narrow model contract; workload-specific stages may
+	// inspect the concrete ChatRequest or EmbeddingRequest deliberately.
+	Req llm.ModelRequest
 
 	// Resp is the decoded non-streaming response, nil for streaming
 	// exchanges and for any request that never reached an upstream.
-	Resp *ir.AiResponse
+	Resp *llm.ChatResponse
 
 	// Usage accumulates token counts: set once from the parsed response for
 	// a non-streaming exchange, updated per frame for a streaming one.
-	Usage ir.Usage
+	Usage llm.Usage
 
 	// Status is the status code sent to the client.
 	Status int
@@ -178,7 +178,7 @@ func (c *Chain) Run(ex *Exchange, terminal func() error) error {
 
 // EmitDelta forwards one streaming frame to every Stage that implements
 // StreamStage, in chain order. Called once per frame on the streaming path.
-func (c *Chain) EmitDelta(ex *Exchange, d ir.StreamDelta) {
+func (c *Chain) EmitDelta(ex *Exchange, d llm.StreamDelta) {
 	if c == nil {
 		return
 	}

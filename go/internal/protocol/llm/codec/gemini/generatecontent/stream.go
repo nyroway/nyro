@@ -3,8 +3,8 @@ package generatecontent
 import (
 	"encoding/json"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // streamResponseDecoder parses Gemini streamGenerateContent chunks. Each chunk
@@ -17,31 +17,31 @@ type streamResponseDecoder struct {
 	sawTool bool // a functionCall part was seen → stop reason is tool_calls
 }
 
-func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, error) {
+func (d *streamResponseDecoder) ParseChunk(payload string) ([]llm.StreamDelta, error) {
 	if payload == "" {
 		return nil, nil
 	}
 	var chunk response
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-		return []ir.StreamDelta{&ir.UnknownDelta{Raw: payload}}, nil
+		return []llm.StreamDelta{&llm.UnknownDelta{Raw: payload}}, nil
 	}
-	var out []ir.StreamDelta
+	var out []llm.StreamDelta
 	if len(chunk.Candidates) > 0 {
 		if !d.started {
 			d.started = true
-			out = append(out, &ir.MessageStartDelta{Model: chunk.ModelVersion})
+			out = append(out, &llm.MessageStartDelta{Model: chunk.ModelVersion})
 		}
 		c := chunk.Candidates[0]
 		for _, p := range c.Content.Parts {
 			switch {
 			case p.FunctionCall != nil:
 				d.sawTool = true
-				out = append(out, &ir.ToolCallStartDelta{Index: 0, Name: p.FunctionCall.Name})
+				out = append(out, &llm.ToolCallStartDelta{Index: 0, Name: p.FunctionCall.Name})
 			case p.Thought:
-				out = append(out, &ir.ThinkingDelta{Text: p.Text})
+				out = append(out, &llm.ThinkingDelta{Text: p.Text})
 			default:
 				if p.Text != "" {
-					out = append(out, &ir.TextDelta{Text: p.Text})
+					out = append(out, &llm.TextDelta{Text: p.Text})
 				}
 			}
 		}
@@ -55,7 +55,7 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 		}
 	}
 	if chunk.UsageMetadata != nil {
-		out = append(out, &ir.UsageDelta{Usage: ir.Usage{
+		out = append(out, &llm.UsageDelta{Usage: llm.Usage{
 			PromptTokens:     chunk.UsageMetadata.PromptTokenCount,
 			CompletionTokens: chunk.UsageMetadata.CandidatesTokenCount,
 			TotalTokens:      chunk.UsageMetadata.TotalTokenCount,
@@ -63,26 +63,26 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]ir.StreamDelta, er
 	}
 	if d.stop != "" && !d.done {
 		d.done = true
-		out = append(out, &ir.DoneDelta{StopReason: d.stop})
+		out = append(out, &llm.DoneDelta{StopReason: d.stop})
 	}
 	return out, nil
 }
 
-func (d *streamResponseDecoder) Finish() []ir.StreamDelta {
+func (d *streamResponseDecoder) Finish() []llm.StreamDelta {
 	if d.done {
 		return nil
 	}
 	d.done = true
-	return []ir.StreamDelta{&ir.DoneDelta{StopReason: d.stop}}
+	return []llm.StreamDelta{&llm.DoneDelta{StopReason: d.stop}}
 }
 
 // streamResponseEncoder formats IR deltas as Gemini streamGenerateContent
 // chunks (SSE data frames, one response object per delta).
 type streamResponseEncoder struct {
-	usage ir.Usage
+	usage llm.Usage
 }
 
-func (e *streamResponseEncoder) FormatDeltas(deltas []ir.StreamDelta) ([]codec.SSE, error) {
+func (e *streamResponseEncoder) FormatDeltas(deltas []llm.StreamDelta) ([]codec.SSE, error) {
 	var out []codec.SSE
 	for _, d := range deltas {
 		if f := e.formatDelta(d); f != nil {
@@ -94,7 +94,7 @@ func (e *streamResponseEncoder) FormatDeltas(deltas []ir.StreamDelta) ([]codec.S
 
 // FormatDone emits a final usageMetadata chunk if usage was captured (Gemini
 // has no [DONE] terminator).
-func (e *streamResponseEncoder) FormatDone(_ ir.Usage) ([]codec.SSE, error) {
+func (e *streamResponseEncoder) FormatDone(_ llm.Usage) ([]codec.SSE, error) {
 	if e.usage.TotalTokens == 0 && e.usage.PromptTokens == 0 {
 		return nil, nil
 	}
@@ -107,22 +107,22 @@ func (e *streamResponseEncoder) FormatDone(_ ir.Usage) ([]codec.SSE, error) {
 	return []codec.SSE{{Data: string(b)}}, nil
 }
 
-func (e *streamResponseEncoder) formatDelta(d ir.StreamDelta) *codec.SSE {
+func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) *codec.SSE {
 	switch v := d.(type) {
-	case *ir.TextDelta:
+	case *llm.TextDelta:
 		b, _ := json.Marshal(response{Candidates: []candidate{{
 			Content: content{Role: "model", Parts: []part{{Text: v.Text}}},
 		}}})
 		return &codec.SSE{Data: string(b)}
-	case *ir.ThinkingDelta:
+	case *llm.ThinkingDelta:
 		b, _ := json.Marshal(response{Candidates: []candidate{{
 			Content: content{Parts: []part{{Text: v.Text, Thought: true}}},
 		}}})
 		return &codec.SSE{Data: string(b)}
-	case *ir.UsageDelta:
+	case *llm.UsageDelta:
 		e.usage = v.Usage
 		return nil
-	case *ir.DoneDelta:
+	case *llm.DoneDelta:
 		// Gemini signals completion via finishReason on the final candidate.
 		b, _ := json.Marshal(response{Candidates: []candidate{{FinishReason: denormalizeGeminiFinishReason(v.StopReason)}}})
 		return &codec.SSE{Data: string(b)}

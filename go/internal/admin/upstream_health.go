@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
 	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/anthropic/messages"
 	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/gemini/generatecontent"
 	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/chatcompletions"
 	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/responses"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -213,13 +213,17 @@ func testDraftModelRequest(r *http.Request, u storage.Upstream, model string, au
 	if !ok {
 		return 0, 0, fmt.Errorf("no codec registered for protocol %q", u.Protocol)
 	}
+	chatHandler, ok := handler.(codec.ChatEndpointHandler)
+	if !ok {
+		return 0, 0, fmt.Errorf("protocol %q does not support chat health checks", u.Protocol)
+	}
 	maxTokens := uint32(1)
-	req := ir.NewAiRequest(model, []ir.Message{{
-		Role:    ir.RoleUser,
-		Content: &ir.TextContent{Text: "ping"},
+	req := llm.NewChatRequest(model, []llm.Message{{
+		Role:    llm.RoleUser,
+		Content: &llm.TextContent{Text: "ping"},
 	}})
 	req.Generation.MaxTokens = &maxTokens
-	outbound, err := handler.MakeRequestEncoder().Encode(req)
+	outbound, err := chatHandler.MakeRequestEncoder().Encode(req)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -252,7 +256,7 @@ func testDraftModelRequest(r *http.Request, u storage.Upstream, model string, au
 	if err != nil {
 		return latency, resp.StatusCode, err
 	}
-	decoded, err := handler.MakeResponseDecoder().Parse(body)
+	decoded, err := chatHandler.MakeResponseDecoder().Parse(body)
 	if err != nil {
 		return latency, resp.StatusCode, fmt.Errorf("model response validation failed: %w", err)
 	}
@@ -262,7 +266,7 @@ func testDraftModelRequest(r *http.Request, u storage.Upstream, model string, au
 	return latency, resp.StatusCode, nil
 }
 
-func isUsableModelResponse(resp *ir.AiResponse) bool {
+func isUsableModelResponse(resp *llm.ChatResponse) bool {
 	if resp == nil || resp.IsError() {
 		return false
 	}

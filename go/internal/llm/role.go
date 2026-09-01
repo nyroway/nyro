@@ -1,4 +1,4 @@
-package ir
+package llm
 
 // Role is the conversational role of a Message.
 // Ported from Role (serde rename_all = "lowercase").

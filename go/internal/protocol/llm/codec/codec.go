@@ -1,31 +1,26 @@
-// Package codec defines the six codec interfaces that translate between
-// external wire protocols (OpenAI / Anthropic / Gemini) and the canonical IR.
+// Package codec defines workload-specific codec interfaces that translate
+// between external wire protocols and canonical LLM requests and responses.
+// Chat stream codecs are stateful and are created once per request stream.
 //
-// Each protocol endpoint implements EndpointHandler, which factories the six
-// codecs. Request/stream encoders+decoders come in pairs:
-//
-//	client → IR        RequestDecoder.Decode
-//	IR → upstream      RequestEncoder.Encode
-//	upstream → IR      ResponseDecoder.Parse (non-stream)
-//	IR → client        ResponseEncoder.Format (non-stream)
+//	client → model     ChatRequestDecoder.Decode
+//	model → upstream   ChatRequestEncoder.Encode
+//	upstream → model   ChatResponseDecoder.Parse (non-stream)
+//	model → client     ChatResponseEncoder.Format (non-stream)
 //	upstream stream→IR StreamResponseDecoder.ParseChunk / Finish
 //	IR → client stream StreamResponseEncoder.FormatDeltas / FormatDone
-//
-// Stream codecs are stateful (one instance per request stream), hence the
-// factory methods on EndpointHandler. Ported from protocol/{mod,traits}.rs.
 package codec
 
 import (
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 )
 
-// RequestDecoder decodes an inbound wire request body into canonical IR.
-type RequestDecoder interface {
-	Decode(body []byte) (*ir.AiRequest, error)
+// ChatRequestDecoder decodes an inbound chat wire request.
+type ChatRequestDecoder interface {
+	Decode(body []byte) (*llm.ChatRequest, error)
 }
 
-// PathDecoder is implemented by codecs whose model and/or stream flag live in
+// ChatPathDecoder is implemented by chat codecs whose model and/or stream flag live in
 // the URL rather than the request body — Gemini embeds both in
 // /v1beta/models/{model}:{action}.
 //
@@ -33,44 +28,54 @@ type RequestDecoder interface {
 // DecodeWithPath instead of Decode. Interpreting them is the codec's job: the
 // URL shape is part of the wire protocol, so it belongs to the package that
 // defines the protocol rather than to the Gateway.
-type PathDecoder interface {
-	DecodeWithPath(body []byte, params map[string]string) (*ir.AiRequest, error)
+type ChatPathDecoder interface {
+	DecodeWithPath(body []byte, params map[string]string) (*llm.ChatRequest, error)
 }
 
-// RequestEncoder encodes canonical IR into the upstream wire request.
-type RequestEncoder interface {
-	Encode(req *ir.AiRequest) (OutboundRequest, error)
+// ChatRequestEncoder encodes a canonical chat request for an upstream.
+type ChatRequestEncoder interface {
+	Encode(req *llm.ChatRequest) (OutboundRequest, error)
 }
 
-// ResponseDecoder parses a non-streaming upstream response body into IR.
-type ResponseDecoder interface {
-	Parse(body []byte) (*ir.AiResponse, error)
+// EmbeddingRequestDecoder decodes an inbound embedding wire request.
+type EmbeddingRequestDecoder interface {
+	Decode(body []byte) (*llm.EmbeddingRequest, error)
 }
 
-// ResponseEncoder formats an IR response into the client-facing wire body.
-type ResponseEncoder interface {
-	Format(resp *ir.AiResponse) ([]byte, error)
+// EmbeddingRequestEncoder encodes a canonical embedding request for an upstream.
+type EmbeddingRequestEncoder interface {
+	Encode(req *llm.EmbeddingRequest) (OutboundRequest, error)
+}
+
+// ChatResponseDecoder parses a non-streaming upstream chat response.
+type ChatResponseDecoder interface {
+	Parse(body []byte) (*llm.ChatResponse, error)
+}
+
+// ChatResponseEncoder formats a canonical chat response for the client.
+type ChatResponseEncoder interface {
+	Format(resp *llm.ChatResponse) ([]byte, error)
 }
 
 // StreamResponseDecoder parses upstream stream chunks into IR deltas.
-// Stateful — create one per request stream via EndpointHandler.
+// Stateful — create one per request stream via ChatEndpointHandler.
 type StreamResponseDecoder interface {
 	// ParseChunk processes one upstream SSE payload (the bytes after "data ").
 	// Returns zero or more deltas; a "[DONE]" sentinel yields a Done delta.
-	ParseChunk(payload string) ([]ir.StreamDelta, error)
+	ParseChunk(payload string) ([]llm.StreamDelta, error)
 	// Finish emits any terminal deltas when the upstream stream ends without
 	// an explicit Done (e.g. synthesize Done on clean EOF).
-	Finish() []ir.StreamDelta
+	Finish() []llm.StreamDelta
 }
 
 // StreamResponseEncoder formats IR deltas into client-facing SSE frames.
-// Stateful — create one per request stream via EndpointHandler.
+// Stateful — create one per request stream via ChatEndpointHandler.
 type StreamResponseEncoder interface {
-	FormatDeltas(deltas []ir.StreamDelta) ([]SSE, error)
-	FormatDone(usage ir.Usage) ([]SSE, error)
+	FormatDeltas(deltas []llm.StreamDelta) ([]SSE, error)
+	FormatDone(usage llm.Usage) ([]SSE, error)
 }
 
-// OutboundRequest is the encoded upstream HTTP call produced by RequestEncoder.
+// OutboundRequest is the encoded upstream HTTP call produced by a request encoder.
 type OutboundRequest struct {
 	Method  string
 	Path    string // appended to the provider base URL
@@ -99,7 +104,7 @@ func (s SSE) Bytes() []byte {
 	return b
 }
 
-// EndpointHandler aggregates the six codec factories for one protocol endpoint.
+// EndpointHandler describes one protocol endpoint without assuming a workload.
 type EndpointHandler interface {
 	// Endpoint identifies which protocol endpoint this handler serves.
 	Endpoint() spec.ProtocolEndpoint
@@ -108,10 +113,24 @@ type EndpointHandler interface {
 	// rather than in spec keeps everything about one protocol — wire types,
 	// codecs, routes, capabilities — inside its own leaf package.
 	Capabilities() spec.EndpointCapabilities
-	MakeRequestDecoder() RequestDecoder
-	MakeRequestEncoder() RequestEncoder
-	MakeResponseDecoder() ResponseDecoder
-	MakeResponseEncoder() ResponseEncoder
+}
+
+// ChatEndpointHandler supplies the codecs required by a chat endpoint.
+type ChatEndpointHandler interface {
+	EndpointHandler
+	MakeRequestDecoder() ChatRequestDecoder
+	MakeRequestEncoder() ChatRequestEncoder
+	MakeResponseDecoder() ChatResponseDecoder
+	MakeResponseEncoder() ChatResponseEncoder
 	MakeStreamResponseDecoder() StreamResponseDecoder
 	MakeStreamResponseEncoder() StreamResponseEncoder
+}
+
+// EmbeddingEndpointHandler supplies the request codecs required by a
+// non-streaming embedding endpoint. Its response remains wire-compatible and
+// is passed through without a canonical response conversion.
+type EmbeddingEndpointHandler interface {
+	EndpointHandler
+	MakeRequestDecoder() EmbeddingRequestDecoder
+	MakeRequestEncoder() EmbeddingRequestEncoder
 }

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // requestEncoder implements codec.RequestEncoder for the Responses API.
@@ -14,30 +14,30 @@ type requestEncoder struct{}
 
 // responsesMessageContent builds a Responses message content array from an IR
 // message, preserving image blocks (input_image) alongside text. Using
-// ir.ToText alone dropped images, so multimodal requests reached the model
+// llm.ToText alone dropped images, so multimodal requests reached the model
 // without the picture. Returns nil when there is nothing to send.
-func responsesMessageContent(m ir.Message) json.RawMessage {
+func responsesMessageContent(m llm.Message) json.RawMessage {
 	textType := "input_text"
-	if m.Role == ir.RoleAssistant {
+	if m.Role == llm.RoleAssistant {
 		textType = "output_text"
 	}
 	var parts []map[string]string
-	if bc, ok := m.Content.(*ir.BlocksContent); ok {
+	if bc, ok := m.Content.(*llm.BlocksContent); ok {
 		for _, b := range bc.Blocks {
 			switch blk := b.(type) {
-			case *ir.TextBlock:
+			case *llm.TextBlock:
 				if blk.Text != "" {
 					parts = append(parts, map[string]string{"type": textType, "text": blk.Text})
 				}
-			case *ir.ImageBlock:
-				if img, ok := blk.Source.(*ir.Base64Media); ok {
+			case *llm.ImageBlock:
+				if img, ok := blk.Source.(*llm.Base64Media); ok {
 					parts = append(parts, map[string]string{"type": "input_image", "image_url": "data:" + img.MediaType + ";base64," + img.Data})
-				} else if u, ok := blk.Source.(*ir.URLMedia); ok {
+				} else if u, ok := blk.Source.(*llm.URLMedia); ok {
 					parts = append(parts, map[string]string{"type": "input_image", "image_url": u.URL})
 				}
 			}
 		}
-	} else if t := ir.ToText(m.Content); t != "" {
+	} else if t := llm.ToText(m.Content); t != "" {
 		parts = append(parts, map[string]string{"type": textType, "text": t})
 	}
 	if len(parts) == 0 {
@@ -47,16 +47,16 @@ func responsesMessageContent(m ir.Message) json.RawMessage {
 	return b
 }
 
-func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
+func (requestEncoder) Encode(req *llm.ChatRequest) (codec.OutboundRequest, error) {
 	var instructions []string
 	var input []inputItem
 	for _, m := range req.Messages {
 		switch m.Role {
-		case ir.RoleSystem:
-			if t := ir.ToText(m.Content); t != "" {
+		case llm.RoleSystem:
+			if t := llm.ToText(m.Content); t != "" {
 				instructions = append(instructions, t)
 			}
-		case ir.RoleUser, ir.RoleAssistant:
+		case llm.RoleUser, llm.RoleAssistant:
 			if content := responsesMessageContent(m); content != nil {
 				input = append(input, inputItem{Type: "message", Role: string(m.Role), Content: content})
 			}
@@ -65,8 +65,8 @@ func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 					Type: "function_call", CallID: tc.ID, Name: tc.Name, Arguments: tc.Arguments,
 				})
 			}
-		case ir.RoleTool:
-			out, _ := json.Marshal(ir.ToText(m.Content))
+		case llm.RoleTool:
+			out, _ := json.Marshal(llm.ToText(m.Content))
 			input = append(input, inputItem{
 				Type: "function_call_output", CallID: m.ToolCallID, Output: out,
 			})
@@ -99,16 +99,16 @@ func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 	}
 	if req.ToolChoice != nil {
 		switch tc := req.ToolChoice.(type) {
-		case *ir.AutoToolChoice:
+		case *llm.AutoToolChoice:
 			w.ToolChoice = json.RawMessage(`"auto"`)
-		case *ir.NoneToolChoice:
+		case *llm.NoneToolChoice:
 			w.ToolChoice = json.RawMessage(`"none"`)
-		case *ir.RequiredToolChoice:
+		case *llm.RequiredToolChoice:
 			w.ToolChoice = json.RawMessage(`"required"`)
-		case *ir.NamedToolChoice:
+		case *llm.NamedToolChoice:
 			b, _ := json.Marshal(map[string]any{"type": "function", "function": map[string]string{"name": tc.Name}})
 			w.ToolChoice = b
-		case *ir.RawToolChoice:
+		case *llm.RawToolChoice:
 			w.ToolChoice = tc.Raw
 		}
 	}
@@ -117,17 +117,17 @@ func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 	if req.Reasoning.Enabled && req.Reasoning.Effort != nil {
 		r := map[string]string{}
 		switch req.Reasoning.Effort.(type) {
-		case *ir.ReasoningNone:
+		case *llm.ReasoningNone:
 			r["effort"] = "none"
-		case *ir.ReasoningMinimal:
+		case *llm.ReasoningMinimal:
 			r["effort"] = "minimal"
-		case *ir.ReasoningLow:
+		case *llm.ReasoningLow:
 			r["effort"] = "low"
-		case *ir.ReasoningMedium:
+		case *llm.ReasoningMedium:
 			r["effort"] = "medium"
-		case *ir.ReasoningHigh:
+		case *llm.ReasoningHigh:
 			r["effort"] = "high"
-		case *ir.ReasoningXhigh:
+		case *llm.ReasoningXhigh:
 			r["effort"] = "xhigh"
 		}
 		if req.Reasoning.Display != "" {

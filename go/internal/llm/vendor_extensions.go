@@ -1,16 +1,6 @@
-package ir
+package llm
 
 import "encoding/json"
-
-// RawEnvelope is a snapshot of the original inbound request, captured before
-// any codec transformation. Preserved for pass-through mode, audit logging,
-// and debug round-trip verification.
-type RawEnvelope struct {
-	Body    json.RawMessage   // optional original JSON body (verbatim)
-	Headers map[string]string // flattened, lowercase keys
-	Method  string
-	Path    string
-}
 
 // VendorExtensions is the three-segment model for fields that have no home in
 // the canonical IR schema:

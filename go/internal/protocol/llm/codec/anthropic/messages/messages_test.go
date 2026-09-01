@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
 )
 
@@ -37,7 +37,7 @@ func TestRequestRoundTrip(t *testing.T) {
 	if req.System != "be brief" {
 		t.Errorf("system=%q", req.System)
 	}
-	if len(req.Messages) != 1 || ir.ToText(req.Messages[0].Content) != "hi" {
+	if len(req.Messages) != 1 || llm.ToText(req.Messages[0].Content) != "hi" {
 		t.Errorf("messages=%+v", req.Messages)
 	}
 	if req.Generation.MaxTokens == nil || *req.Generation.MaxTokens != 100 {
@@ -120,13 +120,13 @@ func TestStreamDecode(t *testing.T) {
 		}
 		for _, dl := range deltas {
 			switch v := dl.(type) {
-			case *ir.MessageStartDelta:
+			case *llm.MessageStartDelta:
 				sawStart = true
-			case *ir.TextDelta:
+			case *llm.TextDelta:
 				text.WriteString(v.Text)
-			case *ir.UsageDelta:
+			case *llm.UsageDelta:
 				total = v.Usage.TotalTokens
-			case *ir.DoneDelta:
+			case *llm.DoneDelta:
 				sawDone = true
 				if v.StopReason != "end_turn" {
 					t.Errorf("stop=%q", v.StopReason)
@@ -151,11 +151,11 @@ func TestStreamDecode(t *testing.T) {
 func TestStreamEncode(t *testing.T) {
 	t.Parallel()
 	e := &streamResponseEncoder{}
-	deltas := []ir.StreamDelta{
-		&ir.MessageStartDelta{ID: "m1", Model: "claude"},
-		&ir.TextDelta{Text: "Hi"},
-		&ir.UsageDelta{Usage: ir.Usage{CompletionTokens: 2}},
-		&ir.DoneDelta{StopReason: "end_turn"},
+	deltas := []llm.StreamDelta{
+		&llm.MessageStartDelta{ID: "m1", Model: "claude"},
+		&llm.TextDelta{Text: "Hi"},
+		&llm.UsageDelta{Usage: llm.Usage{CompletionTokens: 2}},
+		&llm.DoneDelta{StopReason: "end_turn"},
 	}
 	frames, err := e.FormatDeltas(deltas)
 	if err != nil {

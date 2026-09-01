@@ -21,19 +21,8 @@ func (EmbeddingsHandler) Capabilities() spec.EndpointCapabilities {
 	}
 }
 
-func (EmbeddingsHandler) MakeRequestDecoder() codec.RequestDecoder { return requestDecoder{} }
-func (EmbeddingsHandler) MakeRequestEncoder() codec.RequestEncoder { return requestEncoder{} }
-
-func (EmbeddingsHandler) MakeResponseDecoder() codec.ResponseDecoder { return responseDecoder{} }
-func (EmbeddingsHandler) MakeResponseEncoder() codec.ResponseEncoder { return responseEncoder{} }
-
-func (EmbeddingsHandler) MakeStreamResponseDecoder() codec.StreamResponseDecoder {
-	return &streamResponseDecoder{}
-}
-
-func (EmbeddingsHandler) MakeStreamResponseEncoder() codec.StreamResponseEncoder {
-	return &streamResponseEncoder{}
-}
+func (EmbeddingsHandler) MakeRequestDecoder() codec.EmbeddingRequestDecoder { return requestDecoder{} }
+func (EmbeddingsHandler) MakeRequestEncoder() codec.EmbeddingRequestEncoder { return requestEncoder{} }
 
 func init() {
 	codec.Register(EmbeddingsHandler{})

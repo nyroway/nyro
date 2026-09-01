@@ -1,10 +1,10 @@
-package ir
+package llm
 
 import "testing"
 
-func TestAiErrorKindIsRetryable(t *testing.T) {
+func TestErrorKindIsRetryable(t *testing.T) {
 	t.Parallel()
-	retryable := []AiErrorKind{
+	retryable := []ErrorKind{
 		ErrRateLimitError, ErrServerError, ErrServiceUnavailable,
 		ErrTimeout, ErrModelNotAvailable, ErrUnexpectedEOF, ErrStreamMidError,
 	}
@@ -13,7 +13,7 @@ func TestAiErrorKindIsRetryable(t *testing.T) {
 			t.Errorf("%s should be retryable", k)
 		}
 	}
-	nonRetryable := []AiErrorKind{
+	nonRetryable := []ErrorKind{
 		ErrAuthenticationError, ErrAuthorizationError, ErrQuotaExceeded,
 		ErrInvalidRequest, ErrContentFiltered,
 	}
@@ -24,9 +24,9 @@ func TestAiErrorKindIsRetryable(t *testing.T) {
 	}
 }
 
-func TestAiErrorFromStatus(t *testing.T) {
+func TestErrorFromStatus(t *testing.T) {
 	t.Parallel()
-	e := AiErrorFromStatus(429, "slow down")
+	e := ErrorFromStatus(429, "slow down")
 	if e.Kind != ErrRateLimitError {
 		t.Errorf("kind = %s, want rate_limit_error", e.Kind)
 	}
@@ -69,9 +69,9 @@ func TestToText(t *testing.T) {
 	}
 }
 
-func TestNewAiRequestDefaults(t *testing.T) {
+func TestNewChatRequestDefaults(t *testing.T) {
 	t.Parallel()
-	r := NewAiRequest("gpt-4", []Message{{Role: RoleUser, Content: &TextContent{Text: "hi"}}})
+	r := NewChatRequest("gpt-4", []Message{{Role: RoleUser, Content: &TextContent{Text: "hi"}}})
 	if r.Model != "gpt-4" {
 		t.Errorf("model = %q", r.Model)
 	}
@@ -83,13 +83,13 @@ func TestNewAiRequestDefaults(t *testing.T) {
 	}
 }
 
-func TestAiResponseIsError(t *testing.T) {
+func TestChatResponseIsError(t *testing.T) {
 	t.Parallel()
-	r := NewAiResponse("id", "m")
+	r := NewChatResponse("id", "m")
 	if r.IsError() {
 		t.Error("new response should not be an error")
 	}
-	r.Error = NewAiError(ErrInvalidRequest, "bad")
+	r.Error = NewError(ErrInvalidRequest, "bad")
 	if !r.IsError() {
 		t.Error("should be an error after setting Error")
 	}

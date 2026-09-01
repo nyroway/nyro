@@ -5,21 +5,20 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 // requestDecoder implements codec.RequestDecoder and codec.PathDecoder.
 type requestDecoder struct{}
 
-func (requestDecoder) Decode(body []byte) (*ir.AiRequest, error) {
+func (requestDecoder) Decode(body []byte) (*llm.ChatRequest, error) {
 	return requestDecoder{}.decode(body, "gemini-2.0-flash", false)
 }
 
 // DecodeWithPath reads the model and stream flag out of Gemini's single-segment
 // {resource} parameter, which carries "{model}:{action}" — e.g.
 // "gemini-3.1-flash:streamGenerateContent".
-func (d requestDecoder) DecodeWithPath(body []byte, params map[string]string) (*ir.AiRequest, error) {
+func (d requestDecoder) DecodeWithPath(body []byte, params map[string]string) (*llm.ChatRequest, error) {
 	model, action, ok := strings.Cut(params["resource"], ":")
 	if !ok || model == "" {
 		return nil, fmt.Errorf("malformed Gemini path, expected models/{model}:{action}")
@@ -27,14 +26,13 @@ func (d requestDecoder) DecodeWithPath(body []byte, params map[string]string) (*
 	return d.decode(body, model, action == "streamGenerateContent")
 }
 
-func (requestDecoder) decode(body []byte, model string, stream bool) (*ir.AiRequest, error) {
+func (requestDecoder) decode(body []byte, model string, stream bool) (*llm.ChatRequest, error) {
 	var w request
 	if err := json.Unmarshal(body, &w); err != nil {
 		return nil, err
 	}
 
-	req := ir.NewAiRequest(model, nil)
-	req.Meta.SourceProtocol = &spec.GeminiGenerateContentV1Beta
+	req := llm.NewChatRequest(model, nil)
 	req.Stream.Enabled = stream
 
 	if w.SystemInstruction != nil {
@@ -48,7 +46,7 @@ func (requestDecoder) decode(body []byte, model string, stream bool) (*ir.AiRequ
 
 	if w.GenerationConfig != nil {
 		gc := w.GenerationConfig
-		req.Generation = ir.GenerationConfig{
+		req.Generation = llm.GenerationConfig{
 			Temperature: gc.Temperature,
 			MaxTokens:   gc.MaxOutputTokens,
 			TopP:        gc.TopP,
@@ -68,19 +66,19 @@ func (requestDecoder) decode(body []byte, model string, stream bool) (*ir.AiRequ
 
 	for _, te := range w.Tools {
 		for _, fd := range te.FunctionDeclarations {
-			req.Tools = append(req.Tools, ir.ToolSpec{
+			req.Tools = append(req.Tools, llm.ToolSpec{
 				Name: fd.Name, Description: fd.Description, Parameters: fd.Parameters,
 			})
 		}
 	}
 	for _, ss := range w.SafetySettings {
-		req.SafetySettings = append(req.SafetySettings, ir.SafetySettings{
+		req.SafetySettings = append(req.SafetySettings, llm.SafetySettings{
 			Category: ss.Category, Threshold: ss.Threshold,
 		})
 	}
 
 	if w.GenerationConfig != nil || len(w.ToolConfig) > 0 || w.CachedContent != "" {
-		ext := &ir.GoogleExt{
+		ext := &llm.GoogleExt{
 			ToolConfig:    w.ToolConfig,
 			CachedContent: w.CachedContent,
 		}
@@ -117,50 +115,50 @@ func contentText(c content) string {
 	return strings.Join(texts, "\n")
 }
 
-func decodeContent(c content) (ir.Message, bool) {
-	role := ir.RoleUser
+func decodeContent(c content) (llm.Message, bool) {
+	role := llm.RoleUser
 	if c.Role == "model" {
-		role = ir.RoleAssistant
+		role = llm.RoleAssistant
 	}
-	var blocks []ir.ContentBlock
-	var toolCalls []ir.ToolCall
+	var blocks []llm.ContentBlock
+	var toolCalls []llm.ToolCall
 	hasFnResp := false
 	for _, p := range c.Parts {
 		switch {
 		case p.FunctionCall != nil:
 			id := "call_" + p.FunctionCall.Name // Gemini has no call id; synthesize
-			toolCalls = append(toolCalls, ir.ToolCall{ID: id, Name: p.FunctionCall.Name, Arguments: string(p.FunctionCall.Args)})
-			blocks = append(blocks, &ir.ToolUseBlock{ID: id, Name: p.FunctionCall.Name, Input: p.FunctionCall.Args, ThoughtSignature: p.ThoughtSignature})
+			toolCalls = append(toolCalls, llm.ToolCall{ID: id, Name: p.FunctionCall.Name, Arguments: string(p.FunctionCall.Args)})
+			blocks = append(blocks, &llm.ToolUseBlock{ID: id, Name: p.FunctionCall.Name, Input: p.FunctionCall.Args, ThoughtSignature: p.ThoughtSignature})
 		case p.FunctionResponse != nil:
 			hasFnResp = true
-			blocks = append(blocks, &ir.ToolResultBlock{ToolUseID: p.FunctionResponse.Name, Content: p.FunctionResponse.Response})
+			blocks = append(blocks, &llm.ToolResultBlock{ToolUseID: p.FunctionResponse.Name, Content: p.FunctionResponse.Response})
 		case p.InlineData != nil:
-			blocks = append(blocks, &ir.ImageBlock{Source: &ir.Base64Media{MediaType: p.InlineData.MimeType, Data: p.InlineData.Data}})
+			blocks = append(blocks, &llm.ImageBlock{Source: &llm.Base64Media{MediaType: p.InlineData.MimeType, Data: p.InlineData.Data}})
 		case p.Thought:
-			blocks = append(blocks, &ir.ThinkingBlock{Thinking: p.Text})
+			blocks = append(blocks, &llm.ThinkingBlock{Thinking: p.Text})
 		default:
 			if p.Text != "" {
-				blocks = append(blocks, &ir.TextBlock{Text: p.Text})
+				blocks = append(blocks, &llm.TextBlock{Text: p.Text})
 			}
 		}
 	}
 	if len(blocks) == 0 {
-		return ir.Message{}, false
+		return llm.Message{}, false
 	}
 	if hasFnResp {
-		role = ir.RoleTool
+		role = llm.RoleTool
 	}
-	return ir.Message{Role: role, Content: blockContent(blocks), ToolCalls: toolCalls}, true
+	return llm.Message{Role: role, Content: blockContent(blocks), ToolCalls: toolCalls}, true
 }
 
 // blockContent collapses to TextContent when the content is a single text block.
-func blockContent(blocks []ir.ContentBlock) ir.MessageContent {
+func blockContent(blocks []llm.ContentBlock) llm.MessageContent {
 	if len(blocks) == 1 {
-		if t, ok := blocks[0].(*ir.TextBlock); ok {
-			return &ir.TextContent{Text: t.Text}
+		if t, ok := blocks[0].(*llm.TextBlock); ok {
+			return &llm.TextContent{Text: t.Text}
 		}
 	}
-	return &ir.BlocksContent{Blocks: blocks}
+	return &llm.BlocksContent{Blocks: blocks}
 }
 
 func int64ptr(u *uint32) *int64 {

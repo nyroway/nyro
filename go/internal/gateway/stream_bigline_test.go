@@ -19,6 +19,10 @@ func TestServeStreamHugeSSELine(t *testing.T) {
 	if !ok {
 		t.Fatal("openai codec not registered")
 	}
+	chat, ok := h.(codec.ChatEndpointHandler)
+	if !ok {
+		t.Fatalf("openai codec type = %T, want codec.ChatEndpointHandler", h)
+	}
 
 	// One valid OpenAI chunk whose content pushes the data: line past 2 MiB.
 	big := strings.Repeat("x", 2<<20)
@@ -29,7 +33,7 @@ func TestServeStreamHugeSSELine(t *testing.T) {
 	g := NewGateway()
 	rec := httptest.NewRecorder()
 	ex := &pipeline.Exchange{Ctx: context.Background(), W: rec}
-	g.serveStream(ex, upstream, h, h)
+	g.serveStream(ex, upstream, chat, chat)
 
 	if !strings.Contains(rec.Body.String(), big[:64]) {
 		t.Errorf("streamed body lost the oversized chunk content; got %d bytes", rec.Body.Len())

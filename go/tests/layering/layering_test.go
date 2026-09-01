@@ -24,7 +24,10 @@ const modulePath = "github.com/nyroway/nyro/go"
 
 func TestFoundationBoundaryPolicy(t *testing.T) {
 	t.Parallel()
-	llm := foundationBoundary{prefix: "internal/protocol/llm"}
+	legacyLLMProtocol := foundationBoundary{
+		prefix:        "internal/protocol/llm",
+		allowInternal: []string{"internal/llm"},
+	}
 	platform := foundationBoundary{prefix: "internal/platform", allowThirdParty: true}
 	quotaRule := foundationBoundary{prefix: "internal/quota", allowThirdParty: true}
 	routerRule := foundationBoundary{prefix: "internal/router"}
@@ -34,10 +37,8 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 		imp  directImport
 		want bool
 	}{
-		{"llm standard library", llm, directImport{path: "encoding/json", standard: true}, true},
-		{"llm own subtree", llm, directImport{path: modulePath + "/internal/protocol/llm/spec"}, true},
-		{"llm third party", llm, directImport{path: "example.com/dependency"}, false},
-		{"llm other internal", llm, directImport{path: modulePath + "/internal/provider"}, false},
+		{"legacy llm protocol may import llm", legacyLLMProtocol, directImport{path: modulePath + "/internal/llm"}, true},
+		{"legacy llm protocol rejects provider", legacyLLMProtocol, directImport{path: modulePath + "/internal/provider"}, false},
 		{"platform standard library", platform, directImport{path: "database/sql", standard: true}, true},
 		{"platform own subtree", platform, directImport{path: modulePath + "/internal/platform/state"}, true},
 		{"platform third party", platform, directImport{path: "github.com/jackc/pgx/v5"}, true},
@@ -56,6 +57,27 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := importAllowedByFoundationBoundary(tt.rule, tt.imp); got != tt.want {
 				t.Fatalf("importAllowedByFoundationBoundary(%+v, %+v) = %v, want %v", tt.rule, tt.imp, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLLMModelBoundaryPolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		imp  directImport
+		want bool
+	}{
+		{"standard library", directImport{path: "encoding/json", standard: true}, true},
+		{"llm runtime", directImport{path: modulePath + "/internal/llm/runtime"}, false},
+		{"other internal", directImport{path: modulePath + "/internal/provider"}, false},
+		{"third party", directImport{path: "example.com/dependency"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := llmModelImportAllowed(tt.imp); got != tt.want {
+				t.Fatalf("llmModelImportAllowed(%+v) = %v, want %v", tt.imp, got, tt.want)
 			}
 		})
 	}
@@ -107,6 +129,7 @@ func TestKernelBoundaryPolicy(t *testing.T) {
 type foundationBoundary struct {
 	prefix          string
 	allowThirdParty bool
+	allowInternal   []string
 }
 
 type directImport struct {
@@ -115,7 +138,7 @@ type directImport struct {
 }
 
 var foundationBoundaries = []foundationBoundary{
-	{prefix: "internal/protocol/llm"},
+	{prefix: "internal/protocol/llm", allowInternal: []string{"internal/llm"}},
 	{prefix: "internal/platform", allowThirdParty: true},
 	{prefix: "internal/quota", allowThirdParty: true},
 	{prefix: "internal/router"},
@@ -124,6 +147,11 @@ var foundationBoundaries = []foundationBoundary{
 func importAllowedByFoundationBoundary(rule foundationBoundary, imp directImport) bool {
 	if imp.standard || packageWithin(imp.path, modulePath+"/"+rule.prefix) {
 		return true
+	}
+	for _, allowed := range rule.allowInternal {
+		if packageWithin(imp.path, modulePath+"/"+allowed) {
+			return true
+		}
 	}
 	return rule.allowThirdParty && !packageWithin(imp.path, modulePath)
 }
@@ -137,6 +165,10 @@ func configSnapshotImportAllowed(imp directImport) bool {
 }
 
 func kernelImportAllowed(imp directImport) bool {
+	return imp.standard
+}
+
+func llmModelImportAllowed(imp directImport) bool {
 	return imp.standard
 }
 
@@ -154,6 +186,7 @@ const (
 var packageLayer = map[string]int{
 	// Layer 0 — foundation.
 	"internal/kernel":                                    layerFoundation,
+	"internal/llm":                                       layerFoundation,
 	"internal/pipeline":                                  layerFoundation,
 	"internal/protocol/llm":                              layerFoundation,
 	"internal/protocol/llm/codec":                        layerFoundation,
@@ -162,7 +195,6 @@ var packageLayer = map[string]int{
 	"internal/protocol/llm/codec/openai/chatcompletions": layerFoundation,
 	"internal/protocol/llm/codec/openai/embeddings":      layerFoundation,
 	"internal/protocol/llm/codec/openai/responses":       layerFoundation,
-	"internal/protocol/llm/ir":                           layerFoundation,
 	"internal/protocol/llm/spec":                         layerFoundation,
 	"internal/platform/database":                         layerFoundation,
 	"internal/platform/database/postgres":                layerFoundation,
@@ -257,6 +289,20 @@ func TestKernelUsesOnlyStandardLibrary(t *testing.T) {
 		for _, imp := range pkg.directImports {
 			if !kernelImportAllowed(imp) {
 				t.Errorf("kernel boundary: %s imports %s", pkg.name, imp.path)
+			}
+		}
+	}
+}
+
+func TestLLMModelUsesOnlyStandardLibrary(t *testing.T) {
+	t.Parallel()
+	for _, pkg := range loadInternalPackages(t) {
+		if pkg.name != "internal/llm" {
+			continue
+		}
+		for _, imp := range pkg.directImports {
+			if !llmModelImportAllowed(imp) {
+				t.Errorf("llm model boundary: %s imports %s", pkg.name, imp.path)
 			}
 		}
 	}

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // streamResponseEncoder formats IR deltas as the full Responses API SSE event
@@ -18,11 +18,11 @@ type streamResponseEncoder struct {
 	itemID    string
 	itemAdded bool
 	partAdded bool
-	usage     ir.Usage
+	usage     llm.Usage
 	textBuf   strings.Builder
 }
 
-func (e *streamResponseEncoder) FormatDeltas(deltas []ir.StreamDelta) ([]codec.SSE, error) {
+func (e *streamResponseEncoder) FormatDeltas(deltas []llm.StreamDelta) ([]codec.SSE, error) {
 	var out []codec.SSE
 	for _, d := range deltas {
 		out = append(out, e.formatDelta(d)...)
@@ -31,20 +31,20 @@ func (e *streamResponseEncoder) FormatDeltas(deltas []ir.StreamDelta) ([]codec.S
 }
 
 // FormatDone is a no-op: response.completed is emitted on the DoneDelta.
-func (e *streamResponseEncoder) FormatDone(_ ir.Usage) ([]codec.SSE, error) {
+func (e *streamResponseEncoder) FormatDone(_ llm.Usage) ([]codec.SSE, error) {
 	return nil, nil
 }
 
-func (e *streamResponseEncoder) formatDelta(d ir.StreamDelta) []codec.SSE {
+func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) []codec.SSE {
 	switch v := d.(type) {
-	case *ir.MessageStartDelta:
+	case *llm.MessageStartDelta:
 		e.id, e.model = v.ID, v.Model
 		e.itemID = "msg_" + v.ID
 		return []codec.SSE{
 			ev(map[string]any{"type": "response.created", "response": map[string]any{"id": v.ID, "model": v.Model, "status": "in_progress"}}),
 			ev(map[string]any{"type": "response.in_progress", "response": map[string]string{"id": v.ID, "status": "in_progress"}}),
 		}
-	case *ir.TextDelta:
+	case *llm.TextDelta:
 		var out []codec.SSE
 		if !e.itemAdded {
 			e.itemAdded = true
@@ -66,10 +66,10 @@ func (e *streamResponseEncoder) formatDelta(d ir.StreamDelta) []codec.SSE {
 			"delta": v.Text,
 		}))
 		return out
-	case *ir.UsageDelta:
+	case *llm.UsageDelta:
 		e.usage = v.Usage
 		return nil
-	case *ir.DoneDelta:
+	case *llm.DoneDelta:
 		fullText := e.textBuf.String()
 		return []codec.SSE{
 			ev(map[string]any{"type": "response.output_text.done", "item_id": e.itemID, "output_index": 0, "content_index": 0, "text": fullText}),

@@ -3,17 +3,17 @@ package responses
 import (
 	"encoding/json"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 type responseDecoder struct{}
 
-func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
+func (responseDecoder) Parse(body []byte) (*llm.ChatResponse, error) {
 	var w response
 	if err := json.Unmarshal(body, &w); err != nil {
 		return nil, err
 	}
-	resp := ir.NewAiResponse(w.ID, w.Model)
+	resp := llm.NewChatResponse(w.ID, w.Model)
 	for _, it := range w.Output {
 		switch it.Type {
 		case "message":
@@ -33,12 +33,12 @@ func (responseDecoder) Parse(body []byte) (*ir.AiResponse, error) {
 			if args == "" {
 				args = "{}"
 			}
-			resp.ToolCalls = append(resp.ToolCalls, ir.ToolCall{ID: it.CallID, Name: it.Name, Arguments: args})
+			resp.ToolCalls = append(resp.ToolCalls, llm.ToolCall{ID: it.CallID, Name: it.Name, Arguments: args})
 		}
 	}
 	resp.StopReason = responsesStopReason(w.Status, len(resp.ToolCalls) > 0)
 	if w.Usage != nil {
-		resp.Usage = ir.Usage{
+		resp.Usage = llm.Usage{
 			PromptTokens:     w.Usage.InputTokens,
 			CompletionTokens: w.Usage.OutputTokens,
 			TotalTokens:      w.Usage.TotalTokens,
@@ -80,7 +80,7 @@ func responsesStopReason(status string, hasTool bool) string {
 
 type responseEncoder struct{}
 
-func (responseEncoder) Format(resp *ir.AiResponse) ([]byte, error) {
+func (responseEncoder) Format(resp *llm.ChatResponse) ([]byte, error) {
 	var output []outputItem
 	if resp.ReasoningContent != "" {
 		output = append(output, outputItem{

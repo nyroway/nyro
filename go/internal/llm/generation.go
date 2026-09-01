@@ -1,4 +1,4 @@
-package ir
+package llm
 
 // GenerationConfig holds core generation parameters shared across all
 // supported protocols. Optional knobs use pointers to distinguish unset.

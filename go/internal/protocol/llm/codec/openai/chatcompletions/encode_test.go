@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
+	"github.com/nyroway/nyro/go/internal/llm"
 )
 
 // TestEncodeOmitsContentForToolOnlyAssistant is the Go port of Rust regression
@@ -15,18 +15,18 @@ import (
 // (it lives solely in `tool_calls`).
 func TestEncodeOmitsContentForToolOnlyAssistant(t *testing.T) {
 	t.Parallel()
-	req := ir.NewAiRequest("gpt-4o", []ir.Message{
+	req := llm.NewChatRequest("gpt-4o", []llm.Message{
 		{
-			Role: ir.RoleAssistant,
-			Content: &ir.BlocksContent{Blocks: []ir.ContentBlock{
-				&ir.ToolUseBlock{ID: "call_a", Name: "Bash", Input: json.RawMessage(`{"command":"ls"}`)},
+			Role: llm.RoleAssistant,
+			Content: &llm.BlocksContent{Blocks: []llm.ContentBlock{
+				&llm.ToolUseBlock{ID: "call_a", Name: "Bash", Input: json.RawMessage(`{"command":"ls"}`)},
 			}},
-			ToolCalls: []ir.ToolCall{{ID: "call_a", Name: "Bash", Arguments: `{"command":"ls"}`}},
+			ToolCalls: []llm.ToolCall{{ID: "call_a", Name: "Bash", Arguments: `{"command":"ls"}`}},
 		},
 		{
-			Role:       ir.RoleTool,
+			Role:       llm.RoleTool,
 			ToolCallID: "call_a",
-			Content:    &ir.TextContent{Text: "file1\nfile2"},
+			Content:    &llm.TextContent{Text: "file1\nfile2"},
 		},
 	})
 	out, err := requestEncoder{}.Encode(req)

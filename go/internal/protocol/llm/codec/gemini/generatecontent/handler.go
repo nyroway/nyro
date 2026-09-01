@@ -26,13 +26,17 @@ func (GenerateContentHandler) Capabilities() spec.EndpointCapabilities {
 	}
 }
 
-func (GenerateContentHandler) MakeRequestDecoder() codec.RequestDecoder { return requestDecoder{} }
+func (GenerateContentHandler) MakeRequestDecoder() codec.ChatRequestDecoder { return requestDecoder{} }
 
-func (GenerateContentHandler) MakeRequestEncoder() codec.RequestEncoder { return requestEncoder{} }
+func (GenerateContentHandler) MakeRequestEncoder() codec.ChatRequestEncoder { return requestEncoder{} }
 
-func (GenerateContentHandler) MakeResponseDecoder() codec.ResponseDecoder { return responseDecoder{} }
+func (GenerateContentHandler) MakeResponseDecoder() codec.ChatResponseDecoder {
+	return responseDecoder{}
+}
 
-func (GenerateContentHandler) MakeResponseEncoder() codec.ResponseEncoder { return responseEncoder{} }
+func (GenerateContentHandler) MakeResponseEncoder() codec.ChatResponseEncoder {
+	return responseEncoder{}
+}
 
 func (GenerateContentHandler) MakeStreamResponseDecoder() codec.StreamResponseDecoder {
 	return &streamResponseDecoder{}

@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/ir"
 )
 
 // requestEncoder implements codec.RequestEncoder for Anthropic messages.
 type requestEncoder struct{}
 
-func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
+func (requestEncoder) Encode(req *llm.ChatRequest) (codec.OutboundRequest, error) {
 	maxTokens := uint32(4096) // Anthropic requires max_tokens
 	if req.Generation.MaxTokens != nil {
 		maxTokens = *req.Generation.MaxTokens
@@ -43,7 +43,7 @@ func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 	if req.Reasoning.Enabled {
 		w.Thinking = &thinkingConfig{Type: "enabled", BudgetTokens: req.Reasoning.BudgetTokens}
 	}
-	if e, ok := req.Ext.(*ir.AnthropicExt); ok {
+	if e, ok := req.Ext.(*llm.AnthropicExt); ok {
 		w.TopK = e.TopK
 		w.Container = e.Container
 		w.ServiceTier = e.ServiceTier
@@ -68,8 +68,8 @@ func (requestEncoder) Encode(req *ir.AiRequest) (codec.OutboundRequest, error) {
 	}, nil
 }
 
-func encodeMessage(m ir.Message) message {
-	if m.Role == ir.RoleTool {
+func encodeMessage(m llm.Message) message {
+	if m.Role == llm.RoleTool {
 		// Tool result → user message with a tool_result block.
 		toolUseID := normalizeToolID(m.ToolCallID)
 		blocks := []contentBlock{{Type: "tool_result", ToolUseID: toolUseID, Content: textRawMsg(m)}}
@@ -77,21 +77,21 @@ func encodeMessage(m ir.Message) message {
 		return message{Role: "user", Content: raw}
 	}
 	role := "user"
-	if m.Role == ir.RoleAssistant {
+	if m.Role == llm.RoleAssistant {
 		role = "assistant"
 	}
 	return message{Role: role, Content: encodeContent(m)}
 }
 
 // encodeContent renders a message body to Anthropic content (string or blocks).
-func encodeContent(m ir.Message) json.RawMessage {
+func encodeContent(m llm.Message) json.RawMessage {
 	text, textOnly := textOf(m)
 	if textOnly && len(m.ToolCalls) == 0 {
 		b, _ := json.Marshal(text)
 		return b
 	}
 	var blocks []contentBlock
-	if bc, ok := m.Content.(*ir.BlocksContent); ok {
+	if bc, ok := m.Content.(*llm.BlocksContent); ok {
 		for _, b := range bc.Blocks {
 			blocks = append(blocks, encodeBlock(b))
 		}
@@ -102,9 +102,9 @@ func encodeContent(m ir.Message) json.RawMessage {
 	// tool_use (prevents duplicates for Native Anthropic where the IR has both
 	// ToolUseBlock in content AND ToolCalls on the message).
 	hasToolUseInBlocks := false
-	if bc, ok := m.Content.(*ir.BlocksContent); ok {
+	if bc, ok := m.Content.(*llm.BlocksContent); ok {
 		for _, b := range bc.Blocks {
-			if _, ok := b.(*ir.ToolUseBlock); ok {
+			if _, ok := b.(*llm.ToolUseBlock); ok {
 				hasToolUseInBlocks = true
 				break
 			}
@@ -123,15 +123,15 @@ func encodeContent(m ir.Message) json.RawMessage {
 	return b
 }
 
-func encodeBlock(b ir.ContentBlock) contentBlock {
+func encodeBlock(b llm.ContentBlock) contentBlock {
 	switch v := b.(type) {
-	case *ir.TextBlock:
+	case *llm.TextBlock:
 		cb := contentBlock{Type: "text", Text: v.Text}
 		if v.CacheControl != nil {
 			cb.CacheControl = encodeCacheControl(*v.CacheControl)
 		}
 		return cb
-	case *ir.ThinkingBlock:
+	case *llm.ThinkingBlock:
 		cb := contentBlock{Type: "thinking", Thinking: v.Thinking}
 		if v.Signature != "" {
 			cb.Signature = v.Signature
@@ -140,7 +140,7 @@ func encodeBlock(b ir.ContentBlock) contentBlock {
 			cb.CacheControl = encodeCacheControl(*v.CacheControl)
 		}
 		return cb
-	case *ir.ToolUseBlock:
+	case *llm.ToolUseBlock:
 		input := v.Input
 		if len(input) == 0 {
 			input = json.RawMessage("{}")
@@ -150,20 +150,20 @@ func encodeBlock(b ir.ContentBlock) contentBlock {
 			cb.CacheControl = encodeCacheControl(*v.CacheControl)
 		}
 		return cb
-	case *ir.ToolResultBlock:
+	case *llm.ToolResultBlock:
 		cb := contentBlock{Type: "tool_result", ToolUseID: v.ToolUseID, Content: v.Content}
 		if v.CacheControl != nil {
 			cb.CacheControl = encodeCacheControl(*v.CacheControl)
 		}
 		return cb
-	case *ir.ImageBlock:
+	case *llm.ImageBlock:
 		return contentBlock{Type: "image", Source: encodeMediaSource(v.Source)}
 	}
 	return contentBlock{Type: "text"}
 }
 
-func encodeCacheControl(cc ir.CacheControl) json.RawMessage {
-	if cc.Ttl == ir.CacheTtlEphemeral1h {
+func encodeCacheControl(cc llm.CacheControl) json.RawMessage {
+	if cc.Ttl == llm.CacheTtlEphemeral1h {
 		return json.RawMessage(`{"type":"ephemeral","ttl":"1h"}`)
 	}
 	return json.RawMessage(`{"type":"ephemeral"}`)
@@ -192,43 +192,43 @@ func normalizeToolID(id string) string {
 	return sb.String()
 }
 
-func encodeMediaSource(s ir.MediaSource) json.RawMessage {
+func encodeMediaSource(s llm.MediaSource) json.RawMessage {
 	switch v := s.(type) {
-	case *ir.Base64Media:
+	case *llm.Base64Media:
 		b, _ := json.Marshal(map[string]string{"type": "base64", "media_type": v.MediaType, "data": v.Data})
 		return b
-	case *ir.URLMedia:
+	case *llm.URLMedia:
 		b, _ := json.Marshal(map[string]string{"type": "url", "url": v.URL})
 		return b
 	}
 	return nil
 }
 
-func encodeToolChoice(tc ir.ToolChoice) json.RawMessage {
+func encodeToolChoice(tc llm.ToolChoice) json.RawMessage {
 	switch v := tc.(type) {
-	case *ir.AutoToolChoice:
+	case *llm.AutoToolChoice:
 		return json.RawMessage(`{"type":"auto"}`)
-	case *ir.NoneToolChoice:
+	case *llm.NoneToolChoice:
 		return json.RawMessage(`{"type":"none"}`)
-	case *ir.RequiredToolChoice:
+	case *llm.RequiredToolChoice:
 		return json.RawMessage(`{"type":"any"}`)
-	case *ir.NamedToolChoice:
+	case *llm.NamedToolChoice:
 		b, _ := json.Marshal(map[string]string{"type": "tool", "name": v.Name})
 		return b
-	case *ir.RawToolChoice:
+	case *llm.RawToolChoice:
 		return v.Raw
 	}
 	return json.RawMessage(`{"type":"auto"}`)
 }
 
-func textOf(m ir.Message) (string, bool) {
-	if tc, ok := m.Content.(*ir.TextContent); ok {
+func textOf(m llm.Message) (string, bool) {
+	if tc, ok := m.Content.(*llm.TextContent); ok {
 		return tc.Text, true
 	}
 	return "", false
 }
 
-func textRawMsg(m ir.Message) json.RawMessage {
+func textRawMsg(m llm.Message) json.RawMessage {
 	if text, ok := textOf(m); ok {
 		b, _ := json.Marshal(text)
 		return b
@@ -240,10 +240,10 @@ func textRawMsg(m ir.Message) json.RawMessage {
 // (user+user, assistant+assistant) into a single message. Strict Anthropic
 // endpoints (DeepSeek) reject consecutive same-role messages with 400.
 // System messages are filtered (handled by the top-level system field).
-func mergeConsecutiveSameRole(msgs []ir.Message) []ir.Message {
-	var out []ir.Message
+func mergeConsecutiveSameRole(msgs []llm.Message) []llm.Message {
+	var out []llm.Message
 	for _, m := range msgs {
-		if m.Role == ir.RoleSystem {
+		if m.Role == llm.RoleSystem {
 			continue
 		}
 		if len(out) > 0 && out[len(out)-1].Role == m.Role {
@@ -260,30 +260,30 @@ func mergeConsecutiveSameRole(msgs []ir.Message) []ir.Message {
 	return out
 }
 
-func mergeContent(a, b ir.MessageContent) ir.MessageContent {
+func mergeContent(a, b llm.MessageContent) llm.MessageContent {
 	if a == nil {
 		return b
 	}
 	if b == nil {
 		return a
 	}
-	if ta, ok := a.(*ir.TextContent); ok {
-		if tb, ok := b.(*ir.TextContent); ok {
-			return &ir.TextContent{Text: ta.Text + "\n" + tb.Text}
+	if ta, ok := a.(*llm.TextContent); ok {
+		if tb, ok := b.(*llm.TextContent); ok {
+			return &llm.TextContent{Text: ta.Text + "\n" + tb.Text}
 		}
 	}
-	return &ir.BlocksContent{Blocks: append(toBlocks(a), toBlocks(b)...)}
+	return &llm.BlocksContent{Blocks: append(toBlocks(a), toBlocks(b)...)}
 }
 
-func toBlocks(c ir.MessageContent) []ir.ContentBlock {
+func toBlocks(c llm.MessageContent) []llm.ContentBlock {
 	switch v := c.(type) {
-	case *ir.BlocksContent:
+	case *llm.BlocksContent:
 		return v.Blocks
-	case *ir.TextContent:
+	case *llm.TextContent:
 		if v.Text == "" {
 			return nil
 		}
-		return []ir.ContentBlock{&ir.TextBlock{Text: v.Text}}
+		return []llm.ContentBlock{&llm.TextBlock{Text: v.Text}}
 	}
 	return nil
 }
