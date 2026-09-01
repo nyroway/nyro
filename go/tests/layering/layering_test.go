@@ -83,6 +83,27 @@ func TestConfigSnapshotBoundaryPolicy(t *testing.T) {
 	}
 }
 
+func TestKernelBoundaryPolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		imp  directImport
+		want bool
+	}{
+		{"standard library", directImport{path: "sync", standard: true}, true},
+		{"kernel subtree", directImport{path: modulePath + "/internal/kernel/extension"}, false},
+		{"other internal", directImport{path: modulePath + "/internal/config"}, false},
+		{"third party", directImport{path: "example.com/dependency"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := kernelImportAllowed(tt.imp); got != tt.want {
+				t.Fatalf("kernelImportAllowed(%+v) = %v, want %v", tt.imp, got, tt.want)
+			}
+		})
+	}
+}
+
 type foundationBoundary struct {
 	prefix          string
 	allowThirdParty bool
@@ -115,6 +136,10 @@ func configSnapshotImportAllowed(imp directImport) bool {
 	return imp.standard || imp.path == modulePath+"/internal/storage"
 }
 
+func kernelImportAllowed(imp directImport) bool {
+	return imp.standard
+}
+
 // Layer numbers. Lower may not import higher.
 const (
 	layerFoundation = 0 // protocol and platform foundations shared by higher layers
@@ -128,6 +153,7 @@ const (
 // forces a deliberate layering decision rather than silently defaulting.
 var packageLayer = map[string]int{
 	// Layer 0 — foundation.
+	"internal/kernel":                                    layerFoundation,
 	"internal/pipeline":                                  layerFoundation,
 	"internal/protocol/llm":                              layerFoundation,
 	"internal/protocol/llm/codec":                        layerFoundation,
@@ -217,6 +243,20 @@ func TestConfigSnapshotStaysIsolated(t *testing.T) {
 		for _, imp := range pkg.directImports {
 			if !configSnapshotImportAllowed(imp) {
 				t.Errorf("config snapshot boundary: %s imports %s", pkg.name, imp.path)
+			}
+		}
+	}
+}
+
+func TestKernelUsesOnlyStandardLibrary(t *testing.T) {
+	t.Parallel()
+	for _, pkg := range loadInternalPackages(t) {
+		if !packageWithin(pkg.name, "internal/kernel") {
+			continue
+		}
+		for _, imp := range pkg.directImports {
+			if !kernelImportAllowed(imp) {
+				t.Errorf("kernel boundary: %s imports %s", pkg.name, imp.path)
 			}
 		}
 	}
