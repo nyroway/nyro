@@ -7,7 +7,7 @@
 // (nested keys/routes/quotas).
 //
 // Layer: 1 (data) — may import internal/config/snapshot,
-// internal/protocol/llm, layer 0, and storage.
+// internal/llm/protocol, layer 0, and storage.
 //
 // It imports platform/state and telemetry/schema (layer 0) to validate the
 // settings.state and settings.telemetry YAML blocks. It does not import either

@@ -22,7 +22,7 @@ until parity is reached (P0–P6 migration plan).
 | `internal/config/` | `config.rs` | standalone YAML loading and storage seeding |
 | `internal/config/snapshot/` | — | immutable runtime config, builder, atomic publication cache, and storage-backed loading |
 | `internal/configsync/` | — | gRPC/protobuf transport, authentication, conversion, and node tracking |
-| `internal/protocol/llm/` | `protocol/` | Nyro-internal LLM protocol identity, canonical IR, codec interfaces, endpoint registry, and Native/Transform negotiation |
+| `internal/llm/protocol/` | `protocol/` | LLM wire-protocol identity, split ingress/egress codecs, and immutable explicitly composed catalogs |
 | `internal/provider/` | `provider/` | `Vendor` interface, 7-step build/parse pipeline, vendor registry |
 | `internal/gateway/` | `proxy/` | Gateway data-plane orchestration, ingress shells, and streaming dual-path (passthrough + IR round-trip) |
 | `internal/router/` | `router/` | runtime target selection, weighted/priority/cooldown/latency ordering, health state |
@@ -56,7 +56,7 @@ embedded.
 | sqlx (sqlite/pg/mysql) | **GORM** (`gorm.io/gorm`) + sqlite/postgres drivers | **AutoMigrate OFF** — schema source-of-truth is the migration layer (`deploy/schema/*.sql`); GORM is used for CRUD/struct mapping only |
 | serde | `encoding/json` + struct tags | |
 | tracing | `log/slog` | stdlib |
-| `inventory` | `init()` + global registry | Go has no link-time registration; codecs/vendors/hooks register at init |
+| `inventory` | explicit constructors + catalogs | Protocol codecs are assembled in Bootstrap without blank imports or `init()` registration; provider migration follows separately |
 
 **SQLite without CGO:** GORM's default sqlite driver (`gorm.io/driver/sqlite`)
 pulls `mattn/go-sqlite3` (CGO). To keep the build pure-Go (no C toolchain,

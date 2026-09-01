@@ -12,7 +12,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -21,8 +23,17 @@ func newEngine(t *testing.T, token string) (chi.Router, *memory.Backend) {
 	t.Helper()
 	st := memory.New()
 	r := chi.NewRouter()
-	Mount(r, st.Storage(), nil, nil)
+	Mount(r, st.Storage(), nil, nil, testProtocolCatalog(t))
 	return r, st
+}
+
+func testProtocolCatalog(t *testing.T) *protocol.Catalog {
+	t.Helper()
+	catalog, err := bootstrap.NewLLMProtocolCatalog()
+	if err != nil {
+		t.Fatalf("compose LLM protocols: %v", err)
+	}
+	return catalog
 }
 
 func do(r http.Handler, method, path, token string, body []byte) *httptest.ResponseRecorder {

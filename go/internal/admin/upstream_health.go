@@ -11,12 +11,7 @@ import (
 	"time"
 
 	"github.com/nyroway/nyro/go/internal/llm"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/codec"
-	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/anthropic/messages"
-	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/gemini/generatecontent"
-	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/chatcompletions"
-	_ "github.com/nyroway/nyro/go/internal/protocol/llm/codec/openai/responses"
-	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
@@ -61,23 +56,23 @@ func (e *healthEventWriter) send(ev upstreamHealthEvent) {
 	}
 }
 
-func streamDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, in storage.CreateUpstream) {
-	streamUpstreamHealth(w, r, s, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true})
+func streamDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, in storage.CreateUpstream) {
+	streamUpstreamHealth(w, r, s, protocols, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true})
 }
 
 // streamEditDraftUpstreamHealth runs the same pre-save validation pipeline as
 // streamDraftUpstreamHealth, but excludes excludeID from the name-uniqueness
 // check — an edit form resubmits the provider's own (unchanged) name, which
 // would otherwise always collide with itself.
-func streamEditDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, in storage.CreateUpstream, excludeID string) {
-	streamUpstreamHealth(w, r, s, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true, excludeID: excludeID})
+func streamEditDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, in storage.CreateUpstream, excludeID string) {
+	streamUpstreamHealth(w, r, s, protocols, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true, excludeID: excludeID})
 }
 
-func streamSavedUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, u storage.Upstream) {
-	streamUpstreamHealth(w, r, s, u, upstreamHealthOptions{})
+func streamSavedUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, u storage.Upstream) {
+	streamUpstreamHealth(w, r, s, protocols, u, upstreamHealthOptions{})
 }
 
-func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, u storage.Upstream, opts upstreamHealthOptions) {
+func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, u storage.Upstream, opts upstreamHealthOptions) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -143,7 +138,7 @@ func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Stor
 	events.send(upstreamHealthEvent{Type: "check", Check: "models", Status: "passed", Model: model, Discovered: len(models), Models: models, Message: "Model resolved"})
 
 	events.send(upstreamHealthEvent{Type: "check", Check: "model_request", Status: "running", Model: model, Message: "Sending minimal model request"})
-	latency, statusCode, err := testDraftModelRequest(r, u, model, auth)
+	latency, statusCode, err := testDraftModelRequest(r, protocols, u, model, auth)
 	if err != nil {
 		events.send(upstreamHealthEvent{Type: "check", Check: "model_request", Status: "failed", Model: model, LatencyMS: latency, StatusCode: statusCode, Error: err.Error()})
 		complete(false, err.Error())
@@ -200,20 +195,23 @@ func firstModelForDraft(ctx context.Context, u storage.Upstream) (string, []stri
 	return models[0], models, nil
 }
 
-func testDraftModelRequest(r *http.Request, u storage.Upstream, model string, auth provider.Authenticator) (int64, int, error) {
-	proto, err := spec.ParseProtocol(u.Protocol)
+func testDraftModelRequest(r *http.Request, protocols *protocol.Catalog, u storage.Upstream, model string, auth provider.Authenticator) (int64, int, error) {
+	proto, err := protocol.ParseProtocol(u.Protocol)
 	if err != nil {
 		return 0, 0, err
 	}
-	ep, ok := codec.EndpointFor(proto)
-	if !ok {
-		return 0, 0, fmt.Errorf("no codec registered for protocol %q", u.Protocol)
+	if protocols == nil {
+		return 0, 0, fmt.Errorf("LLM protocol catalog is unavailable")
 	}
-	handler, ok := codec.Get(ep)
+	ep, ok := protocols.EndpointFor(proto)
 	if !ok {
-		return 0, 0, fmt.Errorf("no codec registered for protocol %q", u.Protocol)
+		return 0, 0, fmt.Errorf("no egress codec configured for protocol %q", u.Protocol)
 	}
-	chatHandler, ok := handler.(codec.ChatEndpointHandler)
+	handler, ok := protocols.Egress(ep)
+	if !ok {
+		return 0, 0, fmt.Errorf("no egress codec configured for protocol %q", u.Protocol)
+	}
+	chatHandler, ok := handler.(protocol.ChatEgressCodec)
 	if !ok {
 		return 0, 0, fmt.Errorf("protocol %q does not support chat health checks", u.Protocol)
 	}
@@ -223,7 +221,7 @@ func testDraftModelRequest(r *http.Request, u storage.Upstream, model string, au
 		Content: &llm.TextContent{Text: "ping"},
 	}})
 	req.Generation.MaxTokens = &maxTokens
-	outbound, err := chatHandler.MakeRequestEncoder().Encode(req)
+	outbound, err := chatHandler.EncodeRequest(req)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -256,7 +254,7 @@ func testDraftModelRequest(r *http.Request, u storage.Upstream, model string, au
 	if err != nil {
 		return latency, resp.StatusCode, err
 	}
-	decoded, err := chatHandler.MakeResponseDecoder().Parse(body)
+	decoded, err := chatHandler.DecodeResponse(protocol.WireResponse{Status: resp.StatusCode, Body: body})
 	if err != nil {
 		return latency, resp.StatusCode, fmt.Errorf("model response validation failed: %w", err)
 	}

@@ -17,7 +17,7 @@ import (
 // been published?"). Empty cache → 503 unready; published snapshot → 200 ready.
 func TestReadyz(t *testing.T) {
 	// Empty cache → unready.
-	gw := NewGateway()
+	gw := NewGateway(testProtocolCatalog(t))
 	r := NewRouter(gw)
 	req := httptest.NewRequest("GET", "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -36,7 +36,7 @@ func TestReadyz(t *testing.T) {
 	_, _ = core.Routes().Create(storage.CreateRoute{
 		Model: "m", Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "m"}},
 	})
-	gw2 := NewGateway()
+	gw2 := NewGateway(testProtocolCatalog(t))
 	if err := gw2.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestReadyz(t *testing.T) {
 	}
 
 	// Sanity: a hand-built snapshot via Swap also flips ready (the config-sync path).
-	gw3 := NewGateway()
+	gw3 := NewGateway(testProtocolCatalog(t))
 	gw3.Cache.Swap((&configsnapshot.Builder{}).Build())
 	r3 := NewRouter(gw3)
 	req3 := httptest.NewRequest("GET", "/readyz", nil)
@@ -66,7 +66,7 @@ func TestReadyz(t *testing.T) {
 	cache := &configsnapshot.Cache{}
 	cache.Swap((&configsnapshot.Builder{}).Build())
 	quotaSwitch := quota.NewUnavailableSwitch()
-	gw4 := NewGatewayWithCache(cache, quotaSwitch)
+	gw4 := NewGatewayWithCache(cache, quotaSwitch, testProtocolCatalog(t))
 	r4 := NewRouter(gw4)
 	req4 := httptest.NewRequest("GET", "/readyz", nil)
 	rec4 := httptest.NewRecorder()

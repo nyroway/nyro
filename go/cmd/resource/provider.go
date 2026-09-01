@@ -18,7 +18,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
+	llmprotocol "github.com/nyroway/nyro/go/internal/llm/protocol"
 )
 
 const (
@@ -573,7 +573,7 @@ func normalizeUpdateProtocol(protocol string, presets []providerPreset, existing
 			formatAvailableProtocols(options),
 		)
 	}
-	parsed, err := spec.ParseProtocol(protocol)
+	parsed, err := llmprotocol.ParseProtocol(protocol)
 	if err != nil {
 		return "", fmt.Errorf(
 			"unknown protocol %q\n\nCurrent protocol: %s\n\n%s",
@@ -660,7 +660,7 @@ type protocolOption struct {
 }
 
 func selectableProtocolOptions() []protocolOption {
-	infos := spec.Protocols()
+	infos := llmprotocol.Protocols()
 	out := make([]protocolOption, 0, len(infos))
 	for _, info := range infos {
 		if !info.Selectable {
@@ -672,7 +672,7 @@ func selectableProtocolOptions() []protocolOption {
 }
 
 func protocolDisplayName(id string) string {
-	if parsed, err := spec.ParseProtocol(id); err == nil {
+	if parsed, err := llmprotocol.ParseProtocol(id); err == nil {
 		return parsed.DisplayName()
 	}
 	return id
@@ -737,7 +737,7 @@ func normalizeProviderProtocol(protocol string) (string, error) {
 	if protocol == "" {
 		return "", errors.New("protocol cannot be empty")
 	}
-	parsed, err := spec.ParseProtocol(protocol)
+	parsed, err := llmprotocol.ParseProtocol(protocol)
 	if err != nil {
 		return "", fmt.Errorf("unknown protocol %q\n\n%s", protocol, formatAvailableProtocols(selectableProtocolOptions()))
 	}

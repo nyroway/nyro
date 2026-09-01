@@ -149,7 +149,7 @@ func TestAdminStateSettingsAtomicFailureDoesNotPersist(t *testing.T) {
 		settings: failingIncrementSettings{SettingsStore: base.Settings()},
 	}
 	r := chi.NewRouter()
-	Mount(r, wrapped, nil, nil)
+	Mount(r, wrapped, nil, nil, testProtocolCatalog(t))
 
 	rec := do(r, http.MethodPut, "/api/v1/settings", "", []byte(`{
 		"values":{"state.type":"redis","state.url":"redis://127.0.0.1:6379/0"}

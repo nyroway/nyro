@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
+	llmprotocol "github.com/nyroway/nyro/go/internal/llm/protocol"
 )
 
 // DefaultAnthropicVersion is the anthropic-version header value applied by
@@ -74,7 +74,7 @@ func authSchemeFor(providerID, protocol string) string {
 	if def, ok := Lookup(providerID); ok && def.Auth != "" {
 		return def.Auth
 	}
-	if parsed, err := spec.ParseProtocol(protocol); err == nil {
+	if parsed, err := llmprotocol.ParseProtocol(protocol); err == nil {
 		protocol = parsed.String()
 	}
 	switch protocol {

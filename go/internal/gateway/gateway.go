@@ -11,6 +11,7 @@ import (
 	"time"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/router"
@@ -26,9 +27,10 @@ import (
 // (none/stdout/otlp). Router selects among a route's upstreams and tracks
 // failover.
 type Gateway struct {
-	Cache  *configsnapshot.Cache
-	Quota  *quota.Switch
-	Router *router.Router
+	Cache     *configsnapshot.Cache
+	Quota     *quota.Switch
+	Router    *router.Router
+	Protocols *protocol.Catalog
 
 	// Obs is the OTel provider (logger/meter/tracer). Populated by the data
 	// plane once at startup; nil in unit tests (the dispatcher still works,
@@ -86,10 +88,11 @@ func (g *Gateway) chain() *pipeline.Chain {
 // and populate the cache directly via Cache.LoadAndSwap / Cache.Swap. Production
 // callers use NewGatewayWithCache through gateway/runtime with a snapshot built
 // from YAML or filled by the config-sync stream.
-func NewGateway() *Gateway {
+func NewGateway(protocols *protocol.Catalog) *Gateway {
 	return NewGatewayWithCache(
 		&configsnapshot.Cache{},
 		quota.NewSwitch(quota.NewMemory()),
+		protocols,
 	)
 }
 
@@ -97,7 +100,7 @@ func NewGateway() *Gateway {
 // (standalone-YAML and config-sync path): the caller builds the snapshot from YAML or
 // from the config-sync stream and swaps it in, so the gateway never needs storage for
 // config. Obs/Handles are attached by gateway/runtime after construction.
-func NewGatewayWithCache(cache *configsnapshot.Cache, quotas *quota.Switch) *Gateway {
+func NewGatewayWithCache(cache *configsnapshot.Cache, quotas *quota.Switch, protocols *protocol.Catalog) *Gateway {
 	if cache == nil {
 		cache = &configsnapshot.Cache{}
 	}
@@ -105,9 +108,10 @@ func NewGatewayWithCache(cache *configsnapshot.Cache, quotas *quota.Switch) *Gat
 		quotas = quota.NewUnavailableSwitch()
 	}
 	return &Gateway{
-		Cache:  cache,
-		Quota:  quotas,
-		Router: router.New(),
+		Cache:     cache,
+		Quota:     quotas,
+		Router:    router.New(),
+		Protocols: protocols,
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nyroway/nyro/go/internal/protocol/llm/spec"
+	llmprotocol "github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
@@ -34,7 +34,7 @@ func normalizeCreateUpstreamProtocol(in *storage.CreateUpstream) error {
 	if protocol == "" {
 		return nil
 	}
-	parsed, err := spec.ParseProtocol(protocol)
+	parsed, err := llmprotocol.ParseProtocol(protocol)
 	if err != nil {
 		return err
 	}
@@ -50,7 +50,7 @@ func normalizeUpdateUpstreamProtocol(in *storage.UpdateUpstream) error {
 	if protocol == "" {
 		return nil
 	}
-	parsed, err := spec.ParseProtocol(protocol)
+	parsed, err := llmprotocol.ParseProtocol(protocol)
 	if err != nil {
 		return err
 	}

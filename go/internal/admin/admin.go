@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -41,7 +42,7 @@ type StatsSource interface {
 // intentionally has no built-in authentication: nyro serve binds it to
 // loopback by default, while remote deployments protect it at the network or
 // reverse-proxy boundary.
-func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource) {
+func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, protocols *protocol.Catalog) {
 	r.Route("/api/v1", func(g chi.Router) {
 		g.Use(sameOriginAdminWrites)
 
@@ -109,7 +110,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource) {
 				badRequest(w, err)
 				return
 			}
-			streamDraftUpstreamHealth(w, r, s, in)
+			streamDraftUpstreamHealth(w, r, s, protocols, in)
 		})
 		g.Post("/upstreams/{id}/test-draft/stream", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.CreateUpstream
@@ -117,7 +118,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource) {
 				badRequest(w, err)
 				return
 			}
-			streamEditDraftUpstreamHealth(w, r, s, in, chi.URLParam(r, "id"))
+			streamEditDraftUpstreamHealth(w, r, s, protocols, in, chi.URLParam(r, "id"))
 		})
 		g.Put("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.UpdateUpstream
@@ -169,7 +170,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource) {
 				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
-			streamSavedUpstreamHealth(w, r, s, *u)
+			streamSavedUpstreamHealth(w, r, s, protocols, *u)
 		})
 		g.Post("/upstreams/{id}/routes/import/stream", func(w http.ResponseWriter, r *http.Request) {
 			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))

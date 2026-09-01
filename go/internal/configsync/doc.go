@@ -20,7 +20,7 @@
 // PKI helpers, and connected-node tracking.
 //
 // Layer: 1 (data) — may import internal/config/snapshot,
-// internal/protocol/llm, layer 0, and storage.
+// internal/llm/protocol, layer 0, and storage.
 //
 // It imports platform/state and telemetry/schema (layer 0) to identify State
 // and exporter settings that belong in data-plane snapshots. It does not

@@ -6,9 +6,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nyroway/nyro/go/internal/bootstrap"
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
+
+func testProtocolCatalog(t *testing.T) *protocol.Catalog {
+	t.Helper()
+	catalog, err := bootstrap.NewLLMProtocolCatalog()
+	if err != nil {
+		t.Fatalf("compose LLM protocols: %v", err)
+	}
+	return catalog
+}
 
 // TestGatewayHTTPClientForProxy verifies per-upstream proxy routing: an empty
 // proxyURL uses the direct client; a malformed proxyURL (including a
@@ -17,7 +28,7 @@ import (
 // with a Proxy transport; two different valid URLs return distinct clients.
 func TestGatewayHTTPClientForProxy(t *testing.T) {
 	st := memory.New()
-	gw := NewGateway()
+	gw := NewGateway(testProtocolCatalog(t))
 	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
@@ -131,7 +142,7 @@ func TestResolveProxySettings_Overrides(t *testing.T) {
 // transport is tuned for concurrency (Go's http.Transport defaults to
 // MaxIdleConnsPerHost=2, which churns connections under load).
 func TestDirectClientTransportTuning(t *testing.T) {
-	g := NewGateway()
+	g := NewGateway(testProtocolCatalog(t))
 	client := g.directClient(proxySettings{RequestTimeout: time.Minute, ConnectTimeout: 10 * time.Second})
 	tr, ok := client.Transport.(*http.Transport)
 	if !ok {

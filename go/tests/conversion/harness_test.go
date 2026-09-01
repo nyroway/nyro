@@ -10,6 +10,12 @@ import (
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/gateway"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/llm/protocol/anthropic/messages"
+	"github.com/nyroway/nyro/go/internal/llm/protocol/gemini/generatecontent"
+	"github.com/nyroway/nyro/go/internal/llm/protocol/openai/chatcompletions"
+	"github.com/nyroway/nyro/go/internal/llm/protocol/openai/embeddings"
+	"github.com/nyroway/nyro/go/internal/llm/protocol/openai/responses"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -18,6 +24,30 @@ import (
 // maps it to the upstream's real target model (recorded in the cassette so
 // record and replay agree).
 const routeModel = "conversion-test-model"
+
+func testProtocolCatalog(t *testing.T) *protocol.Catalog {
+	t.Helper()
+	catalog, err := protocol.NewCatalog(
+		[]protocol.IngressCodec{
+			chatcompletions.NewIngress(),
+			responses.NewIngress(),
+			embeddings.NewIngress(),
+			messages.NewIngress(),
+			generatecontent.NewIngress(),
+		},
+		[]protocol.EgressCodec{
+			chatcompletions.NewEgress(),
+			responses.NewEgress(),
+			embeddings.NewEgress(),
+			messages.NewEgress(),
+			generatecontent.NewEgress(),
+		},
+	)
+	if err != nil {
+		t.Fatalf("protocol catalog: %v", err)
+	}
+	return catalog
+}
 
 // Inbound is the client-facing protocol: its protocol id (used in golden paths)
 // and the ingress path requests are POSTed to.
@@ -139,7 +169,7 @@ func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey
 	}); err != nil {
 		t.Fatalf("create route: %v", err)
 	}
-	gw := gateway.NewGateway()
+	gw := gateway.NewGateway(testProtocolCatalog(t))
 	gw.UpstreamTransport = tr
 	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
