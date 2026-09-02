@@ -11,8 +11,9 @@ func NewIngress() protocol.IngressCodec     { return ingress{} }
 func (ingress) Endpoint() protocol.Endpoint { return protocol.AnthropicMessagesV1 }
 func (ingress) Capabilities() protocol.Capabilities {
 	return protocol.Capabilities{
-		IngressRoutes: []protocol.IngressRoute{{Method: "POST", Pattern: "/v1/messages"}},
-		Streaming:     true,
+		IngressRoutes:    []protocol.IngressRoute{{Method: "POST", Pattern: "/v1/messages"}},
+		Streaming:        true,
+		ErrorPassthrough: true,
 	}
 }
 func (ingress) IngressCodec() {}
@@ -27,10 +28,12 @@ func (ingress) NewStreamEncoder() protocol.StreamEncoder { return &streamRespons
 
 type egress struct{}
 
-func NewEgress() protocol.EgressCodec              { return egress{} }
-func (egress) Endpoint() protocol.Endpoint         { return protocol.AnthropicMessagesV1 }
-func (egress) Capabilities() protocol.Capabilities { return protocol.Capabilities{Streaming: true} }
-func (egress) EgressCodec()                        {}
+func NewEgress() protocol.EgressCodec      { return egress{} }
+func (egress) Endpoint() protocol.Endpoint { return protocol.AnthropicMessagesV1 }
+func (egress) Capabilities() protocol.Capabilities {
+	return protocol.Capabilities{Streaming: true, ErrorPassthrough: true}
+}
+func (egress) EgressCodec() {}
 func (egress) EncodeRequest(request *llm.ChatRequest) (protocol.WireRequest, error) {
 	return requestEncoder{}.Encode(request)
 }

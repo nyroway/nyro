@@ -1,13 +1,9 @@
 package gateway
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"time"
-
-	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
-	"github.com/nyroway/nyro/go/internal/quota"
 )
 
 // extractKey pulls the inbound API key from Authorization: Bearer, x-api-key,
@@ -26,71 +22,6 @@ func extractKey(r *http.Request) string {
 }
 
 func expired(iso string) bool {
-	t, err := time.Parse(time.RFC3339, iso)
-	if err != nil {
-		return false // unparseable → treat as not expired
-	}
-	return time.Now().After(t)
-}
-
-// tokenQuotaExceeded checks response-settled historical token usage. Request
-// quotas use AdmitRequest after concurrency acquisition instead.
-func tokenQuotaExceeded(ctx context.Context, qc *quota.Switch, rec *configsnapshot.ConsumerAccess) (int, string) {
-	for _, q := range rec.Quotas {
-		if q.QuotaType != "tokens" {
-			continue
-		}
-		window, err := quota.ParseWindow(q.Window)
-		if err != nil {
-			continue
-		}
-		value, err := qc.TokenValue(ctx, rec.ConsumerID, window)
-		if err != nil {
-			return http.StatusServiceUnavailable, "quota state unavailable"
-		}
-		if value >= q.QuotaLimit {
-			return http.StatusTooManyRequests, "consumer tokens quota exceeded"
-		}
-	}
-	return 0, ""
-}
-
-func requestLimits(rec *configsnapshot.ConsumerAccess) []quota.RequestLimit {
-	limits := make([]quota.RequestLimit, 0, len(rec.Quotas))
-	for _, q := range rec.Quotas {
-		if q.QuotaType != "requests" {
-			continue
-		}
-		window, err := quota.ParseWindow(q.Window)
-		if err != nil {
-			continue
-		}
-		limits = append(limits, quota.RequestLimit{Limit: q.QuotaLimit, Window: window})
-	}
-	return limits
-}
-
-func acquireConcurrency(ctx context.Context, qc *quota.Switch, rec *configsnapshot.ConsumerAccess, leaseTTL time.Duration) (quota.Lease, int, string) {
-	for _, q := range rec.Quotas {
-		if q.QuotaType != "concurrency" {
-			continue
-		}
-		lease, allowed, err := qc.Acquire(ctx, rec.ConsumerID, q.QuotaLimit, leaseTTL)
-		if err != nil {
-			return nil, http.StatusServiceUnavailable, "quota state unavailable"
-		}
-		if !allowed {
-			return nil, http.StatusTooManyRequests, "consumer concurrency quota exceeded"
-		}
-		return lease, 0, ""
-	}
-	return nil, 0, ""
-}
-
-func concurrencyLeaseTTL(snap *configsnapshot.Snapshot) time.Duration {
-	ttl := resolveProxySettings(snap).RequestTimeout + time.Minute
-	if ttl < 5*time.Minute {
-		return 5 * time.Minute
-	}
-	return ttl
+	expiresAt, err := time.Parse(time.RFC3339, iso)
+	return err == nil && time.Now().After(expiresAt)
 }

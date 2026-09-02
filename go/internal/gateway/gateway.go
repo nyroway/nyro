@@ -1,11 +1,9 @@
 package gateway
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
-	"strconv"
 	"sync"
-	"time"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	llmpipeline "github.com/nyroway/nyro/go/internal/llm/pipeline"
@@ -13,6 +11,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
 	"github.com/nyroway/nyro/go/internal/llm/routing"
+	llmruntime "github.com/nyroway/nyro/go/internal/llm/runtime"
 	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
@@ -51,6 +50,9 @@ type Gateway struct {
 	directTransportKey string
 	proxyTransport     provider.Transport
 	proxyTransportKey  string
+	runtimeMu          sync.Mutex
+	runtimeSnapshot    *configsnapshot.Snapshot
+	llmRuntime         *llmruntime.Runtime
 
 	// observePhase is a test seam for the mandatory Observe position.
 	// Production leaves it nil and uses telemetry.NewRegisteredPhase.
@@ -108,71 +110,24 @@ func (g *Gateway) snapshot() *configsnapshot.Snapshot {
 	return &configsnapshot.Snapshot{}
 }
 
-// proxySettings is the resolved settings.proxy configuration for the current
-// snapshot: request/connect timeouts, the per-backend retry budget, and the
-// status codes that trigger a retry/failover. Defaults mirror the config-schema
-// plan's example config.yaml.
-type proxySettings struct {
-	RequestTimeout time.Duration
-	ConnectTimeout time.Duration
-	MaxRetries     int
-	RetryOnStatus  map[int]bool
-	MaxBodyBytes   int64
-}
-
-var defaultRetryOnStatus = map[int]bool{429: true, 500: true, 502: true, 503: true, 504: true}
+type proxySettings = llmruntime.Settings
 
 // resolveProxySettings reads settings.proxy.* from the snapshot (flattened by
 // internal/config.flattenSettings under the proxy.* dot-key namespace),
 // applying the config-schema plan's example defaults for anything absent or
 // unparseable.
 func resolveProxySettings(snap *configsnapshot.Snapshot) proxySettings {
-	ps := proxySettings{
-		RequestTimeout: 120 * time.Second,
-		ConnectTimeout: 30 * time.Second,
-		MaxRetries:     2,
-		RetryOnStatus:  defaultRetryOnStatus,
-		MaxBodyBytes:   32 << 20,
-	}
-	if v, ok := snap.SettingGet("proxy.request_timeout"); ok {
-		if d, err := time.ParseDuration(v); err == nil {
-			ps.RequestTimeout = d
-		}
-	}
-	if v, ok := snap.SettingGet("proxy.connect_timeout"); ok {
-		if d, err := time.ParseDuration(v); err == nil {
-			ps.ConnectTimeout = d
-		}
-	}
-	if v, ok := snap.SettingGet("proxy.max_retries"); ok {
-		if n, err := strconv.Atoi(v); err == nil {
-			ps.MaxRetries = n
-		}
-	}
-	if v, ok := snap.SettingGet("proxy.retry_on_status"); ok {
-		var codes []int
-		if err := json.Unmarshal([]byte(v), &codes); err == nil && len(codes) > 0 {
-			set := make(map[int]bool, len(codes))
-			for _, c := range codes {
-				set[c] = true
-			}
-			ps.RetryOnStatus = set
-		}
-	}
-	if v, ok := snap.SettingGet("proxy.max_body_bytes"); ok {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			ps.MaxBodyBytes = n
-		}
-	}
-	return ps
+	return llmruntime.SettingsFromSnapshot(snap)
 }
 
 // providerTransportFor returns the cached outbound transport selected by the
 // upstream proxy URL and current timeout settings. HTTP construction lives in
 // provider/httptransport; Gateway only owns lifecycle and caching.
 func (g *Gateway) providerTransportFor(proxyURL string) (provider.Transport, error) {
-	snap := g.snapshot()
-	ps := resolveProxySettings(snap)
+	return g.providerTransportForSettings(proxyURL, resolveProxySettings(g.snapshot()))
+}
+
+func (g *Gateway) providerTransportForSettings(proxyURL string, ps proxySettings) (provider.Transport, error) {
 	proxyURL = providerhttp.NormalizeProxyURL(proxyURL)
 	cacheKey := proxyURL + "|" + ps.RequestTimeout.String() + "|" + ps.ConnectTimeout.String()
 
@@ -208,6 +163,56 @@ func (g *Gateway) providerTransportFor(proxyURL string) (provider.Transport, err
 	}
 	return transport, nil
 }
+
+// runtimeFor binds one Runtime to each immutable Snapshot observed during the
+// Gateway transition. Task 10 replaces this small cache with generation-owned
+// construction and activation.
+func (g *Gateway) runtimeFor(snapshot *configsnapshot.Snapshot) (*llmruntime.Runtime, error) {
+	g.runtimeMu.Lock()
+	defer g.runtimeMu.Unlock()
+	if g.runtimeSnapshot == snapshot && g.llmRuntime != nil {
+		return g.llmRuntime, nil
+	}
+	settings := resolveProxySettings(snapshot)
+	runtime, err := llmruntime.New(llmruntime.Config{
+		Snapshot:    snapshot,
+		Protocols:   g.Protocols,
+		Providers:   g.Providers,
+		Router:      g.Router,
+		Transport:   gatewayProviderTransport{gateway: g, settings: settings},
+		Quota:       g.Quota,
+		Observe:     g.observePhaseOrDefault(),
+		PreDispatch: g.preDispatchPhases,
+	})
+	if err != nil {
+		return nil, err
+	}
+	g.runtimeSnapshot = snapshot
+	g.llmRuntime = runtime
+	return runtime, nil
+}
+
+func (g *Gateway) observePhaseOrDefault() llmpipeline.Phase {
+	if g.observePhase != nil {
+		return g.observePhase
+	}
+	return telemetry.NewRegisteredPhase()
+}
+
+type gatewayProviderTransport struct {
+	gateway  *Gateway
+	settings proxySettings
+}
+
+func (transport gatewayProviderTransport) Do(ctx context.Context, request provider.Request) (*provider.Response, error) {
+	selected, err := transport.gateway.providerTransportForSettings(request.ProxyURL, transport.settings)
+	if err != nil {
+		return nil, err
+	}
+	return selected.Do(ctx, request)
+}
+
+func (gatewayProviderTransport) CloseIdleConnections() {}
 
 // CloseIdleConnections releases idle outbound connections and clears both
 // bounded transport cache slots. Active requests are unaffected by net/http's

@@ -60,8 +60,14 @@ type UsageDelta struct{ Usage Usage }
 
 func (*UsageDelta) streamDelta() {}
 
-// DoneDelta signals the stream ended normally.
-type DoneDelta struct{ StopReason string }
+// DoneDelta signals the stream ended normally. UsageAtDone snapshots the
+// latest usage known when the Provider's logical completion marker was
+// decoded; Runtime sets it before deferring terminal delivery so ingress
+// encoders preserve the Provider's event ordering when usage trails Done.
+type DoneDelta struct {
+	StopReason  string
+	UsageAtDone *Usage
+}
 
 func (*DoneDelta) streamDelta() {}
 

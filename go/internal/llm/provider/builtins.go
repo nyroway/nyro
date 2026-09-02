@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 )
 
@@ -98,6 +99,10 @@ type standardDriver struct {
 	authScheme string
 }
 
+func (standardDriver) ExtendRequest(context.Context, UpstreamRuntime, llm.ModelRequest) error {
+	return nil
+}
+
 func (driver standardDriver) Prepare(_ context.Context, upstream UpstreamRuntime, wire protocol.WireRequest) (Request, error) {
 	headers := make(map[string]string, len(wire.Headers)+2)
 	for key, value := range wire.Headers {
@@ -111,12 +116,20 @@ func (driver standardDriver) Prepare(_ context.Context, upstream UpstreamRuntime
 	}
 	return Request{
 		Method: wire.Method, URL: BuildURL(upstream.BaseURL, wire.Path), Headers: headers,
-		Body: append([]byte(nil), wire.Body...), Stream: wire.Stream,
+		Body: append([]byte(nil), wire.Body...), Stream: wire.Stream, ProxyURL: upstream.ProxyURL,
 	}, nil
 }
 
 func (driver standardDriver) Classify(response Response) Classification {
 	return Classification{Failed: response.StatusCode >= 400, Retryable: response.StatusCode == 429 || response.StatusCode >= 500}
+}
+
+func (standardDriver) ExtendResponse(context.Context, UpstreamRuntime, *llm.ChatResponse) error {
+	return nil
+}
+
+func (standardDriver) ExtendError(context.Context, UpstreamRuntime, *llm.Error) error {
+	return nil
 }
 
 func (driver standardDriver) authenticationScheme(protocolID string) string {

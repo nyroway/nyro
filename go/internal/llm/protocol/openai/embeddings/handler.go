@@ -13,6 +13,7 @@ func (ingress) Capabilities() protocol.Capabilities {
 	return protocol.Capabilities{
 		IngressRoutes:     []protocol.IngressRoute{{Method: "POST", Pattern: "/v1/embeddings"}},
 		OpaquePassthrough: true,
+		ErrorPassthrough:  true,
 	}
 }
 func (ingress) IngressCodec() {}
@@ -25,7 +26,7 @@ type egress struct{}
 func NewEgress() protocol.EgressCodec      { return egress{} }
 func (egress) Endpoint() protocol.Endpoint { return protocol.OpenAIEmbeddingsV1 }
 func (egress) Capabilities() protocol.Capabilities {
-	return protocol.Capabilities{OpaquePassthrough: true}
+	return protocol.Capabilities{OpaquePassthrough: true, ErrorPassthrough: true}
 }
 func (egress) EgressCodec() {}
 func (egress) EncodeRequest(request *llm.EmbeddingRequest) (protocol.WireRequest, error) {

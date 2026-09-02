@@ -32,8 +32,9 @@ func TestDispatchRecordsUpstreamLatency(t *testing.T) {
 	if rt == nil || len(rt.Upstreams) == 0 {
 		t.Fatalf("route/backends missing: %+v", rt)
 	}
-	targets, _ := routingTargets(*rt)
-	if lat := gw.Router.Latency(routing.KeyOf(targets[0])); lat <= 0 {
+	target := rt.Upstreams[0]
+	key := routing.KeyOf(routing.Target{UpstreamID: target.UpstreamID, Model: target.Model})
+	if lat := gw.Router.Latency(key); lat <= 0 {
 		t.Errorf("upstream latency not recorded (got %v); Record must receive real latency, not 0", lat)
 	}
 }
