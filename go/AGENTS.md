@@ -126,13 +126,13 @@ Tests must assemble their required modules explicitly. A test must not depend on
 Until a unified module host and lifecycle mechanism exist:
 
 - inject dependencies through explicit constructors;
-- use the existing registries and factory mechanisms;
+- use the existing explicit catalogs and factory mechanisms where available;
 - define interfaces at the capability consumer or in a stable contract package;
 - do not introduce temporary service locators, global containers, or another plugin framework;
 - do not scatter lifecycle management across unrelated business packages;
 - do not add more concrete protocol, provider, storage, or strategy branches to core orchestration code.
 
-Existing `init()`-based codec and provider registration is migration debt. Preserve it where necessary for compatibility, but do not add new implicit registrations.
+LLM protocol codecs and provider drivers are explicitly composed through immutable catalogs. Other `init()`-based registrations remain migration debt; preserve them only where compatibility still requires them, and do not add new implicit registrations.
 
 New modules must use explicit composition. Existing implicit registrations should be replaced incrementally as their corresponding vertical slices migrate to the module host; do not rewrite all registries in an unrelated change.
 

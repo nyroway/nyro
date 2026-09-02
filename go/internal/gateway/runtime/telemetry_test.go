@@ -36,7 +36,7 @@ func buildManager(t *testing.T, cache *configsnapshot.Cache) *obsManagerHarness 
 	}
 	sp := telemetry.NewSwappableProvider(prov)
 	obsManager := newObsManager(context.Background(), cache, sp, prov, obsCfg)
-	runtimeManager := newManager(cache, telemetryStateNoop{}, obsManager)
+	runtimeManager := newManager(cache, telemetryStateNoop{}, obsManager, nil)
 	harness := &obsManagerHarness{ObsManager: obsManager, runtime: runtimeManager}
 	t.Cleanup(func() { _ = harness.Shutdown(context.Background()) })
 	return harness

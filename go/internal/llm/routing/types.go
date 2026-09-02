@@ -1,4 +1,4 @@
-package router
+package routing
 
 // Target is one in-memory route candidate. Gateway projects it from a
 // persisted/config-synchronized route binding before selection.

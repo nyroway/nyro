@@ -9,9 +9,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
-	"github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
-	"github.com/nyroway/nyro/go/internal/provider"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
+	"github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
@@ -193,7 +193,7 @@ type UpstreamSpec struct {
 // models_url are mutually exclusive, and "custom" — having no preset to fall
 // back on — must supply both a base_url and a model source (models or
 // models_url).
-func (u UpstreamSpec) validate() error {
+func (u UpstreamSpec) validate(providers *provider.Catalog) error {
 	if strings.TrimSpace(u.Provider) == "" {
 		return fmt.Errorf("upstream %q: provider is required", u.Name)
 	}
@@ -209,7 +209,10 @@ func (u UpstreamSpec) validate() error {
 		}
 		return nil
 	}
-	if _, ok := provider.Lookup(u.Provider); !ok {
+	if providers == nil {
+		return fmt.Errorf("upstream %q: provider catalog is required", u.Name)
+	}
+	if _, ok := providers.Lookup(u.Provider); !ok {
 		return fmt.Errorf("upstream %q: unknown provider %q", u.Name, u.Provider)
 	}
 	return nil
@@ -338,10 +341,13 @@ func LoadYAML(path string) (*Config, []string, error) {
 // routes (with upstream targets resolved by name), and consumers (keys, route
 // grants, quotas) into st. BuildSnapshot reuses this against a throwaway
 // in-memory store rather than maintaining a parallel construction path.
-func (c *Config) ApplyTo(st storage.Storage) error {
+func (c *Config) ApplyTo(st storage.Storage, providers *provider.Catalog) error {
+	if providers == nil {
+		return fmt.Errorf("provider catalog is required")
+	}
 	upstreamIDs := map[string]string{}
 	for _, u := range c.Upstreams {
-		if err := u.validate(); err != nil {
+		if err := u.validate(providers); err != nil {
 			return err
 		}
 		credsJSON, err := json.Marshal(u.Credentials)
@@ -356,7 +362,7 @@ func (c *Config) ApplyTo(st storage.Storage) error {
 			}
 			protocolVal = proto.String()
 		}
-		if def, ok := provider.Lookup(u.Provider); ok {
+		if def, ok := providers.Lookup(u.Provider); ok {
 			if protocolVal == "" {
 				protocolVal = def.DefaultProtocol
 			}
@@ -606,9 +612,9 @@ func flattenTelemetrySignal(out map[string]string, signal schema.Signal, exporte
 // via the same ApplyTo used by persistent backends and reads the snapshot
 // back through snapshot.LoadFromStorage — there is no separate
 // synthetic-ID construction path to keep in sync.
-func (c *Config) BuildSnapshot() (*configsnapshot.Snapshot, error) {
+func (c *Config) BuildSnapshot(providers *provider.Catalog) (*configsnapshot.Snapshot, error) {
 	tmp := memory.New()
-	if err := c.ApplyTo(tmp.Storage()); err != nil {
+	if err := c.ApplyTo(tmp.Storage(), providers); err != nil {
 		return nil, err
 	}
 	return configsnapshot.LoadFromStorage(tmp.Storage())

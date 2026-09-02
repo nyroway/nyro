@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,9 +11,9 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
+	"github.com/nyroway/nyro/go/internal/llm/routing"
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/provider"
-	"github.com/nyroway/nyro/go/internal/router"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
@@ -105,35 +104,43 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) 
 			}
 		}
 
-		// Build the outbound request: codec-encode the IR, then build the
-		// upstream URL and resolve the provider's outbound authenticator.
+		// The codec owns protocol conversion; the provider driver owns vendor
+		// URL construction, authentication, and provider extensions.
 		outbound, err := encodeRequest(egressHandler, req)
 		if err != nil {
 			writeJSONError(rec, http.StatusInternalServerError, "encode request: "+err.Error())
 			return
 		}
-		outbound.Path = provider.BuildURL(p.BaseURL, outbound.Path)
-
-		auth, authErr := provider.AuthenticatorFor(p.Provider, p.Protocol, runtimeFromUpstream(*p))
-		if authErr != nil {
-			g.Router.Record(router.KeyOf(target), false, 0)
-			continue // can't authenticate for this backend → next backend
+		if g.Providers == nil {
+			writeJSONError(rec, http.StatusInternalServerError, "provider catalog is not configured")
+			return
+		}
+		factory := g.Providers.DriverFor(p.Provider)
+		if factory == nil {
+			writeJSONError(rec, http.StatusInternalServerError, "provider driver is not configured")
+			return
+		}
+		driver := factory()
+		prepared, prepareErr := driver.Prepare(ex.Ctx, runtimeFromUpstream(*p), outbound)
+		if prepareErr != nil {
+			g.Router.Record(routing.KeyOf(target), false, 0)
+			continue
 		}
 
-		client, cErr := g.httpClientFor(p.ProxyURL)
-		if cErr != nil {
-			g.Router.Record(router.KeyOf(target), false, 0)
-			continue // can't build a client for this backend → next backend
+		transport, transportErr := g.providerTransportFor(p.ProxyURL)
+		if transportErr != nil {
+			g.Router.Record(routing.KeyOf(target), false, 0)
+			continue
 		}
 
 		// Retry this backend up to MaxRetries times (1 = no retry, just the
 		// initial attempt) on a network error or a retry_on_status code.
 		attempts := max(ps.MaxRetries, 1)
-		var resp *http.Response
+		var resp *provider.Response
 		var latencyMs float64
 		for attempt := 1; attempt <= attempts; attempt++ {
 			upStart := time.Now()
-			resp, err = g.callUpstream(client, ex.R, outbound, auth)
+			resp, err = transport.Do(ex.Ctx, prepared)
 			latencyMs = float64(time.Since(upStart).Microseconds()) / 1000
 			if err != nil {
 				resp = nil
@@ -153,7 +160,7 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) 
 			break // usable response (not in retry_on_status) → stop retrying
 		}
 		if resp == nil {
-			g.Router.Record(router.KeyOf(target), false, latencyMs)
+			g.Router.Record(routing.KeyOf(target), false, latencyMs)
 			continue // exhausted retries on this backend → next backend
 		}
 
@@ -168,8 +175,8 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) 
 		lc.LatencyUpstreamMs = &um
 		ex.SetExt(telemetry.ExtLogCtx, lc)
 		ex.SetExt(telemetry.ExtUpstream, *p)
-		g.Router.Record(router.KeyOf(target), true, latencyMs)
-		if resp.StatusCode >= 400 {
+		g.Router.Record(routing.KeyOf(target), true, latencyMs)
+		if driver.Classify(*resp).Failed {
 			forwardError(rec, resp)
 		} else {
 			switch req := req.(type) {
@@ -229,27 +236,6 @@ func encodeRequest(handler protocol.EgressCodec, req llm.ModelRequest) (protocol
 	default:
 		return protocol.WireRequest{}, fmt.Errorf("unsupported llm request %T", req)
 	}
-}
-
-// callUpstream sends the outbound HTTP request (without writing to the
-// client), so the dispatcher can fail over before committing a response. The
-// outbound already has the full URL set; auth applies the provider's outbound
-// authentication headers last, after the codec-set headers.
-func (g *Gateway) callUpstream(client *http.Client, r *http.Request, outbound protocol.WireRequest, auth provider.Authenticator) (*http.Response, error) {
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), outbound.Method, outbound.Path, bytes.NewReader(outbound.Body))
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range outbound.Headers {
-		upstreamReq.Header.Set(k, v)
-	}
-	if upstreamReq.Header.Get("Content-Type") == "" {
-		upstreamReq.Header.Set("Content-Type", "application/json")
-	}
-	if err := auth.Apply(r.Context(), upstreamReq); err != nil {
-		return nil, err
-	}
-	return client.Do(upstreamReq)
 }
 
 // runtimeFromUpstream projects the storage row's outbound-relevant fields
@@ -374,9 +360,9 @@ func writeSSE(w io.Writer, frames []protocol.Event, flusher http.Flusher) {
 	}
 }
 
-func forwardError(w http.ResponseWriter, resp *http.Response) {
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		w.Header().Set("Content-Type", ct)
+func forwardError(w http.ResponseWriter, resp *provider.Response) {
+	if values := resp.Headers["Content-Type"]; len(values) > 0 && values[0] != "" {
+		w.Header().Set("Content-Type", values[0])
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
@@ -384,8 +370,8 @@ func forwardError(w http.ResponseWriter, resp *http.Response) {
 
 // copyResponse writes an upstream response to the client verbatim (status +
 // all headers + body), used for passthrough endpoints like embeddings.
-func copyResponse(w http.ResponseWriter, resp *http.Response) {
-	for k, vs := range resp.Header {
+func copyResponse(w http.ResponseWriter, resp *provider.Response) {
+	for k, vs := range resp.Headers {
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}

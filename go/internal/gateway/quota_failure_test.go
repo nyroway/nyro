@@ -295,7 +295,7 @@ func newQuotaTestGatewayWithQuotas(t *testing.T, quotaStore quota.Store, quotas 
 		t.Fatal(err)
 	}
 	quotaSwitch := quota.NewSwitch(quotaStore)
-	gateway := NewGatewayWithCache(cache, quotaSwitch, testProtocolCatalog(t))
+	gateway := NewGatewayWithCache(cache, quotaSwitch, testProtocolCatalog(t), testProviderCatalog(t))
 	return NewRouter(gateway), consumer.Keys[0].Token, quotaSwitch, upstreamCalls
 }
 

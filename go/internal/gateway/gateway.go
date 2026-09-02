@@ -2,19 +2,18 @@ package gateway
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
-	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
+	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
+	"github.com/nyroway/nyro/go/internal/llm/routing"
 	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/quota"
-	"github.com/nyroway/nyro/go/internal/router"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
@@ -29,8 +28,9 @@ import (
 type Gateway struct {
 	Cache     *configsnapshot.Cache
 	Quota     *quota.Switch
-	Router    *router.Router
+	Router    *routing.Router
 	Protocols *protocol.Catalog
+	Providers *provider.Catalog
 
 	// Obs is the OTel provider (logger/meter/tracer). Populated by the data
 	// plane once at startup; nil in unit tests (the dispatcher still works,
@@ -46,11 +46,11 @@ type Gateway struct {
 	// nil is the production default, behaviour is unchanged when unset.
 	UpstreamTransport http.RoundTripper
 
-	clientMu       sync.Mutex
-	client         *http.Client // direct (no proxy) client, rebuilt when timeouts change
-	clientKey      string
-	proxyClient    *http.Client
-	proxyClientKey string
+	transportMu        sync.Mutex
+	directTransport    provider.Transport
+	directTransportKey string
+	proxyTransport     provider.Transport
+	proxyTransportKey  string
 
 	// OuterStages run before the built-in Stages, wrapping the whole chain.
 	// Production leaves this nil; tests use it to observe an exchange the
@@ -88,11 +88,12 @@ func (g *Gateway) chain() *pipeline.Chain {
 // and populate the cache directly via Cache.LoadAndSwap / Cache.Swap. Production
 // callers use NewGatewayWithCache through gateway/runtime with a snapshot built
 // from YAML or filled by the config-sync stream.
-func NewGateway(protocols *protocol.Catalog) *Gateway {
+func NewGateway(protocols *protocol.Catalog, providers *provider.Catalog) *Gateway {
 	return NewGatewayWithCache(
 		&configsnapshot.Cache{},
 		quota.NewSwitch(quota.NewMemory()),
 		protocols,
+		providers,
 	)
 }
 
@@ -100,7 +101,7 @@ func NewGateway(protocols *protocol.Catalog) *Gateway {
 // (standalone-YAML and config-sync path): the caller builds the snapshot from YAML or
 // from the config-sync stream and swaps it in, so the gateway never needs storage for
 // config. Obs/Handles are attached by gateway/runtime after construction.
-func NewGatewayWithCache(cache *configsnapshot.Cache, quotas *quota.Switch, protocols *protocol.Catalog) *Gateway {
+func NewGatewayWithCache(cache *configsnapshot.Cache, quotas *quota.Switch, protocols *protocol.Catalog, providers *provider.Catalog) *Gateway {
 	if cache == nil {
 		cache = &configsnapshot.Cache{}
 	}
@@ -110,8 +111,9 @@ func NewGatewayWithCache(cache *configsnapshot.Cache, quotas *quota.Switch, prot
 	return &Gateway{
 		Cache:     cache,
 		Quota:     quotas,
-		Router:    router.New(),
+		Router:    routing.New(),
 		Protocols: protocols,
+		Providers: providers,
 	}
 }
 
@@ -189,79 +191,65 @@ func resolveProxySettings(snap *configsnapshot.Snapshot) proxySettings {
 	return ps
 }
 
-// httpClientFor returns the HTTP client for an upstream's outbound requests,
-// built from the current snapshot's settings.proxy timeouts. proxyURL is the
-// upstream's own Upstream.ProxyURL (empty means no proxy — the direct client
-// is returned). A non-empty proxyURL that isn't a valid absolute URL
-// (scheme+host) — including any leftover pre-fix "enabled" sentinel value,
-// which parses "successfully" as a bare relative path with no scheme/host —
-// falls back to the direct client rather than failing the request outright.
-// Both clients are cached and rebuilt only when their resolved configuration
-// (timeouts, proxy URL) changes.
-func (g *Gateway) httpClientFor(proxyURL string) (*http.Client, error) {
+// providerTransportFor returns the cached outbound transport selected by the
+// upstream proxy URL and current timeout settings. HTTP construction lives in
+// provider/httptransport; Gateway only owns lifecycle and caching.
+func (g *Gateway) providerTransportFor(proxyURL string) (provider.Transport, error) {
 	snap := g.snapshot()
 	ps := resolveProxySettings(snap)
-
-	proxyURL = strings.TrimSpace(proxyURL)
-	if proxyURL == "" {
-		return g.directClient(ps), nil
-	}
-	parsed, err := url.Parse(proxyURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return g.directClient(ps), nil
-	}
-
+	proxyURL = providerhttp.NormalizeProxyURL(proxyURL)
 	cacheKey := proxyURL + "|" + ps.RequestTimeout.String() + "|" + ps.ConnectTimeout.String()
-	g.clientMu.Lock()
-	defer g.clientMu.Unlock()
-	if g.proxyClient != nil && g.proxyClientKey == cacheKey {
-		return g.proxyClient, nil
-	}
 
-	transport := &http.Transport{
-		Proxy:               http.ProxyURL(parsed),
-		DialContext:         (&net.Dialer{Timeout: ps.ConnectTimeout}).DialContext,
-		MaxIdleConns:        256,
-		MaxIdleConnsPerHost: 64,
-		IdleConnTimeout:     90 * time.Second,
-		ForceAttemptHTTP2:   true,
+	g.transportMu.Lock()
+	defer g.transportMu.Unlock()
+	if proxyURL == "" && g.directTransport != nil && g.directTransportKey == cacheKey {
+		return g.directTransport, nil
 	}
-	client := &http.Client{Timeout: ps.RequestTimeout, Transport: g.transportOr(transport)}
-	g.proxyClient = client
-	g.proxyClientKey = cacheKey
-	return client, nil
+	if proxyURL != "" && g.proxyTransport != nil && g.proxyTransportKey == cacheKey {
+		return g.proxyTransport, nil
+	}
+	transport, err := providerhttp.New(providerhttp.Config{
+		RequestTimeout: ps.RequestTimeout,
+		ConnectTimeout: ps.ConnectTimeout,
+		ProxyURL:       proxyURL,
+		RoundTripper:   g.UpstreamTransport,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL == "" {
+		if g.directTransport != nil {
+			g.directTransport.CloseIdleConnections()
+		}
+		g.directTransport = transport
+		g.directTransportKey = cacheKey
+	} else {
+		if g.proxyTransport != nil {
+			g.proxyTransport.CloseIdleConnections()
+		}
+		g.proxyTransport = transport
+		g.proxyTransportKey = cacheKey
+	}
+	return transport, nil
 }
 
-// directClient returns the cached no-proxy client for ps's timeouts, rebuilding
-// it only when the resolved timeouts change.
-func (g *Gateway) directClient(ps proxySettings) *http.Client {
-	cacheKey := ps.RequestTimeout.String() + "|" + ps.ConnectTimeout.String()
-	g.clientMu.Lock()
-	defer g.clientMu.Unlock()
-	if g.client != nil && g.clientKey == cacheKey {
-		return g.client
+// CloseIdleConnections releases idle outbound connections and clears both
+// bounded transport cache slots. Active requests are unaffected by net/http's
+// CloseIdleConnections contract.
+func (g *Gateway) CloseIdleConnections() {
+	if g == nil {
+		return
 	}
-	client := &http.Client{
-		Timeout: ps.RequestTimeout,
-		Transport: g.transportOr(&http.Transport{
-			DialContext:         (&net.Dialer{Timeout: ps.ConnectTimeout}).DialContext,
-			MaxIdleConns:        256,
-			MaxIdleConnsPerHost: 64,
-			IdleConnTimeout:     90 * time.Second,
-			ForceAttemptHTTP2:   true,
-		}),
+	g.transportMu.Lock()
+	defer g.transportMu.Unlock()
+	if g.directTransport != nil {
+		g.directTransport.CloseIdleConnections()
+		g.directTransport = nil
+		g.directTransportKey = ""
 	}
-	g.client = client
-	g.clientKey = cacheKey
-	return client
-}
-
-// transportOr returns g.UpstreamTransport when set (test seam), else def. It
-// lets the conversion harness swap in a go-vcr recorder without touching the
-// production transport construction. See the UpstreamTransport field.
-func (g *Gateway) transportOr(def http.RoundTripper) http.RoundTripper {
-	if g.UpstreamTransport != nil {
-		return g.UpstreamTransport
+	if g.proxyTransport != nil {
+		g.proxyTransport.CloseIdleConnections()
+		g.proxyTransport = nil
+		g.proxyTransportKey = ""
 	}
-	return def
 }

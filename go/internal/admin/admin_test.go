@@ -15,6 +15,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -23,7 +24,7 @@ func newEngine(t *testing.T, token string) (chi.Router, *memory.Backend) {
 	t.Helper()
 	st := memory.New()
 	r := chi.NewRouter()
-	Mount(r, st.Storage(), nil, nil, testProtocolCatalog(t))
+	Mount(r, st.Storage(), nil, nil, testProtocolCatalog(t), testProviderCatalog(t))
 	return r, st
 }
 
@@ -32,6 +33,15 @@ func testProtocolCatalog(t *testing.T) *protocol.Catalog {
 	catalog, err := bootstrap.NewLLMProtocolCatalog()
 	if err != nil {
 		t.Fatalf("compose LLM protocols: %v", err)
+	}
+	return catalog
+}
+
+func testProviderCatalog(t *testing.T) *provider.Catalog {
+	t.Helper()
+	catalog, err := bootstrap.NewLLMProviderCatalog()
+	if err != nil {
+		t.Fatalf("compose LLM providers: %v", err)
 	}
 	return catalog
 }
@@ -550,7 +560,7 @@ func TestAdminConsumerKeyCRUD(t *testing.T) {
 
 // TestProtocolCredentials verifies the /protocol-credentials endpoint exposes
 // exactly the four codec-backed protocols, each with the api_key field
-// AuthenticatorFor requires.
+// expected by the corresponding provider driver.
 func TestProtocolCredentials(t *testing.T) {
 	r, _ := newEngine(t, "")
 
@@ -621,27 +631,6 @@ func TestMutationsBumpEpoch(t *testing.T) {
 		if after := epoch(); after == before {
 			t.Errorf("%s: config_epoch unchanged (%q) — gateways will not be notified", s.name, after)
 		}
-	}
-}
-
-func TestTestHTTPClientProxyRouting(t *testing.T) {
-	direct := testHTTPClient("", 5*time.Second)
-	if direct.Transport != nil {
-		t.Errorf("empty proxyURL: want default transport (nil), got %T", direct.Transport)
-	}
-
-	invalid := testHTTPClient("enabled", 5*time.Second) // legacy pre-fix sentinel, not a real URL
-	if invalid.Transport != nil {
-		t.Errorf("invalid proxyURL: want default transport (nil, i.e. no proxy), got %T", invalid.Transport)
-	}
-
-	proxied := testHTTPClient("http://proxy.example:8080", 5*time.Second)
-	tr, ok := proxied.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("valid proxyURL: transport is %T, want *http.Transport", proxied.Transport)
-	}
-	if tr.Proxy == nil {
-		t.Error("valid proxyURL: transport has no Proxy function")
 	}
 }
 

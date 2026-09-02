@@ -3,7 +3,7 @@ package gateway
 import (
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/router"
+	"github.com/nyroway/nyro/go/internal/llm/routing"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
@@ -23,13 +23,13 @@ func TestRoutingTargetsProjectsSelectionFields(t *testing.T) {
 	}
 
 	targets, strategy := routingTargets(route)
-	if strategy != router.StrategyLatency {
-		t.Fatalf("strategy = %q, want %q", strategy, router.StrategyLatency)
+	if strategy != routing.StrategyLatency {
+		t.Fatalf("strategy = %q, want %q", strategy, routing.StrategyLatency)
 	}
 	if len(targets) != 1 {
 		t.Fatalf("targets = %d, want 1", len(targets))
 	}
-	want := router.Target{UpstreamID: "upstream-1", Model: "provider-model", Weight: 70, Priority: 2}
+	want := routing.Target{UpstreamID: "upstream-1", Model: "provider-model", Weight: 70, Priority: 2}
 	if targets[0] != want {
 		t.Fatalf("target = %+v, want %+v", targets[0], want)
 	}
@@ -46,7 +46,7 @@ func TestRoutingTargetsPreservesStrategyValue(t *testing.T) {
 	} {
 		t.Run(string(value), func(t *testing.T) {
 			_, strategy := routingTargets(storage.Route{Balance: value})
-			if strategy != router.Strategy(value) {
+			if strategy != routing.Strategy(value) {
 				t.Fatalf("strategy = %q, want raw value %q", strategy, value)
 			}
 		})

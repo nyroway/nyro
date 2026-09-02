@@ -6,9 +6,32 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
+
+func testProviderCatalog(t *testing.T) *provider.Catalog {
+	t.Helper()
+	catalog, err := provider.NewCatalog(
+		provider.Generic(), provider.OpenAI(), provider.Anthropic(),
+		provider.Gemini(), provider.DeepSeek(), provider.OpenRouter(),
+	)
+	if err != nil {
+		t.Fatalf("provider.NewCatalog(): %v", err)
+	}
+	return catalog
+}
+
+func TestApplyToRequiresProviderCatalogForCustomUpstream(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Upstreams: []UpstreamSpec{{
+		Name: "custom", Provider: "custom", BaseURL: "https://example.com", Models: []string{"model"},
+	}}}
+	if err := cfg.ApplyTo(memory.New().Storage(), nil); err == nil {
+		t.Fatal("ApplyTo() accepted a nil provider catalog")
+	}
+}
 
 func TestLoadYAMLAndApplyTo(t *testing.T) {
 	dir := t.TempDir()
@@ -58,7 +81,7 @@ consumers:
 
 	st := memory.New()
 	core := st.Storage()
-	if err := cfg.ApplyTo(core); err != nil {
+	if err := cfg.ApplyTo(core, testProviderCatalog(t)); err != nil {
 		t.Fatalf("ApplyTo: %v", err)
 	}
 
@@ -136,7 +159,7 @@ func TestApplyTo_ProviderTemplateExpansion(t *testing.T) {
 	}
 	st := memory.New()
 	core := st.Storage()
-	if err := cfg.ApplyTo(core); err != nil {
+	if err := cfg.ApplyTo(core, testProviderCatalog(t)); err != nil {
 		t.Fatalf("ApplyTo: %v", err)
 	}
 	ups, _ := core.Upstreams().List()
@@ -167,7 +190,7 @@ func TestApplyTo_ProviderTemplateExplicitProtocolWins(t *testing.T) {
 	}
 	st := memory.New()
 	core := st.Storage()
-	if err := cfg.ApplyTo(core); err != nil {
+	if err := cfg.ApplyTo(core, testProviderCatalog(t)); err != nil {
 		t.Fatalf("ApplyTo: %v", err)
 	}
 	ups, _ := core.Upstreams().List()
@@ -193,7 +216,7 @@ func TestApplyTo_NormalizesProtocolAlias(t *testing.T) {
 	}
 	st := memory.New()
 	core := st.Storage()
-	if err := cfg.ApplyTo(core); err != nil {
+	if err := cfg.ApplyTo(core, testProviderCatalog(t)); err != nil {
 		t.Fatalf("ApplyTo: %v", err)
 	}
 	ups, _ := core.Upstreams().List()
@@ -211,7 +234,7 @@ func TestApplyTo_NormalizesProtocolAlias(t *testing.T) {
 
 func TestApplyTo_RequiresProvider(t *testing.T) {
 	cfg := &Config{Upstreams: []UpstreamSpec{{Name: "x"}}}
-	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+	if err := cfg.ApplyTo(memory.New().Storage(), testProviderCatalog(t)); err == nil {
 		t.Error("expected error for missing provider")
 	}
 }
@@ -220,14 +243,14 @@ func TestApplyTo_ModelsAndModelsURLMutuallyExclusive(t *testing.T) {
 	cfg := &Config{Upstreams: []UpstreamSpec{{
 		Name: "x", Provider: "openai", Models: []string{"gpt-4o"}, ModelsURL: "https://x/models",
 	}}}
-	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+	if err := cfg.ApplyTo(memory.New().Storage(), testProviderCatalog(t)); err == nil {
 		t.Error("expected error for models + models_url both set")
 	}
 }
 
 func TestApplyTo_UnknownProvider(t *testing.T) {
 	cfg := &Config{Upstreams: []UpstreamSpec{{Name: "x", Provider: "nope"}}}
-	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+	if err := cfg.ApplyTo(memory.New().Storage(), testProviderCatalog(t)); err == nil {
 		t.Error("expected error for unknown provider")
 	}
 }
@@ -243,7 +266,7 @@ func TestApplyTo_CustomRequiresBaseURLAndModelSource(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &Config{Upstreams: []UpstreamSpec{tc.spec}}
-			if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+			if err := cfg.ApplyTo(memory.New().Storage(), testProviderCatalog(t)); err == nil {
 				t.Errorf("expected error for %s", tc.name)
 			}
 		})
@@ -256,7 +279,7 @@ func TestApplyTo_CustomWithBaseURLAndModels(t *testing.T) {
 	}}}
 	st := memory.New()
 	core := st.Storage()
-	if err := cfg.ApplyTo(core); err != nil {
+	if err := cfg.ApplyTo(core, testProviderCatalog(t)); err != nil {
 		t.Fatalf("ApplyTo: %v", err)
 	}
 	got, _ := core.Upstreams().List()
@@ -271,7 +294,7 @@ func TestApplyTo_PersistsModelsURL(t *testing.T) {
 	}}}
 	st := memory.New()
 	core := st.Storage()
-	if err := cfg.ApplyTo(core); err != nil {
+	if err := cfg.ApplyTo(core, testProviderCatalog(t)); err != nil {
 		t.Fatalf("ApplyTo: %v", err)
 	}
 	ups, _ := core.Upstreams().List()
@@ -287,7 +310,7 @@ func TestApplyToUnknownUpstream(t *testing.T) {
 	cfg := &Config{
 		Routes: []RouteSpec{{Model: "m", Upstreams: []RouteUpstreamSpec{{Name: "nope", Model: "x"}}}},
 	}
-	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+	if err := cfg.ApplyTo(memory.New().Storage(), testProviderCatalog(t)); err == nil {
 		t.Error("expected error for unknown upstream reference")
 	}
 }
@@ -296,7 +319,7 @@ func TestApplyToUnknownRoute(t *testing.T) {
 	cfg := &Config{
 		Consumers: []ConsumerSpec{{Name: "c", Access: ConsumerAccessSpec{Models: []string{"nope"}}}},
 	}
-	if err := cfg.ApplyTo(memory.New().Storage()); err == nil {
+	if err := cfg.ApplyTo(memory.New().Storage(), testProviderCatalog(t)); err == nil {
 		t.Error("expected error for unknown route reference")
 	}
 }
@@ -315,7 +338,7 @@ func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
 			Access: ConsumerAccessSpec{Models: []string{"gpt-4o"}},
 		}},
 	}
-	snap, err := cfg.BuildSnapshot()
+	snap, err := cfg.BuildSnapshot(testProviderCatalog(t))
 	if err != nil {
 		t.Fatalf("BuildSnapshot: %v", err)
 	}
@@ -344,7 +367,7 @@ func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
 
 func TestBuildSnapshot_UnknownRefs(t *testing.T) {
 	cfg := &Config{Routes: []RouteSpec{{Model: "m", Upstreams: []RouteUpstreamSpec{{Name: "nope", Model: "x"}}}}}
-	if _, err := cfg.BuildSnapshot(); err == nil {
+	if _, err := cfg.BuildSnapshot(testProviderCatalog(t)); err == nil {
 		t.Error("expected error for unknown upstream reference")
 	}
 }

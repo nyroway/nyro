@@ -18,11 +18,17 @@ type observabilityLifecycle interface {
 	Shutdown(context.Context) error
 }
 
-// Manager owns all hot-reloadable Gateway runtime resources.
+type transportLifecycle interface {
+	CloseIdleConnections()
+}
+
+// Manager owns all hot-reloadable Gateway runtime resources and the outbound
+// transport pools created by the Gateway.
 type Manager struct {
-	cache *configsnapshot.Cache
-	state stateLifecycle
-	obs   observabilityLifecycle
+	cache    *configsnapshot.Cache
+	state    stateLifecycle
+	obs      observabilityLifecycle
+	outbound transportLifecycle
 
 	mu           sync.Mutex
 	closed       bool
@@ -30,8 +36,8 @@ type Manager struct {
 	shutdownErr  error
 }
 
-func newManager(cache *configsnapshot.Cache, state stateLifecycle, obs observabilityLifecycle) *Manager {
-	manager := &Manager{cache: cache, state: state, obs: obs}
+func newManager(cache *configsnapshot.Cache, state stateLifecycle, obs observabilityLifecycle, outbound transportLifecycle) *Manager {
+	manager := &Manager{cache: cache, state: state, obs: obs, outbound: outbound}
 	if cache != nil {
 		cache.SetOnSwap(manager.apply)
 	}
@@ -56,7 +62,8 @@ func (m *Manager) apply() {
 	}
 }
 
-// Shutdown clears the cache callback before stopping State and telemetry.
+// Shutdown clears the cache callback and idle outbound connections before
+// stopping State and telemetry.
 func (m *Manager) Shutdown(ctx context.Context) error {
 	if m == nil {
 		return nil
@@ -68,6 +75,9 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 			m.cache.SetOnSwap(nil)
 		}
 		m.mu.Unlock()
+		if m.outbound != nil {
+			m.outbound.CloseIdleConnections()
+		}
 		var stateErr, obsErr error
 		if m.state != nil {
 			stateErr = m.state.Shutdown(ctx)

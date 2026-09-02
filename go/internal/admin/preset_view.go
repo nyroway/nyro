@@ -1,6 +1,6 @@
 package admin
 
-import "github.com/nyroway/nyro/go/internal/provider"
+import "github.com/nyroway/nyro/go/internal/llm/provider"
 
 // presetView is the control-plane projection of a provider Definition for the
 // provider-presets endpoint (WebUI dropdown / new Go frontend). It is a flat,

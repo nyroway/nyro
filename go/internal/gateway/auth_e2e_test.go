@@ -35,7 +35,7 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 		Name: "test", Keys: []storage.CreateConsumerKey{{Name: "primary"}}, Routes: []string{"gpt-4o"},
 	})
 	token := consumer.Keys[0].Token
-	gw := NewGateway(testProtocolCatalog(t))
+	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
 	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}

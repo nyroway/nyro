@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -9,8 +10,17 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
+
+type closingRoundTripper struct{ closes int }
+
+func (*closingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (transport *closingRoundTripper) CloseIdleConnections() { transport.closes++ }
 
 func testProtocolCatalog(t *testing.T) *protocol.Catalog {
 	t.Helper()
@@ -21,62 +31,85 @@ func testProtocolCatalog(t *testing.T) *protocol.Catalog {
 	return catalog
 }
 
-// TestGatewayHTTPClientForProxy verifies per-upstream proxy routing: an empty
-// proxyURL uses the direct client; a malformed proxyURL (including a
-// leftover pre-fix "enabled" sentinel) falls back to the direct client
-// instead of erroring; a valid proxyURL returns a distinct, cached client
-// with a Proxy transport; two different valid URLs return distinct clients.
-func TestGatewayHTTPClientForProxy(t *testing.T) {
+func testProviderCatalog(t *testing.T) *provider.Catalog {
+	t.Helper()
+	catalog, err := bootstrap.NewLLMProviderCatalog()
+	if err != nil {
+		t.Fatalf("compose LLM providers: %v", err)
+	}
+	return catalog
+}
+
+// TestGatewayProviderTransportCaching verifies that resolved outbound
+// transports are cached by proxy and timeout configuration. Proxy mechanics
+// are covered by provider/httptransport's focused tests.
+func TestGatewayProviderTransportCaching(t *testing.T) {
 	st := memory.New()
-	gw := NewGateway(testProtocolCatalog(t))
+	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
 	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
-	direct, err := gw.httpClientFor("")
+	direct, err := gw.providerTransportFor("")
 	if err != nil {
 		t.Fatalf("direct client: %v", err)
 	}
 
 	// empty proxyURL → direct client (same cached instance on repeat calls).
-	if c, err := gw.httpClientFor(""); err != nil || c != direct {
+	if c, err := gw.providerTransportFor(""); err != nil || c != direct {
 		t.Errorf("empty proxyURL: want direct client, got %v err=%v", c, err)
 	}
 
 	// leftover legacy "enabled" sentinel (pre-fix placeholder, not a real
 	// URL) → falls back to direct rather than erroring the dispatch.
-	if c, err := gw.httpClientFor("enabled"); err != nil || c != direct {
-		t.Errorf("legacy \"enabled\" sentinel: want direct client (no error), got %v err=%v", c, err)
+	if _, err := gw.providerTransportFor("enabled"); err != nil {
+		t.Errorf("legacy \"enabled\" sentinel: want direct transport behavior, got err=%v", err)
 	}
 
 	// valid proxyURL → distinct proxied client.
-	c, err := gw.httpClientFor("http://proxy.example:8080")
+	c, err := gw.providerTransportFor("http://proxy.example:8080")
 	if err != nil {
 		t.Fatalf("proxied client: %v", err)
 	}
 	if c == direct {
 		t.Error("valid proxyURL: want distinct proxied client, got direct")
 	}
-	tr, ok := c.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("transport not *http.Transport: %T", c.Transport)
-	}
-	if tr.Proxy == nil {
-		t.Error("proxied client transport has no Proxy function")
-	}
-
 	// cached on second call (same url|timeouts).
-	c2, _ := gw.httpClientFor("http://proxy.example:8080")
+	c2, _ := gw.providerTransportFor("http://proxy.example:8080")
 	if c2 != c {
 		t.Error("proxied client not cached across calls")
 	}
 
 	// a different proxyURL → distinct client (not the stale cached one).
-	c3, err := gw.httpClientFor("http://other-proxy.example:9090")
+	c3, err := gw.providerTransportFor("http://other-proxy.example:9090")
 	if err != nil {
 		t.Fatalf("second proxied client: %v", err)
 	}
 	if c3 == c {
 		t.Error("different proxyURL: want a distinct client, got the previous one")
+	}
+}
+
+func TestGatewayRetiresReplacedAndActiveProviderTransports(t *testing.T) {
+	t.Parallel()
+	closer := &closingRoundTripper{}
+	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
+	gw.UpstreamTransport = closer
+	if _, err := gw.providerTransportFor("http://first-proxy.example:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gw.providerTransportFor("http://second-proxy.example:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if closer.closes != 1 {
+		t.Fatalf("replaced transport close calls = %d, want 1", closer.closes)
+	}
+	gw.CloseIdleConnections()
+	if closer.closes != 2 {
+		t.Fatalf("shutdown transport close calls = %d, want 2", closer.closes)
+	}
+	gw.CloseIdleConnections()
+	if closer.closes != 2 {
+		t.Fatalf("CloseIdleConnections() was not idempotent: %d calls", closer.closes)
 	}
 }
 
@@ -135,23 +168,5 @@ func TestResolveProxySettings_Overrides(t *testing.T) {
 	}
 	if !ps.RetryOnStatus[408] || !ps.RetryOnStatus[429] || ps.RetryOnStatus[500] {
 		t.Errorf("RetryOnStatus = %v, want exactly {408,429}", ps.RetryOnStatus)
-	}
-}
-
-// TestDirectClientTransportTuning verifies the direct upstream client's
-// transport is tuned for concurrency (Go's http.Transport defaults to
-// MaxIdleConnsPerHost=2, which churns connections under load).
-func TestDirectClientTransportTuning(t *testing.T) {
-	g := NewGateway(testProtocolCatalog(t))
-	client := g.directClient(proxySettings{RequestTimeout: time.Minute, ConnectTimeout: 10 * time.Second})
-	tr, ok := client.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("Transport is %T, want *http.Transport", client.Transport)
-	}
-	if tr.MaxIdleConnsPerHost < 64 {
-		t.Errorf("MaxIdleConnsPerHost=%d, want >=64 (default 2 churns connections)", tr.MaxIdleConnsPerHost)
-	}
-	if tr.IdleConnTimeout == 0 {
-		t.Error("IdleConnTimeout unset")
 	}
 }

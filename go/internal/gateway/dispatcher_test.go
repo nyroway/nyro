@@ -42,7 +42,7 @@ func newTestGateway(t *testing.T, upstreamURL string) *Gateway {
 // same LoadAndSwap the config-sync loader uses.
 func newTestGatewayFromStorage(t *testing.T, s storage.Storage) *Gateway {
 	t.Helper()
-	gw := NewGateway(testProtocolCatalog(t))
+	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
 	if err := gw.Cache.LoadAndSwap(s); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
@@ -55,12 +55,9 @@ func newTestGatewayProto(t *testing.T, upstreamURL, protocol string) *Gateway {
 
 // newTestGatewayProviderProto is like newTestGatewayProto but also takes a
 // providerID (e.g. "anthropic", "gemini") that's stored on the upstream row.
-// Auth resolution is provider-scheme-first: provider.AuthenticatorFor looks
-// up providerID's registered Definition.Auth first, falling back to a
-// protocol-keyed default only when providerID doesn't match a known preset
-// (as with the "test" placeholder id used by newTestGatewayProto/Proto below,
-// which exercises the protocol-fallback path). Passing a real preset id here
-// exercises the real scheme-lookup path end-to-end from the dispatcher.
+// The catalog resolves a known ID to its provider-specific driver and an
+// unknown ID to the generic protocol-aware fallback. Passing a real preset ID
+// therefore exercises explicit driver selection end-to-end.
 func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol string) *Gateway {
 	t.Helper()
 	st := memory.New()
@@ -73,7 +70,7 @@ func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol
 		Model:     "gpt-4o",
 		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "gpt-4o"}},
 	})
-	gw := NewGateway(testProtocolCatalog(t))
+	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
 	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}

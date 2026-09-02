@@ -13,7 +13,7 @@ func TestManagerAppliesCacheSwapToStateAndTelemetry(t *testing.T) {
 	cache := &configsnapshot.Cache{}
 	state := &managerStateFake{}
 	obs := &managerObsFake{}
-	manager := newManager(cache, state, obs)
+	manager := newManager(cache, state, obs, nil)
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 
 	snapshot := snapshotWith(map[string]string{"proxy.max_retries": "4"})
@@ -32,7 +32,8 @@ func TestManagerShutdownClearsCallbackAndJoinsErrors(t *testing.T) {
 	obsErr := errors.New("telemetry shutdown")
 	state := &managerStateFake{shutdownErr: stateErr}
 	obs := &managerObsFake{shutdownErr: obsErr}
-	manager := newManager(cache, state, obs)
+	transports := &managerTransportFake{}
+	manager := newManager(cache, state, obs, transports)
 
 	err := manager.Shutdown(context.Background())
 	if !errors.Is(err, stateErr) || !errors.Is(err, obsErr) {
@@ -40,6 +41,9 @@ func TestManagerShutdownClearsCallbackAndJoinsErrors(t *testing.T) {
 	}
 	if state.shutdownCount() != 1 || obs.shutdownCount() != 1 {
 		t.Fatalf("shutdown calls state=%d obs=%d, want 1 each", state.shutdownCount(), obs.shutdownCount())
+	}
+	if transports.closeCount() != 1 {
+		t.Fatalf("transport close calls = %d, want 1", transports.closeCount())
 	}
 
 	cache.Swap((&configsnapshot.Builder{}).Build())
@@ -51,6 +55,9 @@ func TestManagerShutdownClearsCallbackAndJoinsErrors(t *testing.T) {
 	}
 	if state.shutdownCount() != 1 || obs.shutdownCount() != 1 {
 		t.Fatal("Shutdown was not idempotent")
+	}
+	if transports.closeCount() != 1 {
+		t.Fatal("transport shutdown was not idempotent")
 	}
 }
 
@@ -99,6 +106,23 @@ type managerObsFake struct {
 	rebuilds    int
 	shutCalls   int
 	shutdownErr error
+}
+
+type managerTransportFake struct {
+	mu         sync.Mutex
+	closeCalls int
+}
+
+func (f *managerTransportFake) CloseIdleConnections() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closeCalls++
+}
+
+func (f *managerTransportFake) closeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closeCalls
 }
 
 func (f *managerObsFake) rebuild() {

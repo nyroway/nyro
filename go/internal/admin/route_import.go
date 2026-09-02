@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
@@ -51,8 +52,8 @@ func (e *routeImportEventWriter) send(ev routeImportEvent) {
 	}
 }
 
-func previewUpstreamRouteImport(w http.ResponseWriter, r *http.Request, s storage.Storage, u storage.Upstream) {
-	plan, err := planUpstreamRouteImport(r, s, u)
+func previewUpstreamRouteImport(w http.ResponseWriter, r *http.Request, s storage.Storage, providers *provider.Catalog, u storage.Upstream) {
+	plan, err := planUpstreamRouteImport(r, s, providers, u)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -61,14 +62,14 @@ func previewUpstreamRouteImport(w http.ResponseWriter, r *http.Request, s storag
 	_ = json.NewEncoder(w).Encode(plan)
 }
 
-func streamImportUpstreamRoutes(w http.ResponseWriter, r *http.Request, s storage.Storage, u storage.Upstream) {
+func streamImportUpstreamRoutes(w http.ResponseWriter, r *http.Request, s storage.Storage, providers *provider.Catalog, u storage.Upstream) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	events := newRouteImportEventWriter(w)
 
 	events.send(routeImportEvent{Type: "stage", Stage: "models", Status: "running", Message: "Resolving models"})
-	plan, err := planUpstreamRouteImport(r, s, u)
+	plan, err := planUpstreamRouteImport(r, s, providers, u)
 	if err != nil {
 		events.send(routeImportEvent{Type: "stage", Stage: "models", Status: "failed", Error: err.Error()})
 		events.send(routeImportEvent{Type: "complete", Success: false, Error: err.Error()})
@@ -131,8 +132,8 @@ func streamImportUpstreamRoutes(w http.ResponseWriter, r *http.Request, s storag
 	})
 }
 
-func planUpstreamRouteImport(r *http.Request, s storage.Storage, u storage.Upstream) (routeImportPreview, error) {
-	models, err := modelsForUpstream(r.Context(), u)
+func planUpstreamRouteImport(r *http.Request, s storage.Storage, providers *provider.Catalog, u storage.Upstream) (routeImportPreview, error) {
+	models, err := modelsForUpstream(r.Context(), providers, u)
 	if err != nil {
 		return routeImportPreview{}, err
 	}

@@ -33,6 +33,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
 	"github.com/nyroway/nyro/go/internal/gateway"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
@@ -47,6 +48,7 @@ const certExpiryCheckInterval = 24 * time.Hour
 // SyncTarget; Build prefers ConfigPath when both are set.
 type Options struct {
 	Protocols *protocol.Catalog
+	Providers *provider.Catalog
 
 	// ConfigPath is a standalone YAML config file: the snapshot is built once
 	// at startup and never refreshed. No control plane or database involved.
@@ -91,6 +93,9 @@ type Options struct {
 // health. The config-sync client stops when ctx is cancelled; Manager owns the
 // remaining runtime shutdown.
 func Build(ctx context.Context, opts Options) (*gateway.Gateway, *Manager, error) {
+	if opts.Providers == nil {
+		return nil, nil, errors.New("dataplane: provider catalog is required")
+	}
 	switch {
 	case opts.ConfigPath != "":
 		// Standalone YAML: build the config snapshot directly (no DB). The
@@ -105,7 +110,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *Manager, error
 		for _, name := range missing {
 			slog.Warn("config references an unset environment variable", "var", name)
 		}
-		snap, err := cfg.BuildSnapshot()
+		snap, err := cfg.BuildSnapshot(opts.Providers)
 		if err != nil {
 			return nil, nil, fmt.Errorf("build snapshot: %w", err)
 		}
@@ -117,7 +122,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *Manager, error
 			_ = stateManager.Shutdown(context.Background())
 			return nil, nil, fmt.Errorf("state backend: %w", err)
 		}
-		gw := gateway.NewGatewayWithCache(cache, quotaSwitch, opts.Protocols)
+		gw := gateway.NewGatewayWithCache(cache, quotaSwitch, opts.Protocols, opts.Providers)
 
 		// Standalone config is static: the snapshot is already in the cache, so
 		// the initial resolve sees the real (YAML-declared) obs config and no
@@ -131,14 +136,14 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *Manager, error
 		sp := telemetry.NewSwappableProvider(prov)
 		attachObservability(gw, prov, sp)
 		obsManager := newObsManager(ctx, cache, sp, prov, obsCfg)
-		return gw, newManager(cache, stateManager, obsManager), nil
+		return gw, newManager(cache, stateManager, obsManager, gw), nil
 
 	case opts.SyncTarget != "":
 		// config-sync hot-reload: empty cache is filled by the stream.
 		cache := &configsnapshot.Cache{}
 		quotaSwitch := quota.NewUnavailableSwitch()
 		stateManager := newStateManager(ctx, quotaSwitch, stateManagerOptions{})
-		gw := gateway.NewGatewayWithCache(cache, quotaSwitch, opts.Protocols)
+		gw := gateway.NewGatewayWithCache(cache, quotaSwitch, opts.Protocols, opts.Providers)
 
 		// Build the INITIAL provider from the still-empty cache: it resolves to
 		// the fixed default (logs→stdout, metrics/traces disabled). The real obs
@@ -157,7 +162,7 @@ func Build(ctx context.Context, opts Options) (*gateway.Gateway, *Manager, error
 		sp := telemetry.NewSwappableProvider(prov)
 		attachObservability(gw, prov, sp)
 		obsManager := newObsManager(ctx, cache, sp, prov, obsCfg)
-		mgr := newManager(cache, stateManager, obsManager)
+		mgr := newManager(cache, stateManager, obsManager, gw)
 
 		client := configsync.NewConfigClient(opts.SyncTarget, cache, servicePort(opts.ListenAddr), opts.SyncTLS)
 		if len(opts.SyncDialOpts) > 0 {

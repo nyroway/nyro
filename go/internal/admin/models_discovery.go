@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nyroway/nyro/go/internal/provider"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
+	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
@@ -64,12 +66,14 @@ func (c *modelsCache) invalidate(id string) {
 // Returns "" when neither is available (a "custom" upstream with no
 // models_url and no static models, or an unknown/unregistered provider) —
 // callers must treat that as "discovery not possible," not an error.
-func modelsDiscoveryURL(u storage.Upstream) string {
+func modelsDiscoveryURL(providers *provider.Catalog, u storage.Upstream) string {
 	if u.ModelsURL != "" {
 		return u.ModelsURL
 	}
-	if def, ok := provider.Lookup(u.Provider); ok {
-		return def.ModelsURL
+	if providers != nil {
+		if def, ok := providers.Lookup(u.Provider); ok {
+			return def.ModelsURL
+		}
 	}
 	return ""
 }
@@ -80,7 +84,7 @@ func modelsDiscoveryURL(u storage.Upstream) string {
 // modelsCacheTTL. Returns an empty slice (not an error) when discovery isn't
 // possible (no URL resolved) so callers can render an empty dropdown rather
 // than failing the whole request.
-func modelsForUpstream(ctx context.Context, u storage.Upstream) ([]string, error) {
+func modelsForUpstream(ctx context.Context, providers *provider.Catalog, u storage.Upstream) ([]string, error) {
 	if len(u.ModelsJSON) > 0 {
 		var models []string
 		if err := json.Unmarshal(u.ModelsJSON, &models); err != nil {
@@ -88,14 +92,14 @@ func modelsForUpstream(ctx context.Context, u storage.Upstream) ([]string, error
 		}
 		return models, nil
 	}
-	discoveryURL := modelsDiscoveryURL(u)
+	discoveryURL := modelsDiscoveryURL(providers, u)
 	if discoveryURL == "" {
 		return []string{}, nil
 	}
 	if cached, ok := discoveryCache.get(u.ID); ok {
 		return cached, nil
 	}
-	models, err := fetchModels(ctx, u, discoveryURL)
+	models, err := fetchModels(ctx, providers, u, discoveryURL)
 	if err != nil {
 		return nil, err
 	}
@@ -108,33 +112,40 @@ func modelsForUpstream(ctx context.Context, u storage.Upstream) ([]string, error
 // OpenAI-shaped {"data":[{"id":"..."}]} form (this holds for OpenAI,
 // Anthropic's /v1/models, and Gemini's OpenAI-compatible models endpoint —
 // all three of today's exposed presets' ModelsURL values use this shape).
-func fetchModels(ctx context.Context, u storage.Upstream, discoveryURL string) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
-	if err != nil {
-		return nil, err
+func fetchModels(ctx context.Context, providers *provider.Catalog, u storage.Upstream, discoveryURL string) ([]string, error) {
+	if providers == nil {
+		return nil, fmt.Errorf("provider catalog is unavailable")
 	}
-	auth, err := provider.AuthenticatorFor(u.Provider, u.Protocol, provider.UpstreamRuntime{
+	factory := providers.DriverFor(u.Provider)
+	if factory == nil {
+		return nil, fmt.Errorf("provider driver is unavailable")
+	}
+	upstream := provider.UpstreamRuntime{
 		Name:            u.Name,
 		Provider:        u.Provider,
 		Protocol:        u.Protocol,
-		BaseURL:         u.BaseURL,
+		BaseURL:         discoveryURL,
 		CredentialsJSON: u.CredentialsJSON,
 		ProxyURL:        u.ProxyURL,
-	})
+	}
+	request, err := factory().Prepare(ctx, upstream, protocol.WireRequest{Method: http.MethodGet})
 	if err != nil {
 		return nil, err
 	}
-	if err := auth.Apply(ctx, req); err != nil {
+	// DiscoveryURL is already an absolute endpoint, not an egress path to
+	// join. Preserve it byte-for-byte, including a trailing slash.
+	request.URL = discoveryURL
+	transport, err := newAdminProviderTransport(u.ProxyURL, 10*time.Second)
+	if err != nil {
 		return nil, err
 	}
-	client := testHTTPClient(u.ProxyURL, 10*time.Second)
-	resp, err := client.Do(req)
+	resp, err := transport.Do(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("discovery request failed: %s", resp.Status)
+		return nil, fmt.Errorf("discovery request failed: %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	var body struct {
 		Data []struct {
@@ -151,4 +162,13 @@ func fetchModels(ctx context.Context, u storage.Upstream, discoveryURL string) (
 		}
 	}
 	return models, nil
+}
+
+func newAdminProviderTransport(proxyURL string, timeout time.Duration) (provider.Transport, error) {
+	return providerhttp.New(providerhttp.Config{
+		RequestTimeout:      timeout,
+		ConnectTimeout:      timeout,
+		ProxyURL:            proxyURL,
+		UseEnvironmentProxy: true,
+	})
 }
