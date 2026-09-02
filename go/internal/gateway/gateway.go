@@ -55,6 +55,9 @@ type Gateway struct {
 	// observePhase is a test seam for the mandatory Observe position.
 	// Production leaves it nil and uses telemetry.NewRegisteredPhase.
 	observePhase llmpipeline.Phase
+	// preDispatchPhases exercises the ordered optional slot during the
+	// Gateway-to-Runtime transition. Production currently leaves it empty.
+	preDispatchPhases []llmpipeline.Phase
 }
 
 // NewGateway builds a Gateway with a fresh, empty snapshot Cache. Tests use this

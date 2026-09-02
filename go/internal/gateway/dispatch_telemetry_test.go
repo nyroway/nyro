@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,12 @@ import (
 // capturePhase records the Exchange from the Observe finalizer, at the same
 // lifecycle point where telemetry emits.
 type capturePhase struct{ got **pipeline.Exchange }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func (capturePhase) Name() string { return "observe" }
 
@@ -117,5 +124,68 @@ func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 	}
 	if ex.Usage != (llm.Usage{}) {
 		t.Errorf("exchange usage = %+v; want zero on the early-exit path", ex.Usage)
+	}
+}
+
+func TestDispatchPublishesTargetAndTypedErrorWhenTransportsAreExhausted(t *testing.T) {
+	gw, captured := newCapturingGateway(t, "https://upstream.invalid")
+	gw.UpstreamTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("synthetic transport failure")
+	})
+	r := NewRouter(gw)
+
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "all upstream backends failed") {
+		t.Fatalf("dispatch = %d %s, want unchanged exhausted-backends 502", rec.Code, rec.Body.String())
+	}
+	ex := captured(t)
+	if ex.Target.ID == "" || ex.Target.UpstreamName != "test" || ex.Target.Model != "gpt-4o" {
+		t.Errorf("exchange target = %+v, want attempted test/gpt-4o target", ex.Target)
+	}
+	if ex.Target.UpstreamLatencyMs == nil {
+		t.Error("exchange target has no latency for the failed transport attempt")
+	}
+	if ex.Error == nil || ex.Error.StatusCode == nil || *ex.Error.StatusCode != http.StatusBadGateway {
+		t.Errorf("exchange error = %+v, want typed 502 terminal error", ex.Error)
+	}
+}
+
+func TestDispatchPublishesTypedErrorForProviderFailureWithoutChangingWireResponse(t *testing.T) {
+	const providerBody = `{"error":{"message":"provider rejected"}}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(providerBody))
+	}))
+	defer upstream.Close()
+
+	gw, captured := newCapturingGateway(t, upstream.URL)
+	r := NewRouter(gw)
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != providerBody {
+		t.Fatalf("dispatch = %d %s, want verbatim provider 400 body", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Errorf("content type = %q, want provider content type", got)
+	}
+	ex := captured(t)
+	if ex.Target.ID == "" || ex.Target.UpstreamName != "test" {
+		t.Errorf("exchange target = %+v, want selected test target", ex.Target)
+	}
+	if ex.Target.UpstreamStatus == nil || *ex.Target.UpstreamStatus != http.StatusBadRequest {
+		t.Errorf("exchange target status = %v, want provider 400", ex.Target.UpstreamStatus)
+	}
+	if ex.Error == nil || ex.Error.StatusCode == nil || *ex.Error.StatusCode != http.StatusBadRequest {
+		t.Errorf("exchange error = %+v, want typed provider 400 terminal error", ex.Error)
 	}
 }

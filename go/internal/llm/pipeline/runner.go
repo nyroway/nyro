@@ -152,6 +152,10 @@ func (r *Runner) Run(ctx context.Context, ex *Exchange) (Completion, error) {
 			}
 			goto finalize
 		case Reject:
+			if outcome.Error == nil {
+				runErr = fmt.Errorf("pipeline: phase %q rejected without an error", phase.Name())
+				goto finalize
+			}
 			ex.Error = outcome.Error
 			goto finalize
 		default:
