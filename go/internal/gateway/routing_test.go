@@ -3,14 +3,14 @@ package gateway
 import (
 	"testing"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm/routing"
-	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 func TestRoutingTargetsProjectsSelectionFields(t *testing.T) {
-	route := storage.Route{
-		Balance: storage.BalanceLatency,
-		Upstreams: []storage.RouteUpstream{{
+	route := configsnapshot.Route{
+		Balance: string(routing.StrategyLatency),
+		Upstreams: []configsnapshot.RouteTarget{{
 			ID:         "binding-1",
 			RouteID:    "route-1",
 			UpstreamID: "upstream-1",
@@ -18,7 +18,6 @@ func TestRoutingTargetsProjectsSelectionFields(t *testing.T) {
 			Weight:     70,
 			Priority:   2,
 			Enabled:    false,
-			CreatedAt:  "2026-08-11T00:00:00Z",
 		}},
 	}
 
@@ -36,16 +35,16 @@ func TestRoutingTargetsProjectsSelectionFields(t *testing.T) {
 }
 
 func TestRoutingTargetsPreservesStrategyValue(t *testing.T) {
-	for _, value := range []storage.ModelBalance{
+	for _, value := range []string{
 		"",
-		storage.BalanceWeighted,
-		storage.BalancePriority,
-		storage.BalanceCooldown,
-		storage.BalanceLatency,
+		string(routing.StrategyWeighted),
+		string(routing.StrategyPriority),
+		string(routing.StrategyCooldown),
+		string(routing.StrategyLatency),
 		"future-strategy",
 	} {
 		t.Run(string(value), func(t *testing.T) {
-			_, strategy := routingTargets(storage.Route{Balance: value})
+			_, strategy := routingTargets(configsnapshot.Route{Balance: value})
 			if strategy != routing.Strategy(value) {
 				t.Fatalf("strategy = %q, want raw value %q", strategy, value)
 			}

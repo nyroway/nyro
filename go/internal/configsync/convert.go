@@ -39,13 +39,13 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *configsnapshot.Snapshot {
 		if u == nil {
 			continue
 		}
-		b.SetUpstream(storage.Upstream{
+		b.SetUpstream(configsnapshot.Upstream{
 			ID:              u.GetId(),
 			Name:            u.GetName(),
 			Protocol:        u.GetProtocol(),
 			BaseURL:         u.GetBaseUrl(),
-			CredentialsJSON: rawJSON(u.GetCredentialsJson()),
-			ModelsJSON:      rawJSON(u.GetModelsJson()),
+			CredentialsJSON: []byte(u.GetCredentialsJson()),
+			ModelsJSON:      []byte(u.GetModelsJson()),
 			ProxyURL:        u.GetProxyUrl(),
 			Enabled:         u.GetEnabled(),
 		})
@@ -56,10 +56,10 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *configsnapshot.Snapshot {
 			continue
 		}
 		enablePayload := r.GetEnablePayload()
-		route := storage.Route{
+		route := configsnapshot.Route{
 			ID:            r.GetId(),
 			Model:         r.GetModel(),
-			Balance:       storage.ModelBalance(r.GetBalance()),
+			Balance:       r.GetBalance(),
 			EnableAuth:    r.GetEnableAuth(),
 			EnablePayload: &enablePayload,
 			Enabled:       r.GetEnabled(),
@@ -68,7 +68,7 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *configsnapshot.Snapshot {
 			if t == nil {
 				continue
 			}
-			route.Upstreams = append(route.Upstreams, storage.RouteUpstream{
+			route.Upstreams = append(route.Upstreams, configsnapshot.RouteTarget{
 				ID: t.GetId(), RouteID: t.GetRouteId(), UpstreamID: t.GetUpstreamId(),
 				Model: t.GetModel(), Weight: t.GetWeight(), Priority: t.GetPriority(),
 				Enabled: t.GetEnabled(),
@@ -81,12 +81,12 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *configsnapshot.Snapshot {
 		if c == nil {
 			continue
 		}
-		var quotas []storage.ConsumerQuota
+		var quotas []configsnapshot.ConsumerQuota
 		for _, q := range c.GetQuotas() {
 			if q == nil {
 				continue
 			}
-			quotas = append(quotas, storage.ConsumerQuota{
+			quotas = append(quotas, configsnapshot.ConsumerQuota{
 				ID: q.GetId(), ConsumerID: q.GetConsumerId(), QuotaType: q.GetQuotaType(),
 				QuotaLimit: q.GetQuotaLimit(), Window: q.GetWindow(),
 			})
@@ -187,14 +187,6 @@ func EpochFromStorage(s storage.Storage) int64 {
 	v, _ := s.Settings().Get("config_epoch")
 	n, _ := strconv.ParseInt(v, 10, 64)
 	return n
-}
-
-// rawJSON converts a wire JSON string to json.RawMessage (empty means "not set").
-func rawJSON(s string) json.RawMessage {
-	if s == "" {
-		return nil
-	}
-	return json.RawMessage(s)
 }
 
 // jsonRaw converts a json.RawMessage DTO field to the wire string.

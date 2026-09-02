@@ -37,13 +37,13 @@ func newTestGateway(t *testing.T, upstreamURL string) *Gateway {
 
 // newTestGatewayFromStorage builds a storage-less Gateway and populates its
 // config cache from the given (typically in-memory) storage. This is the test
-// equivalent of the old NewGateway(s) one-shot LoadFromStorage: production no
+// equivalent of the old NewGateway(s) one-shot storage projection: production no
 // longer reads the DB for config (config-sync / YAML), so tests seed the cache via the
 // same LoadAndSwap the config-sync loader uses.
 func newTestGatewayFromStorage(t *testing.T, s storage.Storage) *Gateway {
 	t.Helper()
 	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
-	if err := gw.Cache.LoadAndSwap(s); err != nil {
+	if err := storage.LoadAndSwap(gw.Cache, s); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	return gw
@@ -71,7 +71,7 @@ func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol
 		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "gpt-4o"}},
 	})
 	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
-	if err := gw.Cache.LoadAndSwap(core); err != nil {
+	if err := storage.LoadAndSwap(gw.Cache, core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	return gw

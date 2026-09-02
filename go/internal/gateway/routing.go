@@ -1,11 +1,11 @@
 package gateway
 
 import (
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm/routing"
-	"github.com/nyroway/nyro/go/internal/storage"
 )
 
-func routingTargets(route storage.Route) ([]routing.Target, routing.Strategy) {
+func routingTargets(route configsnapshot.Route) ([]routing.Target, routing.Strategy) {
 	targets := make([]routing.Target, 0, len(route.Upstreams))
 	for _, target := range route.Upstreams {
 		targets = append(targets, routing.Target{

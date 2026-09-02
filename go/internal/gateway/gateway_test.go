@@ -11,6 +11,7 @@ import (
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
+	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
@@ -46,7 +47,7 @@ func testProviderCatalog(t *testing.T) *provider.Catalog {
 func TestGatewayProviderTransportCaching(t *testing.T) {
 	st := memory.New()
 	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
-	if err := gw.Cache.LoadAndSwap(st.Storage()); err != nil {
+	if err := storage.LoadAndSwap(gw.Cache, st.Storage()); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	direct, err := gw.providerTransportFor("")
@@ -153,7 +154,7 @@ func TestResolveProxySettings_Overrides(t *testing.T) {
 	mustSet("proxy.retry_on_status", string(codes))
 
 	c := &configsnapshot.Cache{}
-	if err := c.LoadAndSwap(core); err != nil {
+	if err := storage.LoadAndSwap(c, core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	ps := resolveProxySettings(c.Load())

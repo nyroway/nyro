@@ -291,7 +291,7 @@ func newQuotaTestGatewayWithQuotas(t *testing.T, quotaStore quota.Store, quotas 
 		t.Fatal(err)
 	}
 	cache := &configsnapshot.Cache{}
-	if err := cache.LoadAndSwap(core); err != nil {
+	if err := storage.LoadAndSwap(cache, core); err != nil {
 		t.Fatal(err)
 	}
 	quotaSwitch := quota.NewSwitch(quotaStore)

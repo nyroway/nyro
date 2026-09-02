@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
@@ -69,11 +69,11 @@ func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	}
 
 	ex := captured(t)
-	route, _ := ex.GetExt(telemetry.ExtRoute).(storage.Route)
+	route, _ := ex.GetExt(telemetry.ExtRoute).(configsnapshot.Route)
 	if route.Model != "gpt-4o" {
 		t.Errorf("exchange route = %+v; want model gpt-4o", route)
 	}
-	up, _ := ex.GetExt(telemetry.ExtUpstream).(storage.Upstream)
+	up, _ := ex.GetExt(telemetry.ExtUpstream).(configsnapshot.Upstream)
 	if up.Name != "test" {
 		t.Errorf("exchange upstream = %+v; want name test", up)
 	}
@@ -123,7 +123,7 @@ func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 	if ex.Status != http.StatusNotFound {
 		t.Errorf("exchange status = %d; want 404 (early-exit path must still record it)", ex.Status)
 	}
-	if _, ok := ex.GetExt(telemetry.ExtRoute).(storage.Route); ok {
+	if _, ok := ex.GetExt(telemetry.ExtRoute).(configsnapshot.Route); ok {
 		t.Error("exchange carries a route for a model that does not exist")
 	}
 	if ex.Usage != (llm.Usage{}) {

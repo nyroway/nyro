@@ -10,9 +10,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 // Exchange keys for the state the dispatcher hands to this Stage. They live in
@@ -22,7 +22,7 @@ const (
 	// ExtLogCtx holds the LogCtx the dispatcher fills in as protocol, model,
 	// and upstream details become known.
 	ExtLogCtx = "obs.logctx"
-	// ExtRoute and ExtUpstream hold the resolved storage rows.
+	// ExtRoute and ExtUpstream hold the resolved runtime snapshot values.
 	ExtRoute    = "obs.route"
 	ExtUpstream = "obs.upstream"
 )
@@ -84,8 +84,8 @@ func (s Stage) OnDelta(ex *pipeline.Exchange, d llm.StreamDelta) {
 // exactly once per request, from Handle's defer.
 func (s Stage) emit(ex *pipeline.Exchange, active *activeSet, span trace.Span) {
 	lc, _ := ex.GetExt(ExtLogCtx).(LogCtx)
-	route, _ := ex.GetExt(ExtRoute).(storage.Route)
-	upstream, _ := ex.GetExt(ExtUpstream).(storage.Upstream)
+	route, _ := ex.GetExt(ExtRoute).(configsnapshot.Route)
+	upstream, _ := ex.GetExt(ExtUpstream).(configsnapshot.Upstream)
 
 	latencyMs := time.Since(ex.Started).Milliseconds()
 

@@ -351,6 +351,9 @@ func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
 	if rt == nil || len(rt.Upstreams) != 1 {
 		t.Fatalf("route target missing: %+v", rt)
 	}
+	if rt.Balance != "weighted" || rt.Upstreams[0].Weight != 100 || rt.Upstreams[0].Priority != 1 {
+		t.Fatalf("route defaults = %+v; want weighted strategy, weight 100, priority 1", rt)
+	}
 	u := snap.UpstreamGet(rt.Upstreams[0].UpstreamID)
 	if u == nil || u.BaseURL != "https://api.openai.com" || string(u.CredentialsJSON) != `{"api_key":"sk-x"}` {
 		t.Errorf("upstream missing/wrong: %+v", u)

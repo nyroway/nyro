@@ -36,7 +36,7 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 	})
 	token := consumer.Keys[0].Token
 	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
-	if err := gw.Cache.LoadAndSwap(core); err != nil {
+	if err := storage.LoadAndSwap(gw.Cache, core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	engine := NewRouter(gw)
@@ -68,7 +68,7 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 	if _, err := core.Consumers().Update(consumer.ID, storage.UpdateConsumer{Enabled: boolPtr(false)}); err != nil {
 		t.Fatalf("disable consumer: %v", err)
 	}
-	if err := gw.Cache.LoadAndSwap(core); err != nil { // reflect the storage change in the in-memory cache
+	if err := storage.LoadAndSwap(gw.Cache, core); err != nil { // reflect the storage change in the in-memory cache
 		t.Fatalf("reload cache: %v", err)
 	}
 	if c := post(token); c != http.StatusForbidden {

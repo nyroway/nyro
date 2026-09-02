@@ -9,7 +9,6 @@ import (
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/quota"
-	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 // checkAccess is the inbound access check. For open routes (EnableAuth=false)
@@ -20,7 +19,7 @@ import (
 // (0, "", nil) to allow, or (statusCode, message, nil) to deny. When a
 // concurrency quota slot was acquired, the third return is a non-nil release
 // Lease that MUST be released exactly once when the request finishes.
-func checkAccess(snap *configsnapshot.Snapshot, qc *quota.Switch, route storage.Route, r *http.Request, consumerID *string, keyName *string, keyPreview *string) (int, string, quota.Lease) {
+func checkAccess(snap *configsnapshot.Snapshot, qc *quota.Switch, route configsnapshot.Route, r *http.Request, consumerID *string, keyName *string, keyPreview *string) (int, string, quota.Lease) {
 	if !route.EnableAuth {
 		return 0, "", nil
 	}
@@ -106,7 +105,7 @@ func expired(iso string) bool {
 
 // tokenQuotaExceeded checks response-settled historical token usage. Request
 // quotas use AdmitRequest after concurrency acquisition instead.
-func tokenQuotaExceeded(ctx context.Context, qc *quota.Switch, rec *storage.ConsumerKeyAccessRecord) (int, string) {
+func tokenQuotaExceeded(ctx context.Context, qc *quota.Switch, rec *configsnapshot.ConsumerAccess) (int, string) {
 	for _, q := range rec.Quotas {
 		if q.QuotaType != "tokens" {
 			continue
@@ -126,7 +125,7 @@ func tokenQuotaExceeded(ctx context.Context, qc *quota.Switch, rec *storage.Cons
 	return 0, ""
 }
 
-func requestLimits(rec *storage.ConsumerKeyAccessRecord) []quota.RequestLimit {
+func requestLimits(rec *configsnapshot.ConsumerAccess) []quota.RequestLimit {
 	limits := make([]quota.RequestLimit, 0, len(rec.Quotas))
 	for _, q := range rec.Quotas {
 		if q.QuotaType != "requests" {
@@ -141,7 +140,7 @@ func requestLimits(rec *storage.ConsumerKeyAccessRecord) []quota.RequestLimit {
 	return limits
 }
 
-func acquireConcurrency(ctx context.Context, qc *quota.Switch, rec *storage.ConsumerKeyAccessRecord, leaseTTL time.Duration) (quota.Lease, int, string) {
+func acquireConcurrency(ctx context.Context, qc *quota.Switch, rec *configsnapshot.ConsumerAccess, leaseTTL time.Duration) (quota.Lease, int, string) {
 	for _, q := range rec.Quotas {
 		if q.QuotaType != "concurrency" {
 			continue

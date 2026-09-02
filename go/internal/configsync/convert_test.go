@@ -115,7 +115,7 @@ func TestSnapshotFromProto_Settings(t *testing.T) {
 
 func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	// Build storage, build pb snapshot, convert to internal, assert equivalence
-	// with the direct LoadFromStorage path.
+	// with the direct storage-to-snapshot projection.
 	st, u, rOpen, _, _, rawKey := newPopulatedStorage(t)
 	if err := st.Storage().Settings().Set("proxy.request_timeout", "45s"); err != nil {
 		t.Fatal(err)
@@ -130,9 +130,9 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	}
 
 	// Direct load for comparison.
-	direct, err := configsnapshot.LoadFromStorage(st.Storage())
+	direct, err := storage.LoadSnapshot(st.Storage())
 	if err != nil {
-		t.Fatalf("LoadFromStorage: %v", err)
+		t.Fatalf("LoadSnapshot: %v", err)
 	}
 
 	got := SnapshotFromProto(pbSnap)
@@ -163,9 +163,9 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 // TestSnapshotFromStorage_CarriesObservabilitySettings is a targeted
 // end-to-end check for the new per-signal observability setting keys
 // (obs_<signal>_exporter, obs_<signal>_<engine>_<field>) through the full
-// settings-push path: storage.Settings().Set -> LoadFromStorage/ListAll ->
+// settings-push path: storage.Settings().Set -> storage.LoadSnapshot ->
 // SetSetting -> SnapshotFromStorage (proto) -> SnapshotFromProto -> SettingGet.
-// Existing settings coverage (snapshot.TestLoadFromStorageBuildsAllMaps,
+// Existing settings coverage (storage.LoadSnapshot,
 // TestSnapshotFromProto_Settings, TestSnapshotFromStorage_RoundtripsThroughProto)
 // only exercises generic keys like proxy_url; this proves the new obs key
 // shapes specifically survive the same pipeline unmodified, with no

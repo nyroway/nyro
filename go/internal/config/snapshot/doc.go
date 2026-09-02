@@ -4,6 +4,6 @@
 // this package; request-serving code reads it without depending on a source or
 // transport.
 //
-// Layer: 1 (data) — may import the Go standard library and internal/storage.
-// It must not import config-sync transports, telemetry runtime, or layer 3.
+// Layer: 1 (data) — may import the Go standard library only.
+// It must not import configuration sources, storage, telemetry runtime, or layer 3.
 package snapshot
