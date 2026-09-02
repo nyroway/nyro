@@ -83,7 +83,7 @@ type Options struct {
 // Build returns a storage-free Gateway plus the unified runtime Manager.
 //
 // It constructs the initial telemetry.Provider, wraps it in a
-// SwappableProvider, and points the OTel telemetry Stage at it. In config-sync
+// SwappableProvider, and points the OTel telemetry Phase at it. In config-sync
 // mode it registers the manager's hot-reload callback on the cache BEFORE
 // starting the config stream, so the control-plane-seeded obs settings — which
 // arrive with the first snapshot, after this initial build — are applied
@@ -197,9 +197,9 @@ func servicePort(addr string) string {
 }
 
 // attachObservability wires the initial telemetry.Provider into the Gateway
-// and points the telemetry Stage at the SwappableProvider. gw.Obs/gw.Handles are
+// and points the telemetry Phase at the SwappableProvider. gw.Obs/gw.Handles are
 // informational only (the gateway dispatch path does not read them — telemetry
-// flows entirely through the sp-backed Stage) and reflect the initial provider.
+// flows entirely through the sp-backed Phase) and reflect the initial provider.
 //
 // RegisterProvider is idempotent and re-pointable, which is what makes it
 // safe for one process to assemble more than one data plane over its lifetime.

@@ -17,7 +17,9 @@ import (
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm"
-	"github.com/nyroway/nyro/go/internal/pipeline"
+	"github.com/nyroway/nyro/go/internal/llm/pipeline"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/security/authn"
 )
 
 // captureLogger is a minimal log.Logger wrapper that records every emitted
@@ -28,45 +30,83 @@ type captureLogger struct {
 	records []log.Record
 }
 
+type testLogContext struct {
+	ConsumerKeyName    string
+	ConsumerKeyPreview string
+	ClientProtocol     string
+	UpstreamProtocol   string
+	ClientModel        string
+	UpstreamModel      string
+	Method             string
+	Path               string
+	IsStream           bool
+	UpstreamStatus     *int32
+	LatencyUpstreamMs  *int64
+}
+
 func (c *captureLogger) Emit(ctx context.Context, r log.Record) {
 	c.records = append(c.records, r.Clone())
 }
 
-// runStage drives one exchange through the telemetry Stage: it starts the span
-// on the way in and emits on the way out. Unlike the two-call phase model it
-// replaces, a single Handle covers the whole lifecycle, so a test asserting the
-// emitted record only has to run this once.
+// runStage drives one exchange through the telemetry phase and its finalizer.
 func runStage(t *testing.T, ex *pipeline.Exchange) {
 	t.Helper()
-	if ex.Ctx == nil {
-		ex.Ctx = context.Background()
+	stage := NewRegisteredPhase()
+	outcome, finalizer := stage.Apply(context.Background(), ex)
+	if outcome.Decision != pipeline.Continue {
+		t.Fatalf("Phase.Apply decision = %v, want Continue", outcome.Decision)
 	}
-	stage := NewRegisteredStage()
-	if err := stage.Handle(ex, func() error { return nil }); err != nil {
-		t.Fatalf("Stage.Handle returned %v, want nil", err)
+	if finalizer == nil {
+		t.Fatal("Phase.Apply returned a nil finalizer")
+	}
+	if err := finalizer(context.Background(), ex, pipeline.Completion{
+		Response: ex.Response,
+		Error:    ex.Error,
+		Usage:    ex.Usage,
+		Streamed: ex.Streamed,
+	}); err != nil {
+		t.Fatalf("telemetry finalizer returned %v, want nil", err)
 	}
 }
 
 // newExchange builds an Exchange carrying the state the dispatcher publishes.
-func newExchange(route configsnapshot.Route, upstream configsnapshot.Upstream, consumerID string, usage llm.Usage, started time.Time, status int, lc LogCtx) *pipeline.Exchange {
-	ex := &pipeline.Exchange{
-		Ctx:        context.Background(),
-		Usage:      usage,
-		Status:     status,
-		Started:    started,
-		ConsumerID: consumerID,
+func newExchange(route configsnapshot.Route, upstream configsnapshot.Upstream, consumerID string, usage llm.Usage, started time.Time, status int, lc testLogContext) *pipeline.Exchange {
+	currentModel := lc.ClientModel
+	if lc.UpstreamModel != "" {
+		currentModel = lc.UpstreamModel
 	}
-	ex.SetExt(ExtRoute, route)
-	ex.SetExt(ExtUpstream, upstream)
-	ex.SetExt(ExtLogCtx, lc)
-	return ex
+	return &pipeline.Exchange{
+		Request: llm.NewChatRequest(currentModel, nil),
+		Source: protocol.Endpoint{
+			Protocol: protocol.Protocol(lc.ClientProtocol),
+		},
+		Identity: authn.Identity{
+			Subject:           consumerID,
+			CredentialName:    lc.ConsumerKeyName,
+			CredentialPreview: lc.ConsumerKeyPreview,
+		},
+		Route: pipeline.LogicalRoute{ID: route.ID, Model: route.Model},
+		Target: pipeline.Target{
+			UpstreamID:        upstream.ID,
+			UpstreamName:      upstream.Name,
+			Model:             lc.UpstreamModel,
+			Endpoint:          protocol.Endpoint{Protocol: protocol.Protocol(lc.UpstreamProtocol)},
+			UpstreamStatus:    lc.UpstreamStatus,
+			UpstreamLatencyMs: lc.LatencyUpstreamMs,
+		},
+		RequestInfo: pipeline.RequestInfo{
+			ClientModel: lc.ClientModel,
+			Operation:   lc.Method,
+			Resource:    lc.Path,
+		},
+		Usage:    usage,
+		Status:   status,
+		Started:  started,
+		Streamed: lc.IsStream,
+	}
 }
 
-// TestStageDerivesSpanContext pins that the Stage replaces ex.Ctx with the
-// span-derived context on the way in, so later Stages and the upstream call
-// inherit the parent span. The phase model published the context through the
-// bag; the Stage puts it where every consumer already looks.
-func TestStageDerivesSpanContext(t *testing.T) {
+func TestPhaseStartsAndFinalizesSpan(t *testing.T) {
 	// Isolated harness: a fresh span recorder + tracer, fresh handles, fresh
 	// logger capture. The target is process-wide — but we assert only what
 	// THIS invocation produced.
@@ -85,26 +125,23 @@ func TestStageDerivesSpanContext(t *testing.T) {
 		_ = meterProvider.Shutdown(context.Background())
 	})
 
-	ex := &pipeline.Exchange{Ctx: context.Background(), Started: time.Now()}
-	root := ex.Ctx
-
-	var innerCtx context.Context
-	stage := NewRegisteredStage()
-	if err := stage.Handle(ex, func() error { innerCtx = ex.Ctx; return nil }); err != nil {
-		t.Fatalf("Stage.Handle returned %v, want nil", err)
+	ex := &pipeline.Exchange{Started: time.Now()}
+	stage := NewRegisteredPhase()
+	outcome, finalizer := stage.Apply(context.Background(), ex)
+	if outcome.Decision != pipeline.Continue || finalizer == nil {
+		t.Fatalf("Apply = (%v, %v), want Continue and a finalizer", outcome, finalizer)
 	}
-
-	if innerCtx == nil {
-		t.Fatal("the chain never ran")
+	if got := len(spanRecorder.Started()); got != 1 {
+		t.Fatalf("started spans = %d, want 1", got)
 	}
-	if innerCtx == root {
-		t.Error("Stage did not replace ex.Ctx with the span context")
+	if got := len(spanRecorder.Ended()); got != 0 {
+		t.Fatalf("ended spans before finalization = %d, want 0", got)
 	}
-	if sc := trace.SpanContextFromContext(innerCtx); !sc.IsValid() {
-		t.Error("ex.Ctx inside the chain carries no valid span context")
+	if err := finalizer(context.Background(), ex, pipeline.Completion{}); err != nil {
+		t.Fatalf("finalizer: %v", err)
 	}
 	if got := len(spanRecorder.Ended()); got != 1 {
-		t.Errorf("ended spans = %d, want 1 (the Stage must end the span on the way out)", got)
+		t.Errorf("ended spans = %d, want 1", got)
 	}
 }
 
@@ -130,7 +167,7 @@ func TestStageRecordsMetricsTokensAndSpan(t *testing.T) {
 	cacheRead := uint32(7)
 	usage := llm.Usage{PromptTokens: 100, CompletionTokens: 50, CacheReadTokens: &cacheRead}
 	started := time.Now().Add(-25 * time.Millisecond) // pretend 25ms elapsed upstream
-	lc := LogCtx{
+	lc := testLogContext{
 		ClientProtocol:   "openai",
 		UpstreamProtocol: "openai",
 		ClientModel:      "gpt-test",
@@ -211,11 +248,9 @@ func TestStageRecordsMetricsTokensAndSpan(t *testing.T) {
 	}
 }
 
-// TestStageEmitsUpstreamAuditAttrs asserts the Stage emits the two optional
-// upstream audit attributes (nyro.upstream_status and
-// nyro.latency_upstream_ms) when LogCtx carries non-nil, non-zero pointers —
-// closing the data-loss gap vs the legacy audit. Also verifies a nil-pointer
-// LogCtx omits them.
+// TestStageEmitsUpstreamAuditAttrs asserts the Phase emits the two optional
+// upstream audit attributes when target state carries non-nil, non-zero
+// pointers, and omits them otherwise.
 func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
@@ -239,7 +274,7 @@ func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 	// --- case 1: non-nil upstream status + latency → both attributes emitted. ---
 	upstreamStatus := int32(429)
 	upstreamLatency := int64(312)
-	lc := LogCtx{
+	lc := testLogContext{
 		UpstreamStatus:    &upstreamStatus,
 		LatencyUpstreamMs: &upstreamLatency,
 	}
@@ -254,7 +289,7 @@ func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 
 	// --- case 2: nil pointers → attributes must be absent. ---
 	cl.records = nil
-	runStage(t, newExchange(route, upstream, "ak", llm.Usage{}, time.Now().Add(-5*time.Millisecond), 200, LogCtx{}))
+	runStage(t, newExchange(route, upstream, "ak", llm.Usage{}, time.Now().Add(-5*time.Millisecond), 200, testLogContext{}))
 
 	if len(cl.records) != 1 {
 		t.Fatalf("case 2 emitted log records: want 1, got %d", len(cl.records))
@@ -262,7 +297,7 @@ func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 	attrMap2 := logRecordAttrs(t, &cl.records[0])
 	for _, key := range []string{"nyro.upstream.status_code", "nyro.latency_upstream_ms"} {
 		if _, ok := attrMap2[key]; ok {
-			t.Errorf("case 2: nil-pointer LogCtx must omit %q, but it was emitted", key)
+			t.Errorf("case 2: nil target value must omit %q, but it was emitted", key)
 		}
 	}
 }
@@ -286,7 +321,7 @@ func TestStage5xxMarksSpanError(t *testing.T) {
 	runStage(t, newExchange(
 		configsnapshot.Route{ID: "m", Model: "gpt-test"},
 		configsnapshot.Upstream{ID: "p", Name: "openai"},
-		"ak", llm.Usage{}, time.Now().Add(-10*time.Millisecond), 503, LogCtx{},
+		"ak", llm.Usage{}, time.Now().Add(-10*time.Millisecond), 503, testLogContext{},
 	))
 
 	ended := spanRecorder.Ended()
@@ -431,7 +466,7 @@ var _ attribute.KeyValue = attribute.KeyValue{}
 //
 // Under the phase model this was a real hazard — the registry appended, so a
 // second registration meant every request produced two spans and two log
-// records. The Stage holds a single re-pointable target instead, which makes
+// records. The Phase holds a single re-pointable target instead, which makes
 // double-emission structurally impossible; the test stays because the
 // re-pointing half of the contract is still load-bearing.
 func TestRegisterProviderIsIdempotentAndRepoints(t *testing.T) {
@@ -454,7 +489,7 @@ func TestRegisterProviderIsIdempotentAndRepoints(t *testing.T) {
 	RegisterProvider(newSwappableFromParts(firstTracer, &captureLogger{}, handles))
 	RegisterProvider(newSwappableFromParts(secondTracer, &captureLogger{}, handles))
 
-	runStage(t, &pipeline.Exchange{Ctx: context.Background(), Started: time.Now()})
+	runStage(t, &pipeline.Exchange{Started: time.Now()})
 
 	// Exactly one span, and it belongs to the most recently registered
 	// provider: registering twice must not leave two live targets.
@@ -466,10 +501,8 @@ func TestRegisterProviderIsIdempotentAndRepoints(t *testing.T) {
 	}
 }
 
-// TestStageEmitsOnShortCircuit is the contract the deferred emit exists for: a
-// Stage further down the chain can reject a request without ever calling next,
-// and telemetry must still report it. Under the phase model this was the LIFO
-// defer pair in the dispatcher; here it falls out of Handle's defer.
+// TestStageEmitsOnShortCircuit verifies telemetry finalization for a request
+// rejected before Dispatch.
 func TestStageEmitsOnShortCircuit(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
@@ -487,14 +520,16 @@ func TestStageEmitsOnShortCircuit(t *testing.T) {
 	})
 
 	// A rejected request: no route, no upstream, no usage — only a status.
-	ex := &pipeline.Exchange{Ctx: context.Background(), Started: time.Now(), Status: 401}
-	stage := NewRegisteredStage()
-	blocked := pipeline.NewChain(stage, shortCircuitStage{})
-	if err := blocked.Run(ex, func() error {
-		t.Error("terminal ran despite the short circuit")
-		return nil
+	ex := &pipeline.Exchange{Started: time.Now(), Status: 401}
+	stage := NewRegisteredPhase()
+	outcome, finalizer := stage.Apply(context.Background(), ex)
+	if outcome.Decision != pipeline.Continue || finalizer == nil {
+		t.Fatalf("Apply = (%v, %v), want Continue and a finalizer", outcome, finalizer)
+	}
+	if err := finalizer(context.Background(), ex, pipeline.Completion{
+		Error: llm.NewError(llm.ErrAuthenticationError, "missing API key"),
 	}); err != nil {
-		t.Fatalf("Run returned %v, want nil", err)
+		t.Fatalf("finalizer: %v", err)
 	}
 
 	if len(cl.records) != 1 {
@@ -509,12 +544,4 @@ func TestStageEmitsOnShortCircuit(t *testing.T) {
 	if got := len(spanRecorder.Ended()); got != 1 {
 		t.Errorf("ended spans = %d, want 1", got)
 	}
-}
-
-// shortCircuitStage rejects every exchange without calling next.
-type shortCircuitStage struct{}
-
-func (shortCircuitStage) Name() string { return "short-circuit" }
-func (shortCircuitStage) Handle(ex *pipeline.Exchange, next func() error) error {
-	return nil
 }

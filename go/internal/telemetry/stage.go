@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
@@ -10,83 +11,60 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm"
-	"github.com/nyroway/nyro/go/internal/pipeline"
+	"github.com/nyroway/nyro/go/internal/llm/pipeline"
 )
 
-// Exchange keys for the state the dispatcher hands to this Stage. They live in
-// Exchange.Ext rather than as Exchange fields because only telemetry reads
-// them, and pipeline (layer 0) must not know about observability's types.
-const (
-	// ExtLogCtx holds the LogCtx the dispatcher fills in as protocol, model,
-	// and upstream details become known.
-	ExtLogCtx = "obs.logctx"
-	// ExtRoute and ExtUpstream hold the resolved runtime snapshot values.
-	ExtRoute    = "obs.route"
-	ExtUpstream = "obs.upstream"
-)
-
-// Stage is the terminal telemetry Stage: it starts the per-request span on the
-// way in and, on the way out, records metrics, emits the structured audit
-// LogRecord, and ends the span.
+// Phase observes the start of a request and finalizes its metrics, structured
+// audit record, and span after the other phases have completed.
 //
-// It belongs first in the chain so its outbound half runs last, after every
-// other Stage has unwound. The emit is deferred inside Handle, which is what
-// guarantees a request rejected by a later Stage — or one that never reached an
-// upstream at all — is still reported, with zero values standing in for the
-// fields the exchange never reached.
+// It occupies the mandatory Observe position, so its Finalizer runs last. A
+// request rejected by a later phase, or one that never reaches an upstream, is
+// still reported with zero values for state it never reached.
 //
-// The Stage holds no tracer or logger of its own: it reads the current bundle
+// Phase holds no tracer or logger of its own: it reads the current bundle
 // from a SwappableProvider on every request, so a config-sync hot reload can
 // replace the pipeline underneath it without rebuilding the chain.
-type Stage struct {
+type Phase struct {
 	target *atomic.Pointer[SwappableProvider]
 }
 
-// NewStage returns a telemetry Stage reading from target. Passing the pointer
+// NewPhase returns a telemetry Phase reading from target. Passing the pointer
 // rather than the provider is deliberate: RegisterProvider re-points it on
-// a later call, and the Stage picks that up without being rebuilt.
-func NewStage(target *atomic.Pointer[SwappableProvider]) pipeline.Stage {
-	return Stage{target: target}
+// a later call, and the Phase picks that up without being rebuilt.
+func NewPhase(target *atomic.Pointer[SwappableProvider]) pipeline.Phase {
+	return Phase{target: target}
 }
 
-func (s Stage) Name() string { return "observability" }
+func (s Phase) Name() string { return "observe" }
 
-// Handle starts the span, runs the rest of the chain, and emits on the way out.
-func (s Stage) Handle(ex *pipeline.Exchange, next func() error) error {
+// Apply starts the span and returns a Finalizer that emits after all request
+// phases have completed.
+func (s Phase) Apply(ctx context.Context, ex *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
 	sp := s.target.Load()
 	if sp == nil {
-		return next() // observability not wired: stay inert
+		return pipeline.Outcome{Decision: pipeline.Continue}, nil
 	}
 	active := sp.load()
 
-	ctx, span := active.tracer.Start(ex.Ctx, "dispatch")
-	ex.Ctx = ctx
-
-	// Deferred so the emit happens however the chain unwinds — a normal
-	// response, a short circuit from a later Stage, or an error.
-	defer s.emit(ex, active, span)
-
-	return next()
+	spanCtx, span := active.tracer.Start(ctx, "dispatch")
+	return pipeline.Outcome{Decision: pipeline.Continue}, func(context.Context, *pipeline.Exchange, pipeline.Completion) error {
+		s.emit(spanCtx, ex, active, span)
+		return nil
+	}
 }
 
 // OnDelta accumulates streaming usage. The dispatcher also tracks usage for
 // the response it writes; this keeps the telemetry view correct for exchanges
 // that end mid-stream.
-func (s Stage) OnDelta(ex *pipeline.Exchange, d llm.StreamDelta) {
+func (s Phase) OnDelta(_ context.Context, ex *pipeline.Exchange, d llm.StreamDelta) {
 	if u, ok := d.(*llm.UsageDelta); ok {
 		ex.Usage = u.Usage
 	}
 }
 
-// emit records metrics, writes the audit LogRecord, and ends the span. It runs
-// exactly once per request, from Handle's defer.
-func (s Stage) emit(ex *pipeline.Exchange, active *activeSet, span trace.Span) {
-	lc, _ := ex.GetExt(ExtLogCtx).(LogCtx)
-	route, _ := ex.GetExt(ExtRoute).(configsnapshot.Route)
-	upstream, _ := ex.GetExt(ExtUpstream).(configsnapshot.Upstream)
-
+// emit records metrics, writes the audit LogRecord, and ends the span.
+func (s Phase) emit(ctx context.Context, ex *pipeline.Exchange, active *activeSet, span trace.Span) {
 	latencyMs := time.Since(ex.Started).Milliseconds()
 
 	// --- metrics (one request, in/out tokens, latency) ---
@@ -96,35 +74,35 @@ func (s Stage) emit(ex *pipeline.Exchange, active *activeSet, span trace.Span) {
 	// types via the shared attrOpt).
 	if active.handles != nil {
 		reqAttrs := metric.WithAttributes(
-			attribute.String("nyro.route.id", route.ID),
-			attribute.String("nyro.route.model", route.Model),
-			attribute.String("nyro.upstream.id", upstream.ID),
-			attribute.String("nyro.upstream.name", upstream.Name),
-			attribute.String("nyro.consumer.id", ex.ConsumerID),
+			attribute.String("nyro.route.id", ex.Route.ID),
+			attribute.String("nyro.route.model", ex.Route.Model),
+			attribute.String("nyro.upstream.id", ex.Target.UpstreamID),
+			attribute.String("nyro.upstream.name", ex.Target.UpstreamName),
+			attribute.String("nyro.consumer.id", ex.Identity.Subject),
 			attribute.Int("http.response.status_code", ex.Status),
 		)
-		active.handles.requests.Add(ex.Ctx, 1, reqAttrs)
+		active.handles.requests.Add(ctx, 1, reqAttrs)
 
 		tokenIn := metric.WithAttributes(
-			attribute.String("nyro.route.id", route.ID),
-			attribute.String("nyro.route.model", route.Model),
-			attribute.String("nyro.consumer.id", ex.ConsumerID),
+			attribute.String("nyro.route.id", ex.Route.ID),
+			attribute.String("nyro.route.model", ex.Route.Model),
+			attribute.String("nyro.consumer.id", ex.Identity.Subject),
 			attribute.String("direction", "in"),
 		)
 		tokenOut := metric.WithAttributes(
-			attribute.String("nyro.route.id", route.ID),
-			attribute.String("nyro.route.model", route.Model),
-			attribute.String("nyro.consumer.id", ex.ConsumerID),
+			attribute.String("nyro.route.id", ex.Route.ID),
+			attribute.String("nyro.route.model", ex.Route.Model),
+			attribute.String("nyro.consumer.id", ex.Identity.Subject),
 			attribute.String("direction", "out"),
 		)
-		active.handles.tokens.Add(ex.Ctx, int64(ex.Usage.PromptTokens), tokenIn)
-		active.handles.tokens.Add(ex.Ctx, int64(ex.Usage.CompletionTokens), tokenOut)
+		active.handles.tokens.Add(ctx, int64(ex.Usage.PromptTokens), tokenIn)
+		active.handles.tokens.Add(ctx, int64(ex.Usage.CompletionTokens), tokenOut)
 
-		active.handles.latency.Record(ex.Ctx, float64(latencyMs), metric.WithAttributes(
-			attribute.String("nyro.route.id", route.ID),
-			attribute.String("nyro.route.model", route.Model),
-			attribute.String("nyro.upstream.id", upstream.ID),
-			attribute.String("nyro.upstream.name", upstream.Name),
+		active.handles.latency.Record(ctx, float64(latencyMs), metric.WithAttributes(
+			attribute.String("nyro.route.id", ex.Route.ID),
+			attribute.String("nyro.route.model", ex.Route.Model),
+			attribute.String("nyro.upstream.id", ex.Target.UpstreamID),
+			attribute.String("nyro.upstream.name", ex.Target.UpstreamName),
 		))
 	}
 
@@ -138,28 +116,28 @@ func (s Stage) emit(ex *pipeline.Exchange, active *activeSet, span trace.Span) {
 	rec.AddAttributes(
 		log.String("nyro.log.id", NewRequestID()),
 		log.Int64("nyro.log.created_ms", ex.Started.UnixMilli()),
-		log.String("nyro.client_protocol", lc.ClientProtocol),
-		log.String("nyro.upstream_protocol", lc.UpstreamProtocol),
-		log.String("nyro.upstream.id", upstream.ID),
-		log.String("nyro.upstream.name", upstream.Name),
-		log.String("nyro.route.id", route.ID),
-		log.String("nyro.route.model", route.Model),
-		log.String("nyro.client_model", lc.ClientModel),
-		log.String("nyro.upstream_model", lc.UpstreamModel),
-		log.String("nyro.method", lc.Method),
-		log.String("nyro.path", lc.Path),
-		log.String("nyro.consumer.id", ex.ConsumerID),
-		log.String("nyro.consumer_key.name", lc.ConsumerKeyName),
-		log.String("nyro.consumer_key.preview", lc.ConsumerKeyPreview),
+		log.String("nyro.client_protocol", string(ex.Source.Protocol)),
+		log.String("nyro.upstream_protocol", string(ex.Target.Endpoint.Protocol)),
+		log.String("nyro.upstream.id", ex.Target.UpstreamID),
+		log.String("nyro.upstream.name", ex.Target.UpstreamName),
+		log.String("nyro.route.id", ex.Route.ID),
+		log.String("nyro.route.model", ex.Route.Model),
+		log.String("nyro.client_model", ex.RequestInfo.ClientModel),
+		log.String("nyro.upstream_model", ex.Target.Model),
+		log.String("nyro.method", ex.RequestInfo.Operation),
+		log.String("nyro.path", ex.RequestInfo.Resource),
+		log.String("nyro.consumer.id", ex.Identity.Subject),
+		log.String("nyro.consumer_key.name", ex.Identity.CredentialName),
+		log.String("nyro.consumer_key.preview", ex.Identity.CredentialPreview),
 		log.Int("http.response.status_code", ex.Status),
 		log.Int64("nyro.latency_total_ms", latencyMs),
 		log.Int64("nyro.input_tokens", int64(ex.Usage.PromptTokens)),
 		log.Int64("nyro.output_tokens", int64(ex.Usage.CompletionTokens)),
 		log.Int64("nyro.cache_read_tokens", cacheRead(ex.Usage)),
-		log.Bool("nyro.is_stream", lc.IsStream),
+		log.Bool("nyro.is_stream", ex.Streamed),
 	)
-	rec.AddAttributes(upstreamLogAttrs(lc)...)
-	active.logger.Emit(ex.Ctx, rec)
+	rec.AddAttributes(upstreamLogAttrs(ex.Target)...)
+	active.logger.Emit(ctx, rec)
 
 	// --- finish the span (status for 5xx, then End) ---
 	if span != nil {
@@ -179,30 +157,28 @@ func cacheRead(u llm.Usage) int64 {
 	return 0
 }
 
-// upstreamLogAttrs builds the optional upstream audit attributes for the audit
-// LogRecord. nyro.upstream_status and nyro.latency_upstream_ms are emitted only
-// when their LogCtx pointer is non-nil AND the dereferenced value is non-zero —
-// A nil pointer (no upstream status/latency captured) yields no attribute.
-func upstreamLogAttrs(lc LogCtx) []log.KeyValue {
+// upstreamLogAttrs builds optional upstream audit attributes. Nil or zero
+// target values are omitted.
+func upstreamLogAttrs(target pipeline.Target) []log.KeyValue {
 	var attrs []log.KeyValue
-	if lc.UpstreamStatus != nil && *lc.UpstreamStatus != 0 {
-		attrs = append(attrs, log.Int64("nyro.upstream.status_code", int64(*lc.UpstreamStatus)))
+	if target.UpstreamStatus != nil && *target.UpstreamStatus != 0 {
+		attrs = append(attrs, log.Int64("nyro.upstream.status_code", int64(*target.UpstreamStatus)))
 	}
-	if lc.LatencyUpstreamMs != nil && *lc.LatencyUpstreamMs != 0 {
-		attrs = append(attrs, log.Int64("nyro.latency_upstream_ms", *lc.LatencyUpstreamMs))
+	if target.UpstreamLatencyMs != nil && *target.UpstreamLatencyMs != 0 {
+		attrs = append(attrs, log.Int64("nyro.latency_upstream_ms", *target.UpstreamLatencyMs))
 	}
 	return attrs
 }
 
-// stageTarget is the SwappableProvider the telemetry Stage reads on every
-// request. RegisterProvider re-points it; the Stage loads (never captures)
+// stageTarget is the SwappableProvider the telemetry Phase reads on every
+// request. RegisterProvider re-points it; the Phase loads (never captures)
 // it, which is what makes repeated registration safe.
 //
-// A nil value means nothing has been registered yet; the Stage then no-ops so a
+// A nil value means nothing has been registered yet; the Phase then no-ops so a
 // request served before (or without) observability wiring still succeeds.
 var stageTarget atomic.Pointer[SwappableProvider]
 
-// RegisterProvider points the telemetry Stage at sp.
+// RegisterProvider points the telemetry Phase at sp.
 //
 // Calling it more than once per process is safe and idempotent: it simply
 // re-points the target. This matters because a single process can assemble more
@@ -216,9 +192,9 @@ func RegisterProvider(sp *SwappableProvider) {
 	stageTarget.Store(sp)
 }
 
-// NewRegisteredStage returns the telemetry Stage bound to the process-wide
-// target that RegisterProvider points. Building a chain before
-// registration is fine: the Stage stays inert until a provider shows up.
-func NewRegisteredStage() pipeline.Stage {
-	return NewStage(&stageTarget)
+// NewRegisteredPhase returns the telemetry Phase bound to the process-wide
+// target that RegisterProvider points. Building a Runner before
+// registration is fine: the Phase stays inert until a provider shows up.
+func NewRegisteredPhase() pipeline.Phase {
+	return NewPhase(&stageTarget)
 }
