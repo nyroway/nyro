@@ -63,7 +63,7 @@ func LoadSnapshot(store Storage) (*configsnapshot.Snapshot, error) {
 		for _, quota := range consumer.Quotas {
 			quotas = append(quotas, configsnapshot.ConsumerQuota{
 				ID: quota.ID, ConsumerID: quota.ConsumerID, QuotaType: quota.QuotaType,
-				QuotaLimit: quota.QuotaLimit, Window: quota.Window, Currency: quota.Currency,
+				QuotaLimit: quota.QuotaLimit, Window: quota.Window,
 			})
 		}
 		for _, key := range consumer.Keys {

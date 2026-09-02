@@ -42,7 +42,6 @@ type ConsumerQuota struct {
 	QuotaType  string
 	QuotaLimit int64
 	Window     string
-	Currency   string
 }
 
 // ConsumerAccess is the gateway-facing result of resolving one consumer key.

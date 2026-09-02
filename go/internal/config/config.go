@@ -693,7 +693,7 @@ func (c *Config) BuildSnapshot(providers *provider.Catalog) (*configsnapshot.Sna
 			}
 			quotas = append(quotas, configsnapshot.ConsumerQuota{
 				ConsumerID: consumer.Name, QuotaType: quota.QuotaType, QuotaLimit: quota.QuotaLimit,
-				Window: quota.Window, Currency: quota.Currency,
+				Window: quota.Window,
 			})
 		}
 		for index, key := range consumer.Keys {
