@@ -37,7 +37,7 @@ func TestReadyz(t *testing.T) {
 		Model: "m", Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "m"}},
 	})
 	gw2 := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
-	if err := gw2.Cache.LoadAndSwap(core); err != nil {
+	if err := storage.LoadAndSwap(gw2.Cache, core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	r2 := NewRouter(gw2)

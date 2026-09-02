@@ -13,7 +13,6 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/internal/storage/memory"
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
@@ -605,17 +604,131 @@ func flattenTelemetrySignal(out map[string]string, signal schema.Signal, exporte
 	return nil
 }
 
-// BuildSnapshot constructs a snapshot.Snapshot directly from the YAML
-// config (no persistent storage). This is the standalone-mode path: `nyro
-// proxy --config` swaps this snapshot into the gateway's cache so config
-// reads work without an admin or DB. It seeds a throwaway in-memory backend
-// via the same ApplyTo used by persistent backends and reads the snapshot
-// back through snapshot.LoadFromStorage — there is no separate
-// synthetic-ID construction path to keep in sync.
+// BuildSnapshot constructs the immutable runtime configuration directly from
+// YAML, applying the same defaults and reference validation as ApplyTo.
 func (c *Config) BuildSnapshot(providers *provider.Catalog) (*configsnapshot.Snapshot, error) {
-	tmp := memory.New()
-	if err := c.ApplyTo(tmp.Storage(), providers); err != nil {
+	if providers == nil {
+		return nil, fmt.Errorf("provider catalog is required")
+	}
+	builder := &configsnapshot.Builder{}
+	upstreamIDs := map[string]string{}
+	for index, upstream := range c.Upstreams {
+		if err := upstream.validate(providers); err != nil {
+			return nil, err
+		}
+		credentials, err := json.Marshal(upstream.Credentials)
+		if err != nil {
+			return nil, fmt.Errorf("encode credentials for upstream %q: %w", upstream.Name, err)
+		}
+		protocolValue, baseURL := strings.TrimSpace(upstream.Protocol), upstream.BaseURL
+		if protocolValue != "" {
+			protocol, err := protocol.ParseProtocol(protocolValue)
+			if err != nil {
+				return nil, fmt.Errorf("upstream %q: %w", upstream.Name, err)
+			}
+			protocolValue = protocol.String()
+		}
+		if definition, ok := providers.Lookup(upstream.Provider); ok {
+			if protocolValue == "" {
+				protocolValue = definition.DefaultProtocol
+			}
+			if baseURL == "" {
+				for _, protocol := range definition.Protocols {
+					if protocol.ID == protocolValue {
+						baseURL = protocol.BaseURL
+						break
+					}
+				}
+			}
+		}
+		var models []byte
+		if len(upstream.Models) > 0 {
+			models, err = json.Marshal(upstream.Models)
+			if err != nil {
+				return nil, fmt.Errorf("encode models for upstream %q: %w", upstream.Name, err)
+			}
+		}
+		upstreamID := fmt.Sprintf("upstream:%d", index)
+		upstreamIDs[upstream.Name] = upstreamID
+		builder.SetUpstream(configsnapshot.Upstream{
+			ID: upstreamID, Name: upstream.Name, Provider: upstream.Provider, Protocol: protocolValue,
+			BaseURL: baseURL, CredentialsJSON: credentials, ModelsJSON: models, ModelsURL: upstream.ModelsURL,
+			ProxyURL: upstream.Proxy.URL, Enabled: enabledByDefault(upstream.Enabled),
+		})
+	}
+	routeModels := map[string]bool{}
+	for _, route := range c.Routes {
+		targets := make([]configsnapshot.RouteTarget, 0, len(route.Upstreams))
+		for index, target := range route.Upstreams {
+			upstreamID, ok := upstreamIDs[target.Name]
+			if !ok {
+				return nil, fmt.Errorf("route %q references unknown upstream %q", route.Model, target.Name)
+			}
+			weight, priority := target.Weight, target.Priority
+			if weight == 0 {
+				weight = 100
+			}
+			if priority == 0 {
+				priority = 1
+			}
+			targets = append(targets, configsnapshot.RouteTarget{
+				ID: fmt.Sprintf("%s:%d", route.Model, index), RouteID: route.Model, UpstreamID: upstreamID,
+				Model: target.Model, Weight: weight, Priority: priority, Enabled: enabledByDefault(target.Enabled),
+			})
+		}
+		enablePayload := route.EnablePayload
+		balance := route.Balance
+		if balance == "" {
+			balance = "weighted"
+		}
+		builder.SetRoute(configsnapshot.Route{
+			ID: route.Model, Model: route.Model, Balance: balance, EnableAuth: route.EnableAuth,
+			EnablePayload: &enablePayload, Enabled: true, Upstreams: targets,
+		})
+		routeModels[route.Model] = true
+	}
+	for _, consumer := range c.Consumers {
+		for _, model := range consumer.Access.Models {
+			if !routeModels[model] {
+				return nil, fmt.Errorf("consumer %q references unknown route %q", consumer.Name, model)
+			}
+		}
+		quotas := make([]configsnapshot.ConsumerQuota, 0)
+		for _, quota := range consumerQuotas(consumer.Quotas) {
+			if err := storage.ValidateConsumerQuota(quota); err != nil {
+				return nil, fmt.Errorf("create consumer %q: %w", consumer.Name, err)
+			}
+			quotas = append(quotas, configsnapshot.ConsumerQuota{
+				ConsumerID: consumer.Name, QuotaType: quota.QuotaType, QuotaLimit: quota.QuotaLimit,
+				Window: quota.Window, Currency: quota.Currency,
+			})
+		}
+		for index, key := range consumer.Keys {
+			rawKey := key.APIKey
+			if rawKey == "" {
+				generated, _, _, err := storage.GenerateKey()
+				if err != nil {
+					return nil, fmt.Errorf("create consumer %q: %w", consumer.Name, err)
+				}
+				rawKey = generated
+			}
+			builder.AddConsumerKey(
+				fmt.Sprintf("%s:%d", consumer.Name, index), consumer.Name, key.Name,
+				storage.PreviewOf(rawKey), storage.HashKey(rawKey), enabledByDefault(key.Enabled) && enabledByDefault(consumer.Enabled),
+				key.ExpiresAt, consumer.Access.Models, quotas,
+			)
+		}
+	}
+	settings, err := flattenSettings(c.Settings)
+	if err != nil {
 		return nil, err
 	}
-	return configsnapshot.LoadFromStorage(tmp.Storage())
+	for key, value := range settings {
+		builder.SetSetting(key, value)
+	}
+	return builder.Build(), nil
+}
+
+func enabledByDefault(value *bool) bool {
+	return value == nil || *value
 }

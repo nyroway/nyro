@@ -2,14 +2,12 @@ package snapshot
 
 import (
 	"testing"
-
-	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 func TestBuilderBuildsUsableSnapshot(t *testing.T) {
 	var builder Builder
-	builder.SetUpstream(storage.Upstream{ID: "up-1", Name: "primary"})
-	builder.SetRoute(storage.Route{ID: "route-1", Model: "gpt-5"})
+	builder.SetUpstream(Upstream{ID: "up-1", Name: "primary"})
+	builder.SetRoute(Route{ID: "route-1", Model: "gpt-5"})
 	builder.SetSetting("proxy.max_retries", "3")
 
 	snap := builder.Build()

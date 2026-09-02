@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/quota"
-	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
@@ -55,7 +55,7 @@ type accessStage struct{ gw *Gateway }
 func (s accessStage) Name() string { return "access" }
 
 func (s accessStage) Handle(ex *pipeline.Exchange, next func() error) error {
-	route, ok := ex.GetExt(telemetry.ExtRoute).(storage.Route)
+	route, ok := ex.GetExt(telemetry.ExtRoute).(configsnapshot.Route)
 	if !ok {
 		return next() // no route resolved: routeStage already responded
 	}

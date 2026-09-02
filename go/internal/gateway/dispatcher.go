@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/llm/routing"
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
@@ -65,7 +65,7 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req llm.Model
 func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) {
 	rec := ex.W
 	req := ex.Req
-	route, _ := ex.GetExt(telemetry.ExtRoute).(storage.Route)
+	route, _ := ex.GetExt(telemetry.ExtRoute).(configsnapshot.Route)
 
 	// select + failover: try each backend (ordered by the balance strategy),
 	// retrying the same backend up to settings.proxy.max_retries times on a
@@ -238,9 +238,9 @@ func encodeRequest(handler protocol.EgressCodec, req llm.ModelRequest) (protocol
 	}
 }
 
-// runtimeFromUpstream projects the storage row's outbound-relevant fields
+// runtimeFromUpstream projects the runtime snapshot's outbound-relevant fields
 // into the provider package's runtime view.
-func runtimeFromUpstream(u storage.Upstream) provider.UpstreamRuntime {
+func runtimeFromUpstream(u configsnapshot.Upstream) provider.UpstreamRuntime {
 	return provider.UpstreamRuntime{
 		Name:            u.Name,
 		Provider:        u.Provider,

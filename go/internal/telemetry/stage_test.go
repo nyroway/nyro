@@ -15,9 +15,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/storage"
 )
 
 // captureLogger is a minimal log.Logger wrapper that records every emitted
@@ -48,7 +48,7 @@ func runStage(t *testing.T, ex *pipeline.Exchange) {
 }
 
 // newExchange builds an Exchange carrying the state the dispatcher publishes.
-func newExchange(route storage.Route, upstream storage.Upstream, consumerID string, usage llm.Usage, started time.Time, status int, lc LogCtx) *pipeline.Exchange {
+func newExchange(route configsnapshot.Route, upstream configsnapshot.Upstream, consumerID string, usage llm.Usage, started time.Time, status int, lc LogCtx) *pipeline.Exchange {
 	ex := &pipeline.Exchange{
 		Ctx:        context.Background(),
 		Usage:      usage,
@@ -125,8 +125,8 @@ func TestStageRecordsMetricsTokensAndSpan(t *testing.T) {
 	})
 
 	// Seed the exchange with the request state the dispatcher publishes.
-	model := storage.Route{ID: "m1", Model: "gpt-test"}
-	provider := storage.Upstream{ID: "p1", Name: "openai"}
+	model := configsnapshot.Route{ID: "m1", Model: "gpt-test"}
+	provider := configsnapshot.Upstream{ID: "p1", Name: "openai"}
 	cacheRead := uint32(7)
 	usage := llm.Usage{PromptTokens: 100, CompletionTokens: 50, CacheReadTokens: &cacheRead}
 	started := time.Now().Add(-25 * time.Millisecond) // pretend 25ms elapsed upstream
@@ -233,8 +233,8 @@ func TestStageEmitsUpstreamAuditAttrs(t *testing.T) {
 	})
 	_ = reader // silence unused; metrics are not the focus of this test
 
-	route := storage.Route{ID: "m", Model: "gpt-test"}
-	upstream := storage.Upstream{ID: "p", Name: "openai"}
+	route := configsnapshot.Route{ID: "m", Model: "gpt-test"}
+	upstream := configsnapshot.Upstream{ID: "p", Name: "openai"}
 
 	// --- case 1: non-nil upstream status + latency → both attributes emitted. ---
 	upstreamStatus := int32(429)
@@ -284,8 +284,8 @@ func TestStage5xxMarksSpanError(t *testing.T) {
 	})
 
 	runStage(t, newExchange(
-		storage.Route{ID: "m", Model: "gpt-test"},
-		storage.Upstream{ID: "p", Name: "openai"},
+		configsnapshot.Route{ID: "m", Model: "gpt-test"},
+		configsnapshot.Upstream{ID: "p", Name: "openai"},
 		"ak", llm.Usage{}, time.Now().Add(-10*time.Millisecond), 503, LogCtx{},
 	))
 

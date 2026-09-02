@@ -103,7 +103,7 @@ func TestConfigSnapshotBoundaryPolicy(t *testing.T) {
 		want bool
 	}{
 		{"standard library", directImport{path: "sync/atomic", standard: true}, true},
-		{"storage contract", directImport{path: modulePath + "/internal/storage"}, true},
+		{"storage contract", directImport{path: modulePath + "/internal/storage"}, false},
 		{"storage backend", directImport{path: modulePath + "/internal/storage/memory"}, false},
 		{"config sync", directImport{path: modulePath + "/internal/configsync"}, false},
 		{"third party", directImport{path: "google.golang.org/grpc"}, false},
@@ -180,7 +180,7 @@ func packageWithin(path, root string) bool {
 }
 
 func configSnapshotImportAllowed(imp directImport) bool {
-	return imp.standard || imp.path == modulePath+"/internal/storage"
+	return imp.standard
 }
 
 func kernelImportAllowed(imp directImport) bool {
