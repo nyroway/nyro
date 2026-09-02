@@ -184,7 +184,7 @@ func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey
 	}
 	gw := gateway.NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
 	gw.UpstreamTransport = tr
-	if err := gw.Cache.LoadAndSwap(core); err != nil {
+	if err := storage.LoadAndSwap(gw.Cache, core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
 	return gw
