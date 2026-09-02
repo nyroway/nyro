@@ -641,18 +641,11 @@ func (c *Config) BuildSnapshot(providers *provider.Catalog) (*configsnapshot.Sna
 				}
 			}
 		}
-		var models []byte
-		if len(upstream.Models) > 0 {
-			models, err = json.Marshal(upstream.Models)
-			if err != nil {
-				return nil, fmt.Errorf("encode models for upstream %q: %w", upstream.Name, err)
-			}
-		}
 		upstreamID := fmt.Sprintf("upstream:%d", index)
 		upstreamIDs[upstream.Name] = upstreamID
 		builder.SetUpstream(configsnapshot.Upstream{
 			ID: upstreamID, Name: upstream.Name, Provider: upstream.Provider, Protocol: protocolValue,
-			BaseURL: baseURL, CredentialsJSON: credentials, ModelsJSON: models, ModelsURL: upstream.ModelsURL,
+			BaseURL: baseURL, CredentialsJSON: credentials,
 			ProxyURL: upstream.Proxy.URL, Enabled: enabledByDefault(upstream.Enabled),
 		})
 	}

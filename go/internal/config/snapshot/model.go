@@ -9,8 +9,6 @@ type Upstream struct {
 	Protocol        string
 	BaseURL         string
 	CredentialsJSON []byte
-	ModelsJSON      []byte
-	ModelsURL       string
 	ProxyURL        string
 	Enabled         bool
 }
@@ -67,7 +65,6 @@ type consumerKeyEntry struct {
 
 func cloneUpstream(in Upstream) Upstream {
 	in.CredentialsJSON = append([]byte(nil), in.CredentialsJSON...)
-	in.ModelsJSON = append([]byte(nil), in.ModelsJSON...)
 	return in
 }
 

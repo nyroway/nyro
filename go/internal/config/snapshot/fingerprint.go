@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -82,18 +83,6 @@ func (s *Snapshot) Fingerprint() string {
 			return !left.Enabled && right.Enabled
 		})
 	}
-	sort.Slice(payload.Keys, func(i, j int) bool {
-		if payload.Keys[i].ConsumerID != payload.Keys[j].ConsumerID {
-			return payload.Keys[i].ConsumerID < payload.Keys[j].ConsumerID
-		}
-		if payload.Keys[i].KeyID != payload.Keys[j].KeyID {
-			return payload.Keys[i].KeyID < payload.Keys[j].KeyID
-		}
-		if payload.Keys[i].KeyHash != payload.Keys[j].KeyHash {
-			return payload.Keys[i].KeyHash < payload.Keys[j].KeyHash
-		}
-		return payload.Keys[i].Name < payload.Keys[j].Name
-	})
 	for i := range payload.Keys {
 		sort.Strings(payload.Keys[i].Routes)
 		sort.Slice(payload.Keys[i].Quotas, func(a, b int) bool {
@@ -116,6 +105,11 @@ func (s *Snapshot) Fingerprint() string {
 			return left.Currency < right.Currency
 		})
 	}
+	sort.Slice(payload.Keys, func(i, j int) bool {
+		left, _ := json.Marshal(payload.Keys[i])
+		right, _ := json.Marshal(payload.Keys[j])
+		return bytes.Compare(left, right) < 0
+	})
 	sort.Slice(payload.Settings, func(i, j int) bool { return payload.Settings[i].Key < payload.Settings[j].Key })
 	encoded, _ := json.Marshal(payload)
 	sum := sha256.Sum256(encoded)

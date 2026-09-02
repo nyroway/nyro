@@ -6,24 +6,39 @@ import (
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	pb "github.com/nyroway/nyro/go/internal/configsync/pb/configsync/v1"
-	"github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/storage"
-	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
-var dataPlaneProxySettingKeys = map[string]struct{}{
-	"proxy.request_timeout": {},
-	"proxy.connect_timeout": {},
-	"proxy.max_retries":     {},
-	"proxy.retry_on_status": {},
-	"proxy.max_body_bytes":  {},
+func isDataPlaneSettingKey(key string) bool {
+	return storage.IsDataPlaneSettingKey(key)
 }
 
-func isDataPlaneSettingKey(key string) bool {
-	if _, ok := dataPlaneProxySettingKeys[key]; ok {
-		return true
+type upstreamWireMetadata struct {
+	Provider string `json:"provider"`
+}
+
+// upstreamProviderFromWire recovers Provider from snapshots emitted by current
+// peers. Legacy peers sent raw models JSON without a provider field, so they
+// keep the existing empty-provider/generic-driver fallback behavior.
+func upstreamProviderFromWire(modelsJSON string) string {
+	var metadata upstreamWireMetadata
+	if err := json.Unmarshal([]byte(modelsJSON), &metadata); err != nil {
+		return ""
 	}
-	return schema.IsExporterSettingKey(key) || state.IsSettingKey(key)
+	return metadata.Provider
+}
+
+// upstreamWireModels uses the unchanged models_json protobuf field as an
+// opaque compatibility envelope. Static models are control-plane data, so the
+// runtime wire envelope carries only Provider. Older peers retain the blob but
+// do not read it on the data plane; newer peers recover driver selection.
+func upstreamWireModels(upstream storage.Upstream) string {
+	metadata := upstreamWireMetadata{Provider: upstream.Provider}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 // SnapshotFromProto converts a wire ConfigSnapshot into the gateway's internal
@@ -42,10 +57,10 @@ func SnapshotFromProto(in *pb.ConfigSnapshot) *configsnapshot.Snapshot {
 		b.SetUpstream(configsnapshot.Upstream{
 			ID:              u.GetId(),
 			Name:            u.GetName(),
+			Provider:        upstreamProviderFromWire(u.GetModelsJson()),
 			Protocol:        u.GetProtocol(),
 			BaseURL:         u.GetBaseUrl(),
 			CredentialsJSON: []byte(u.GetCredentialsJson()),
-			ModelsJSON:      []byte(u.GetModelsJson()),
 			ProxyURL:        u.GetProxyUrl(),
 			Enabled:         u.GetEnabled(),
 		})
@@ -120,7 +135,7 @@ func SnapshotFromStorage(s storage.Storage, version int64) (*pb.ConfigSnapshot, 
 		out.Upstreams = append(out.Upstreams, &pb.Upstream{
 			Id: u.ID, Name: u.Name, Protocol: u.Protocol,
 			BaseUrl: u.BaseURL, CredentialsJson: jsonRaw(u.CredentialsJSON),
-			ModelsJson: jsonRaw(u.ModelsJSON), ProxyUrl: u.ProxyURL, Enabled: u.Enabled,
+			ModelsJson: upstreamWireModels(u), ProxyUrl: u.ProxyURL, Enabled: u.Enabled,
 		})
 	}
 
