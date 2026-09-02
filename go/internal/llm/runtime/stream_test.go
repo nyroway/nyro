@@ -14,6 +14,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm/pipeline"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	anthropicmessages "github.com/nyroway/nyro/go/internal/llm/protocol/anthropic/messages"
+	openaichatcompletions "github.com/nyroway/nyro/go/internal/llm/protocol/openai/chatcompletions"
 	openairesponses "github.com/nyroway/nyro/go/internal/llm/protocol/openai/responses"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/llm/routing"
@@ -112,6 +113,287 @@ func (*rawStreamDecoder) ParseChunk(payload string) ([]llm.StreamDelta, error) {
 }
 
 func (*rawStreamDecoder) Finish() []llm.StreamDelta { return nil }
+
+const (
+	openAIInvalidRequestStreamEvent = `{"error":{"message":"invalid prompt","type":"invalid_request_error","code":"invalid_request"}}`
+	openAIChatContentStreamEvent    = `{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"provider-model","choices":[{"index":0,"delta":{"role":"assistant","content":"partial"},"finish_reason":null}]}`
+	openAIChatDoneStreamEvent       = `{"id":"chatcmpl-2","object":"chat.completion.chunk","created":1,"model":"provider-model","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}`
+	openAIChatSuccessStream         = "data: " + openAIChatDoneStreamEvent + "\n\ndata: [DONE]\n\n"
+)
+
+func TestExecuteUsesProviderClassificationForUncommittedBuiltInStreamError(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		classification provider.ErrorClassification
+		wantFirstCalls int32
+		wantSecond     int32
+		wantError      bool
+	}{
+		{
+			name:           "non-retryable invalid request stops",
+			classification: provider.ErrorClassification{},
+			wantFirstCalls: 1,
+			wantError:      true,
+		},
+		{
+			name:           "explicit retryability consumes retry and failover budget",
+			classification: provider.ErrorClassification{Retryable: true},
+			wantFirstCalls: 2,
+			wantSecond:     1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var firstCalls atomic.Int32
+			var secondCalls atomic.Int32
+			var classifications atomic.Int32
+			driver := &testDriver{extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) (provider.ErrorClassification, error) {
+				classifications.Add(1)
+				if providerError.Kind != llm.ErrInvalidRequest || providerError.Message != "invalid prompt" || string(providerError.Raw) != openAIInvalidRequestStreamEvent {
+					t.Fatalf("normalized built-in stream error = %+v", providerError)
+				}
+				return test.classification, nil
+			}}
+			runtime := newRuntimeFixture(t, runtimeFixture{
+				routes: []configsnapshot.Route{chatRoute("route",
+					routeTarget("first-target", "first", "first-model", 1),
+					routeTarget("second-target", "second", "second-model", 2),
+				)},
+				upstreams: []configsnapshot.Upstream{
+					upstream("first", "test", provider.ProtocolOpenAIChatCompletions),
+					upstream("second", "test", provider.ProtocolOpenAIChatCompletions),
+				},
+				settings:  map[string]string{"proxy.max_retries": "2"},
+				ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+				egress:    []protocol.EgressCodec{openaichatcompletions.NewEgress()},
+				providers: []provider.Registration{providerRegistration("test", driver)},
+				transport: transportFunc(func(_ context.Context, request provider.Request) (*provider.Response, error) {
+					if strings.Contains(request.URL, "first.example") {
+						firstCalls.Add(1)
+						return response(200, "data: "+openAIInvalidRequestStreamEvent+"\n\n"), nil
+					}
+					secondCalls.Add(1)
+					return response(200, openAIChatSuccessStream), nil
+				}),
+			})
+			request := newBuiltInStreamingChatRequest()
+			sink := &recordingSink{}
+
+			completion := runtime.Execute(context.Background(), Call{
+				Request: request,
+				Source:  protocol.OpenAIChatCompletionsV1,
+				Sink:    sink,
+			})
+
+			if got := firstCalls.Load(); got != test.wantFirstCalls {
+				t.Fatalf("first backend calls = %d, want %d", got, test.wantFirstCalls)
+			}
+			if got := secondCalls.Load(); got != test.wantSecond {
+				t.Fatalf("second backend calls = %d, want %d", got, test.wantSecond)
+			}
+			if got := classifications.Load(); got != test.wantFirstCalls {
+				t.Fatalf("Driver stream classifications = %d, want %d", got, test.wantFirstCalls)
+			}
+			if test.wantError {
+				if completion.Error == nil || completion.Error.Kind != llm.ErrInvalidRequest || string(completion.Error.Raw) != openAIInvalidRequestStreamEvent {
+					t.Fatalf("completion error = %+v, want built-in invalid_request", completion.Error)
+				}
+				if len(sink.deltas) != 0 || len(sink.errors) != 1 {
+					t.Fatalf("Sink deltas/errors = %d/%d, want 0/1", len(sink.deltas), len(sink.errors))
+				}
+				return
+			}
+			if completion.Error != nil || !completion.Streamed || len(sink.errors) != 0 {
+				t.Fatalf("completion/Sink errors = %+v/%+v, want failover stream success", completion, sink.errors)
+			}
+		})
+	}
+}
+
+func TestExecuteCommittedProviderStreamClassificationControlsHealthWithoutRetry(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		initiallyHealthy bool
+		unhealthy        bool
+		wantHealthy      bool
+	}{
+		{name: "health neutral", initiallyHealthy: true, wantHealthy: true},
+		{name: "health neutral preserves cooldown"},
+		{name: "explicitly unhealthy", initiallyHealthy: true, unhealthy: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var firstCalls atomic.Int32
+			var secondCalls atomic.Int32
+			router := routing.New()
+			firstTarget := routeTarget("first-target", "first", "first-model", 1)
+			key := routing.KeyOf(routing.Target{UpstreamID: firstTarget.UpstreamID, Model: firstTarget.Model})
+			secondTarget := routeTarget("second-target", "second", "second-model", 2)
+			if !test.initiallyHealthy {
+				router.Record(key, false, 0)
+				router.Record(routing.KeyOf(routing.Target{UpstreamID: secondTarget.UpstreamID, Model: secondTarget.Model}), false, 0)
+			}
+			driver := &testDriver{extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) (provider.ErrorClassification, error) {
+				if providerError.Kind != llm.ErrInvalidRequest || string(providerError.Raw) != openAIInvalidRequestStreamEvent {
+					t.Fatalf("normalized committed stream error = %+v", providerError)
+				}
+				return provider.ErrorClassification{Retryable: true, Unhealthy: test.unhealthy}, nil
+			}}
+			runtime := newRuntimeFixture(t, runtimeFixture{
+				routes: []configsnapshot.Route{chatRoute("route", firstTarget, secondTarget)},
+				upstreams: []configsnapshot.Upstream{
+					upstream("first", "test", provider.ProtocolOpenAIChatCompletions),
+					upstream("second", "test", provider.ProtocolOpenAIChatCompletions),
+				},
+				settings:  map[string]string{"proxy.max_retries": "2"},
+				ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+				egress:    []protocol.EgressCodec{openaichatcompletions.NewEgress()},
+				providers: []provider.Registration{providerRegistration("test", driver)},
+				transport: transportFunc(func(_ context.Context, request provider.Request) (*provider.Response, error) {
+					if strings.Contains(request.URL, "first.example") {
+						firstCalls.Add(1)
+						return response(200, "data: "+openAIChatContentStreamEvent+"\n\ndata: "+openAIInvalidRequestStreamEvent+"\n\n"), nil
+					}
+					secondCalls.Add(1)
+					return response(200, openAIChatSuccessStream), nil
+				}),
+				router: router,
+			})
+			sink := &recordingSink{}
+
+			completion := runtime.Execute(context.Background(), Call{
+				Request: newBuiltInStreamingChatRequest(),
+				Source:  protocol.OpenAIChatCompletionsV1,
+				Sink:    sink,
+			})
+
+			if completion.Error == nil || completion.Error.Kind != llm.ErrInvalidRequest {
+				t.Fatalf("completion error = %+v, want committed invalid_request", completion.Error)
+			}
+			if got := firstCalls.Load(); got != 1 {
+				t.Fatalf("first backend calls = %d, want 1 after commit", got)
+			}
+			if got := secondCalls.Load(); got != 0 {
+				t.Fatalf("second backend calls = %d, want 0 after commit", got)
+			}
+			if got := router.IsHealthy(key); got != test.wantHealthy {
+				t.Fatalf("first backend healthy = %t, want %t", got, test.wantHealthy)
+			}
+			if len(sink.errors) != 0 {
+				t.Fatalf("non-stream Sink errors after commit = %d", len(sink.errors))
+			}
+			if _, ok := sink.deltas[len(sink.deltas)-1].(*llm.StreamErrorDelta); !ok {
+				t.Fatalf("terminal Sink delta = %#v, want StreamErrorDelta", sink.deltas[len(sink.deltas)-1])
+			}
+		})
+	}
+}
+
+func TestExecuteOperationalStreamFailuresRetainTransientUnhealthyDefaults(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		egress         protocol.EgressCodec
+		firstFailure   func() (*provider.Response, error)
+		successBody    string
+		wantExtensions int32
+	}{
+		{
+			name:   "transport",
+			egress: openaichatcompletions.NewEgress(),
+			firstFailure: func() (*provider.Response, error) {
+				return nil, errors.New("provider transport failed")
+			},
+			successBody: openAIChatSuccessStream,
+		},
+		{
+			name: "parser",
+			egress: testChatEgress{
+				endpoint: protocol.OpenAIChatCompletionsV1,
+				caps:     protocol.Capabilities{Streaming: true},
+				state: &codecState{newStreamDecoder: func() protocol.StreamDecoder {
+					return &scriptedStreamDecoder{}
+				}},
+			},
+			firstFailure: func() (*provider.Response, error) {
+				return response(200, "data: bad\n\n"), nil
+			},
+			successBody:    "data: start\n\ndata: done\n\n",
+			wantExtensions: 1,
+		},
+		{
+			name:   "unexpected EOF",
+			egress: openaichatcompletions.NewEgress(),
+			firstFailure: func() (*provider.Response, error) {
+				return response(200, ""), nil
+			},
+			successBody:    openAIChatSuccessStream,
+			wantExtensions: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var firstCalls atomic.Int32
+			var secondCalls atomic.Int32
+			var extensions atomic.Int32
+			router := routing.New()
+			firstTarget := routeTarget("first-target", "first", "first-model", 1)
+			key := routing.KeyOf(routing.Target{UpstreamID: firstTarget.UpstreamID, Model: firstTarget.Model})
+			driver := &testDriver{extendError: func(context.Context, provider.UpstreamRuntime, *llm.Error) (provider.ErrorClassification, error) {
+				extensions.Add(1)
+				return provider.ErrorClassification{}, nil
+			}}
+			runtime := newRuntimeFixture(t, runtimeFixture{
+				routes: []configsnapshot.Route{chatRoute("route", firstTarget,
+					routeTarget("second-target", "second", "second-model", 2),
+				)},
+				upstreams: []configsnapshot.Upstream{
+					upstream("first", "test", provider.ProtocolOpenAIChatCompletions),
+					upstream("second", "test", provider.ProtocolOpenAIChatCompletions),
+				},
+				settings:  map[string]string{"proxy.max_retries": "1"},
+				ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+				egress:    []protocol.EgressCodec{test.egress},
+				providers: []provider.Registration{providerRegistration("test", driver)},
+				transport: transportFunc(func(_ context.Context, request provider.Request) (*provider.Response, error) {
+					if strings.Contains(request.URL, "first.example") {
+						firstCalls.Add(1)
+						return test.firstFailure()
+					}
+					secondCalls.Add(1)
+					return response(200, test.successBody), nil
+				}),
+				router: router,
+			})
+
+			completion := runtime.Execute(context.Background(), Call{
+				Request: newBuiltInStreamingChatRequest(),
+				Source:  protocol.OpenAIChatCompletionsV1,
+				Sink:    &recordingSink{},
+			})
+
+			if completion.Error != nil {
+				t.Fatalf("completion error = %+v, want operational failover success", completion.Error)
+			}
+			if got := firstCalls.Load(); got != 1 {
+				t.Fatalf("first backend calls = %d, want 1", got)
+			}
+			if got := secondCalls.Load(); got != 1 {
+				t.Fatalf("second backend calls = %d, want 1", got)
+			}
+			if got := extensions.Load(); got != test.wantExtensions {
+				t.Fatalf("Driver error extensions = %d, want %d", got, test.wantExtensions)
+			}
+			if router.IsHealthy(key) {
+				t.Fatal("operationally failed first backend was not cooled")
+			}
+		})
+	}
+}
+
+func newBuiltInStreamingChatRequest() *llm.ChatRequest {
+	request := llm.NewChatRequest("client-model", []llm.Message{{
+		Role: llm.RoleUser, Content: &llm.TextContent{Text: "hello"},
+	}})
+	request.Stream.Enabled = true
+	return request
+}
 
 func TestExecuteAllowsUnknownDeltaOnlyForSameEndpointNegotiation(t *testing.T) {
 	tests := []struct {

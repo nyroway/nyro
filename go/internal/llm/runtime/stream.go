@@ -25,9 +25,11 @@ const (
 // streamState is request-scoped authority for the only legal retry boundary:
 // a stream remains uncommitted until Sink accepts its first canonical delta.
 type streamState struct {
-	state          streamLifecycle
-	failure        failureOrigin
-	allowRawErrors bool
+	state               streamLifecycle
+	failure             failureOrigin
+	allowRawErrors      bool
+	errorClassification provider.ErrorClassification
+	canonicalError      bool
 }
 
 func (r *Runtime) consumeStream(
@@ -41,11 +43,11 @@ func (r *Runtime) consumeStream(
 	allowRawStream bool,
 ) *llm.Error {
 	if upstream == nil {
-		return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+		return r.failOperationalProviderStream(ctx, execution, exchange, driver, providerRuntime,
 			llm.NewError(llm.ErrUnexpectedEOF, "provider stream has no body"))
 	}
 	if decoder == nil {
-		return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+		return r.failOperationalProviderStream(ctx, execution, exchange, driver, providerRuntime,
 			llm.NewError(llm.ErrStreamMidError, "egress codec returned no stream decoder"))
 	}
 	reader := bufio.NewReaderSize(upstream, 64*1024)
@@ -68,7 +70,7 @@ func (r *Runtime) consumeStream(
 			if payload != "" {
 				deltas, parseErr := decoder.ParseChunk(payload)
 				if parseErr != nil {
-					return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+					return r.failOperationalProviderStream(ctx, execution, exchange, driver, providerRuntime,
 						llm.NewError(llm.ErrStreamMidError, "decode provider stream: "+parseErr.Error()))
 				}
 				for _, delta := range deltas {
@@ -95,7 +97,7 @@ func (r *Runtime) consumeStream(
 			continue
 		}
 		if !errors.Is(readErr, io.EOF) {
-			return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+			return r.failOperationalProviderStream(ctx, execution, exchange, driver, providerRuntime,
 				llm.NewError(llm.ErrStreamMidError, "read provider stream: "+readErr.Error()))
 		}
 		if pendingDone != nil {
@@ -112,7 +114,7 @@ func (r *Runtime) consumeStream(
 				return providerError
 			}
 		}
-		return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+		return r.failOperationalProviderStream(ctx, execution, exchange, driver, providerRuntime,
 			llm.NewError(llm.ErrUnexpectedEOF, "provider stream ended unexpectedly"))
 	}
 }
@@ -122,15 +124,16 @@ func (r *Runtime) extendStreamProviderError(
 	driver provider.Driver,
 	providerRuntime provider.UpstreamRuntime,
 	providerError *llm.Error,
-) *llm.Error {
+) (*llm.Error, provider.ErrorClassification, error) {
 	providerError = cloneError(providerError)
-	if _, err := driver.ExtendError(ctx, providerRuntime, providerError); err != nil {
-		return llm.ErrorFromStatus(statusBadGateway, "apply provider stream error extension: "+err.Error())
+	classification, err := driver.ExtendError(ctx, providerRuntime, providerError)
+	if err != nil {
+		return nil, provider.ErrorClassification{}, err
 	}
-	return providerError
+	return providerError, classification, nil
 }
 
-func (r *Runtime) failProviderStream(
+func (r *Runtime) failOperationalProviderStream(
 	ctx context.Context,
 	execution *execution,
 	exchange *pipeline.Exchange,
@@ -138,7 +141,34 @@ func (r *Runtime) failProviderStream(
 	providerRuntime provider.UpstreamRuntime,
 	providerError *llm.Error,
 ) *llm.Error {
-	providerError = r.extendStreamProviderError(ctx, driver, providerRuntime, providerError)
+	providerError, _, err := r.extendStreamProviderError(ctx, driver, providerRuntime, providerError)
+	if err != nil {
+		providerError = llm.ErrorFromStatus(statusBadGateway, "apply provider stream error extension: "+err.Error())
+	}
+	// Transport/decoder failures keep Runtime's transient and unhealthy
+	// defaults; only a canonical StreamErrorDelta owns semantic policy.
+	execution.stream.errorClassification = provider.ErrorClassification{Retryable: true, Unhealthy: true}
+	execution.stream.canonicalError = false
+	return r.failStream(ctx, execution, exchange, providerError)
+}
+
+func (r *Runtime) failClassifiedProviderStream(
+	ctx context.Context,
+	execution *execution,
+	exchange *pipeline.Exchange,
+	driver provider.Driver,
+	providerRuntime provider.UpstreamRuntime,
+	providerError *llm.Error,
+) *llm.Error {
+	providerError, classification, err := r.extendStreamProviderError(ctx, driver, providerRuntime, providerError)
+	if err != nil {
+		providerError = llm.ErrorFromStatus(statusBadGateway, "apply provider stream error extension: "+err.Error())
+		classification = provider.ErrorClassification{Retryable: true, Unhealthy: true}
+		execution.stream.canonicalError = false
+	} else {
+		execution.stream.canonicalError = true
+	}
+	execution.stream.errorClassification = classification
 	return r.failStream(ctx, execution, exchange, providerError)
 }
 
@@ -154,8 +184,16 @@ func (r *Runtime) acceptDecodedStreamDelta(
 	if _, unknown := delta.(*llm.UnknownDelta); unknown && !allowRawStream {
 		return nil
 	}
-	if providerError := streamDeltaError(delta); providerError != nil {
-		return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime, providerError)
+	switch terminal := delta.(type) {
+	case *llm.StreamErrorDelta:
+		providerError := terminal.Error
+		if providerError == nil {
+			providerError = llm.NewError(llm.ErrStreamMidError, "provider stream failed")
+		}
+		return r.failClassifiedProviderStream(ctx, execution, exchange, driver, providerRuntime, providerError)
+	case *llm.UnexpectedEOFDelta:
+		return r.failOperationalProviderStream(ctx, execution, exchange, driver, providerRuntime,
+			llm.NewError(llm.ErrUnexpectedEOF, "provider stream ended unexpectedly"))
 	}
 	return r.acceptStreamDelta(ctx, execution, exchange, delta)
 }
@@ -253,20 +291,6 @@ func (r *Runtime) failStream(ctx context.Context, execution *execution, exchange
 		return llm.NewError(llm.ErrStreamMidError, fmt.Sprintf("terminate client stream: %v", err))
 	}
 	return providerError
-}
-
-func streamDeltaError(delta llm.StreamDelta) *llm.Error {
-	switch terminal := delta.(type) {
-	case *llm.StreamErrorDelta:
-		if terminal.Error != nil {
-			return terminal.Error
-		}
-		return llm.NewError(llm.ErrStreamMidError, "provider stream failed")
-	case *llm.UnexpectedEOFDelta:
-		return llm.NewError(llm.ErrUnexpectedEOF, "provider stream ended unexpectedly")
-	default:
-		return nil
-	}
 }
 
 func isTerminalDelta(delta llm.StreamDelta) bool {

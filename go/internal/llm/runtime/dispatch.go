@@ -71,17 +71,18 @@ func (p dispatchPhase) Apply(ctx context.Context, exchange *pipeline.Exchange) (
 }
 
 type attemptResult struct {
-	response  *llm.ChatResponse
-	opaque    *protocol.WireResponse
-	rawError  *protocol.WireResponse
-	err       *llm.Error
-	status    int
-	latencyMs float64
-	retry     bool
-	failover  bool
-	terminal  bool
-	origin    failureOrigin
-	unhealthy bool
+	response            *llm.ChatResponse
+	opaque              *protocol.WireResponse
+	rawError            *protocol.WireResponse
+	err                 *llm.Error
+	status              int
+	latencyMs           float64
+	retry               bool
+	failover            bool
+	terminal            bool
+	origin              failureOrigin
+	errorClassification provider.ErrorClassification
+	canonicalStreamErr  bool
 }
 
 func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *pipeline.Exchange) *llm.Error {
@@ -163,7 +164,7 @@ func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *
 			}
 
 			if result.terminal {
-				if isProviderFailure(result.origin) {
+				if isProviderFailure(result.origin) && (!result.canonicalStreamErr || result.errorClassification.Unhealthy) {
 					r.router.Record(healthKey, false, result.latencyMs)
 				}
 				return result.err
@@ -185,7 +186,7 @@ func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *
 			}
 
 			if isProviderFailure(result.origin) {
-				r.router.Record(healthKey, !result.unhealthy, result.latencyMs)
+				r.router.Record(healthKey, !result.errorClassification.Unhealthy, result.latencyMs)
 			}
 			if result.rawError != nil && r.errorPassthroughAllowed(exchange.Source, egress) {
 				execution.pendingError = &pendingProviderError{
@@ -306,12 +307,12 @@ func (r *Runtime) executeAttempt(
 		retryable := r.settings.RetryOnStatus[response.StatusCode] || classification.Retryable || errorClassification.Retryable
 		rawError := providerErrorPassthrough(wire)
 		return attemptResult{
-			rawError:  &rawError,
-			err:       providerError,
-			status:    response.StatusCode,
-			latencyMs: latencyMs,
-			retry:     retryable,
-			unhealthy: errorClassification.Unhealthy,
+			rawError:            &rawError,
+			err:                 providerError,
+			status:              response.StatusCode,
+			latencyMs:           latencyMs,
+			retry:               retryable,
+			errorClassification: errorClassification,
 		}
 	}
 
@@ -356,12 +357,14 @@ func (r *Runtime) executeAttempt(
 				return attemptResult{status: response.StatusCode, latencyMs: latencyMs}
 			}
 			return attemptResult{
-				err:       streamErr,
-				status:    response.StatusCode,
-				latencyMs: latencyMs,
-				retry:     execution.stream.state == streamUncommitted && execution.stream.failure == failureProvider,
-				terminal:  execution.stream.state != streamUncommitted || execution.stream.failure != failureProvider,
-				origin:    execution.stream.failure,
+				err:                 streamErr,
+				status:              response.StatusCode,
+				latencyMs:           latencyMs,
+				retry:               execution.stream.state == streamUncommitted && execution.stream.failure == failureProvider && execution.stream.errorClassification.Retryable,
+				terminal:            execution.stream.state != streamUncommitted || execution.stream.failure != failureProvider,
+				origin:              execution.stream.failure,
+				errorClassification: execution.stream.errorClassification,
+				canonicalStreamErr:  execution.stream.canonicalError,
 			}
 		}
 
