@@ -1,16 +1,31 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/llm"
+	llmpipeline "github.com/nyroway/nyro/go/internal/llm/pipeline"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
+
+type cachedResponsePhase struct{}
+
+func (cachedResponsePhase) Name() string { return "cache" }
+
+func (cachedResponsePhase) Apply(_ context.Context, ex *llmpipeline.Exchange) (llmpipeline.Outcome, llmpipeline.Finalizer) {
+	response := llm.NewChatResponse("cached-id", ex.Request.ModelID())
+	response.Content = "cached response"
+	ex.Response = response
+	return llmpipeline.Outcome{Decision: llmpipeline.ShortCircuit}, nil
+}
 
 // TestRejectsOversizedBody verifies handleProxy rejects request bodies larger
 // than settings.proxy.max_body_bytes (default 32MiB) with 413, instead of
@@ -166,6 +181,37 @@ func TestDispatchNonStreamEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(out, `"content":"hello"`) {
 		t.Errorf("missing content: %s", out)
+	}
+	if got := strings.Count(out, `"chat.completion"`); got != 1 {
+		t.Errorf("response encoded %d times, want the already-written response preserved: %s", got, out)
+	}
+}
+
+func TestDispatchWritesPreDispatchShortCircuitResponse(t *testing.T) {
+	var upstreamCalls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+
+	gw := newTestGateway(t, upstream.URL)
+	gw.preDispatchPhases = []llmpipeline.Phase{cachedResponsePhase{}}
+	engine := NewRouter(gw)
+	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); !strings.Contains(got, `"content":"cached response"`) {
+		t.Fatalf("response body = %s, want encoded cached response", got)
+	}
+	if got := atomic.LoadInt32(&upstreamCalls); got != 0 {
+		t.Fatalf("upstream calls = %d, want 0 after short circuit", got)
 	}
 }
 

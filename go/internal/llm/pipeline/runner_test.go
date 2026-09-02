@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -173,6 +174,40 @@ func TestRunnerRejectRunsFinalizersInReverseOrder(t *testing.T) {
 	}
 	if completion.Error != denied {
 		t.Fatalf("completion error = %v, want %v", completion.Error, denied)
+	}
+	requireEvents(t, events, []string{
+		"apply:observe",
+		"apply:resolve",
+		"apply:authenticate",
+		"apply:authorize",
+		"finalize:authorize",
+		"finalize:authenticate",
+		"finalize:resolve",
+		"finalize:observe",
+	})
+}
+
+func TestRunnerRejectWithoutErrorReturnsDiagnosticAndPreservesExchangeError(t *testing.T) {
+	events := &eventLog{}
+	existing := llm.NewError(llm.ErrServiceUnavailable, "upstream unavailable")
+	phases := phaseSet(events)
+	phases.Authorize = recordingPhase{
+		name:    "authorize",
+		events:  events,
+		outcome: Outcome{Decision: Reject},
+	}
+	runner, err := NewRunner(phases)
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	ex := &Exchange{Error: existing}
+
+	completion, err := runner.Run(context.Background(), ex)
+	if err == nil || !strings.Contains(err.Error(), `phase "authorize" rejected without an error`) {
+		t.Fatalf("Run error = %v, want malformed reject diagnostic", err)
+	}
+	if completion.Error != existing {
+		t.Fatalf("completion error = %v, want preserved %v", completion.Error, existing)
 	}
 	requireEvents(t, events, []string{
 		"apply:observe",

@@ -65,11 +65,41 @@ func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req llm.Model
 	}
 	if runErr != nil && r.Context().Err() == nil && !rec.wroteHeader {
 		writeJSONError(rec, http.StatusInternalServerError, runErr.Error())
+		return
+	}
+	if completion.Response != nil && !rec.wroteHeader {
+		if err := writeCompletionResponse(rec, ingress, completion.Response); err != nil {
+			writeJSONError(rec, http.StatusInternalServerError, err.Error())
+		}
 	}
 }
 
+func writeCompletionResponse(w http.ResponseWriter, ingress protocol.IngressCodec, response *llm.ChatResponse) error {
+	codec, ok := ingress.(protocol.ChatIngressCodec)
+	if !ok {
+		return fmt.Errorf("ingress endpoint %s cannot encode a chat response", ingress.Endpoint())
+	}
+	out, err := codec.EncodeResponse(response)
+	if err != nil {
+		return fmt.Errorf("format response: %w", err)
+	}
+	for key, value := range out.Headers {
+		w.Header().Set(key, value)
+	}
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	status := out.Status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(out.Body)
+	return nil
+}
+
 // forward is the Dispatch phase's gateway-owned HTTP transition adapter.
-func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *llmpipeline.Runner, ex *llmpipeline.Exchange, route configsnapshot.Route, ingress protocol.IngressCodec, snap *configsnapshot.Snapshot) {
+func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *llmpipeline.Runner, ex *llmpipeline.Exchange, route configsnapshot.Route, ingress protocol.IngressCodec, snap *configsnapshot.Snapshot) *llm.Error {
 	req := ex.Request
 
 	// select + failover: try each backend (ordered by the balance strategy),
@@ -98,8 +128,9 @@ func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *
 		// the ingress codec (cross-protocol transform).
 		egressHandler, found := g.Protocols.Egress(ingress.Endpoint())
 		if !found {
-			writeJSONError(rec, http.StatusInternalServerError, "no egress codec for endpoint "+ingress.Endpoint().String())
-			return
+			message := "no egress codec for endpoint " + ingress.Endpoint().String()
+			writeJSONError(rec, http.StatusInternalServerError, message)
+			return llm.ErrorFromStatus(http.StatusInternalServerError, message)
 		}
 		if proto, parseErr := protocol.ParseProtocol(p.Protocol); parseErr == nil {
 			if ep, ok := g.Protocols.EndpointFor(proto); ok && ep != ingress.Endpoint() {
@@ -108,22 +139,32 @@ func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *
 				}
 			}
 		}
+		ex.Target = llmpipeline.Target{
+			ID:           routeTargetID(route, target),
+			UpstreamID:   p.ID,
+			UpstreamName: p.Name,
+			Model:        actualModel,
+			Endpoint:     egressHandler.Endpoint(),
+		}
 
 		// The codec owns protocol conversion; the provider driver owns vendor
 		// URL construction, authentication, and provider extensions.
 		outbound, err := encodeRequest(egressHandler, req)
 		if err != nil {
-			writeJSONError(rec, http.StatusInternalServerError, "encode request: "+err.Error())
-			return
+			message := "encode request: " + err.Error()
+			writeJSONError(rec, http.StatusInternalServerError, message)
+			return llm.ErrorFromStatus(http.StatusInternalServerError, message)
 		}
 		if g.Providers == nil {
-			writeJSONError(rec, http.StatusInternalServerError, "provider catalog is not configured")
-			return
+			message := "provider catalog is not configured"
+			writeJSONError(rec, http.StatusInternalServerError, message)
+			return llm.ErrorFromStatus(http.StatusInternalServerError, message)
 		}
 		factory := g.Providers.DriverFor(p.Provider)
 		if factory == nil {
-			writeJSONError(rec, http.StatusInternalServerError, "provider driver is not configured")
-			return
+			message := "provider driver is not configured"
+			writeJSONError(rec, http.StatusInternalServerError, message)
+			return llm.ErrorFromStatus(http.StatusInternalServerError, message)
 		}
 		driver := factory()
 		prepared, prepareErr := driver.Prepare(ctx, runtimeFromUpstream(*p), outbound)
@@ -147,6 +188,8 @@ func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *
 			upStart := time.Now()
 			resp, err = transport.Do(ctx, prepared)
 			latencyMs = float64(time.Since(upStart).Microseconds()) / 1000
+			attemptLatencyMs := int64(latencyMs)
+			ex.Target.UpstreamLatencyMs = &attemptLatencyMs
 			if err != nil {
 				resp = nil
 				if attempt < attempts {
@@ -154,6 +197,8 @@ func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *
 				}
 				break
 			}
+			upstreamStatus := int32(resp.StatusCode)
+			ex.Target.UpstreamStatus = &upstreamStatus
 			if ps.RetryOnStatus[resp.StatusCode] {
 				_ = resp.Body.Close()
 				resp = nil
@@ -170,28 +215,22 @@ func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *
 		}
 
 		// usable response (2xx, or a non-retried 4xx/5xx) → serve, no more
-		// failover. Publish typed target facts for later phases and finalizers.
-		us := int32(resp.StatusCode)
-		um := int64(latencyMs)
-		ex.Target = llmpipeline.Target{
-			ID:                routeTargetID(route, target),
-			UpstreamID:        p.ID,
-			UpstreamName:      p.Name,
-			Model:             actualModel,
-			Endpoint:          egressHandler.Endpoint(),
-			UpstreamStatus:    &us,
-			UpstreamLatencyMs: &um,
-		}
+		// failover. Attempt status and latency were published as they arrived.
 		g.Router.Record(routing.KeyOf(target), true, latencyMs)
 		if driver.Classify(*resp).Failed {
 			forwardError(rec, resp)
+			_ = resp.Body.Close()
+			return llm.ErrorFromStatus(uint16(resp.StatusCode), "upstream provider request failed")
 		} else {
+			var responseErr *llm.Error
 			switch req := req.(type) {
 			case *llm.EmbeddingRequest:
 				if ingress.Endpoint() != egressHandler.Endpoint() ||
 					!ingress.Capabilities().OpaquePassthrough ||
 					!egressHandler.Capabilities().OpaquePassthrough {
-					writeJSONError(rec, http.StatusBadGateway, "embedding response requires same-endpoint opaque passthrough")
+					message := "embedding response requires same-endpoint opaque passthrough"
+					writeJSONError(rec, http.StatusBadGateway, message)
+					responseErr = llm.ErrorFromStatus(http.StatusBadGateway, message)
 					break
 				}
 				copyResponse(rec, resp)
@@ -199,16 +238,24 @@ func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *
 				decHandler, decOK := egressHandler.(protocol.ChatEgressCodec)
 				encHandler, encOK := ingress.(protocol.ChatIngressCodec)
 				if !decOK || !encOK {
-					writeJSONError(rec, http.StatusBadGateway, "chat codec does not support selected endpoint")
+					message := "chat codec does not support selected endpoint"
+					writeJSONError(rec, http.StatusBadGateway, message)
+					responseErr = llm.ErrorFromStatus(http.StatusBadGateway, message)
 					break
 				}
 				if req.Stream.Enabled {
 					g.serveStream(ctx, rec, runner, ex, resp.Body, decHandler, encHandler)
 				} else {
-					g.serveNonStream(rec, ex, resp.Body, decHandler, encHandler)
+					responseErr = g.serveNonStream(rec, ex, resp.Body, decHandler, encHandler)
 				}
 			default:
-				writeJSONError(rec, http.StatusInternalServerError, "unsupported llm workload")
+				message := "unsupported llm workload"
+				writeJSONError(rec, http.StatusInternalServerError, message)
+				responseErr = llm.ErrorFromStatus(http.StatusInternalServerError, message)
+			}
+			if responseErr != nil {
+				_ = resp.Body.Close()
+				return responseErr
 			}
 		}
 		_ = resp.Body.Close()
@@ -216,8 +263,11 @@ func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *
 		break
 	}
 	if !served {
-		writeJSONError(rec, http.StatusBadGateway, "all upstream backends failed")
+		message := "all upstream backends failed"
+		writeJSONError(rec, http.StatusBadGateway, message)
+		return llm.ErrorFromStatus(http.StatusBadGateway, message)
 	}
+	return nil
 }
 
 func requestStreams(req llm.ModelRequest) bool {
@@ -326,22 +376,25 @@ func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, runner
 }
 
 // serveNonStream decodes the full upstream body → ChatResponse → formats it.
-func (g *Gateway) serveNonStream(w http.ResponseWriter, ex *llmpipeline.Exchange, upstream io.Reader, decHandler protocol.ChatEgressCodec, encHandler protocol.ChatIngressCodec) {
+func (g *Gateway) serveNonStream(w http.ResponseWriter, ex *llmpipeline.Exchange, upstream io.Reader, decHandler protocol.ChatEgressCodec, encHandler protocol.ChatIngressCodec) *llm.Error {
 	raw, err := io.ReadAll(upstream)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "read upstream: "+err.Error())
-		return
+		message := "read upstream: " + err.Error()
+		writeJSONError(w, http.StatusBadGateway, message)
+		return llm.ErrorFromStatus(http.StatusBadGateway, message)
 	}
 	resp, err := decHandler.DecodeResponse(protocol.WireResponse{Status: http.StatusOK, Body: raw})
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "parse upstream: "+err.Error())
-		return
+		message := "parse upstream: " + err.Error()
+		writeJSONError(w, http.StatusBadGateway, message)
+		return llm.ErrorFromStatus(http.StatusBadGateway, message)
 	}
 	ex.Response = resp
 	out, err := encHandler.EncodeResponse(resp)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "format response: "+err.Error())
-		return
+		message := "format response: " + err.Error()
+		writeJSONError(w, http.StatusBadGateway, message)
+		return llm.ErrorFromStatus(http.StatusBadGateway, message)
 	}
 	for key, value := range out.Headers {
 		w.Header().Set(key, value)
@@ -356,6 +409,7 @@ func (g *Gateway) serveNonStream(w http.ResponseWriter, ex *llmpipeline.Exchange
 	w.WriteHeader(status)
 	ex.Usage = resp.Usage
 	_, _ = w.Write(out.Body)
+	return nil
 }
 
 func writeSSE(w io.Writer, frames []protocol.Event, flusher http.Flusher) {

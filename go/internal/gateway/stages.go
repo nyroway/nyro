@@ -40,6 +40,7 @@ func (g *Gateway) newPipelineRunner(state *gatewayPipelineState) (*llmpipeline.R
 		Authenticate: authenticatePhase{state: state},
 		Authorize:    authorizePhase{state: state},
 		Admit:        admitPhase{state: state},
+		PreDispatch:  g.preDispatchPhases,
 		Dispatch:     dispatchPhase{state: state},
 	})
 	if err != nil {
@@ -183,7 +184,9 @@ type dispatchPhase struct{ state *gatewayPipelineState }
 func (dispatchPhase) Name() string { return "dispatch" }
 
 func (p dispatchPhase) Apply(ctx context.Context, ex *llmpipeline.Exchange) (llmpipeline.Outcome, llmpipeline.Finalizer) {
-	p.state.gw.forward(ctx, p.state.writer, p.state.runner, ex, *p.state.route, p.state.ingress, p.state.snapshot)
+	if err := p.state.gw.forward(ctx, p.state.writer, p.state.runner, ex, *p.state.route, p.state.ingress, p.state.snapshot); err != nil {
+		return llmpipeline.Outcome{Decision: llmpipeline.Reject, Error: err}, nil
+	}
 	return continueOutcome(), nil
 }
 
