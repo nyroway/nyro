@@ -5,10 +5,15 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 )
 
 type fakeDriver struct{ name string }
+
+func (fakeDriver) ExtendRequest(context.Context, UpstreamRuntime, llm.ModelRequest) error {
+	return nil
+}
 
 func (d fakeDriver) Prepare(_ context.Context, _ UpstreamRuntime, wire protocol.WireRequest) (Request, error) {
 	return Request{Method: wire.Method, URL: wire.Path, Headers: wire.Headers, Body: wire.Body, Stream: wire.Stream}, nil
@@ -17,6 +22,12 @@ func (d fakeDriver) Prepare(_ context.Context, _ UpstreamRuntime, wire protocol.
 func (d fakeDriver) Classify(response Response) Classification {
 	return Classification{Failed: response.StatusCode >= 400}
 }
+
+func (fakeDriver) ExtendResponse(context.Context, UpstreamRuntime, *llm.ChatResponse) error {
+	return nil
+}
+
+func (fakeDriver) ExtendError(context.Context, UpstreamRuntime, *llm.Error) error { return nil }
 
 func fakeRegistration(id string, priority int, name string) Registration {
 	return Registration{

@@ -48,8 +48,24 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 	}
 	securityRule := foundationBoundary{prefix: "internal/security"}
 	providerRule := foundationBoundary{
-		prefix:             "internal/llm/provider",
-		allowInternalExact: []string{"internal/llm/protocol"},
+		prefix: "internal/llm/provider",
+		allowInternalExact: []string{
+			"internal/llm",
+			"internal/llm/protocol",
+		},
+	}
+	runtimeRule := foundationBoundary{
+		prefix: "internal/llm/runtime",
+		allowInternalExact: []string{
+			"internal/config/snapshot",
+			"internal/llm",
+			"internal/llm/pipeline",
+			"internal/llm/protocol",
+			"internal/llm/provider",
+			"internal/llm/routing",
+			"internal/quota",
+			"internal/security/authn",
+		},
 	}
 	tests := []struct {
 		name string
@@ -60,7 +76,13 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 		{"llm protocol may import llm", llmProtocol, directImport{path: modulePath + "/internal/llm"}, true},
 		{"llm protocol rejects provider", llmProtocol, directImport{path: modulePath + "/internal/llm/provider"}, false},
 		{"provider may import protocol", providerRule, directImport{path: modulePath + "/internal/llm/protocol"}, true},
+		{"provider may import canonical llm", providerRule, directImport{path: modulePath + "/internal/llm"}, true},
 		{"provider rejects gateway", providerRule, directImport{path: modulePath + "/internal/gateway"}, false},
+		{"runtime may import snapshot", runtimeRule, directImport{path: modulePath + "/internal/config/snapshot"}, true},
+		{"runtime may import provider", runtimeRule, directImport{path: modulePath + "/internal/llm/provider"}, true},
+		{"runtime may import authn contract", runtimeRule, directImport{path: modulePath + "/internal/security/authn"}, true},
+		{"runtime rejects authz implementation", runtimeRule, directImport{path: modulePath + "/internal/security/authz"}, false},
+		{"runtime rejects gateway", runtimeRule, directImport{path: modulePath + "/internal/gateway"}, false},
 		{"platform standard library", platform, directImport{path: "database/sql", standard: true}, true},
 		{"platform own subtree", platform, directImport{path: modulePath + "/internal/platform/state"}, true},
 		{"platform third party", platform, directImport{path: "github.com/jackc/pgx/v5"}, true},
@@ -167,7 +189,7 @@ type directImport struct {
 
 var foundationBoundaries = []foundationBoundary{
 	{prefix: "internal/llm/protocol", allowInternalExact: []string{"internal/llm"}},
-	{prefix: "internal/llm/provider", allowInternalExact: []string{"internal/llm/protocol"}},
+	{prefix: "internal/llm/provider", allowInternalExact: []string{"internal/llm", "internal/llm/protocol"}},
 	{prefix: "internal/llm/routing"},
 	{
 		prefix: "internal/llm/pipeline",
@@ -176,6 +198,19 @@ var foundationBoundaries = []foundationBoundary{
 			"internal/llm/protocol",
 			"internal/security/authn",
 			"internal/security/authz",
+		},
+	},
+	{
+		prefix: "internal/llm/runtime",
+		allowInternalExact: []string{
+			"internal/config/snapshot",
+			"internal/llm",
+			"internal/llm/pipeline",
+			"internal/llm/protocol",
+			"internal/llm/provider",
+			"internal/llm/routing",
+			"internal/quota",
+			"internal/security/authn",
 		},
 	},
 	{prefix: "internal/security"},
@@ -220,7 +255,8 @@ func llmModelImportAllowed(imp directImport) bool {
 const (
 	layerFoundation = 0 // protocol and platform foundations shared by higher layers
 	layerData       = 1 // persistence and configuration
-	layerObs        = 2 // instrumentation, sits between data and serve
+	layerRuntime    = 2 // trusted workload runtime and instrumentation
+	layerObs        = layerRuntime
 	layerServe      = 3 // HTTP surfaces and orchestration
 )
 
@@ -241,6 +277,7 @@ var packageLayer = map[string]int{
 	"internal/llm/protocol/openai/embeddings":      layerFoundation,
 	"internal/llm/protocol/openai/responses":       layerFoundation,
 	"internal/llm/routing":                         layerFoundation,
+	"internal/llm/runtime":                         layerRuntime,
 	"internal/platform/database":                   layerFoundation,
 	"internal/platform/database/postgres":          layerFoundation,
 	"internal/platform/database/sqlite":            layerFoundation,

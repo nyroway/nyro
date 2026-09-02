@@ -162,7 +162,11 @@ func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) []protocol.Event 
 		e.usage = v.Usage
 		return nil
 	case *llm.DoneDelta:
-		return e.terminate(v.StopReason)
+		usage := e.usage
+		if v.UsageAtDone != nil {
+			usage = *v.UsageAtDone
+		}
+		return e.terminate(v.StopReason, usage)
 	case *llm.UnknownDelta:
 		return []protocol.Event{{Data: v.Raw}}
 	}
@@ -191,14 +195,14 @@ func (e *streamResponseEncoder) closeOpenBlock() []protocol.Event {
 	return out
 }
 
-func (e *streamResponseEncoder) terminate(stopReason string) []protocol.Event {
+func (e *streamResponseEncoder) terminate(stopReason string, usage llm.Usage) []protocol.Event {
 	out := e.closeOpenBlock()
-	usageMap := map[string]any{"output_tokens": e.usage.CompletionTokens}
-	if e.usage.CacheReadTokens != nil {
-		usageMap["cache_read_input_tokens"] = *e.usage.CacheReadTokens
+	usageMap := map[string]any{"output_tokens": usage.CompletionTokens}
+	if usage.CacheReadTokens != nil {
+		usageMap["cache_read_input_tokens"] = *usage.CacheReadTokens
 	}
-	if e.usage.CacheCreationTokens != nil {
-		usageMap["cache_creation_input_tokens"] = *e.usage.CacheCreationTokens
+	if usage.CacheCreationTokens != nil {
+		usageMap["cache_creation_input_tokens"] = *usage.CacheCreationTokens
 	}
 	md := map[string]any{
 		"type":  "message_delta",

@@ -71,11 +71,15 @@ func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) []protocol.Event 
 		return nil
 	case *llm.DoneDelta:
 		fullText := e.textBuf.String()
+		usage := e.usage
+		if v.UsageAtDone != nil {
+			usage = *v.UsageAtDone
+		}
 		return []protocol.Event{
 			ev(map[string]any{"type": "response.output_text.done", "item_id": e.itemID, "output_index": 0, "content_index": 0, "text": fullText}),
 			ev(map[string]any{"type": "response.content_part.done", "item_id": e.itemID, "output_index": 0, "content_index": 0, "part": map[string]string{"type": "output_text", "text": fullText}}),
 			ev(map[string]any{"type": "response.output_item.done", "output_index": 0, "item": map[string]any{"type": "message", "id": e.itemID, "role": "assistant", "status": "completed", "content": []any{map[string]string{"type": "output_text", "text": fullText}}}}),
-			ev(map[string]any{"type": "response.completed", "response": map[string]any{"id": e.id, "model": e.model, "status": "completed", "usage": map[string]uint32{"input_tokens": e.usage.PromptTokens, "output_tokens": e.usage.CompletionTokens, "total_tokens": e.usage.TotalTokens}}}),
+			ev(map[string]any{"type": "response.completed", "response": map[string]any{"id": e.id, "model": e.model, "status": "completed", "usage": map[string]uint32{"input_tokens": usage.PromptTokens, "output_tokens": usage.CompletionTokens, "total_tokens": usage.TotalTokens}}}),
 		}
 	}
 	return nil

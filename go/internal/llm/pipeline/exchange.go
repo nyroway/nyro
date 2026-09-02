@@ -51,4 +51,6 @@ type Exchange struct {
 	Streamed      bool
 	Status        int
 	RequestInfo   RequestInfo
+	ClientAddress string
+	RequestID     string
 }
