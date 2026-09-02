@@ -92,9 +92,14 @@ func NewCmd() *cobra.Command {
 		if err != nil {
 			return fmt.Errorf("compose LLM protocols: %w", err)
 		}
+		providers, err := bootstrap.NewLLMProviderCatalog()
+		if err != nil {
+			return fmt.Errorf("compose LLM providers: %w", err)
+		}
 
 		gw, runtimeMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
 			Protocols:  protocols,
+			Providers:  providers,
 			ConfigPath: cfgPath,
 			SyncTarget: configSyncAddr,
 			SyncTLS:    configTLS,

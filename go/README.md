@@ -23,9 +23,10 @@ until parity is reached (P0–P6 migration plan).
 | `internal/config/snapshot/` | — | immutable runtime config, builder, atomic publication cache, and storage-backed loading |
 | `internal/configsync/` | — | gRPC/protobuf transport, authentication, conversion, and node tracking |
 | `internal/llm/protocol/` | `protocol/` | LLM wire-protocol identity, split ingress/egress codecs, and immutable explicitly composed catalogs |
-| `internal/provider/` | `provider/` | `Vendor` interface, 7-step build/parse pipeline, vendor registry |
+| `internal/llm/provider/` | `provider/` | immutable provider catalog, transport-neutral drivers, built-in provider definitions, and generic fallback |
+| `internal/llm/provider/httptransport/` | — | outbound HTTP transport implementation, proxy handling, connection policy, and test transport seam |
+| `internal/llm/routing/` | `router/` | runtime target selection, weighted/priority/cooldown/latency ordering, health state |
 | `internal/gateway/` | `proxy/` | Gateway data-plane orchestration, ingress shells, and streaming dual-path (passthrough + IR round-trip) |
-| `internal/router/` | `router/` | runtime target selection, weighted/priority/cooldown/latency ordering, health state |
 | `internal/quota/` | `quota/` | backend-neutral request/token windows and concurrency leases, with memory and Redis implementations |
 | `internal/plugin/` | `plugin/` | five-phase lifecycle (`OnRequest`/`OnAccess`/`OnUpstream`/`OnResponse`/`OnLog`) |
 | `internal/admin/` | `admin/` | control plane: keys+quotas, models/routing, providers, OAuth, logs/stats, import/export |
@@ -56,7 +57,7 @@ embedded.
 | sqlx (sqlite/pg/mysql) | **GORM** (`gorm.io/gorm`) + sqlite/postgres drivers | **AutoMigrate OFF** — schema source-of-truth is the migration layer (`deploy/schema/*.sql`); GORM is used for CRUD/struct mapping only |
 | serde | `encoding/json` + struct tags | |
 | tracing | `log/slog` | stdlib |
-| `inventory` | explicit constructors + catalogs | Protocol codecs are assembled in Bootstrap without blank imports or `init()` registration; provider migration follows separately |
+| `inventory` | explicit constructors + catalogs | Protocol codecs and provider drivers are assembled in Bootstrap without blank imports or `init()` registration |
 
 **SQLite without CGO:** GORM's default sqlite driver (`gorm.io/driver/sqlite`)
 pulls `mattn/go-sqlite3` (CGO). To keep the build pure-Go (no C toolchain,

@@ -378,8 +378,12 @@ func NewCmd() *cobra.Command {
 		if err != nil {
 			return fmt.Errorf("compose LLM protocols: %w", err)
 		}
+		providers, err := bootstrap.NewLLMProviderCatalog()
+		if err != nil {
+			return fmt.Errorf("compose LLM providers: %w", err)
+		}
 		observeSource := admin.NewObserveSource(observeStore)
-		admin.Mount(engine, st, observeSource, observeSource, protocols)
+		admin.Mount(engine, st, observeSource, observeSource, protocols, providers)
 		webui.Mount(engine, webuiDir)
 
 		var dataPlaneHandler http.Handler
@@ -387,6 +391,7 @@ func NewCmd() *cobra.Command {
 		if !disableProxy {
 			gw, runtimeMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
 				Protocols:    protocols,
+				Providers:    providers,
 				SyncTarget:   configsync.InProcessTarget,
 				SyncDialOpts: inProcDialOpts,
 				ListenAddr:   proxyAddr,

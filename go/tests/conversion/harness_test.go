@@ -16,6 +16,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm/protocol/openai/chatcompletions"
 	"github.com/nyroway/nyro/go/internal/llm/protocol/openai/embeddings"
 	"github.com/nyroway/nyro/go/internal/llm/protocol/openai/responses"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -45,6 +46,18 @@ func testProtocolCatalog(t *testing.T) *protocol.Catalog {
 	)
 	if err != nil {
 		t.Fatalf("protocol catalog: %v", err)
+	}
+	return catalog
+}
+
+func testProviderCatalog(t *testing.T) *provider.Catalog {
+	t.Helper()
+	catalog, err := provider.NewCatalog(
+		provider.Generic(), provider.OpenAI(), provider.Anthropic(),
+		provider.Gemini(), provider.DeepSeek(), provider.OpenRouter(),
+	)
+	if err != nil {
+		t.Fatalf("provider catalog: %v", err)
 	}
 	return catalog
 }
@@ -169,7 +182,7 @@ func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey
 	}); err != nil {
 		t.Fatalf("create route: %v", err)
 	}
-	gw := gateway.NewGateway(testProtocolCatalog(t))
+	gw := gateway.NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
 	gw.UpstreamTransport = tr
 	if err := gw.Cache.LoadAndSwap(core); err != nil {
 		t.Fatalf("load cache: %v", err)

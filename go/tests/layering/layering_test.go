@@ -31,12 +31,16 @@ const modulePath = "github.com/nyroway/nyro/go"
 func TestFoundationBoundaryPolicy(t *testing.T) {
 	t.Parallel()
 	llmProtocol := foundationBoundary{
-		prefix:        "internal/llm/protocol",
-		allowInternal: []string{"internal/llm"},
+		prefix:             "internal/llm/protocol",
+		allowInternalExact: []string{"internal/llm"},
 	}
 	platform := foundationBoundary{prefix: "internal/platform", allowThirdParty: true}
 	quotaRule := foundationBoundary{prefix: "internal/quota", allowThirdParty: true}
-	routerRule := foundationBoundary{prefix: "internal/router"}
+	routingRule := foundationBoundary{prefix: "internal/llm/routing"}
+	providerRule := foundationBoundary{
+		prefix:             "internal/llm/provider",
+		allowInternalExact: []string{"internal/llm/protocol"},
+	}
 	tests := []struct {
 		name string
 		rule foundationBoundary
@@ -44,7 +48,9 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 		want bool
 	}{
 		{"llm protocol may import llm", llmProtocol, directImport{path: modulePath + "/internal/llm"}, true},
-		{"llm protocol rejects provider", llmProtocol, directImport{path: modulePath + "/internal/provider"}, false},
+		{"llm protocol rejects provider", llmProtocol, directImport{path: modulePath + "/internal/llm/provider"}, false},
+		{"provider may import protocol", providerRule, directImport{path: modulePath + "/internal/llm/protocol"}, true},
+		{"provider rejects gateway", providerRule, directImport{path: modulePath + "/internal/gateway"}, false},
 		{"platform standard library", platform, directImport{path: "database/sql", standard: true}, true},
 		{"platform own subtree", platform, directImport{path: modulePath + "/internal/platform/state"}, true},
 		{"platform third party", platform, directImport{path: "github.com/jackc/pgx/v5"}, true},
@@ -55,9 +61,9 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 		{"quota platform state", quotaRule, directImport{path: modulePath + "/internal/platform/state"}, false},
 		{"quota storage", quotaRule, directImport{path: modulePath + "/internal/storage"}, false},
 		{"quota gateway", quotaRule, directImport{path: modulePath + "/internal/gateway"}, false},
-		{"router standard library", routerRule, directImport{path: "sort", standard: true}, true},
-		{"router storage", routerRule, directImport{path: modulePath + "/internal/storage"}, false},
-		{"router third party", routerRule, directImport{path: "example.com/dependency"}, false},
+		{"routing standard library", routingRule, directImport{path: "sort", standard: true}, true},
+		{"routing storage", routingRule, directImport{path: modulePath + "/internal/storage"}, false},
+		{"routing third party", routingRule, directImport{path: "example.com/dependency"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,7 +83,7 @@ func TestLLMModelBoundaryPolicy(t *testing.T) {
 	}{
 		{"standard library", directImport{path: "encoding/json", standard: true}, true},
 		{"llm runtime", directImport{path: modulePath + "/internal/llm/runtime"}, false},
-		{"other internal", directImport{path: modulePath + "/internal/provider"}, false},
+		{"other internal", directImport{path: modulePath + "/internal/llm/provider"}, false},
 		{"third party", directImport{path: "example.com/dependency"}, false},
 	}
 	for _, tt := range tests {
@@ -133,9 +139,10 @@ func TestKernelBoundaryPolicy(t *testing.T) {
 }
 
 type foundationBoundary struct {
-	prefix          string
-	allowThirdParty bool
-	allowInternal   []string
+	prefix             string
+	allowThirdParty    bool
+	allowInternal      []string
+	allowInternalExact []string
 }
 
 type directImport struct {
@@ -144,10 +151,11 @@ type directImport struct {
 }
 
 var foundationBoundaries = []foundationBoundary{
-	{prefix: "internal/llm/protocol", allowInternal: []string{"internal/llm"}},
+	{prefix: "internal/llm/protocol", allowInternalExact: []string{"internal/llm"}},
+	{prefix: "internal/llm/provider", allowInternalExact: []string{"internal/llm/protocol"}},
+	{prefix: "internal/llm/routing"},
 	{prefix: "internal/platform", allowThirdParty: true},
 	{prefix: "internal/quota", allowThirdParty: true},
-	{prefix: "internal/router"},
 }
 
 func importAllowedByFoundationBoundary(rule foundationBoundary, imp directImport) bool {
@@ -156,6 +164,11 @@ func importAllowedByFoundationBoundary(rule foundationBoundary, imp directImport
 	}
 	for _, allowed := range rule.allowInternal {
 		if packageWithin(imp.path, modulePath+"/"+allowed) {
+			return true
+		}
+	}
+	for _, allowed := range rule.allowInternalExact {
+		if imp.path == modulePath+"/"+allowed {
 			return true
 		}
 	}
@@ -193,12 +206,15 @@ var packageLayer = map[string]int{
 	// Layer 0 — foundation.
 	"internal/kernel":                              layerFoundation,
 	"internal/llm":                                 layerFoundation,
+	"internal/llm/provider":                        layerFoundation,
+	"internal/llm/provider/httptransport":          layerFoundation,
 	"internal/llm/protocol":                        layerFoundation,
 	"internal/llm/protocol/anthropic/messages":     layerFoundation,
 	"internal/llm/protocol/gemini/generatecontent": layerFoundation,
 	"internal/llm/protocol/openai/chatcompletions": layerFoundation,
 	"internal/llm/protocol/openai/embeddings":      layerFoundation,
 	"internal/llm/protocol/openai/responses":       layerFoundation,
+	"internal/llm/routing":                         layerFoundation,
 	"internal/pipeline":                            layerFoundation,
 	"internal/platform/database":                   layerFoundation,
 	"internal/platform/database/postgres":          layerFoundation,
@@ -211,8 +227,6 @@ var packageLayer = map[string]int{
 	"internal/platform/state/sqlite":               layerFoundation,
 	"internal/quota":                               layerFoundation,
 	"internal/quota/redis":                         layerFoundation,
-	"internal/router":                              layerFoundation,
-	"internal/provider":                            layerFoundation,
 	"internal/telemetry/schema":                    layerFoundation,
 	"internal/version":                             layerFoundation,
 	"internal/webutil":                             layerFoundation,
@@ -279,6 +293,20 @@ func TestConfigSnapshotStaysIsolated(t *testing.T) {
 		for _, imp := range pkg.directImports {
 			if !configSnapshotImportAllowed(imp) {
 				t.Errorf("config snapshot boundary: %s imports %s", pkg.name, imp.path)
+			}
+		}
+	}
+}
+
+func TestProviderCoreStaysTransportNeutral(t *testing.T) {
+	t.Parallel()
+	for _, pkg := range loadInternalPackages(t) {
+		if pkg.name != "internal/llm/provider" {
+			continue
+		}
+		for _, imp := range pkg.directImports {
+			if imp.path == "net/http" {
+				t.Error("internal/llm/provider imports net/http; HTTP belongs in provider/httptransport")
 			}
 		}
 	}

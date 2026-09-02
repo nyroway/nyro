@@ -15,6 +15,7 @@ import (
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/configsync"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
 	platformstate "github.com/nyroway/nyro/go/internal/platform/state"
 	redisserver "github.com/nyroway/nyro/go/internal/platform/state/redis"
@@ -25,11 +26,31 @@ import (
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
+func testProviderCatalog(t *testing.T) *provider.Catalog {
+	t.Helper()
+	catalog, err := provider.NewCatalog(
+		provider.Generic(), provider.OpenAI(), provider.Anthropic(),
+		provider.Gemini(), provider.DeepSeek(), provider.OpenRouter(),
+	)
+	if err != nil {
+		t.Fatalf("provider catalog: %v", err)
+	}
+	return catalog
+}
+
+func TestBuildRejectsNilProviderCatalog(t *testing.T) {
+	t.Parallel()
+	_, _, err := Build(context.Background(), Options{SyncTarget: configsync.InProcessTarget})
+	if err == nil || !strings.Contains(err.Error(), "provider catalog") {
+		t.Fatalf("Build() error = %v, want missing provider catalog", err)
+	}
+}
+
 func TestBuild_ConfigAndConfigSyncAreMutuallyExclusive(t *testing.T) {
 	// NOTE: Build itself does NOT enforce XOR (it picks --config when both
 	// are set). The XOR is enforced in the cobra RunE. We exercise it via RunE
 	// below. This test documents that Build picks config when both given.
-	_, _, err := Build(context.Background(), Options{ConfigPath: "missing.yaml", SyncTarget: "localhost:9999", ListenAddr: "127.0.0.1:19530"})
+	_, _, err := Build(context.Background(), Options{Providers: testProviderCatalog(t), ConfigPath: "missing.yaml", SyncTarget: "localhost:9999", ListenAddr: "127.0.0.1:19530"})
 	// missing.yaml → file error, proving the config branch was selected.
 	if err == nil {
 		t.Error("expected error selecting config branch with both flags; Build must prefer --config")
@@ -61,7 +82,7 @@ consumers:
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gw, manager, err := Build(context.Background(), Options{ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
+	gw, manager, err := Build(context.Background(), Options{Providers: testProviderCatalog(t), ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -83,7 +104,7 @@ consumers:
 
 func TestBuildStandaloneExplicitMemoryState(t *testing.T) {
 	path := writeRuntimeYAML(t, "settings:\n  state:\n    type: memory\n")
-	gateway, manager, err := Build(context.Background(), Options{ConfigPath: path})
+	gateway, manager, err := Build(context.Background(), Options{Providers: testProviderCatalog(t), ConfigPath: path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,12 +119,12 @@ func TestBuildStandaloneRedisSharesQuotaAcrossGateways(t *testing.T) {
 	defer shutdown()
 	path := writeRuntimeYAML(t, "settings:\n  state:\n    type: redis\n    url: redis://"+addr+"/0\n")
 
-	gatewayA, managerA, err := Build(context.Background(), Options{ConfigPath: path})
+	gatewayA, managerA, err := Build(context.Background(), Options{Providers: testProviderCatalog(t), ConfigPath: path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = managerA.Shutdown(context.Background()) })
-	gatewayB, managerB, err := Build(context.Background(), Options{ConfigPath: path})
+	gatewayB, managerB, err := Build(context.Background(), Options{Providers: testProviderCatalog(t), ConfigPath: path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +166,7 @@ func TestBuildStandaloneRedisProbeFailureIsStrictAndRedacted(t *testing.T) {
 	addr, shutdown := startRuntimeRedisWithOptions(t, true)
 	defer shutdown()
 	path := writeRuntimeYAML(t, "settings:\n  state:\n    type: redis\n    url: redis://"+addr+"/0\n")
-	_, _, err := Build(context.Background(), Options{ConfigPath: path})
+	_, _, err := Build(context.Background(), Options{Providers: testProviderCatalog(t), ConfigPath: path})
 	if err == nil {
 		t.Fatal("Build() error = nil")
 	}
@@ -156,7 +177,7 @@ func TestBuildStandaloneRedisProbeFailureIsStrictAndRedacted(t *testing.T) {
 
 func TestBuildStandaloneRedisFailureIsStrictAndRedacted(t *testing.T) {
 	path := writeRuntimeYAML(t, "settings:\n  state:\n    type: redis\n    url: redis://alice:secret@127.0.0.1:1/0\n")
-	_, _, err := Build(context.Background(), Options{ConfigPath: path})
+	_, _, err := Build(context.Background(), Options{Providers: testProviderCatalog(t), ConfigPath: path})
 	if err == nil {
 		t.Fatal("Build() error = nil")
 	}
@@ -179,6 +200,7 @@ func TestBuildConfigSyncStateReadinessAndLastKnownGood(t *testing.T) {
 	dialOptions, stopServer := configsync.ServeInProcess(ctx, server)
 
 	gateway, manager, err := Build(ctx, Options{
+		Providers:    testProviderCatalog(t),
 		SyncTarget:   configsync.InProcessTarget,
 		SyncDialOpts: dialOptions,
 	})
@@ -246,7 +268,7 @@ consumers: []
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := Build(context.Background(), Options{ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
+	_, _, err := Build(context.Background(), Options{Providers: testProviderCatalog(t), ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
 	if err == nil {
 		t.Fatal("expected an error: traces.exporter=otlp declared in YAML with no endpoint must fail fast, proving the YAML setting was read")
 	}
@@ -271,7 +293,7 @@ consumers: []
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, manager, err := Build(context.Background(), Options{ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
+	_, manager, err := Build(context.Background(), Options{Providers: testProviderCatalog(t), ConfigPath: path, ListenAddr: "127.0.0.1:19530"})
 	if err != nil {
 		t.Fatalf("Build: %v (OTEL_* env vars must not be consulted when the YAML declares nothing)", err)
 	}

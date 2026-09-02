@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	llmprotocol "github.com/nyroway/nyro/go/internal/llm/protocol"
-	"github.com/nyroway/nyro/go/internal/provider"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
@@ -82,7 +82,7 @@ func validateModelsMutualExclusion(modelsJSON json.RawMessage, modelsURL string)
 // freshly created "custom" upstream to already have a model source
 // (models/models_url) — the control plane allows filling that in later via
 // a follow-up update, unlike a one-shot declarative config load.
-func validateNewUpstreamFields(providerID, baseURL string, modelsJSON json.RawMessage, modelsURL string) error {
+func validateNewUpstreamFields(providers *provider.Catalog, providerID, baseURL string, modelsJSON json.RawMessage, modelsURL string) error {
 	if strings.TrimSpace(providerID) == "" {
 		return errors.New("provider is required")
 	}
@@ -95,7 +95,10 @@ func validateNewUpstreamFields(providerID, baseURL string, modelsJSON json.RawMe
 		}
 		return nil
 	}
-	if _, ok := provider.Lookup(providerID); !ok {
+	if providers == nil {
+		return errors.New("provider catalog is unavailable")
+	}
+	if _, ok := providers.Lookup(providerID); !ok {
 		return fmt.Errorf("unknown provider %q", providerID)
 	}
 	return nil

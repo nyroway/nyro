@@ -8,14 +8,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/platform/state"
-	"github.com/nyroway/nyro/go/internal/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 	"github.com/nyroway/nyro/go/internal/version"
@@ -42,7 +41,7 @@ type StatsSource interface {
 // intentionally has no built-in authentication: nyro serve binds it to
 // loopback by default, while remote deployments protect it at the network or
 // reverse-proxy boundary.
-func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, protocols *protocol.Catalog) {
+func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, protocols *protocol.Catalog, providers *provider.Catalog) {
 	r.Route("/api/v1", func(g chi.Router) {
 		g.Use(sameOriginAdminWrites)
 
@@ -90,7 +89,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, p
 				badRequest(w, err)
 				return
 			}
-			if err := validateNewUpstreamFields(in.Provider, in.BaseURL, in.ModelsJSON, in.ModelsURL); err != nil {
+			if err := validateNewUpstreamFields(providers, in.Provider, in.BaseURL, in.ModelsJSON, in.ModelsURL); err != nil {
 				badRequest(w, err)
 				return
 			}
@@ -110,7 +109,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, p
 				badRequest(w, err)
 				return
 			}
-			streamDraftUpstreamHealth(w, r, s, protocols, in)
+			streamDraftUpstreamHealth(w, r, s, protocols, providers, in)
 		})
 		g.Post("/upstreams/{id}/test-draft/stream", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.CreateUpstream
@@ -118,7 +117,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, p
 				badRequest(w, err)
 				return
 			}
-			streamEditDraftUpstreamHealth(w, r, s, protocols, in, chi.URLParam(r, "id"))
+			streamEditDraftUpstreamHealth(w, r, s, protocols, providers, in, chi.URLParam(r, "id"))
 		})
 		g.Put("/upstreams/{id}", func(w http.ResponseWriter, r *http.Request) {
 			var in storage.UpdateUpstream
@@ -170,7 +169,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, p
 				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
-			streamSavedUpstreamHealth(w, r, s, protocols, *u)
+			streamSavedUpstreamHealth(w, r, s, protocols, providers, *u)
 		})
 		g.Post("/upstreams/{id}/routes/import/stream", func(w http.ResponseWriter, r *http.Request) {
 			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
@@ -178,7 +177,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, p
 				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
-			streamImportUpstreamRoutes(w, r, s, *u)
+			streamImportUpstreamRoutes(w, r, s, providers, *u)
 		})
 		g.Get("/upstreams/{id}/routes/import/preview", func(w http.ResponseWriter, r *http.Request) {
 			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
@@ -186,7 +185,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, p
 				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
-			previewUpstreamRouteImport(w, r, s, *u)
+			previewUpstreamRouteImport(w, r, s, providers, *u)
 		})
 		g.Get("/upstreams/{id}/models", func(w http.ResponseWriter, r *http.Request) {
 			u, err := s.Upstreams().Get(chi.URLParam(r, "id"))
@@ -194,7 +193,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, p
 				webutil.JSON(w, http.StatusNotFound, map[string]any{"error": "upstream not found"})
 				return
 			}
-			models, err := modelsForUpstream(r.Context(), *u)
+			models, err := modelsForUpstream(r.Context(), providers, *u)
 			if err != nil {
 				webutil.JSON(w, http.StatusOK, map[string]any{"models": []string{}, "error": err.Error()})
 				return
@@ -493,7 +492,7 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, p
 			webutil.JSON(w, http.StatusOK, st)
 		})
 		g.Get("/provider-presets", func(w http.ResponseWriter, r *http.Request) {
-			defs := provider.Definitions()
+			defs := providers.Definitions()
 			out := make([]presetView, len(defs))
 			for i, d := range defs {
 				out[i] = toPresetView(d)
@@ -538,24 +537,6 @@ func parseOptionalInt32(values url.Values, key string) (*int32, error) {
 	}
 	result := int32(parsed)
 	return &result, nil
-}
-
-// testHTTPClient returns the HTTP client used by admin-side upstream discovery
-// and health checks, routed through proxyURL when it's a valid absolute URL.
-// This mirrors the same-purpose logic in the data-plane gateway
-// (internal/gateway/gateway.go's httpClientFor) so an admin test and a real
-// request take the same route, but skips caching because these calls are not
-// on the request hot path.
-func testHTTPClient(proxyURL string, timeout time.Duration) *http.Client {
-	proxyURL = strings.TrimSpace(proxyURL)
-	if proxyURL == "" {
-		return &http.Client{Timeout: timeout}
-	}
-	parsed, err := url.Parse(proxyURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return &http.Client{Timeout: timeout}
-	}
-	return &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: http.ProxyURL(parsed)}}
 }
 
 func sameOriginAdminWrites(next http.Handler) http.Handler {

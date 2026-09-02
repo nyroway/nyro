@@ -38,7 +38,7 @@ func TestServeStreamHugeSSELine(t *testing.T) {
 		`"choices":[{"index":0,"delta":{"content":"` + big + `"},"finish_reason":null}]}`
 	upstream := bytes.NewBufferString("data: " + chunk + "\n\ndata: [DONE]\n\n")
 
-	g := NewGateway(testProtocolCatalog(t))
+	g := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
 	rec := httptest.NewRecorder()
 	ex := &pipeline.Exchange{Ctx: context.Background(), W: rec}
 	g.serveStream(ex, upstream, chatEgress, chatIngress)

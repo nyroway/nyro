@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/router"
+	"github.com/nyroway/nyro/go/internal/llm/routing"
 )
 
 // TestDispatchRecordsUpstreamLatency verifies the dispatcher records the real
@@ -33,7 +33,7 @@ func TestDispatchRecordsUpstreamLatency(t *testing.T) {
 		t.Fatalf("route/backends missing: %+v", rt)
 	}
 	targets, _ := routingTargets(*rt)
-	if lat := gw.Router.Latency(router.KeyOf(targets[0])); lat <= 0 {
+	if lat := gw.Router.Latency(routing.KeyOf(targets[0])); lat <= 0 {
 		t.Errorf("upstream latency not recorded (got %v); Record must receive real latency, not 0", lat)
 	}
 }

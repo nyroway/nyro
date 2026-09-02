@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,7 +11,7 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
-	"github.com/nyroway/nyro/go/internal/provider"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/storage"
 )
 
@@ -56,23 +55,23 @@ func (e *healthEventWriter) send(ev upstreamHealthEvent) {
 	}
 }
 
-func streamDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, in storage.CreateUpstream) {
-	streamUpstreamHealth(w, r, s, protocols, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true})
+func streamDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, providers *provider.Catalog, in storage.CreateUpstream) {
+	streamUpstreamHealth(w, r, s, protocols, providers, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true})
 }
 
 // streamEditDraftUpstreamHealth runs the same pre-save validation pipeline as
 // streamDraftUpstreamHealth, but excludes excludeID from the name-uniqueness
 // check — an edit form resubmits the provider's own (unchanged) name, which
 // would otherwise always collide with itself.
-func streamEditDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, in storage.CreateUpstream, excludeID string) {
-	streamUpstreamHealth(w, r, s, protocols, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true, excludeID: excludeID})
+func streamEditDraftUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, providers *provider.Catalog, in storage.CreateUpstream, excludeID string) {
+	streamUpstreamHealth(w, r, s, protocols, providers, draftUpstream(in), upstreamHealthOptions{checkNameConflict: true, excludeID: excludeID})
 }
 
-func streamSavedUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, u storage.Upstream) {
-	streamUpstreamHealth(w, r, s, protocols, u, upstreamHealthOptions{})
+func streamSavedUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, providers *provider.Catalog, u storage.Upstream) {
+	streamUpstreamHealth(w, r, s, protocols, providers, u, upstreamHealthOptions{})
 }
 
-func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, u storage.Upstream, opts upstreamHealthOptions) {
+func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Storage, protocols *protocol.Catalog, providers *provider.Catalog, u storage.Upstream, opts upstreamHealthOptions) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -90,7 +89,7 @@ func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Stor
 		complete(false, msg)
 		return
 	}
-	if err := validateNewUpstreamFields(u.Provider, u.BaseURL, u.ModelsJSON, u.ModelsURL); err != nil {
+	if err := validateNewUpstreamFields(providers, u.Provider, u.BaseURL, u.ModelsJSON, u.ModelsURL); err != nil {
 		events.send(upstreamHealthEvent{Type: "check", Check: "config", Status: "failed", Error: err.Error()})
 		complete(false, err.Error())
 		return
@@ -106,30 +105,37 @@ func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Stor
 	events.send(upstreamHealthEvent{Type: "check", Check: "config", Status: "passed", Message: "Configuration is valid"})
 
 	events.send(upstreamHealthEvent{Type: "check", Check: "credentials", Status: "running", Message: "Validating upstream credentials"})
-	auth, err := provider.AuthenticatorFor(u.Provider, u.Protocol, provider.UpstreamRuntime{
+	if providers == nil {
+		msg := "provider catalog is unavailable"
+		events.send(upstreamHealthEvent{Type: "check", Check: "credentials", Status: "failed", Error: msg})
+		complete(false, msg)
+		return
+	}
+	factory := providers.DriverFor(u.Provider)
+	if factory == nil {
+		msg := "provider driver is unavailable"
+		events.send(upstreamHealthEvent{Type: "check", Check: "credentials", Status: "failed", Error: msg})
+		complete(false, msg)
+		return
+	}
+	driver := factory()
+	_, err := driver.Prepare(r.Context(), provider.UpstreamRuntime{
 		Name:            u.Name,
 		Provider:        u.Provider,
 		Protocol:        u.Protocol,
-		BaseURL:         u.BaseURL,
+		BaseURL:         firstNonEmpty(u.BaseURL, "http://localhost"),
 		CredentialsJSON: u.CredentialsJSON,
 		ProxyURL:        u.ProxyURL,
-	})
+	}, protocol.WireRequest{Method: http.MethodGet})
 	if err != nil {
 		events.send(upstreamHealthEvent{Type: "check", Check: "credentials", Status: "failed", Error: err.Error()})
 		complete(false, err.Error())
 		return
 	}
-	if req, reqErr := http.NewRequestWithContext(r.Context(), http.MethodGet, firstNonEmpty(u.BaseURL, "http://localhost"), nil); reqErr == nil {
-		if err := auth.Apply(r.Context(), req); err != nil {
-			events.send(upstreamHealthEvent{Type: "check", Check: "credentials", Status: "failed", Error: err.Error()})
-			complete(false, err.Error())
-			return
-		}
-	}
 	events.send(upstreamHealthEvent{Type: "check", Check: "credentials", Status: "passed", Message: "Credentials can be applied"})
 
 	events.send(upstreamHealthEvent{Type: "check", Check: "models", Status: "running", Message: "Resolving a model to test"})
-	model, models, err := firstModelForDraft(r.Context(), u)
+	model, models, err := firstModelForDraft(r.Context(), providers, u)
 	if err != nil {
 		events.send(upstreamHealthEvent{Type: "check", Check: "models", Status: "failed", Error: err.Error()})
 		complete(false, err.Error())
@@ -138,7 +144,7 @@ func streamUpstreamHealth(w http.ResponseWriter, r *http.Request, s storage.Stor
 	events.send(upstreamHealthEvent{Type: "check", Check: "models", Status: "passed", Model: model, Discovered: len(models), Models: models, Message: "Model resolved"})
 
 	events.send(upstreamHealthEvent{Type: "check", Check: "model_request", Status: "running", Model: model, Message: "Sending minimal model request"})
-	latency, statusCode, err := testDraftModelRequest(r, protocols, u, model, auth)
+	latency, statusCode, err := testDraftModelRequest(r, protocols, u, model, driver)
 	if err != nil {
 		events.send(upstreamHealthEvent{Type: "check", Check: "model_request", Status: "failed", Model: model, LatencyMS: latency, StatusCode: statusCode, Error: err.Error()})
 		complete(false, err.Error())
@@ -171,19 +177,19 @@ func draftUpstream(in storage.CreateUpstream) storage.Upstream {
 // request against, along with the full deduplicated list so the caller can
 // report every model that was found (the health check only exercises one
 // model, but the UI shows the complete discovery result).
-func firstModelForDraft(ctx context.Context, u storage.Upstream) (string, []string, error) {
+func firstModelForDraft(ctx context.Context, providers *provider.Catalog, u storage.Upstream) (string, []string, error) {
 	var models []string
 	if len(u.ModelsJSON) > 0 {
 		if err := json.Unmarshal(u.ModelsJSON, &models); err != nil {
 			return "", nil, err
 		}
 	} else {
-		discoveryURL := modelsDiscoveryURL(u)
+		discoveryURL := modelsDiscoveryURL(providers, u)
 		if discoveryURL == "" {
 			return "", nil, fmt.Errorf("models or models_url is required to verify model availability")
 		}
 		var err error
-		models, err = fetchModels(ctx, u, discoveryURL)
+		models, err = fetchModels(ctx, providers, u, discoveryURL)
 		if err != nil {
 			return "", nil, err
 		}
@@ -195,7 +201,7 @@ func firstModelForDraft(ctx context.Context, u storage.Upstream) (string, []stri
 	return models[0], models, nil
 }
 
-func testDraftModelRequest(r *http.Request, protocols *protocol.Catalog, u storage.Upstream, model string, auth provider.Authenticator) (int64, int, error) {
+func testDraftModelRequest(r *http.Request, protocols *protocol.Catalog, u storage.Upstream, model string, driver provider.Driver) (int64, int, error) {
 	proto, err := protocol.ParseProtocol(u.Protocol)
 	if err != nil {
 		return 0, 0, err
@@ -225,30 +231,26 @@ func testDraftModelRequest(r *http.Request, protocols *protocol.Catalog, u stora
 	if err != nil {
 		return 0, 0, err
 	}
-	outbound.Path = provider.BuildURL(u.BaseURL, outbound.Path)
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), outbound.Method, outbound.Path, bytes.NewReader(outbound.Body))
+	prepared, err := driver.Prepare(r.Context(), provider.UpstreamRuntime{
+		Name: u.Name, Provider: u.Provider, Protocol: u.Protocol, BaseURL: u.BaseURL,
+		CredentialsJSON: u.CredentialsJSON, ProxyURL: u.ProxyURL,
+	}, outbound)
 	if err != nil {
 		return 0, 0, err
 	}
-	for k, v := range outbound.Headers {
-		upstreamReq.Header.Set(k, v)
-	}
-	if upstreamReq.Header.Get("Content-Type") == "" {
-		upstreamReq.Header.Set("Content-Type", "application/json")
-	}
-	if err := auth.Apply(r.Context(), upstreamReq); err != nil {
+	transport, err := newAdminProviderTransport(u.ProxyURL, 20*time.Second)
+	if err != nil {
 		return 0, 0, err
 	}
-	client := testHTTPClient(u.ProxyURL, 20*time.Second)
 	start := time.Now()
-	resp, err := client.Do(upstreamReq)
+	resp, err := transport.Do(r.Context(), prepared)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
 		return latency, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
-		return latency, resp.StatusCode, fmt.Errorf("model request failed: %s", resp.Status)
+		return latency, resp.StatusCode, fmt.Errorf("model request failed: %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
