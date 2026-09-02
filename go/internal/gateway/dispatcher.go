@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,61 +12,65 @@ import (
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm"
+	llmpipeline "github.com/nyroway/nyro/go/internal/llm/pipeline"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/llm/routing"
-	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/telemetry"
+	"github.com/nyroway/nyro/go/internal/security/authn"
 )
 
 // Dispatch is the single orchestration entry point. The ingress shell
 // (handleProxy) has already decoded the wire body into IR; Dispatch builds the
-// Exchange, runs it through the Stage chain (telemetry, authn, authz, quota),
-// and the chain's terminal resolves the model→backend→provider from the
-// in-memory cache, forwards to the upstream, and converts the response back.
-//
-// Cross-cutting concerns live in Stages, not here: this function is routing,
-// failover, and codec transformation, and nothing else. See internal/pipeline
-// for the chain contract and internal/telemetry.Stage for the terminal
-// telemetry Stage.
+// Exchange and runs the explicit LLM phases. The Dispatch phase retains the
+// compatibility implementation for routing, failover, codec transformation,
+// Provider calls, and HTTP response writing until the trusted Runtime cutover.
 func (g *Gateway) Dispatch(w http.ResponseWriter, r *http.Request, req llm.ModelRequest, ingress protocol.IngressCodec) {
 	stream := requestStreams(req)
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	ex := &pipeline.Exchange{
-		Ctx:     r.Context(),
-		W:       rec,
-		R:       r,
-		Req:     req,
-		Status:  http.StatusOK,
-		Started: time.Now(),
-		Stream:  stream,
+	ex := &llmpipeline.Exchange{
+		Request:     req,
+		Source:      ingress.Endpoint(),
+		Credentials: authn.Credentials{APIKey: extractKey(r)},
+		Status:      http.StatusOK,
+		Started:     time.Now(),
+		Streamed:    stream,
+		RequestInfo: llmpipeline.RequestInfo{
+			ClientModel: req.ModelID(),
+			Operation:   r.Method,
+			Resource:    r.URL.Path,
+		},
 	}
-	// The recorder writes the status onto the exchange as it happens, so a
-	// Stage emitting from a defer sees what the client actually got.
+	// The recorder writes status onto the Exchange as it happens, so the
+	// Observe Finalizer sees what the client actually got.
 	rec.ex = ex
-	ex.SetExt(telemetry.ExtLogCtx, telemetry.LogCtx{
-		Method:         r.Method,
-		Path:           r.URL.Path,
-		ClientProtocol: string(ingress.Endpoint().Protocol),
-		ClientModel:    req.ModelID(),
-		IsStream:       stream,
-	})
-
-	// The chain's Stages own auth, quota, and telemetry. Errors are already
-	// written to the client by the Stage that produced them, so the return
-	// value is only for Stages that want to inspect it.
-	_ = g.chain().Run(ex, func() error {
-		g.forward(ex, ingress)
-		return nil
-	})
+	state := &gatewayPipelineState{
+		gw:       g,
+		snapshot: g.snapshot(),
+		writer:   rec,
+		ingress:  ingress,
+	}
+	runner, err := g.newPipelineRunner(state)
+	if err != nil {
+		writeJSONError(rec, http.StatusInternalServerError, err.Error())
+		return
+	}
+	completion, runErr := runner.Run(r.Context(), ex)
+	if completion.Error != nil && !rec.wroteHeader {
+		status := http.StatusInternalServerError
+		if completion.Error.StatusCode != nil {
+			status = int(*completion.Error.StatusCode)
+		}
+		writeJSONError(rec, status, completion.Error.Message)
+		return
+	}
+	if runErr != nil && r.Context().Err() == nil && !rec.wroteHeader {
+		writeJSONError(rec, http.StatusInternalServerError, runErr.Error())
+	}
 }
 
-// forward is the chain's terminal: select a backend, transform, call the
-// upstream, and write the response. It runs only if no Stage short-circuited.
-func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) {
-	rec := ex.W
-	req := ex.Req
-	route, _ := ex.GetExt(telemetry.ExtRoute).(configsnapshot.Route)
+// forward is the Dispatch phase's gateway-owned HTTP transition adapter.
+func (g *Gateway) forward(ctx context.Context, rec http.ResponseWriter, runner *llmpipeline.Runner, ex *llmpipeline.Exchange, route configsnapshot.Route, ingress protocol.IngressCodec, snap *configsnapshot.Snapshot) {
+	req := ex.Request
 
 	// select + failover: try each backend (ordered by the balance strategy),
 	// retrying the same backend up to settings.proxy.max_retries times on a
@@ -73,11 +78,11 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) 
 	// backend; stop at the first usable response.
 	targets, strategy := routingTargets(route)
 	ordered := g.Router.Select(targets, strategy)
-	ps := resolveProxySettings(g.snapshot())
+	ps := resolveProxySettings(snap)
 	clientModel := req.ModelID()
 	served := false
 	for _, target := range ordered {
-		p := g.snapshot().UpstreamGet(target.UpstreamID)
+		p := snap.UpstreamGet(target.UpstreamID)
 		if p == nil || !p.Enabled {
 			continue
 		}
@@ -121,7 +126,7 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) 
 			return
 		}
 		driver := factory()
-		prepared, prepareErr := driver.Prepare(ex.Ctx, runtimeFromUpstream(*p), outbound)
+		prepared, prepareErr := driver.Prepare(ctx, runtimeFromUpstream(*p), outbound)
 		if prepareErr != nil {
 			g.Router.Record(routing.KeyOf(target), false, 0)
 			continue
@@ -140,7 +145,7 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) 
 		var latencyMs float64
 		for attempt := 1; attempt <= attempts; attempt++ {
 			upStart := time.Now()
-			resp, err = transport.Do(ex.Ctx, prepared)
+			resp, err = transport.Do(ctx, prepared)
 			latencyMs = float64(time.Since(upStart).Microseconds()) / 1000
 			if err != nil {
 				resp = nil
@@ -165,16 +170,18 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) 
 		}
 
 		// usable response (2xx, or a non-retried 4xx/5xx) → serve, no more
-		// failover. Record what the telemetry Stage needs now that it's known.
-		lc, _ := ex.GetExt(telemetry.ExtLogCtx).(telemetry.LogCtx)
-		lc.UpstreamModel = actualModel
-		lc.UpstreamProtocol = string(egressHandler.Endpoint().Protocol)
+		// failover. Publish typed target facts for later phases and finalizers.
 		us := int32(resp.StatusCode)
-		lc.UpstreamStatus = &us
 		um := int64(latencyMs)
-		lc.LatencyUpstreamMs = &um
-		ex.SetExt(telemetry.ExtLogCtx, lc)
-		ex.SetExt(telemetry.ExtUpstream, *p)
+		ex.Target = llmpipeline.Target{
+			ID:                routeTargetID(route, target),
+			UpstreamID:        p.ID,
+			UpstreamName:      p.Name,
+			Model:             actualModel,
+			Endpoint:          egressHandler.Endpoint(),
+			UpstreamStatus:    &us,
+			UpstreamLatencyMs: &um,
+		}
 		g.Router.Record(routing.KeyOf(target), true, latencyMs)
 		if driver.Classify(*resp).Failed {
 			forwardError(rec, resp)
@@ -196,9 +203,9 @@ func (g *Gateway) forward(ex *pipeline.Exchange, ingress protocol.IngressCodec) 
 					break
 				}
 				if req.Stream.Enabled {
-					g.serveStream(ex, resp.Body, decHandler, encHandler)
+					g.serveStream(ctx, rec, runner, ex, resp.Body, decHandler, encHandler)
 				} else {
-					g.serveNonStream(ex, resp.Body, decHandler, encHandler)
+					g.serveNonStream(rec, ex, resp.Body, decHandler, encHandler)
 				}
 			default:
 				writeJSONError(rec, http.StatusInternalServerError, "unsupported llm workload")
@@ -252,10 +259,9 @@ func runtimeFromUpstream(u configsnapshot.Upstream) provider.UpstreamRuntime {
 }
 
 // serveStream decodes upstream SSE → IR deltas → re-encodes to client SSE in
-// real time, flushing after each frame. Every delta is also handed to the
-// chain's StreamStages before it is re-encoded.
-func (g *Gateway) serveStream(ex *pipeline.Exchange, upstream io.Reader, decHandler protocol.ChatEgressCodec, encHandler protocol.ChatIngressCodec) {
-	w := ex.W
+// real time, flushing after each frame. Every parsed delta is also handed to
+// the Runner's observers before it is re-encoded.
+func (g *Gateway) serveStream(ctx context.Context, w http.ResponseWriter, runner *llmpipeline.Runner, ex *llmpipeline.Exchange, upstream io.Reader, decHandler protocol.ChatEgressCodec, encHandler protocol.ChatIngressCodec) {
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -299,8 +305,10 @@ func (g *Gateway) serveStream(ex *pipeline.Exchange, upstream io.Reader, decHand
 			if u, ok := d.(*llm.UsageDelta); ok {
 				usage = u.Usage
 			}
-			// Per-delta: every StreamStage sees every frame.
-			g.chain().EmitDelta(ex, d)
+			// Per-delta observers cannot control or rewrite flow.
+			if runner != nil {
+				runner.ObserveDelta(ctx, ex, d)
+			}
 		}
 		frames, _ := enc.FormatDeltas(deltas)
 		writeSSE(w, frames, flusher)
@@ -318,8 +326,7 @@ func (g *Gateway) serveStream(ex *pipeline.Exchange, upstream io.Reader, decHand
 }
 
 // serveNonStream decodes the full upstream body → ChatResponse → formats it.
-func (g *Gateway) serveNonStream(ex *pipeline.Exchange, upstream io.Reader, decHandler protocol.ChatEgressCodec, encHandler protocol.ChatIngressCodec) {
-	w := ex.W
+func (g *Gateway) serveNonStream(w http.ResponseWriter, ex *llmpipeline.Exchange, upstream io.Reader, decHandler protocol.ChatEgressCodec, encHandler protocol.ChatIngressCodec) {
 	raw, err := io.ReadAll(upstream)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "read upstream: "+err.Error())
@@ -330,7 +337,7 @@ func (g *Gateway) serveNonStream(ex *pipeline.Exchange, upstream io.Reader, decH
 		writeJSONError(w, http.StatusBadGateway, "parse upstream: "+err.Error())
 		return
 	}
-	ex.Resp = resp
+	ex.Response = resp
 	out, err := encHandler.EncodeResponse(resp)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "format response: "+err.Error())

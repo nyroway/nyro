@@ -8,11 +8,11 @@ import (
 	"time"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
+	llmpipeline "github.com/nyroway/nyro/go/internal/llm/pipeline"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
 	"github.com/nyroway/nyro/go/internal/llm/routing"
-	"github.com/nyroway/nyro/go/internal/pipeline"
 	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
@@ -21,7 +21,7 @@ import (
 // (upstreams, routes, consumer keys, proxy settings) go through Cache, an
 // in-memory snapshot published by config-sync or built once from YAML; Quota is
 // a stable facade over the configured quota State backend. The gateway holds NO storage handle:
-// per-request telemetry flows through the OTel telemetry Stage (Obs/Handles,
+// per-request telemetry flows through the OTel telemetry Phase (Obs/Handles,
 // pointed at a provider once at startup) → configured sink
 // (none/stdout/otlp). Router selects among a route's upstreams and tracks
 // failover.
@@ -34,7 +34,7 @@ type Gateway struct {
 
 	// Obs is the OTel provider (logger/meter/tracer). Populated by the data
 	// plane once at startup; nil in unit tests (the dispatcher still works,
-	// the telemetry Stage simply stays inert so nothing is emitted).
+	// the telemetry Phase simply stays inert so nothing is emitted).
 	Obs     *telemetry.Provider
 	Handles *telemetry.Handles
 
@@ -52,36 +52,9 @@ type Gateway struct {
 	proxyTransport     provider.Transport
 	proxyTransportKey  string
 
-	// OuterStages run before the built-in Stages, wrapping the whole chain.
-	// Production leaves this nil; tests use it to observe an exchange the
-	// way the telemetry Stage does — from outside, so a short circuit
-	// further in is still seen on the way out. Set it before the first
-	// request: the chain is built once.
-	OuterStages []pipeline.Stage
-
-	chainOnce  sync.Once
-	stageChain *pipeline.Chain
-}
-
-// chain returns the request Stage chain, building it once on first use.
-//
-// Order is the contract. The telemetry Stage is outermost so its deferred emit
-// runs after every other Stage has unwound — that is what reports a request
-// rejected by access control, or one that never reached a backend. route comes
-// before access because the access check is per-route, and quota is innermost
-// of the cross-cutting Stages so it records only exchanges that got past auth.
-func (g *Gateway) chain() *pipeline.Chain {
-	g.chainOnce.Do(func() {
-		stages := append([]pipeline.Stage(nil), g.OuterStages...)
-		stages = append(stages,
-			telemetry.NewRegisteredStage(),
-			routeStage{gw: g},
-			accessStage{gw: g},
-			quotaStage{gw: g},
-		)
-		g.stageChain = pipeline.NewChain(stages...)
-	})
-	return g.stageChain
+	// observePhase is a test seam for the mandatory Observe position.
+	// Production leaves it nil and uses telemetry.NewRegisteredPhase.
+	observePhase llmpipeline.Phase
 }
 
 // NewGateway builds a Gateway with a fresh, empty snapshot Cache. Tests use this

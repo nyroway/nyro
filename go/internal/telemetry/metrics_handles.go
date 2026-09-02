@@ -4,10 +4,10 @@ import "go.opentelemetry.io/otel/metric"
 
 // Handles owns the named OTel counter/histogram instruments the gateway emits
 // per request. They are created once from a metric.Meter (the one assembled by
-// Provider) and read by the telemetry Stage.
+// Provider) and read by the telemetry Phase.
 //
 // Intentionally no global/init: Handles is constructed by the caller via
-// NewHandles and reaches the Stage through a SwappableProvider, so
+// NewHandles and reaches the Phase through a SwappableProvider, so
 // instrumentation is inert until the data plane wires it — no process-wide
 // side effects from importing this package.
 type Handles struct {
@@ -15,9 +15,9 @@ type Handles struct {
 	tokens   metric.Int64Counter     // nyro_tokens_total: prompt+completion, route/consumer/direction attributes
 	latency  metric.Float64Histogram // nyro_request_latency_ms: total latency, route/upstream attributes
 	// nyro_in_flight (Int64UpDownCounter) is intentionally NOT created here:
-	// the telemetry Stage does not yet Inc/Dec a concurrency gauge, so
+	// the telemetry Phase does not yet Inc/Dec a concurrency gauge, so
 	// emitting it would publish a constant 0 (misleading). Reintroduce when
-	// the Stage actually tracks in-flight requests around next().
+	// the Phase explicitly tracks in-flight requests.
 }
 
 // NewHandles creates the named instruments from m. Errors are intentionally

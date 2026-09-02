@@ -17,3 +17,15 @@ func routingTargets(route configsnapshot.Route) ([]routing.Target, routing.Strat
 	}
 	return targets, routing.Strategy(route.Balance)
 }
+
+func routeTargetID(route configsnapshot.Route, selected routing.Target) string {
+	for _, target := range route.Upstreams {
+		if target.UpstreamID == selected.UpstreamID &&
+			target.Model == selected.Model &&
+			target.Weight == selected.Weight &&
+			target.Priority == selected.Priority {
+			return target.ID
+		}
+	}
+	return ""
+}

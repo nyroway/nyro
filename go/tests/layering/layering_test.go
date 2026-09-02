@@ -37,6 +37,16 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 	platform := foundationBoundary{prefix: "internal/platform", allowThirdParty: true}
 	quotaRule := foundationBoundary{prefix: "internal/quota", allowThirdParty: true}
 	routingRule := foundationBoundary{prefix: "internal/llm/routing"}
+	pipelineRule := foundationBoundary{
+		prefix: "internal/llm/pipeline",
+		allowInternalExact: []string{
+			"internal/llm",
+			"internal/llm/protocol",
+			"internal/security/authn",
+			"internal/security/authz",
+		},
+	}
+	securityRule := foundationBoundary{prefix: "internal/security"}
 	providerRule := foundationBoundary{
 		prefix:             "internal/llm/provider",
 		allowInternalExact: []string{"internal/llm/protocol"},
@@ -64,6 +74,11 @@ func TestFoundationBoundaryPolicy(t *testing.T) {
 		{"routing standard library", routingRule, directImport{path: "sort", standard: true}, true},
 		{"routing storage", routingRule, directImport{path: modulePath + "/internal/storage"}, false},
 		{"routing third party", routingRule, directImport{path: "example.com/dependency"}, false},
+		{"pipeline may import llm", pipelineRule, directImport{path: modulePath + "/internal/llm"}, true},
+		{"pipeline may import authn contract", pipelineRule, directImport{path: modulePath + "/internal/security/authn"}, true},
+		{"pipeline rejects gateway", pipelineRule, directImport{path: modulePath + "/internal/gateway"}, false},
+		{"security own subtree", securityRule, directImport{path: modulePath + "/internal/security/authn"}, true},
+		{"security rejects llm runtime", securityRule, directImport{path: modulePath + "/internal/llm/runtime"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -154,6 +169,16 @@ var foundationBoundaries = []foundationBoundary{
 	{prefix: "internal/llm/protocol", allowInternalExact: []string{"internal/llm"}},
 	{prefix: "internal/llm/provider", allowInternalExact: []string{"internal/llm/protocol"}},
 	{prefix: "internal/llm/routing"},
+	{
+		prefix: "internal/llm/pipeline",
+		allowInternalExact: []string{
+			"internal/llm",
+			"internal/llm/protocol",
+			"internal/security/authn",
+			"internal/security/authz",
+		},
+	},
+	{prefix: "internal/security"},
 	{prefix: "internal/platform", allowThirdParty: true},
 	{prefix: "internal/quota", allowThirdParty: true},
 }
@@ -206,6 +231,7 @@ var packageLayer = map[string]int{
 	// Layer 0 — foundation.
 	"internal/kernel":                              layerFoundation,
 	"internal/llm":                                 layerFoundation,
+	"internal/llm/pipeline":                        layerFoundation,
 	"internal/llm/provider":                        layerFoundation,
 	"internal/llm/provider/httptransport":          layerFoundation,
 	"internal/llm/protocol":                        layerFoundation,
@@ -215,7 +241,6 @@ var packageLayer = map[string]int{
 	"internal/llm/protocol/openai/embeddings":      layerFoundation,
 	"internal/llm/protocol/openai/responses":       layerFoundation,
 	"internal/llm/routing":                         layerFoundation,
-	"internal/pipeline":                            layerFoundation,
 	"internal/platform/database":                   layerFoundation,
 	"internal/platform/database/postgres":          layerFoundation,
 	"internal/platform/database/sqlite":            layerFoundation,
@@ -227,6 +252,8 @@ var packageLayer = map[string]int{
 	"internal/platform/state/sqlite":               layerFoundation,
 	"internal/quota":                               layerFoundation,
 	"internal/quota/redis":                         layerFoundation,
+	"internal/security/authn":                      layerFoundation,
+	"internal/security/authz":                      layerFoundation,
 	"internal/telemetry/schema":                    layerFoundation,
 	"internal/version":                             layerFoundation,
 	"internal/webutil":                             layerFoundation,
@@ -310,6 +337,92 @@ func TestProviderCoreStaysTransportNeutral(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestLLMRuntimePackagesStayTransportNeutral(t *testing.T) {
+	t.Parallel()
+	for _, pkg := range loadInternalPackages(t) {
+		if !packageWithin(pkg.name, "internal/llm/pipeline") &&
+			!packageWithin(pkg.name, "internal/llm/runtime") &&
+			!packageWithin(pkg.name, "internal/llm/routing") {
+			continue
+		}
+		for _, imp := range pkg.directImports {
+			if imp.path == "net/http" {
+				t.Errorf("transport-neutral LLM package %s imports net/http", pkg.name)
+			}
+		}
+	}
+}
+
+func TestLLMExchangeHasNoContextFunctionOrUntypedMapFields(t *testing.T) {
+	t.Parallel()
+	root := moduleRoot(t)
+	path := filepath.Join(root, "internal", "llm", "pipeline", "exchange.go")
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		t.Fatalf("parse Exchange source: %v", err)
+	}
+	found := false
+	for _, declaration := range file.Decls {
+		generic, ok := declaration.(*ast.GenDecl)
+		if !ok || generic.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range generic.Specs {
+			typeSpec, ok := specification.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != "Exchange" {
+				continue
+			}
+			found = true
+			structure, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				t.Fatal("pipeline.Exchange is not a struct")
+			}
+			for _, field := range structure.Fields.List {
+				switch fieldType := field.Type.(type) {
+				case *ast.FuncType:
+					t.Errorf("pipeline.Exchange contains a function field %s", fieldNames(field))
+				case *ast.MapType:
+					key, keyOK := fieldType.Key.(*ast.Ident)
+					value, valueOK := fieldType.Value.(*ast.Ident)
+					if keyOK && key.Name == "string" && valueOK && value.Name == "any" {
+						t.Errorf("pipeline.Exchange contains an untyped extension map field %s", fieldNames(field))
+					}
+				case *ast.SelectorExpr:
+					owner, ownerOK := fieldType.X.(*ast.Ident)
+					if ownerOK && owner.Name == "context" && fieldType.Sel.Name == "Context" {
+						t.Errorf("pipeline.Exchange contains a context.Context field %s", fieldNames(field))
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("pipeline.Exchange declaration not found")
+	}
+}
+
+func TestSecurityDoesNotImportLLMConcreteRuntime(t *testing.T) {
+	t.Parallel()
+	for _, pkg := range loadInternalPackages(t) {
+		if !packageWithin(pkg.name, "internal/security") {
+			continue
+		}
+		for _, imp := range pkg.imports {
+			if packageWithin(imp, "internal/llm/runtime") {
+				t.Errorf("security boundary: %s imports concrete LLM runtime %s", pkg.name, imp)
+			}
+		}
+	}
+}
+
+func fieldNames(field *ast.Field) string {
+	names := make([]string, 0, len(field.Names))
+	for _, name := range field.Names {
+		names = append(names, name.Name)
+	}
+	return strings.Join(names, ", ")
 }
 
 func TestKernelUsesOnlyStandardLibrary(t *testing.T) {

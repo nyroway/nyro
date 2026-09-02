@@ -2,41 +2,36 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm"
-	"github.com/nyroway/nyro/go/internal/pipeline"
-	"github.com/nyroway/nyro/go/internal/telemetry"
+	"github.com/nyroway/nyro/go/internal/llm/pipeline"
 )
 
-// captureStage records the Exchange as the chain unwinds, standing in for the
-// telemetry Stage so a test can assert what telemetry would have seen.
-//
-// It captures after next returns, which is the same position the real
-// telemetry Stage emits from. Placed first in the chain (see
-// newCapturingGateway), that also means it observes exchanges a later Stage
-// short-circuited.
-type captureStage struct{ got **pipeline.Exchange }
+// capturePhase records the Exchange from the Observe finalizer, at the same
+// lifecycle point where telemetry emits.
+type capturePhase struct{ got **pipeline.Exchange }
 
-func (captureStage) Name() string { return "test.capture" }
+func (capturePhase) Name() string { return "observe" }
 
-func (c captureStage) Handle(ex *pipeline.Exchange, next func() error) error {
-	defer func() { *c.got = ex }()
-	return next()
+func (c capturePhase) Apply(context.Context, *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+	return pipeline.Outcome{Decision: pipeline.Continue}, func(_ context.Context, ex *pipeline.Exchange, _ pipeline.Completion) error {
+		*c.got = ex
+		return nil
+	}
 }
 
-// newCapturingGateway builds a test gateway whose chain starts with a
-// captureStage, and returns a func yielding the captured Exchange.
+// newCapturingGateway replaces only the mandatory Observe implementation.
 func newCapturingGateway(t *testing.T, upstreamURL string) (*Gateway, func(*testing.T) *pipeline.Exchange) {
 	t.Helper()
 	gw := newTestGateway(t, upstreamURL)
 	var captured *pipeline.Exchange
-	gw.OuterStages = []pipeline.Stage{captureStage{got: &captured}}
+	gw.observePhase = capturePhase{got: &captured}
 	return gw, func(t *testing.T) *pipeline.Exchange {
 		t.Helper()
 		if captured == nil {
@@ -47,11 +42,8 @@ func newCapturingGateway(t *testing.T, upstreamURL string) (*Gateway, func(*test
 }
 
 // TestDispatchPopulatesExchangeBeforeTelemetry is the core ordering invariant:
-// by the time the chain unwinds to the telemetry Stage, the Exchange must hold
-// route, upstream, usage, status, consumer, started, and the LogCtx. The
-// dispatcher fills these in as they become known and the telemetry Stage emits
-// from a defer, guaranteeing it sees the finished picture. (The emit itself is
-// tested in internal/telemetry/stage_test.go.)
+// by the time the Observe finalizer runs, the Exchange must hold route, target,
+// usage, status, identity, request metadata, and response.
 func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	upstream := nonStreamUpstream(t)
 	defer upstream.Close()
@@ -69,13 +61,14 @@ func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	}
 
 	ex := captured(t)
-	route, _ := ex.GetExt(telemetry.ExtRoute).(configsnapshot.Route)
-	if route.Model != "gpt-4o" {
-		t.Errorf("exchange route = %+v; want model gpt-4o", route)
+	if ex.Route.Model != "gpt-4o" {
+		t.Errorf("exchange route = %+v; want model gpt-4o", ex.Route)
 	}
-	up, _ := ex.GetExt(telemetry.ExtUpstream).(configsnapshot.Upstream)
-	if up.Name != "test" {
-		t.Errorf("exchange upstream = %+v; want name test", up)
+	if ex.Target.UpstreamName != "test" {
+		t.Errorf("exchange target = %+v; want upstream name test", ex.Target)
+	}
+	if ex.Target.ID == "" {
+		t.Error("exchange target ID is empty")
 	}
 	if ex.Usage.PromptTokens != 3 || ex.Usage.CompletionTokens != 2 {
 		t.Errorf("exchange usage = %+v; want prompt=3 completion=2 (from nonStreamUpstream fixture)", ex.Usage)
@@ -83,25 +76,23 @@ func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	if ex.Started.Before(startWall) {
 		t.Errorf("exchange started %v before dispatch entry %v", ex.Started, startWall)
 	}
-	lc, _ := ex.GetExt(telemetry.ExtLogCtx).(telemetry.LogCtx)
-	if lc.ClientModel != "gpt-4o" || lc.Method != http.MethodPost {
-		t.Errorf("exchange logctx = %+v; want ClientModel=gpt-4o Method=POST", lc)
+	if ex.Request.ModelID() != "gpt-4o" || ex.RequestInfo.Operation != http.MethodPost {
+		t.Errorf("exchange request metadata = %+v; want ClientModel=gpt-4o Method=POST", ex.RequestInfo)
 	}
-	// ConsumerID empty: the fixture model has EnableAuth=false (open), so no
+	// Identity subject is empty: the fixture model has EnableAuth=false, so no
 	// key resolves.
-	if ex.ConsumerID != "" {
-		t.Errorf("exchange consumer = %q; want empty for open model", ex.ConsumerID)
+	if ex.Identity.Subject != "" || !ex.Identity.Anonymous {
+		t.Errorf("exchange identity = %+v; want anonymous for open model", ex.Identity)
 	}
 	// The upstream's response usage must have reached the exchange.
-	if ex.Resp == nil {
-		t.Error("exchange Resp is nil for a non-streaming response")
+	if ex.Response == nil {
+		t.Error("exchange Response is nil for a non-streaming response")
 	}
 }
 
 // TestDispatchPopulatesExchangeOnEarlyExit asserts the Exchange still carries
 // the status when the request is rejected BEFORE reaching an upstream
-// (model-not-found): the route Stage short-circuits, and the outer Stages —
-// telemetry in production, captureStage here — still unwind.
+// (model-not-found): Resolve rejects, but the Observe Finalizer still runs.
 func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 	upstream := nonStreamUpstream(t) // never hit (model not found)
 	defer upstream.Close()
@@ -117,13 +108,11 @@ func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 	}
 
 	ex := captured(t)
-	// Dispatch stamps the recorder's status onto the Exchange after the chain
-	// returns, so a Stage reading ex.Status in its own defer sees the code the
-	// client actually got.
+	// Resolve stamps the status before returning Reject, so Observe sees it.
 	if ex.Status != http.StatusNotFound {
 		t.Errorf("exchange status = %d; want 404 (early-exit path must still record it)", ex.Status)
 	}
-	if _, ok := ex.GetExt(telemetry.ExtRoute).(configsnapshot.Route); ok {
+	if ex.Route != (pipeline.LogicalRoute{}) {
 		t.Error("exchange carries a route for a model that does not exist")
 	}
 	if ex.Usage != (llm.Usage{}) {

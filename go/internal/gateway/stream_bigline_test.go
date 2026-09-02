@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nyroway/nyro/go/internal/llm/pipeline"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
-	"github.com/nyroway/nyro/go/internal/pipeline"
 )
 
 // TestServeStreamHugeSSELine verifies SSE lines larger than bufio.Scanner's
@@ -40,8 +40,8 @@ func TestServeStreamHugeSSELine(t *testing.T) {
 
 	g := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
 	rec := httptest.NewRecorder()
-	ex := &pipeline.Exchange{Ctx: context.Background(), W: rec}
-	g.serveStream(ex, upstream, chatEgress, chatIngress)
+	ex := &pipeline.Exchange{}
+	g.serveStream(context.Background(), rec, nil, ex, upstream, chatEgress, chatIngress)
 
 	if !strings.Contains(rec.Body.String(), big[:64]) {
 		t.Errorf("streamed body lost the oversized chunk content; got %d bytes", rec.Body.Len())
