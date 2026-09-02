@@ -1,6 +1,8 @@
 package configsync
 
 import (
+	"reflect"
+	"sort"
 	"testing"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
@@ -42,6 +44,16 @@ func TestSnapshotFromProto_Upstreams(t *testing.T) {
 	}
 	if snap.UpstreamGet("missing") != nil {
 		t.Error("missing upstream should be nil")
+	}
+}
+
+func TestSnapshotFromProto_LegacyModelsJSONUsesGenericFallback(t *testing.T) {
+	snap := SnapshotFromProto(&pb.ConfigSnapshot{Upstreams: []*pb.Upstream{{
+		Id: "up-1", Name: "legacy", Protocol: "openai-chatcompletions", BaseUrl: "https://legacy.example/v1",
+		ModelsJson: `["legacy-model"]`,
+	}}})
+	if upstream := snap.UpstreamGet("up-1"); upstream == nil || upstream.Provider != "" {
+		t.Fatalf("legacy upstream provider = %+v, want generic fallback", upstream)
 	}
 }
 
@@ -116,7 +128,7 @@ func TestSnapshotFromProto_Settings(t *testing.T) {
 func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	// Build storage, build pb snapshot, convert to internal, assert equivalence
 	// with the direct storage-to-snapshot projection.
-	st, u, rOpen, _, _, rawKey := newPopulatedStorage(t)
+	st, _, _, _, _, rawKey := newPopulatedStorage(t)
 	if err := st.Storage().Settings().Set("proxy.request_timeout", "45s"); err != nil {
 		t.Fatal(err)
 	}
@@ -137,27 +149,46 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 
 	got := SnapshotFromProto(pbSnap)
 
-	// upstreams
-	if gu := got.UpstreamGet(u.ID); gu == nil || gu.BaseURL != u.BaseURL {
-		t.Errorf("upstream via proto path mismatch: %+v", gu)
+	if !reflect.DeepEqual(sortedUpstreams(got), sortedUpstreams(direct)) {
+		t.Errorf("upstreams via proto = %+v, want %+v", sortedUpstreams(got), sortedUpstreams(direct))
 	}
-	// routes with targets
-	gr := got.RouteByModel(rOpen.Model)
-	dr := direct.RouteByModel(rOpen.Model)
-	if gr == nil || len(gr.Upstreams) != len(dr.Upstreams) {
-		t.Errorf("route targets mismatch: got %d want %d", len(gr.Upstreams), len(dr.Upstreams))
+	if !reflect.DeepEqual(sortedRoutes(got), sortedRoutes(direct)) {
+		t.Errorf("routes via proto = %+v, want %+v", sortedRoutes(got), sortedRoutes(direct))
 	}
-	// consumer keys
-	if gk := got.FindKey(rawKey); gk == nil {
-		t.Error("key via proto path mismatch: not found")
+	if !reflect.DeepEqual(got.FindKey(rawKey), direct.FindKey(rawKey)) {
+		t.Errorf("consumer access via proto = %+v, want %+v", got.FindKey(rawKey), direct.FindKey(rawKey))
 	}
-	// settings
-	if v, ok := got.SettingGet("proxy.request_timeout"); !ok || v != "45s" {
-		t.Errorf("data-plane setting via proto path = %q %v, want 45s true", v, ok)
+	for _, key := range []string{"proxy.request_timeout", "proxy_enabled", "proxy_url"} {
+		if gotValue, gotOK := got.SettingGet(key); gotValue != mustSetting(t, direct, key) || gotOK != hasSetting(direct, key) {
+			t.Errorf("SettingGet(%q) via proto = %q, %v; want %q, %v", key, gotValue, gotOK, mustSetting(t, direct, key), hasSetting(direct, key))
+		}
 	}
-	if _, ok := got.SettingGet("proxy_url"); ok {
-		t.Error("legacy control-plane setting proxy_url must not be carried through proto")
+	if got.Fingerprint() != direct.Fingerprint() {
+		t.Errorf("fingerprint via proto = %q, want %q", got.Fingerprint(), direct.Fingerprint())
 	}
+}
+
+func sortedUpstreams(snap *configsnapshot.Snapshot) []configsnapshot.Upstream {
+	upstreams := snap.UpstreamsList()
+	sort.Slice(upstreams, func(i, j int) bool { return upstreams[i].ID < upstreams[j].ID })
+	return upstreams
+}
+
+func sortedRoutes(snap *configsnapshot.Snapshot) []configsnapshot.Route {
+	routes := snap.RoutesList()
+	sort.Slice(routes, func(i, j int) bool { return routes[i].Model < routes[j].Model })
+	return routes
+}
+
+func mustSetting(t *testing.T, snap *configsnapshot.Snapshot, key string) string {
+	t.Helper()
+	value, _ := snap.SettingGet(key)
+	return value
+}
+
+func hasSetting(snap *configsnapshot.Snapshot, key string) bool {
+	_, ok := snap.SettingGet(key)
+	return ok
 }
 
 // TestSnapshotFromStorage_CarriesObservabilitySettings is a targeted
@@ -245,6 +276,10 @@ func TestSnapshotFromStorage_OnlyCarriesDataPlaneSettings(t *testing.T) {
 	}
 
 	roundtrip := SnapshotFromProto(pbSnap)
+	direct, err := storage.LoadSnapshot(core)
+	if err != nil {
+		t.Fatalf("LoadSnapshot: %v", err)
+	}
 	for _, key := range []string{"state.type", "state.url"} {
 		want := settings[key]
 		if got, ok := roundtrip.SettingGet(key); !ok || got != want {
@@ -260,6 +295,9 @@ func TestSnapshotFromStorage_OnlyCarriesDataPlaneSettings(t *testing.T) {
 		if _, ok := pbSnap.Settings[key]; ok {
 			t.Errorf("control-plane setting %q must not be carried", key)
 		}
+	}
+	if direct.Fingerprint() != roundtrip.Fingerprint() {
+		t.Errorf("all runtime settings fingerprint via proto = %q, want %q", roundtrip.Fingerprint(), direct.Fingerprint())
 	}
 }
 

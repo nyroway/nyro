@@ -29,7 +29,7 @@ func newPopulatedStorage(t *testing.T) (*memory.Backend, storage.Upstream, stora
 	core := st.Storage()
 
 	upstream, err := core.Upstreams().Create(storage.CreateUpstream{
-		Name: "openai", Protocol: "openai",
+		Name: "openai", Provider: "openai", Protocol: "openai",
 		BaseURL: "https://api.openai.com", CredentialsJSON: []byte(`{"api_key":"sk-upstream"}`),
 	})
 	if err != nil {

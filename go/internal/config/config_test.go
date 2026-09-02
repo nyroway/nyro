@@ -3,11 +3,13 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/platform/state"
+	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
@@ -366,6 +368,79 @@ func TestBuildSnapshot_BuildsReadableSnapshot(t *testing.T) {
 	if len(rec.Routes) != 1 || rec.Routes[0] != "gpt-4o" {
 		t.Errorf("route grant missing/wrong: %+v", rec.Routes)
 	}
+}
+
+func TestBuildSnapshotMatchesStorageRuntimeQueries(t *testing.T) {
+	cfg := &Config{
+		Settings: SettingsSpec{Proxy: ProxySpec{RequestTimeout: "45s", MaxRetries: 3}},
+		Upstreams: []UpstreamSpec{{
+			Name: "openai", Provider: "openai", Credentials: map[string]string{"api_key": "sk-x"}, Proxy: UpstreamProxySpec{URL: "http://proxy.local"},
+		}},
+		Routes: []RouteSpec{{
+			Model: "gpt-4o", EnableAuth: true, Upstreams: []RouteUpstreamSpec{{Name: "openai", Model: "gpt-4o", Weight: 4, Priority: 2}},
+		}},
+		Consumers: []ConsumerSpec{{
+			Name: "local", Keys: []ConsumerKeySpec{{Name: "primary", APIKey: "nyro-runtime-source-key"}}, Access: ConsumerAccessSpec{Models: []string{"gpt-4o"}},
+			Quotas: ConsumerQuotasSpec{Requests: []QuotaLimitSpec{{Limit: 60, Window: "1m"}}},
+		}},
+	}
+	yamlSnapshot, err := cfg.BuildSnapshot(testProviderCatalog(t))
+	if err != nil {
+		t.Fatalf("BuildSnapshot: %v", err)
+	}
+	backend := memory.New()
+	if err := cfg.ApplyTo(backend.Storage(), testProviderCatalog(t)); err != nil {
+		t.Fatalf("ApplyTo: %v", err)
+	}
+	storageSnapshot, err := storage.LoadSnapshot(backend.Storage())
+	if err != nil {
+		t.Fatalf("LoadSnapshot: %v", err)
+	}
+
+	yamlRoute := yamlSnapshot.RouteByModel("gpt-4o")
+	storageRoute := storageSnapshot.RouteByModel("gpt-4o")
+	if yamlRoute == nil || storageRoute == nil || yamlRoute.Balance != storageRoute.Balance || yamlRoute.EnableAuth != storageRoute.EnableAuth || yamlRoute.Enabled != storageRoute.Enabled || !reflect.DeepEqual(yamlRoute.EnablePayload, storageRoute.EnablePayload) {
+		t.Fatalf("route runtime fields differ: yaml=%+v storage=%+v", yamlRoute, storageRoute)
+	}
+	if len(yamlRoute.Upstreams) != 1 || len(storageRoute.Upstreams) != 1 {
+		t.Fatalf("route targets differ: yaml=%+v storage=%+v", yamlRoute.Upstreams, storageRoute.Upstreams)
+	}
+	yamlTarget, storageTarget := yamlRoute.Upstreams[0], storageRoute.Upstreams[0]
+	if yamlTarget.Model != storageTarget.Model || yamlTarget.Weight != storageTarget.Weight || yamlTarget.Priority != storageTarget.Priority || yamlTarget.Enabled != storageTarget.Enabled {
+		t.Fatalf("route target runtime fields differ: yaml=%+v storage=%+v", yamlTarget, storageTarget)
+	}
+	yamlUpstream := yamlSnapshot.UpstreamGet(yamlTarget.UpstreamID)
+	storageUpstream := storageSnapshot.UpstreamGet(storageTarget.UpstreamID)
+	if yamlUpstream == nil || storageUpstream == nil || yamlUpstream.Name != storageUpstream.Name || yamlUpstream.Provider != storageUpstream.Provider || yamlUpstream.Protocol != storageUpstream.Protocol || yamlUpstream.BaseURL != storageUpstream.BaseURL || yamlUpstream.ProxyURL != storageUpstream.ProxyURL || yamlUpstream.Enabled != storageUpstream.Enabled || !reflect.DeepEqual(yamlUpstream.CredentialsJSON, storageUpstream.CredentialsJSON) {
+		t.Fatalf("upstream runtime fields differ: yaml=%+v storage=%+v", yamlUpstream, storageUpstream)
+	}
+	yamlAccess := yamlSnapshot.FindKey("nyro-runtime-source-key")
+	storageAccess := storageSnapshot.FindKey("nyro-runtime-source-key")
+	if yamlAccess == nil || storageAccess == nil || yamlAccess.Name != storageAccess.Name || yamlAccess.KeyPreview != storageAccess.KeyPreview || yamlAccess.Enabled != storageAccess.Enabled || yamlAccess.ExpiresAt != storageAccess.ExpiresAt || !reflect.DeepEqual(yamlAccess.Routes, storageAccess.Routes) {
+		t.Fatalf("consumer access runtime fields differ: yaml=%+v storage=%+v", yamlAccess, storageAccess)
+	}
+	if len(yamlAccess.Quotas) != 1 || len(storageAccess.Quotas) != 1 || yamlAccess.Quotas[0].QuotaType != storageAccess.Quotas[0].QuotaType || yamlAccess.Quotas[0].QuotaLimit != storageAccess.Quotas[0].QuotaLimit || yamlAccess.Quotas[0].Window != storageAccess.Quotas[0].Window || yamlAccess.Quotas[0].Currency != storageAccess.Quotas[0].Currency {
+		t.Fatalf("consumer quota runtime fields differ: yaml=%+v storage=%+v", yamlAccess.Quotas, storageAccess.Quotas)
+	}
+	for _, key := range []string{"proxy.request_timeout", "proxy.max_retries"} {
+		if yamlValue, yamlOK := yamlSnapshot.SettingGet(key); yamlValue != mustSnapshotSetting(t, storageSnapshot, key) || yamlOK != hasSnapshotSetting(storageSnapshot, key) {
+			t.Fatalf("SettingGet(%q) differs: yaml=%q,%v storage=%q,%v", key, yamlValue, yamlOK, mustSnapshotSetting(t, storageSnapshot, key), hasSnapshotSetting(storageSnapshot, key))
+		}
+	}
+	if again, err := cfg.BuildSnapshot(testProviderCatalog(t)); err != nil || yamlSnapshot.Fingerprint() != again.Fingerprint() {
+		t.Fatalf("YAML fingerprint is not deterministic: first=%q second=%q err=%v", yamlSnapshot.Fingerprint(), again.Fingerprint(), err)
+	}
+}
+
+func mustSnapshotSetting(t *testing.T, snap interface{ SettingGet(string) (string, bool) }, key string) string {
+	t.Helper()
+	value, _ := snap.SettingGet(key)
+	return value
+}
+
+func hasSnapshotSetting(snap interface{ SettingGet(string) (string, bool) }, key string) bool {
+	_, ok := snap.SettingGet(key)
+	return ok
 }
 
 func TestBuildSnapshot_UnknownRefs(t *testing.T) {

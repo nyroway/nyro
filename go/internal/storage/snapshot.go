@@ -1,6 +1,26 @@
 package storage
 
-import configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
+import (
+	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
+	"github.com/nyroway/nyro/go/internal/platform/state"
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
+)
+
+var dataPlaneProxySettingKeys = map[string]struct{}{
+	"proxy.request_timeout": {},
+	"proxy.connect_timeout": {},
+	"proxy.max_retries":     {},
+	"proxy.retry_on_status": {},
+	"proxy.max_body_bytes":  {},
+}
+
+// IsDataPlaneSettingKey reports whether key contributes to a runtime Snapshot.
+func IsDataPlaneSettingKey(key string) bool {
+	if _, ok := dataPlaneProxySettingKeys[key]; ok {
+		return true
+	}
+	return schema.IsExporterSettingKey(key) || state.IsSettingKey(key)
+}
 
 // LoadSnapshot projects one complete storage read into the immutable runtime
 // configuration model. Raw consumer keys are never loaded.
@@ -13,8 +33,8 @@ func LoadSnapshot(store Storage) (*configsnapshot.Snapshot, error) {
 	for _, upstream := range upstreams {
 		builder.SetUpstream(configsnapshot.Upstream{
 			ID: upstream.ID, Name: upstream.Name, Provider: upstream.Provider, Protocol: upstream.Protocol,
-			BaseURL: upstream.BaseURL, CredentialsJSON: upstream.CredentialsJSON, ModelsJSON: upstream.ModelsJSON,
-			ModelsURL: upstream.ModelsURL, ProxyURL: upstream.ProxyURL, Enabled: upstream.Enabled,
+			BaseURL: upstream.BaseURL, CredentialsJSON: upstream.CredentialsJSON,
+			ProxyURL: upstream.ProxyURL, Enabled: upstream.Enabled,
 		})
 	}
 	routes, err := store.Routes().List()
@@ -56,7 +76,9 @@ func LoadSnapshot(store Storage) (*configsnapshot.Snapshot, error) {
 		return nil, err
 	}
 	for _, setting := range settings {
-		builder.SetSetting(setting.Key, setting.Value)
+		if IsDataPlaneSettingKey(setting.Key) {
+			builder.SetSetting(setting.Key, setting.Value)
+		}
 	}
 	return builder.Build(), nil
 }

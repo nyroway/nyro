@@ -77,6 +77,35 @@ func TestFingerprintIsStableForEquivalentSnapshots(t *testing.T) {
 	}
 }
 
+func TestFingerprintIsStableWhenConsumerKeyIdentityTies(t *testing.T) {
+	build := func(reverse bool) *Snapshot {
+		entries := []struct {
+			enabled bool
+			expires string
+			routes  []string
+			quota   int64
+		}{
+			{enabled: true, expires: "", routes: []string{"gpt-5"}, quota: 10},
+			{enabled: false, expires: "2026-12-01T00:00:00Z", routes: []string{"gpt-4"}, quota: 20},
+		}
+		var builder Builder
+		if reverse {
+			entries[0], entries[1] = entries[1], entries[0]
+		}
+		for _, entry := range entries {
+			builder.AddConsumerKey(
+				"key-1", "consumer-1", "primary", previewOf("nyro_tok_tied_0000"), hashKey("nyro_tok_tied_0000"),
+				entry.enabled, entry.expires, entry.routes,
+				[]ConsumerQuota{{ID: "quota-1", ConsumerID: "consumer-1", QuotaType: "requests", QuotaLimit: entry.quota, Window: "1m"}},
+			)
+		}
+		return builder.Build()
+	}
+	if got, want := build(false).Fingerprint(), build(true).Fingerprint(); got != want {
+		t.Fatalf("tied consumer keys have fingerprints %q and %q", got, want)
+	}
+}
+
 func TestFingerprintChangesForEffectiveDataPlaneConfiguration(t *testing.T) {
 	base := snapshotForFingerprint(false)
 	tests := []struct {
@@ -96,12 +125,6 @@ func TestFingerprintChangesForEffectiveDataPlaneConfiguration(t *testing.T) {
 			},
 		},
 		{
-			name: "consumer grant and quota",
-			mutate: func(b *Builder) {
-				b.AddConsumerKey("key-1", "consumer-1", "primary", previewOf("nyro_tok_fingerprint_0000"), hashKey("nyro_tok_fingerprint_0000"), true, "", []string{"changed"}, []ConsumerQuota{{ID: "quota-1", ConsumerID: "consumer-1", QuotaType: "requests", QuotaLimit: 11, Window: "1m"}})
-			},
-		},
-		{
 			name:   "setting",
 			mutate: func(b *Builder) { b.SetSetting("proxy.max_retries", "4") },
 		},
@@ -116,6 +139,32 @@ func TestFingerprintChangesForEffectiveDataPlaneConfiguration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFingerprintChangesForConsumerGrantAndQuota(t *testing.T) {
+	base := snapshotWithConsumerAccess([]string{"gpt-5"}, 10)
+	for _, test := range []struct {
+		name string
+		snap *Snapshot
+	}{
+		{name: "grant", snap: snapshotWithConsumerAccess([]string{"gpt-4"}, 10)},
+		{name: "quota", snap: snapshotWithConsumerAccess([]string{"gpt-5"}, 11)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.snap.Fingerprint(); got == base.Fingerprint() {
+				t.Fatal("fingerprint did not change")
+			}
+		})
+	}
+}
+
+func snapshotWithConsumerAccess(routes []string, quotaLimit int64) *Snapshot {
+	var builder Builder
+	builder.SetUpstream(Upstream{ID: "up-1", Name: "primary", CredentialsJSON: []byte(`{"api_key":"secret"}`), Enabled: true})
+	builder.SetRoute(Route{ID: "route-1", Model: "gpt-5", Balance: "weighted", Enabled: true, Upstreams: []RouteTarget{{ID: "target-1", UpstreamID: "up-1", Model: "gpt-5", Weight: 1, Priority: 1, Enabled: true}}})
+	rawKey := "nyro_tok_fingerprint_consumer_0000"
+	builder.AddConsumerKey("key-1", "consumer-1", "primary", previewOf(rawKey), hashKey(rawKey), true, "", routes, []ConsumerQuota{{ID: "quota-1", ConsumerID: "consumer-1", QuotaType: "requests", QuotaLimit: quotaLimit, Window: "1m"}})
+	return builder.Build()
 }
 
 func snapshotForFingerprint(reverse bool) *Snapshot {
