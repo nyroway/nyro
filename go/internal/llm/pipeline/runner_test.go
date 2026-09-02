@@ -118,6 +118,48 @@ func TestRunnerRunsMandatoryPhasesInFixedOrder(t *testing.T) {
 	})
 }
 
+func TestRunnerRunsTerminalizerBeforeReverseFinalizers(t *testing.T) {
+	events := &eventLog{}
+	phases := phaseSet(events)
+	runner, err := NewRunner(phases)
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	exchange := &Exchange{}
+	terminalResponse := llm.NewChatResponse("terminal", "model")
+
+	completion, err := runner.RunWithTerminalizer(context.Background(), exchange, func(_ context.Context, current *Exchange, runErr error) error {
+		if runErr != nil {
+			t.Fatalf("terminalizer run error = %v", runErr)
+		}
+		events.add("terminalize")
+		current.Response = terminalResponse
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("RunWithTerminalizer: %v", err)
+	}
+	if completion.Response != terminalResponse || completion.Error != nil {
+		t.Fatalf("completion = %+v", completion)
+	}
+	requireEvents(t, events, []string{
+		"apply:observe",
+		"apply:resolve",
+		"apply:authenticate",
+		"apply:authorize",
+		"apply:admit",
+		"apply:dispatch",
+		"terminalize",
+		"finalize:dispatch",
+		"finalize:admit",
+		"finalize:authorize",
+		"finalize:authenticate",
+		"finalize:resolve",
+		"finalize:observe",
+	})
+}
+
 func TestRunnerShortCircuitSkipsDispatchAndRunsFinalizers(t *testing.T) {
 	events := &eventLog{}
 	phases := phaseSet(events)

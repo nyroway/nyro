@@ -19,6 +19,20 @@ func TestConstructorsExposeGeminiEndpoint(t *testing.T) {
 	}
 }
 
+func TestEgressDecodeErrorPreservesGeminiSemantics(t *testing.T) {
+	codec := NewEgress().(protocol.ChatEgressCodec)
+	body := []byte(`{"error":{"code":429,"message":"resource exhausted","status":"RESOURCE_EXHAUSTED"}}`)
+
+	got, err := codec.DecodeError(protocol.WireResponse{Status: 429, Body: body})
+
+	if err != nil {
+		t.Fatalf("DecodeError: %v", err)
+	}
+	if got.Kind != llm.ErrRateLimitError || got.Message != "resource exhausted" || got.StatusCode == nil || *got.StatusCode != 429 || string(got.Raw) != string(body) {
+		t.Fatalf("decoded error = %+v", got)
+	}
+}
+
 func TestRequestRoundTrip(t *testing.T) {
 	t.Parallel()
 	in := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],` +

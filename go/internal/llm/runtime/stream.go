@@ -11,6 +11,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/llm/pipeline"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	"github.com/nyroway/nyro/go/internal/llm/provider"
 )
 
 type streamLifecycle uint8
@@ -24,7 +25,9 @@ const (
 // streamState is request-scoped authority for the only legal retry boundary:
 // a stream remains uncommitted until Sink accepts its first canonical delta.
 type streamState struct {
-	state streamLifecycle
+	state          streamLifecycle
+	failure        failureOrigin
+	allowRawErrors bool
 }
 
 func (r *Runtime) consumeStream(
@@ -33,28 +36,40 @@ func (r *Runtime) consumeStream(
 	exchange *pipeline.Exchange,
 	upstream io.Reader,
 	decoder protocol.StreamDecoder,
+	driver provider.Driver,
+	providerRuntime provider.UpstreamRuntime,
+	allowRawStream bool,
 ) *llm.Error {
 	if upstream == nil {
-		return llm.NewError(llm.ErrUnexpectedEOF, "provider stream has no body")
+		return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+			llm.NewError(llm.ErrUnexpectedEOF, "provider stream has no body"))
 	}
 	if decoder == nil {
-		return llm.NewError(llm.ErrStreamMidError, "egress codec returned no stream decoder")
+		return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+			llm.NewError(llm.ErrStreamMidError, "egress codec returned no stream decoder"))
 	}
 	reader := bufio.NewReaderSize(upstream, 64*1024)
 	var pendingDone *llm.DoneDelta
 	for {
 		if err := ctx.Err(); err != nil {
 			execution.stream.state = streamTerminated
+			execution.stream.failure = failureClient
 			return errorFromExecution(err)
 		}
 		line, readErr := reader.ReadString('\n')
+		if err := ctx.Err(); err != nil {
+			execution.stream.state = streamTerminated
+			execution.stream.failure = failureClient
+			return errorFromExecution(err)
+		}
 		line = strings.TrimRight(line, "\r\n")
 		if strings.HasPrefix(line, "data:") {
 			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if payload != "" {
 				deltas, parseErr := decoder.ParseChunk(payload)
 				if parseErr != nil {
-					return r.failStream(ctx, execution, exchange, llm.NewError(llm.ErrStreamMidError, "decode provider stream: "+parseErr.Error()))
+					return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+						llm.NewError(llm.ErrStreamMidError, "decode provider stream: "+parseErr.Error()))
 				}
 				for _, delta := range deltas {
 					if done, ok := delta.(*llm.DoneDelta); ok {
@@ -67,12 +82,12 @@ func (r *Runtime) consumeStream(
 						pendingDone = &pending
 						continue
 					}
-					if providerError := r.acceptStreamDelta(ctx, execution, exchange, delta); providerError != nil {
+					if providerError := r.acceptDecodedStreamDelta(ctx, execution, exchange, driver, providerRuntime, delta, allowRawStream); providerError != nil {
 						return providerError
 					}
 				}
 				if pendingDone != nil && payload == "[DONE]" {
-					return r.finishNormalStream(ctx, execution, exchange, decoder, pendingDone)
+					return r.finishNormalStream(ctx, execution, exchange, decoder, driver, providerRuntime, pendingDone, allowRawStream)
 				}
 			}
 		}
@@ -80,10 +95,11 @@ func (r *Runtime) consumeStream(
 			continue
 		}
 		if !errors.Is(readErr, io.EOF) {
-			return r.failStream(ctx, execution, exchange, llm.NewError(llm.ErrStreamMidError, "read provider stream: "+readErr.Error()))
+			return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+				llm.NewError(llm.ErrStreamMidError, "read provider stream: "+readErr.Error()))
 		}
 		if pendingDone != nil {
-			return r.finishNormalStream(ctx, execution, exchange, decoder, pendingDone)
+			return r.finishNormalStream(ctx, execution, exchange, decoder, driver, providerRuntime, pendingDone, allowRawStream)
 		}
 
 		// Finish may flush decoder-local buffered content. A decoder-synthesized
@@ -92,12 +108,56 @@ func (r *Runtime) consumeStream(
 			if _, done := delta.(*llm.DoneDelta); done {
 				continue
 			}
-			if providerError := r.acceptStreamDelta(ctx, execution, exchange, delta); providerError != nil {
+			if providerError := r.acceptDecodedStreamDelta(ctx, execution, exchange, driver, providerRuntime, delta, allowRawStream); providerError != nil {
 				return providerError
 			}
 		}
-		return r.failStream(ctx, execution, exchange, llm.NewError(llm.ErrUnexpectedEOF, "provider stream ended unexpectedly"))
+		return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime,
+			llm.NewError(llm.ErrUnexpectedEOF, "provider stream ended unexpectedly"))
 	}
+}
+
+func (r *Runtime) extendStreamProviderError(
+	ctx context.Context,
+	driver provider.Driver,
+	providerRuntime provider.UpstreamRuntime,
+	providerError *llm.Error,
+) *llm.Error {
+	providerError = cloneError(providerError)
+	if err := driver.ExtendError(ctx, providerRuntime, providerError); err != nil {
+		return llm.ErrorFromStatus(statusBadGateway, "apply provider stream error extension: "+err.Error())
+	}
+	return providerError
+}
+
+func (r *Runtime) failProviderStream(
+	ctx context.Context,
+	execution *execution,
+	exchange *pipeline.Exchange,
+	driver provider.Driver,
+	providerRuntime provider.UpstreamRuntime,
+	providerError *llm.Error,
+) *llm.Error {
+	providerError = r.extendStreamProviderError(ctx, driver, providerRuntime, providerError)
+	return r.failStream(ctx, execution, exchange, providerError)
+}
+
+func (r *Runtime) acceptDecodedStreamDelta(
+	ctx context.Context,
+	execution *execution,
+	exchange *pipeline.Exchange,
+	driver provider.Driver,
+	providerRuntime provider.UpstreamRuntime,
+	delta llm.StreamDelta,
+	allowRawStream bool,
+) *llm.Error {
+	if _, unknown := delta.(*llm.UnknownDelta); unknown && !allowRawStream {
+		return nil
+	}
+	if providerError := streamDeltaError(delta); providerError != nil {
+		return r.failProviderStream(ctx, execution, exchange, driver, providerRuntime, providerError)
+	}
+	return r.acceptStreamDelta(ctx, execution, exchange, delta)
 }
 
 func (r *Runtime) finishNormalStream(
@@ -105,7 +165,10 @@ func (r *Runtime) finishNormalStream(
 	execution *execution,
 	exchange *pipeline.Exchange,
 	decoder protocol.StreamDecoder,
+	driver provider.Driver,
+	providerRuntime provider.UpstreamRuntime,
 	done *llm.DoneDelta,
+	allowRawStream bool,
 ) *llm.Error {
 	// Finish may release decoder-local content that logically precedes Done,
 	// such as an unterminated reasoning buffer.
@@ -113,7 +176,7 @@ func (r *Runtime) finishNormalStream(
 		if _, terminal := buffered.(*llm.DoneDelta); terminal {
 			continue
 		}
-		if providerError := r.acceptStreamDelta(ctx, execution, exchange, buffered); providerError != nil {
+		if providerError := r.acceptDecodedStreamDelta(ctx, execution, exchange, driver, providerRuntime, buffered, allowRawStream); providerError != nil {
 			return providerError
 		}
 	}
@@ -126,22 +189,18 @@ func (r *Runtime) acceptStreamDelta(
 	exchange *pipeline.Exchange,
 	delta llm.StreamDelta,
 ) *llm.Error {
-	providerError := streamDeltaError(delta)
-	if providerError != nil && execution.stream.state == streamUncommitted {
-		return providerError
-	}
 	if err := r.sendDelta(ctx, execution, exchange, delta); err != nil {
 		execution.stream.state = streamTerminated
 		if ctxErr := ctx.Err(); ctxErr != nil {
+			execution.stream.failure = failureClient
 			return errorFromExecution(ctxErr)
 		}
+		execution.stream.failure = failureDownstream
 		return llm.NewError(llm.ErrStreamMidError, "send client stream: "+err.Error())
-	}
-	if providerError != nil {
-		return providerError
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		execution.stream.state = streamTerminated
+		execution.stream.failure = failureClient
 		return errorFromExecution(ctxErr)
 	}
 	return nil
@@ -154,6 +213,9 @@ func (r *Runtime) sendDelta(ctx context.Context, execution *execution, exchange 
 	if execution.stream.state == streamTerminated {
 		return errors.New("stream is already terminated")
 	}
+	if execution.deliveryClosed {
+		return errors.New("stream Sink is closed")
+	}
 	if usage, ok := delta.(*llm.UsageDelta); ok {
 		exchange.Usage = usage.Usage
 	}
@@ -161,6 +223,7 @@ func (r *Runtime) sendDelta(ctx context.Context, execution *execution, exchange 
 		execution.runner.ObserveDelta(ctx, exchange, delta)
 	}
 	if err := execution.sink.SendDelta(ctx, delta); err != nil {
+		execution.deliveryClosed = true
 		return err
 	}
 	if execution.stream.state == streamUncommitted {
@@ -169,15 +232,22 @@ func (r *Runtime) sendDelta(ctx context.Context, execution *execution, exchange 
 	execution.delivered = true
 	if isTerminalDelta(delta) {
 		execution.stream.state = streamTerminated
+		execution.deliveryClosed = true
 	}
 	return nil
 }
 
 func (r *Runtime) failStream(ctx context.Context, execution *execution, exchange *pipeline.Exchange, providerError *llm.Error) *llm.Error {
+	execution.stream.failure = failureProvider
 	if execution.stream.state != streamCommitted {
 		return providerError
 	}
-	terminal := &llm.StreamErrorDelta{Error: providerError}
+	deliveredError := providerError
+	if !execution.stream.allowRawErrors && len(providerError.Raw) > 0 {
+		deliveredError = cloneError(providerError)
+		deliveredError.Raw = nil
+	}
+	terminal := &llm.StreamErrorDelta{Error: deliveredError}
 	if err := r.sendDelta(ctx, execution, exchange, terminal); err != nil {
 		execution.stream.state = streamTerminated
 		return llm.NewError(llm.ErrStreamMidError, fmt.Sprintf("terminate client stream: %v", err))

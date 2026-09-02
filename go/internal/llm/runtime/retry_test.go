@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
+	"github.com/nyroway/nyro/go/internal/llm/routing"
 )
 
 func TestExecuteRetriesConfiguredStatusesUsingCurrentAttemptSemantics(t *testing.T) {
@@ -88,6 +91,81 @@ func TestExecuteFailsOverAfterBackendRetryBudget(t *testing.T) {
 	}
 	if completion.Error != nil || completion.Response == nil || completion.Response.Content != "second response" {
 		t.Fatalf("completion = %+v", completion)
+	}
+}
+
+func TestExecuteRetriesSemanticClassificationOnCustomStatus(t *testing.T) {
+	var attempts atomic.Int32
+	driver := &testDriver{classify: func(response provider.Response) provider.Classification {
+		if response.StatusCode == 409 {
+			return provider.Classification{Retryable: true}
+		}
+		return provider.Classification{}
+	}}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		settings: map[string]string{
+			"proxy.max_retries":     "2",
+			"proxy.retry_on_status": `[503]`,
+		},
+		ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress:    []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		providers: []provider.Registration{providerRegistration("test", driver)},
+		transport: transportFunc(func(_ context.Context, _ provider.Request) (*provider.Response, error) {
+			if attempts.Add(1) == 1 {
+				return response(409, `{"error":{"message":"provider asks retry"}}`), nil
+			}
+			return response(200, "ok"), nil
+		}),
+	})
+	sink := &recordingSink{}
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    sink,
+	})
+
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("transport attempts = %d, want 2 for semantic retryability", got)
+	}
+	if completion.Error != nil || completion.Response == nil || completion.Response.Content != "ok" {
+		t.Fatalf("completion = %+v", completion)
+	}
+}
+
+func TestExecuteMarksClassifiedProviderFailureUnhealthy(t *testing.T) {
+	router := routing.New()
+	target := routeTarget("target", "backend", "served-model", 1)
+	key := routing.KeyOf(routing.Target{UpstreamID: target.UpstreamID, Model: target.Model})
+	driver := &testDriver{classify: func(provider.Response) provider.Classification {
+		return provider.Classification{Failed: true}
+	}}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes:    []configsnapshot.Route{chatRoute("route", target)},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		settings:  map[string]string{"proxy.max_retries": "1"},
+		ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress:    []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		providers: []provider.Registration{providerRegistration("test", driver)},
+		transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return response(418, `{"error":{"message":"classified failure"}}`), nil
+		}),
+		router: router,
+	})
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    &recordingSink{},
+	})
+
+	if completion.Error == nil {
+		t.Fatal("completion error = nil")
+	}
+	if router.IsHealthy(key) {
+		t.Fatal("classified Provider failure was recorded healthy")
 	}
 }
 
@@ -169,7 +247,7 @@ func TestExecutePreservesSameProtocolProviderError(t *testing.T) {
 	if len(sink.opaque) != 1 {
 		t.Fatalf("opaque responses = %d, want 1", len(sink.opaque))
 	}
-	if got := sink.opaque[0]; got.Status != 418 || string(got.Body) != body || got.Headers["Content-Type"] != "application/problem+json" {
+	if got := sink.opaque[0]; got.Status != 418 || string(got.Body) != body || got.Headers["Content-Type"] != "application/problem+json" || len(got.Headers) != 1 {
 		t.Fatalf("opaque response = %+v", got)
 	}
 	if len(sink.errors) != 0 {
@@ -194,8 +272,67 @@ func TestExecuteNormalizesCrossProtocolProviderError(t *testing.T) {
 		t.Fatalf("normalized errors = %d, want 1", len(sink.errors))
 	}
 	got := sink.errors[0]
-	if completion.Error != got || got.StatusCode == nil || *got.StatusCode != 418 || string(got.Raw) != body {
+	if completion.Error == got {
+		t.Fatal("cross-Endpoint Sink received the diagnostic Completion error object directly")
+	}
+	if got.StatusCode == nil || *got.StatusCode != 418 || len(got.Raw) != 0 {
 		t.Fatalf("normalized error = %+v; completion = %+v", got, completion)
+	}
+	if string(completion.Error.Raw) != body {
+		t.Fatalf("diagnostic completion raw = %q, want Provider body", completion.Error.Raw)
+	}
+}
+
+type closeTrackingBody struct {
+	closed atomic.Bool
+}
+
+func (*closeTrackingBody) Read([]byte) (int, error) { return 0, io.EOF }
+func (body *closeTrackingBody) Close() error {
+	body.closed.Store(true)
+	return nil
+}
+
+func TestExecuteClosesResponseBodyWhenTransportReturnsResponseAndError(t *testing.T) {
+	body := &closeTrackingBody{}
+	runtime := retryRuntime(t,
+		[]configsnapshot.RouteTarget{routeTarget("target", "backend", "served-model", 1)},
+		[]configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		map[string]string{"proxy.max_retries": "1"},
+		transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return &provider.Response{StatusCode: 502, Body: body}, errors.New("transport failed after receiving headers")
+		}),
+	)
+
+	runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    &recordingSink{},
+	})
+
+	if !body.closed.Load() {
+		t.Fatal("response body was not closed when Transport returned response and error")
+	}
+}
+
+func TestExecuteRejectsNilProviderResponseBody(t *testing.T) {
+	runtime := retryRuntime(t,
+		[]configsnapshot.RouteTarget{routeTarget("target", "backend", "served-model", 1)},
+		[]configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		map[string]string{"proxy.max_retries": "1"},
+		transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return &provider.Response{StatusCode: 200}, nil
+		}),
+	)
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    &recordingSink{},
+	})
+
+	if completion.Error == nil {
+		t.Fatalf("completion error = %+v", completion.Error)
 	}
 }
 
@@ -232,6 +369,8 @@ func errorRuntime(t *testing.T, source, target protocol.Endpoint, body string) *
 		transport: transportFunc(func(_ context.Context, _ provider.Request) (*provider.Response, error) {
 			providerResponse := response(418, body)
 			providerResponse.Headers["Content-Type"] = []string{"application/problem+json"}
+			providerResponse.Headers["Set-Cookie"] = []string{"session=provider-secret"}
+			providerResponse.Headers["X-Provider-Secret"] = []string{"do-not-forward"}
 			return providerResponse, nil
 		}),
 	})

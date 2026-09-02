@@ -28,6 +28,12 @@ type Runner struct {
 	observers []StreamObserver
 }
 
+// Terminalizer runs exactly once after phase execution stops and before any
+// Finalizer. It is reserved for the trusted Runtime's terminal delivery so
+// every Finalizer observes the response/error actually committed downstream.
+// Extension phases never receive or control this hook.
+type Terminalizer func(context.Context, *Exchange, error) error
+
 var reservedPhaseNames = map[string]struct{}{
 	"observe":      {},
 	"resolve":      {},
@@ -122,6 +128,19 @@ func normalizedPhaseName(name string) string {
 // registered Finalizer in reverse order. Finalizer failures are joined so one
 // failure cannot prevent later cleanup.
 func (r *Runner) Run(ctx context.Context, ex *Exchange) (Completion, error) {
+	return r.run(ctx, ex, nil)
+}
+
+// RunWithTerminalizer executes the fixed phase sequence and invokes the
+// supplied trusted terminal step immediately before reverse finalization.
+func (r *Runner) RunWithTerminalizer(ctx context.Context, ex *Exchange, terminalize Terminalizer) (Completion, error) {
+	if terminalize == nil {
+		return Completion{}, errors.New("pipeline: Terminalizer is nil")
+	}
+	return r.run(ctx, ex, terminalize)
+}
+
+func (r *Runner) run(ctx context.Context, ex *Exchange, terminalize Terminalizer) (Completion, error) {
 	if r == nil {
 		return Completion{}, errors.New("pipeline: Runner is nil")
 	}
@@ -165,6 +184,11 @@ func (r *Runner) Run(ctx context.Context, ex *Exchange) (Completion, error) {
 	}
 
 finalize:
+	if terminalize != nil {
+		if err := terminalize(ctx, ex, runErr); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}
 	completion := completionFrom(ex)
 	for i := len(finalizers) - 1; i >= 0; i-- {
 		if err := finalizers[i](ctx, ex, completion); err != nil {

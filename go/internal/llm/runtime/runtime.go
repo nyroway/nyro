@@ -121,50 +121,96 @@ func (r *Runtime) Execute(ctx context.Context, call Call) pipeline.Completion {
 	if call.Source.Protocol == "" {
 		return r.deliverImmediateError(ctx, call.Sink, llm.ErrorFromStatus(statusBadRequest, "source Endpoint is required"))
 	}
+	request, err := cloneModelRequest(call.Request)
+	if err != nil {
+		return r.deliverImmediateError(ctx, call.Sink, llm.ErrorFromStatus(statusBadRequest, err.Error()))
+	}
+	clientModel := request.ModelID()
 
 	exchange := &pipeline.Exchange{
-		Request:       call.Request,
+		Request:       request,
 		Source:        call.Source,
 		Credentials:   call.Credentials,
 		Started:       time.Now(),
-		Streamed:      requestStreams(call.Request),
+		Streamed:      requestStreams(request),
 		Status:        statusOK,
-		RequestInfo:   r.requestInfo(call),
+		RequestInfo:   r.requestInfo(call.Source, request),
 		ClientAddress: call.ClientAddress,
 		RequestID:     call.RequestID,
 	}
-	execution := &execution{runtime: r, sink: call.Sink}
+	execution := &execution{runtime: r, sink: call.Sink, request: request, clientModel: clientModel}
 	runner, err := r.runnerFor(execution)
 	if err != nil {
 		return r.deliverImmediateError(ctx, call.Sink, llm.ErrorFromStatus(statusInternalServerError, err.Error()))
 	}
 	execution.runner = runner
-	completion, runErr := runner.Run(ctx, exchange)
-	if completion.Error == nil && completion.Response == nil && !execution.delivered && runErr != nil {
-		completion.Error = errorFromExecution(runErr)
-		exchange.Error = completion.Error
-		exchange.Status = statusOf(completion.Error, statusInternalServerError)
+	completion, _ := runner.RunWithTerminalizer(ctx, exchange, execution.terminalize)
+	return completion
+}
+
+func (execution *execution) terminalize(ctx context.Context, exchange *pipeline.Exchange, runErr error) error {
+	execution.restoreAuthority(exchange)
+	if runErr != nil {
+		exchange.Response = nil
+		exchange.Error = errorFromExecution(runErr)
+		exchange.Status = statusOf(exchange.Error, statusBadGateway)
+	}
+	if exchange.Error != nil {
+		exchange.Response = nil
+	}
+	if execution.delivered || execution.deliveryClosed {
+		return nil
 	}
 
 	switch {
-	case completion.Error != nil && !execution.delivered:
-		if sendErr := call.Sink.SendError(ctx, completion.Error); sendErr != nil && !errors.Is(sendErr, context.Canceled) {
-			completion.Error = errorFromExecution(fmt.Errorf("send error: %w", sendErr))
+	case execution.pendingWire != nil:
+		execution.deliveryClosed = true
+		if sendErr := execution.sink.SendOpaque(ctx, *execution.pendingWire); sendErr != nil {
+			exchange.Response = nil
+			exchange.Error = errorFromExecution(fmt.Errorf("send opaque response: %w", sendErr))
+			exchange.Status = statusOf(exchange.Error, statusBadGateway)
+			return sendErr
 		}
-	case completion.Response != nil && !execution.delivered:
-		if sendErr := call.Sink.SendResponse(ctx, completion.Response); sendErr != nil {
-			completion.Error = errorFromExecution(fmt.Errorf("send response: %w", sendErr))
+		execution.delivered = true
+		execution.recordPendingHealth()
+	case exchange.Error != nil:
+		execution.deliveryClosed = true
+		sinkError := cloneError(exchange.Error)
+		sinkError.Raw = nil
+		if sendErr := execution.sink.SendError(ctx, sinkError); sendErr != nil {
+			exchange.Error = errorFromExecution(fmt.Errorf("send error: %w", sendErr))
+			exchange.Status = statusOf(exchange.Error, statusBadGateway)
+			return sendErr
 		}
+		execution.delivered = true
+	case exchange.Response != nil:
+		execution.deliveryClosed = true
+		if sendErr := execution.sink.SendResponse(ctx, exchange.Response); sendErr != nil {
+			exchange.Response = nil
+			exchange.Error = errorFromExecution(fmt.Errorf("send response: %w", sendErr))
+			exchange.Status = statusOf(exchange.Error, statusBadGateway)
+			return sendErr
+		}
+		execution.delivered = true
+		execution.recordPendingHealth()
 	}
-	return completion
+	return nil
+}
+
+func (execution *execution) recordPendingHealth() {
+	if execution.pendingHealth == nil {
+		return
+	}
+	execution.runtime.router.Record(execution.pendingHealth.key, true, execution.pendingHealth.latencyMs)
+	execution.pendingHealth = nil
 }
 
 func (r *Runtime) runnerFor(execution *execution) (*pipeline.Runner, error) {
 	return pipeline.NewRunner(pipeline.PhaseSet{
 		Observe:      r.observe,
-		Resolve:      resolvePhase{runtime: r},
-		Authenticate: authenticatePhase{runtime: r},
-		Authorize:    authorizePhase{runtime: r},
+		Resolve:      resolvePhase{runtime: r, execution: execution},
+		Authenticate: authenticatePhase{runtime: r, execution: execution},
+		Authorize:    authorizePhase{runtime: r, execution: execution},
 		Admit:        admitPhase{runtime: r},
 		PreDispatch:  r.preDispatch,
 		Dispatch:     dispatchPhase{runtime: r, execution: execution},
@@ -174,14 +220,16 @@ func (r *Runtime) runnerFor(execution *execution) (*pipeline.Runner, error) {
 
 func (r *Runtime) deliverImmediateError(ctx context.Context, sink Sink, providerError *llm.Error) pipeline.Completion {
 	if sink != nil {
-		_ = sink.SendError(ctx, providerError)
+		if sendErr := sink.SendError(ctx, providerError); sendErr != nil {
+			providerError = errorFromExecution(fmt.Errorf("send error: %w", sendErr))
+		}
 	}
 	return pipeline.Completion{Error: providerError}
 }
 
-func (r *Runtime) requestInfo(call Call) pipeline.RequestInfo {
-	info := pipeline.RequestInfo{ClientModel: call.Request.ModelID()}
-	ingress, ok := r.protocols.Ingress(call.Source)
+func (r *Runtime) requestInfo(source protocol.Endpoint, request llm.ModelRequest) pipeline.RequestInfo {
+	info := pipeline.RequestInfo{ClientModel: request.ModelID()}
+	ingress, ok := r.protocols.Ingress(source)
 	if !ok {
 		return info
 	}
@@ -200,11 +248,14 @@ func (continuePhase) Apply(context.Context, *pipeline.Exchange) (pipeline.Outcom
 	return pipeline.Outcome{Decision: pipeline.Continue}, nil
 }
 
-type resolvePhase struct{ runtime *Runtime }
+type resolvePhase struct {
+	runtime   *Runtime
+	execution *execution
+}
 
 func (resolvePhase) Name() string { return "resolve" }
 func (p resolvePhase) Apply(_ context.Context, exchange *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
-	model := exchange.Request.ModelID()
+	model := p.execution.clientModel
 	route := p.runtime.snapshot.RouteByModel(model)
 	switch {
 	case route == nil:
@@ -214,18 +265,24 @@ func (p resolvePhase) Apply(_ context.Context, exchange *pipeline.Exchange) (pip
 	case len(route.Upstreams) == 0:
 		return reject(exchange, statusServiceUnavailable, "no backends for model: "+model), nil
 	}
+	p.execution.logicalRoute = *route
+	p.execution.logicalRoute.Upstreams = append([]configsnapshot.RouteTarget(nil), route.Upstreams...)
+	p.execution.routeResolved = true
 	exchange.Route = pipeline.LogicalRoute{ID: route.ID, Model: route.Model}
 	return continueOutcome(), nil
 }
 
-type authenticatePhase struct{ runtime *Runtime }
+type authenticatePhase struct {
+	runtime   *Runtime
+	execution *execution
+}
 
 func (authenticatePhase) Name() string { return "authenticate" }
 func (p authenticatePhase) Apply(_ context.Context, exchange *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
-	route := p.runtime.snapshot.RouteByModel(exchange.Route.Model)
-	if route == nil {
+	if !p.execution.routeResolved {
 		return reject(exchange, statusServiceUnavailable, "logical route is unavailable"), nil
 	}
+	route := p.execution.logicalRoute
 	if !route.EnableAuth {
 		exchange.Identity = authn.Identity{Anonymous: true}
 		return continueOutcome(), nil
@@ -255,7 +312,10 @@ func (p authenticatePhase) Apply(_ context.Context, exchange *pipeline.Exchange)
 	return continueOutcome(), nil
 }
 
-type authorizePhase struct{ runtime *Runtime }
+type authorizePhase struct {
+	runtime   *Runtime
+	execution *execution
+}
 
 func (authorizePhase) Name() string { return "authorize" }
 func (p authorizePhase) Apply(_ context.Context, exchange *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
@@ -264,7 +324,7 @@ func (p authorizePhase) Apply(_ context.Context, exchange *pipeline.Exchange) (p
 		return continueOutcome(), nil
 	}
 	record := p.runtime.snapshot.FindKey(exchange.Credentials.APIKey)
-	if record == nil || !slices.Contains(record.Routes, exchange.Route.Model) {
+	if record == nil || !slices.Contains(record.Routes, p.execution.logicalRoute.Model) {
 		exchange.Authorization.Reason = "API key is not granted this route"
 		return reject(exchange, statusForbidden, exchange.Authorization.Reason), nil
 	}
