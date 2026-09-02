@@ -42,6 +42,19 @@ func fakeFallback() Registration {
 	return registration
 }
 
+func TestStandardDriverLeavesStatusRetryPolicyToRuntimeSettings(t *testing.T) {
+	driver := Generic().Factory()
+	for _, status := range []int{429, 500, 503} {
+		classification := driver.Classify(Response{StatusCode: status})
+		if !classification.Failed {
+			t.Errorf("status %d: Failed = false, want true", status)
+		}
+		if classification.Retryable {
+			t.Errorf("status %d: Retryable = true, want status-only retry policy left to retry_on_status", status)
+		}
+	}
+}
+
 func TestNewCatalogRejectsEmptyAndDuplicateIDs(t *testing.T) {
 	t.Parallel()
 	if _, err := NewCatalog(fakeFallback(), fakeRegistration("", 1, "Empty")); err == nil {

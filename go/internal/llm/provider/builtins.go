@@ -121,7 +121,7 @@ func (driver standardDriver) Prepare(_ context.Context, upstream UpstreamRuntime
 }
 
 func (driver standardDriver) Classify(response Response) Classification {
-	return Classification{Failed: response.StatusCode >= 400, Retryable: response.StatusCode == 429 || response.StatusCode >= 500}
+	return Classification{Failed: response.StatusCode >= 400}
 }
 
 func (standardDriver) ExtendResponse(context.Context, UpstreamRuntime, *llm.ChatResponse) error {

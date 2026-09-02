@@ -19,6 +19,20 @@ func TestConstructorsExposeAnthropicEndpoint(t *testing.T) {
 	}
 }
 
+func TestEgressDecodeErrorPreservesAnthropicSemantics(t *testing.T) {
+	codec := NewEgress().(protocol.ChatEgressCodec)
+	body := []byte(`{"type":"error","error":{"type":"overloaded_error","message":"capacity exhausted"}}`)
+
+	got, err := codec.DecodeError(protocol.WireResponse{Status: 529, Body: body})
+
+	if err != nil {
+		t.Fatalf("DecodeError: %v", err)
+	}
+	if got.Kind != llm.ErrServiceUnavailable || got.Message != "capacity exhausted" || got.StatusCode == nil || *got.StatusCode != 529 || string(got.Raw) != string(body) {
+		t.Fatalf("decoded error = %+v", got)
+	}
+}
+
 func TestRequestRoundTrip(t *testing.T) {
 	t.Parallel()
 	in := `{"model":"claude-3-5-sonnet","max_tokens":100,"system":"be brief",` +

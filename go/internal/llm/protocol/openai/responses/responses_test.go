@@ -19,6 +19,20 @@ func TestConstructorsExposeResponsesEndpoint(t *testing.T) {
 	}
 }
 
+func TestEgressDecodeErrorPreservesResponsesSemantics(t *testing.T) {
+	codec := NewEgress().(protocol.ChatEgressCodec)
+	body := []byte(`{"error":{"message":"request rate exceeded","type":"rate_limit_error"}}`)
+
+	got, err := codec.DecodeError(protocol.WireResponse{Status: 429, Body: body})
+
+	if err != nil {
+		t.Fatalf("DecodeError: %v", err)
+	}
+	if got.Kind != llm.ErrRateLimitError || got.Message != "request rate exceeded" || got.StatusCode == nil || *got.StatusCode != 429 || string(got.Raw) != string(body) {
+		t.Fatalf("decoded error = %+v", got)
+	}
+}
+
 func TestRequestRoundTrip(t *testing.T) {
 	t.Parallel()
 	in := `{"model":"gpt-4o","instructions":"be brief",` +

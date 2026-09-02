@@ -50,8 +50,9 @@ type IngressRoute struct {
 }
 
 type Capabilities struct {
-	IngressRoutes     []IngressRoute
-	Streaming         bool
-	OpaquePassthrough bool
-	ErrorPassthrough  bool
+	IngressRoutes        []IngressRoute
+	Streaming            bool
+	OpaquePassthrough    bool
+	ErrorPassthrough     bool
+	RawStreamPassthrough bool
 }

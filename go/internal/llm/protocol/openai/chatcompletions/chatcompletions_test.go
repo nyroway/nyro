@@ -19,6 +19,20 @@ func TestConstructorsExposeChatCompletionsEndpoint(t *testing.T) {
 	}
 }
 
+func TestEgressDecodeErrorPreservesOpenAISemantics(t *testing.T) {
+	codec := NewEgress().(protocol.ChatEgressCodec)
+	body := []byte(`{"error":{"message":"maximum context is 8k","type":"invalid_request_error","code":"context_length_exceeded"}}`)
+
+	got, err := codec.DecodeError(protocol.WireResponse{Status: 400, Body: body})
+
+	if err != nil {
+		t.Fatalf("DecodeError: %v", err)
+	}
+	if got.Kind != llm.ErrContextLengthExceeded || got.Message != "maximum context is 8k" || got.StatusCode == nil || *got.StatusCode != 400 || string(got.Raw) != string(body) {
+		t.Fatalf("decoded error = %+v", got)
+	}
+}
+
 func TestRequestRoundTrip(t *testing.T) {
 	t.Parallel()
 	in := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],` +

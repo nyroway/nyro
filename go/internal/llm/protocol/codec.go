@@ -25,6 +25,7 @@ type ChatEgressCodec interface {
 	EgressCodec
 	EncodeRequest(*llm.ChatRequest) (WireRequest, error)
 	DecodeResponse(WireResponse) (*llm.ChatResponse, error)
+	DecodeError(WireResponse) (*llm.Error, error)
 	NewStreamDecoder() StreamDecoder
 }
 
@@ -36,6 +37,7 @@ type EmbeddingIngressCodec interface {
 type EmbeddingEgressCodec interface {
 	EgressCodec
 	EncodeRequest(*llm.EmbeddingRequest) (WireRequest, error)
+	DecodeError(WireResponse) (*llm.Error, error)
 }
 
 type StreamDecoder interface {

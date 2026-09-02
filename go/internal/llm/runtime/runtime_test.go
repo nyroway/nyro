@@ -19,18 +19,23 @@ import (
 )
 
 type recordingSink struct {
-	mu        sync.Mutex
-	responses []*llm.ChatResponse
-	errors    []*llm.Error
-	deltas    []llm.StreamDelta
-	opaque    []protocol.WireResponse
-	onDelta   func(llm.StreamDelta) error
+	mu         sync.Mutex
+	responses  []*llm.ChatResponse
+	errors     []*llm.Error
+	deltas     []llm.StreamDelta
+	opaque     []protocol.WireResponse
+	onResponse func(*llm.ChatResponse) error
+	onError    func(*llm.Error) error
+	onDelta    func(llm.StreamDelta) error
 }
 
 func (s *recordingSink) SendResponse(_ context.Context, response *llm.ChatResponse) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.responses = append(s.responses, response)
+	if s.onResponse != nil {
+		return s.onResponse(response)
+	}
 	return nil
 }
 
@@ -38,6 +43,9 @@ func (s *recordingSink) SendError(_ context.Context, err *llm.Error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.errors = append(s.errors, err)
+	if s.onError != nil {
+		return s.onError(err)
+	}
 	return nil
 }
 
@@ -94,6 +102,12 @@ func (c testChatEgress) DecodeResponse(response protocol.WireResponse) (*llm.Cha
 	}
 	return &llm.ChatResponse{ID: "response", Model: "served", Content: string(response.Body)}, nil
 }
+func (c testChatEgress) DecodeError(response protocol.WireResponse) (*llm.Error, error) {
+	if c.state != nil && c.state.decodeError != nil {
+		return c.state.decodeError(response)
+	}
+	return llm.ErrorFromStatus(uint16(response.Status), "decoded provider error").WithRaw(response.Body), nil
+}
 func (c testChatEgress) NewStreamDecoder() protocol.StreamDecoder {
 	if c.state != nil && c.state.newStreamDecoder != nil {
 		return c.state.newStreamDecoder()
@@ -112,10 +126,14 @@ func (testEmbeddingEgress) EgressCodec()                          {}
 func (testEmbeddingEgress) EncodeRequest(request *llm.EmbeddingRequest) (protocol.WireRequest, error) {
 	return protocol.WireRequest{Method: "POST", Path: "/embeddings", Body: []byte(request.Model)}, nil
 }
+func (testEmbeddingEgress) DecodeError(response protocol.WireResponse) (*llm.Error, error) {
+	return llm.ErrorFromStatus(uint16(response.Status), "decoded embedding error").WithRaw(response.Body), nil
+}
 
 type codecState struct {
 	encode           func(*llm.ChatRequest) (protocol.WireRequest, error)
 	decode           func(protocol.WireResponse) (*llm.ChatResponse, error)
+	decodeError      func(protocol.WireResponse) (*llm.Error, error)
 	newStreamDecoder func() protocol.StreamDecoder
 }
 
@@ -390,6 +408,88 @@ func TestExecuteRunsFixedProviderSequenceAfterLogicalRouteResolution(t *testing.
 	}
 }
 
+func TestExecuteRunsErrorDecodeAndDriverExtensionInProviderSequence(t *testing.T) {
+	var sequence []string
+	appendStep := func(step string) { sequence = append(sequence, step) }
+
+	driver := &testDriver{
+		extendRequest: func(context.Context, provider.UpstreamRuntime, llm.ModelRequest) error {
+			appendStep("driver request extension")
+			return nil
+		},
+		prepare: func(_ context.Context, upstream provider.UpstreamRuntime, wire protocol.WireRequest) (provider.Request, error) {
+			appendStep("driver endpoint/header/signing")
+			return provider.Request{Method: wire.Method, URL: upstream.BaseURL + wire.Path, Body: wire.Body}, nil
+		},
+		classify: func(provider.Response) provider.Classification {
+			appendStep("driver raw classification")
+			return provider.Classification{Failed: true}
+		},
+		extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) error {
+			appendStep("driver normalized error extension")
+			if providerError.Kind != llm.ErrContentFiltered || providerError.Message != "decoded vendor refusal" {
+				t.Fatalf("error before Driver extension = %+v", providerError)
+			}
+			providerError.Message = "provider: " + providerError.Message
+			return nil
+		},
+	}
+	codec := testChatEgress{
+		endpoint: protocol.AnthropicMessagesV1,
+		state: &codecState{
+			encode: func(request *llm.ChatRequest) (protocol.WireRequest, error) {
+				appendStep("egress encode")
+				return protocol.WireRequest{Method: "POST", Path: "/invoke", Body: []byte(request.Model)}, nil
+			},
+			decodeError: func(response protocol.WireResponse) (*llm.Error, error) {
+				appendStep("egress error decode")
+				if response.Status != 422 || string(response.Body) != `{"type":"content_filter","message":"refused"}` {
+					t.Fatalf("wire error = %+v", response)
+				}
+				return llm.NewError(llm.ErrContentFiltered, "decoded vendor refusal").WithStatus(422).WithRaw(response.Body), nil
+			},
+		},
+	}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "backend-model", 1))},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolAnthropicMessages)},
+		settings:  map[string]string{"proxy.max_retries": "1"},
+		ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress:    []protocol.EgressCodec{codec},
+		providers: []provider.Registration{providerRegistration("test", driver)},
+		transport: transportFunc(func(_ context.Context, _ provider.Request) (*provider.Response, error) {
+			appendStep("transport")
+			return response(422, `{"type":"content_filter","message":"refused"}`), nil
+		}),
+	})
+	sink := &recordingSink{}
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    sink,
+	})
+
+	wantSequence := []string{
+		"driver request extension",
+		"egress encode",
+		"driver endpoint/header/signing",
+		"transport",
+		"driver raw classification",
+		"egress error decode",
+		"driver normalized error extension",
+	}
+	if !slices.Equal(sequence, wantSequence) {
+		t.Fatalf("provider error sequence = %q, want %q", sequence, wantSequence)
+	}
+	if completion.Error == nil || completion.Error.Kind != llm.ErrContentFiltered || completion.Error.Message != "provider: decoded vendor refusal" {
+		t.Fatalf("completion error = %+v", completion.Error)
+	}
+	if len(sink.errors) != 1 || sink.errors[0].Message != "provider: decoded vendor refusal" {
+		t.Fatalf("sink errors = %+v", sink.errors)
+	}
+}
+
 func TestNewRejectsMissingRuntimeDependencies(t *testing.T) {
 	_, err := New(Config{})
 	if err == nil {
@@ -398,4 +498,281 @@ func TestNewRejectsMissingRuntimeDependencies(t *testing.T) {
 	if errors.Is(err, context.Canceled) {
 		t.Fatalf("New error = %v", err)
 	}
+}
+
+func TestExecuteDeliversTerminalResponseBeforeFinalizers(t *testing.T) {
+	var events []string
+	var finalized pipeline.Completion
+	observe := testPhase{name: "observe", apply: func(context.Context, *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+		return pipeline.Outcome{Decision: pipeline.Continue}, func(_ context.Context, _ *pipeline.Exchange, completion pipeline.Completion) error {
+			events = append(events, "finalize")
+			finalized = completion
+			return nil
+		}
+	}}
+	runtime := terminalRuntime(t, observe, nil)
+	sink := &recordingSink{onResponse: func(*llm.ChatResponse) error {
+		events = append(events, "sink response")
+		return nil
+	}}
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    sink,
+	})
+
+	if !slices.Equal(events, []string{"sink response", "finalize"}) {
+		t.Fatalf("terminal order = %q", events)
+	}
+	if finalized.Response == nil || finalized.Error != nil || completion.Response != finalized.Response || completion.Error != nil {
+		t.Fatalf("finalized/returned completion = %+v / %+v", finalized, completion)
+	}
+}
+
+func TestExecuteNormalizesRunErrorAndDeliversBeforeFinalizers(t *testing.T) {
+	var events []string
+	var finalized pipeline.Completion
+	var finalizedStatus int
+	observe := testPhase{name: "observe", apply: func(context.Context, *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+		return pipeline.Outcome{Decision: pipeline.Continue}, func(_ context.Context, exchange *pipeline.Exchange, completion pipeline.Completion) error {
+			events = append(events, "finalize")
+			finalized = completion
+			finalizedStatus = exchange.Status
+			return nil
+		}
+	}}
+	broken := testPhase{name: "broken.extension", apply: func(context.Context, *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+		return pipeline.Outcome{Decision: pipeline.Decision(255)}, nil
+	}}
+	runtime := terminalRuntime(t, observe, []pipeline.Phase{broken})
+	sink := &recordingSink{onError: func(*llm.Error) error {
+		events = append(events, "sink error")
+		return nil
+	}}
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    sink,
+	})
+
+	if !slices.Equal(events, []string{"sink error", "finalize"}) {
+		t.Fatalf("terminal order = %q", events)
+	}
+	if finalized.Error == nil || !strings.Contains(finalized.Error.Message, "invalid decision 255") || finalized.Response != nil || finalizedStatus != statusBadGateway {
+		t.Fatalf("finalizer saw completion/status = %+v / %d", finalized, finalizedStatus)
+	}
+	if completion.Error != finalized.Error || completion.Response != nil {
+		t.Fatalf("returned completion = %+v", completion)
+	}
+}
+
+func TestExecuteSinkResponseFailureBecomesUnambiguousFinalCompletion(t *testing.T) {
+	var finalized pipeline.Completion
+	var finalizedStatus int
+	observe := testPhase{name: "observe", apply: func(context.Context, *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+		return pipeline.Outcome{Decision: pipeline.Continue}, func(_ context.Context, exchange *pipeline.Exchange, completion pipeline.Completion) error {
+			finalized = completion
+			finalizedStatus = exchange.Status
+			return nil
+		}
+	}}
+	runtime := terminalRuntime(t, observe, nil)
+	sink := &recordingSink{onResponse: func(*llm.ChatResponse) error {
+		return errors.New("client write failed")
+	}}
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    sink,
+	})
+
+	if finalized.Error == nil || !strings.Contains(finalized.Error.Message, "client write failed") || finalized.Response != nil || finalizedStatus != statusBadGateway {
+		t.Fatalf("finalizer saw completion/status = %+v / %d", finalized, finalizedStatus)
+	}
+	if completion.Error != finalized.Error || completion.Response != nil {
+		t.Fatalf("returned completion = %+v", completion)
+	}
+	if len(sink.responses) != 1 || len(sink.errors) != 0 {
+		t.Fatalf("Sink response/error attempts = %d/%d, want 1/0", len(sink.responses), len(sink.errors))
+	}
+}
+
+func TestExecutePropagatesSendErrorFailureBeforeFinalizers(t *testing.T) {
+	var finalized pipeline.Completion
+	var finalizedStatus int
+	observe := testPhase{name: "observe", apply: func(context.Context, *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+		return pipeline.Outcome{Decision: pipeline.Continue}, func(_ context.Context, exchange *pipeline.Exchange, completion pipeline.Completion) error {
+			finalized = completion
+			finalizedStatus = exchange.Status
+			return nil
+		}
+	}}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		ingress: []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress:  []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return response(200, "unused"), nil
+		}),
+		observe: observe,
+	})
+	sink := &recordingSink{onError: func(*llm.Error) error {
+		return errors.New("client error write failed")
+	}}
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("missing-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    sink,
+	})
+
+	if finalized.Error == nil || !strings.Contains(finalized.Error.Message, "client error write failed") || finalized.Response != nil || finalizedStatus != statusBadGateway {
+		t.Fatalf("finalizer saw completion/status = %+v / %d", finalized, finalizedStatus)
+	}
+	if completion.Error != finalized.Error || completion.Response != nil {
+		t.Fatalf("returned completion = %+v", completion)
+	}
+	if len(sink.errors) != 1 {
+		t.Fatalf("Sink error attempts = %d, want 1", len(sink.errors))
+	}
+}
+
+func TestExecutePropagatesImmediateSendErrorFailure(t *testing.T) {
+	runtime := terminalRuntime(t, nil, nil)
+	sink := &recordingSink{onError: func(*llm.Error) error {
+		return errors.New("immediate error write failed")
+	}}
+
+	completion := runtime.Execute(context.Background(), Call{Sink: sink})
+
+	if completion.Error == nil || !strings.Contains(completion.Error.Message, "immediate error write failed") || completion.Response != nil {
+		t.Fatalf("completion = %+v", completion)
+	}
+	if len(sink.errors) != 1 {
+		t.Fatalf("Sink error attempts = %d, want 1", len(sink.errors))
+	}
+}
+
+func TestExecuteClonesCallerRequestBeforePreDispatch(t *testing.T) {
+	request := llm.NewChatRequest("client-model", nil)
+	request.Meta.Vendor.Ingress = map[string]json.RawMessage{"seed": json.RawMessage(`"original"`)}
+	pre := testPhase{name: "mutate.request", apply: func(_ context.Context, exchange *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+		attempt := exchange.Request.(*llm.ChatRequest)
+		attempt.Meta.Vendor.Ingress["seed"][0] = 'X'
+		attempt.Meta.Vendor.Ingress["added"] = json.RawMessage(`true`)
+		return pipeline.Outcome{Decision: pipeline.Continue}, nil
+	}}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		settings:  map[string]string{"proxy.max_retries": "1"},
+		ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress:    []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+		transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return response(200, "ok"), nil
+		}),
+		pre: []pipeline.Phase{pre},
+	})
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: request,
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    &recordingSink{},
+	})
+
+	if completion.Error != nil {
+		t.Fatalf("completion error = %v", completion.Error)
+	}
+	if got := string(request.Meta.Vendor.Ingress["seed"]); got != `"original"` {
+		t.Fatalf("caller extension = %s, want original", got)
+	}
+	if _, found := request.Meta.Vendor.Ingress["added"]; found {
+		t.Fatal("PreDispatch mutation leaked into caller request")
+	}
+}
+
+func TestExecuteKeepsAuthorizedRouteAndModelAfterPreDispatchMutation(t *testing.T) {
+	var providerURL string
+	var providerModel string
+	var finalizedRoute pipeline.LogicalRoute
+	originalRoute := configsnapshot.Route{
+		ID: "authorized-route", Model: "client-model", Balance: string(routing.StrategyPriority), Enabled: true,
+		Upstreams: []configsnapshot.RouteTarget{routeTarget("authorized-target", "authorized-backend", "*", 1)},
+	}
+	otherRoute := configsnapshot.Route{
+		ID: "substituted-route", Model: "other-model", Balance: string(routing.StrategyPriority), Enabled: true,
+		Upstreams: []configsnapshot.RouteTarget{routeTarget("other-target", "other-backend", "other-provider-model", 1)},
+	}
+	pre := testPhase{name: "mutate.route", apply: func(_ context.Context, exchange *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+		if !exchange.Authorization.Allowed {
+			t.Fatal("PreDispatch ran before authorization")
+		}
+		exchange.Route = pipeline.LogicalRoute{ID: otherRoute.ID, Model: otherRoute.Model}
+		exchange.Request.SetModelID(otherRoute.Model)
+		return pipeline.Outcome{Decision: pipeline.Continue}, nil
+	}}
+	observe := testPhase{name: "observe", apply: func(context.Context, *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+		return pipeline.Outcome{Decision: pipeline.Continue}, func(_ context.Context, exchange *pipeline.Exchange, _ pipeline.Completion) error {
+			finalizedRoute = exchange.Route
+			return nil
+		}
+	}}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes: []configsnapshot.Route{originalRoute, otherRoute},
+		upstreams: []configsnapshot.Upstream{
+			upstream("authorized-backend", "test", provider.ProtocolOpenAIChatCompletions),
+			upstream("other-backend", "test", provider.ProtocolOpenAIChatCompletions),
+		},
+		settings:  map[string]string{"proxy.max_retries": "1"},
+		ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress:    []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+		transport: transportFunc(func(_ context.Context, request provider.Request) (*provider.Response, error) {
+			providerURL = request.URL
+			providerModel = string(request.Body)
+			return response(200, "ok"), nil
+		}),
+		observe: observe,
+		pre:     []pipeline.Phase{pre},
+	})
+	request := llm.NewChatRequest("client-model", nil)
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: request,
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    &recordingSink{},
+	})
+
+	if completion.Error != nil {
+		t.Fatalf("completion error = %v", completion.Error)
+	}
+	if !strings.Contains(providerURL, "authorized-backend.example") || providerModel != "client-model" {
+		t.Fatalf("Provider target URL/model = %q/%q, want authorized backend/client-model", providerURL, providerModel)
+	}
+	if finalizedRoute.ID != originalRoute.ID || finalizedRoute.Model != originalRoute.Model {
+		t.Fatalf("finalized logical route = %+v, want authorized route", finalizedRoute)
+	}
+	if request.Model != "client-model" {
+		t.Fatalf("caller model = %q, want client-model", request.Model)
+	}
+}
+
+func terminalRuntime(t *testing.T, observe pipeline.Phase, post []pipeline.Phase) *Runtime {
+	t.Helper()
+	return newRuntimeFixture(t, runtimeFixture{
+		routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		settings:  map[string]string{"proxy.max_retries": "1"},
+		ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress:    []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+		transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return response(200, "terminal response"), nil
+		}),
+		observe: observe,
+		post:    post,
+	})
 }

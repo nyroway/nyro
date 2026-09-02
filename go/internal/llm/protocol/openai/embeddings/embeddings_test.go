@@ -19,6 +19,20 @@ func TestConstructorsExposeEmbeddingsEndpoint(t *testing.T) {
 	}
 }
 
+func TestEgressDecodeErrorPreservesEmbeddingErrorSemantics(t *testing.T) {
+	codec := NewEgress().(protocol.EmbeddingEgressCodec)
+	body := []byte(`{"error":{"message":"unknown embedding model","type":"invalid_request_error","code":"model_not_found"}}`)
+
+	got, err := codec.DecodeError(protocol.WireResponse{Status: 404, Body: body})
+
+	if err != nil {
+		t.Fatalf("DecodeError: %v", err)
+	}
+	if got.Kind != llm.ErrModelNotAvailable || got.Message != "unknown embedding model" || got.StatusCode == nil || *got.StatusCode != 404 || string(got.Raw) != string(body) {
+		t.Fatalf("decoded error = %+v", got)
+	}
+}
+
 func TestEmbeddingInputShapesRoundTrip(t *testing.T) {
 	t.Parallel()
 

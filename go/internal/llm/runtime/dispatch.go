@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"time"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
@@ -17,12 +18,33 @@ import (
 )
 
 type execution struct {
-	runtime   *Runtime
-	sink      Sink
-	runner    *pipeline.Runner
-	delivered bool
-	stream    streamState
+	runtime        *Runtime
+	sink           Sink
+	runner         *pipeline.Runner
+	request        llm.ModelRequest
+	clientModel    string
+	logicalRoute   configsnapshot.Route
+	routeResolved  bool
+	delivered      bool
+	deliveryClosed bool
+	pendingWire    *protocol.WireResponse
+	pendingHealth  *healthRecord
+	stream         streamState
 }
+
+type healthRecord struct {
+	key       routing.Key
+	latencyMs float64
+}
+
+type failureOrigin uint8
+
+const (
+	failureNone failureOrigin = iota
+	failureProvider
+	failureDownstream
+	failureClient
+)
 
 type dispatchPhase struct {
 	runtime   *Runtime
@@ -52,17 +74,20 @@ type attemptResult struct {
 	retry     bool
 	failover  bool
 	terminal  bool
+	origin    failureOrigin
 }
 
 func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *pipeline.Exchange) *llm.Error {
-	route := r.snapshot.RouteByModel(exchange.Route.Model)
-	if route == nil {
+	if !execution.routeResolved {
 		return llm.ErrorFromStatus(statusServiceUnavailable, "logical route is unavailable")
 	}
-	targets, strategy := routingTargets(*route)
+	execution.restoreAuthority(exchange)
+	route := execution.logicalRoute
+	targets, strategy := routingTargets(route)
 	ordered := r.router.Select(targets, strategy)
-	clientModel := exchange.Request.ModelID()
+	clientModel := execution.clientModel
 	for _, target := range ordered {
+		healthKey := routing.KeyOf(target)
 		upstream := r.snapshot.UpstreamGet(target.UpstreamID)
 		if upstream == nil || !upstream.Enabled {
 			continue
@@ -81,7 +106,7 @@ func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *
 		}
 
 		exchange.Target = pipeline.Target{
-			ID:           routeTargetID(*route, target),
+			ID:           routeTargetID(route, target),
 			UpstreamID:   upstream.ID,
 			UpstreamName: upstream.Name,
 			Model:        actualModel,
@@ -99,7 +124,7 @@ func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *
 			if driver == nil {
 				return llm.ErrorFromStatus(statusInternalServerError, "provider driver factory returned nil")
 			}
-			attemptRequest, cloneErr := cloneModelRequest(exchange.Request)
+			attemptRequest, cloneErr := cloneModelRequest(execution.request)
 			if cloneErr != nil {
 				return llm.ErrorFromStatus(statusInternalServerError, cloneErr.Error())
 			}
@@ -115,50 +140,70 @@ func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *
 			exchange.Target.UpstreamLatencyMs = &latency
 
 			if result.err == nil {
-				r.router.Record(routing.KeyOf(target), true, result.latencyMs)
 				if result.response != nil {
 					exchange.Response = result.response
 					exchange.Usage = result.response.Usage
+					execution.pendingHealth = &healthRecord{key: healthKey, latencyMs: result.latencyMs}
 				}
 				if result.opaque != nil {
-					if err := execution.sink.SendOpaque(ctx, *result.opaque); err != nil {
-						return errorFromExecution(fmt.Errorf("send opaque response: %w", err))
-					}
-					execution.delivered = true
+					execution.pendingWire = result.opaque
+					execution.pendingHealth = &healthRecord{key: healthKey, latencyMs: result.latencyMs}
+				}
+				if result.response == nil && result.opaque == nil {
+					r.router.Record(healthKey, true, result.latencyMs)
 				}
 				return nil
 			}
 
 			if result.terminal {
-				r.router.Record(routing.KeyOf(target), false, result.latencyMs)
+				if isProviderFailure(result.origin) {
+					r.router.Record(healthKey, false, result.latencyMs)
+				}
 				return result.err
 			}
 			if result.retry {
 				if attempt < attempts {
 					continue
 				}
-				r.router.Record(routing.KeyOf(target), false, result.latencyMs)
+				if isProviderFailure(result.origin) {
+					r.router.Record(healthKey, false, result.latencyMs)
+				}
 				break
 			}
 			if result.failover {
-				r.router.Record(routing.KeyOf(target), false, result.latencyMs)
+				if isProviderFailure(result.origin) {
+					r.router.Record(healthKey, false, result.latencyMs)
+				}
 				break
 			}
 
-			// A non-retried Provider response is a usable backend response even
-			// when it reports a client/provider error. Preserve the existing
-			// health semantics and terminate without trying another backend.
-			r.router.Record(routing.KeyOf(target), true, result.latencyMs)
+			if isProviderFailure(result.origin) {
+				r.router.Record(healthKey, false, result.latencyMs)
+			}
 			if result.rawError != nil && r.errorPassthroughAllowed(exchange.Source, egress) {
-				if err := execution.sink.SendOpaque(ctx, *result.rawError); err != nil {
-					return errorFromExecution(fmt.Errorf("send provider error: %w", err))
-				}
-				execution.delivered = true
+				execution.pendingWire = result.rawError
 			}
 			return result.err
 		}
 	}
 	return llm.ErrorFromStatus(statusBadGateway, "all upstream backends failed")
+}
+
+func (execution *execution) restoreAuthority(exchange *pipeline.Exchange) {
+	if execution.request != nil {
+		execution.request.SetModelID(execution.clientModel)
+		exchange.Request = execution.request
+	}
+	if execution.routeResolved {
+		exchange.Route = pipeline.LogicalRoute{
+			ID:    execution.logicalRoute.ID,
+			Model: execution.logicalRoute.Model,
+		}
+	}
+}
+
+func isProviderFailure(origin failureOrigin) bool {
+	return origin == failureNone || origin == failureProvider
 }
 
 func (r *Runtime) executeAttempt(
@@ -187,8 +232,11 @@ func (r *Runtime) executeAttempt(
 	response, err := r.transport.Do(ctx, prepared)
 	latencyMs := float64(time.Since(started).Microseconds()) / 1000
 	if err != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return attemptResult{err: errorFromExecution(ctxErr), latencyMs: latencyMs, terminal: true}
+			return attemptResult{err: errorFromExecution(ctxErr), latencyMs: latencyMs, terminal: true, origin: failureClient}
 		}
 		return attemptResult{
 			err:       llm.NewError(llm.ErrServiceUnavailable, "provider transport: "+err.Error()),
@@ -203,10 +251,18 @@ func (r *Runtime) executeAttempt(
 			retry:     true,
 		}
 	}
+	if response.Body == nil {
+		return attemptResult{
+			err:       llm.NewError(llm.ErrServiceUnavailable, "provider transport returned a response without a body"),
+			status:    response.StatusCode,
+			latencyMs: latencyMs,
+			retry:     true,
+		}
+	}
 	defer response.Body.Close()
 
 	classification := driver.Classify(*response)
-	if classification.Failed || classification.Error != nil || r.settings.RetryOnStatus[response.StatusCode] {
+	if classification.Failed || classification.Retryable || classification.Error != nil || r.settings.RetryOnStatus[response.StatusCode] {
 		wire, readErr := readWireResponse(response)
 		if readErr != nil {
 			return attemptResult{
@@ -216,11 +272,11 @@ func (r *Runtime) executeAttempt(
 				retry:     true,
 			}
 		}
-		providerError := classification.Error
-		if providerError == nil {
-			providerError = llm.ErrorFromStatus(uint16(response.StatusCode), "upstream provider request failed")
+		providerError, decodeErr := decodeProviderError(egress, request, wire)
+		if decodeErr != nil || providerError == nil {
+			providerError = llm.ErrorFromStatus(uint16(response.StatusCode), "decode provider error: "+errorMessage(decodeErr))
 		}
-		providerError = cloneError(providerError)
+		providerError = mergeClassifiedError(providerError, classification.Error)
 		if providerError.StatusCode == nil && response.StatusCode > 0 && response.StatusCode <= 65535 {
 			status := uint16(response.StatusCode)
 			providerError.StatusCode = &status
@@ -236,10 +292,10 @@ func (r *Runtime) executeAttempt(
 				failover:  true,
 			}
 		}
-		retryable := r.settings.RetryOnStatus[response.StatusCode] ||
-			(classification.Retryable && response.StatusCode < 400)
+		retryable := r.settings.RetryOnStatus[response.StatusCode] || classification.Retryable
+		rawError := providerErrorPassthrough(wire)
 		return attemptResult{
-			rawError:  &wire,
+			rawError:  &rawError,
 			err:       providerError,
 			status:    response.StatusCode,
 			latencyMs: latencyMs,
@@ -271,7 +327,19 @@ func (r *Runtime) executeAttempt(
 			if !egress.Capabilities().Streaming {
 				return attemptResult{err: llm.ErrorFromStatus(statusBadGateway, "selected endpoint does not support streaming"), status: response.StatusCode, latencyMs: latencyMs, failover: true}
 			}
-			streamErr := r.consumeStream(ctx, execution, exchange, response.Body, codec.NewStreamDecoder())
+			execution.stream = streamState{
+				allowRawErrors: r.errorPassthroughAllowed(exchange.Source, egress),
+			}
+			streamErr := r.consumeStream(
+				ctx,
+				execution,
+				exchange,
+				response.Body,
+				codec.NewStreamDecoder(),
+				driver,
+				providerRuntime,
+				r.rawStreamPassthroughAllowed(exchange.Source, egress),
+			)
 			if streamErr == nil {
 				return attemptResult{status: response.StatusCode, latencyMs: latencyMs}
 			}
@@ -279,8 +347,9 @@ func (r *Runtime) executeAttempt(
 				err:       streamErr,
 				status:    response.StatusCode,
 				latencyMs: latencyMs,
-				retry:     execution.stream.state == streamUncommitted,
-				terminal:  execution.stream.state != streamUncommitted,
+				retry:     execution.stream.state == streamUncommitted && execution.stream.failure == failureProvider,
+				terminal:  execution.stream.state != streamUncommitted || execution.stream.failure != failureProvider,
+				origin:    execution.stream.failure,
 			}
 		}
 
@@ -302,6 +371,53 @@ func (r *Runtime) executeAttempt(
 	default:
 		return attemptResult{err: llm.ErrorFromStatus(statusInternalServerError, fmt.Sprintf("unsupported LLM request %T", request)), terminal: true}
 	}
+}
+
+func decodeProviderError(codec protocol.EgressCodec, request llm.ModelRequest, response protocol.WireResponse) (*llm.Error, error) {
+	switch request.(type) {
+	case *llm.ChatRequest:
+		chat, ok := codec.(protocol.ChatEgressCodec)
+		if !ok {
+			return nil, fmt.Errorf("endpoint %s does not support chat error decoding", codec.Endpoint())
+		}
+		return chat.DecodeError(response)
+	case *llm.EmbeddingRequest:
+		embedding, ok := codec.(protocol.EmbeddingEgressCodec)
+		if !ok {
+			return nil, fmt.Errorf("endpoint %s does not support embedding error decoding", codec.Endpoint())
+		}
+		return embedding.DecodeError(response)
+	default:
+		return nil, fmt.Errorf("unsupported LLM request %T", request)
+	}
+}
+
+func mergeClassifiedError(decoded, classified *llm.Error) *llm.Error {
+	merged := cloneError(decoded)
+	if classified == nil {
+		return merged
+	}
+	classified = cloneError(classified)
+	if classified.Kind != "" {
+		merged.Kind = classified.Kind
+	}
+	if classified.Message != "" {
+		merged.Message = classified.Message
+	}
+	if classified.StatusCode != nil {
+		merged.StatusCode = classified.StatusCode
+	}
+	if len(classified.Raw) > 0 {
+		merged.Raw = classified.Raw
+	}
+	return merged
+}
+
+func errorMessage(err error) string {
+	if err == nil {
+		return "egress codec returned no error"
+	}
+	return err.Error()
 }
 
 func (r *Runtime) egressFor(source protocol.Endpoint, protocolID string) (protocol.EgressCodec, error) {
@@ -350,6 +466,21 @@ func readWireResponse(response *provider.Response) (protocol.WireResponse, error
 		}
 	}
 	return protocol.WireResponse{Status: response.StatusCode, Headers: headers, Body: body}, nil
+}
+
+func providerErrorPassthrough(response protocol.WireResponse) protocol.WireResponse {
+	headers := make(map[string]string, 1)
+	for key, value := range response.Headers {
+		if strings.EqualFold(key, "Content-Type") && value != "" {
+			headers["Content-Type"] = value
+			break
+		}
+	}
+	return protocol.WireResponse{
+		Status:  response.Status,
+		Headers: headers,
+		Body:    append([]byte(nil), response.Body...),
+	}
 }
 
 func runtimeFromUpstream(upstream configsnapshot.Upstream) provider.UpstreamRuntime {
@@ -405,6 +536,14 @@ func (r *Runtime) opaquePassthroughAllowed(source protocol.Endpoint, egress prot
 	}
 	ingress, found := r.protocols.Ingress(source)
 	return found && ingress.Capabilities().OpaquePassthrough
+}
+
+func (r *Runtime) rawStreamPassthroughAllowed(source protocol.Endpoint, egress protocol.EgressCodec) bool {
+	if source != egress.Endpoint() || !egress.Capabilities().RawStreamPassthrough {
+		return false
+	}
+	ingress, found := r.protocols.Ingress(source)
+	return found && ingress.Capabilities().RawStreamPassthrough
 }
 
 func cloneModelRequest(request llm.ModelRequest) (llm.ModelRequest, error) {
