@@ -155,8 +155,8 @@ func TestSnapshotFromStorage_RoundtripsThroughProto(t *testing.T) {
 	if !reflect.DeepEqual(sortedRoutes(got), sortedRoutes(direct)) {
 		t.Errorf("routes via proto = %+v, want %+v", sortedRoutes(got), sortedRoutes(direct))
 	}
-	if !reflect.DeepEqual(got.FindKey(rawKey), direct.FindKey(rawKey)) {
-		t.Errorf("consumer access via proto = %+v, want %+v", got.FindKey(rawKey), direct.FindKey(rawKey))
+	if gotAccess, directAccess := sortedConsumerAccess(got.FindKey(rawKey)), sortedConsumerAccess(direct.FindKey(rawKey)); !reflect.DeepEqual(gotAccess, directAccess) {
+		t.Errorf("consumer access via proto = %+v, want %+v", gotAccess, directAccess)
 	}
 	for _, key := range []string{"proxy.request_timeout", "proxy_enabled", "proxy_url"} {
 		if gotValue, gotOK := got.SettingGet(key); gotValue != mustSetting(t, direct, key) || gotOK != hasSetting(direct, key) {
@@ -178,6 +178,33 @@ func sortedRoutes(snap *configsnapshot.Snapshot) []configsnapshot.Route {
 	routes := snap.RoutesList()
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Model < routes[j].Model })
 	return routes
+}
+
+func sortedConsumerAccess(access *configsnapshot.ConsumerAccess) *configsnapshot.ConsumerAccess {
+	if access == nil {
+		return nil
+	}
+	copy := *access
+	copy.Routes = append([]string(nil), copy.Routes...)
+	copy.Quotas = append([]configsnapshot.ConsumerQuota(nil), copy.Quotas...)
+	sort.Strings(copy.Routes)
+	sort.Slice(copy.Quotas, func(i, j int) bool {
+		left, right := copy.Quotas[i], copy.Quotas[j]
+		if left.ID != right.ID {
+			return left.ID < right.ID
+		}
+		if left.ConsumerID != right.ConsumerID {
+			return left.ConsumerID < right.ConsumerID
+		}
+		if left.QuotaType != right.QuotaType {
+			return left.QuotaType < right.QuotaType
+		}
+		if left.QuotaLimit != right.QuotaLimit {
+			return left.QuotaLimit < right.QuotaLimit
+		}
+		return left.Window < right.Window
+	})
+	return &copy
 }
 
 func mustSetting(t *testing.T, snap *configsnapshot.Snapshot, key string) string {

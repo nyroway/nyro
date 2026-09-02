@@ -99,10 +99,7 @@ func (s *Snapshot) Fingerprint() string {
 			if left.QuotaLimit != right.QuotaLimit {
 				return left.QuotaLimit < right.QuotaLimit
 			}
-			if left.Window != right.Window {
-				return left.Window < right.Window
-			}
-			return left.Currency < right.Currency
+			return left.Window < right.Window
 		})
 	}
 	sort.Slice(payload.Keys, func(i, j int) bool {

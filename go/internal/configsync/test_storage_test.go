@@ -58,7 +58,10 @@ func newPopulatedStorage(t *testing.T) (*memory.Backend, storage.Upstream, stora
 		Name:   "alice",
 		Keys:   []storage.CreateConsumerKey{{Name: "primary", Token: "nyro_tok_alice_0000"}},
 		Routes: []string{gatedRoute.Model},
-		Quotas: []storage.CreateConsumerQuota{{QuotaType: "requests", QuotaLimit: 100, Window: "1m"}},
+		Quotas: []storage.CreateConsumerQuota{
+			{QuotaType: "requests", QuotaLimit: 100, Window: "1m"},
+			{QuotaType: "budget", QuotaLimit: 12, Window: "1mo", Currency: "USD"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
