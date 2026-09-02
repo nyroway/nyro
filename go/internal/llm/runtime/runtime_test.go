@@ -142,7 +142,7 @@ type testDriver struct {
 	prepare        func(context.Context, provider.UpstreamRuntime, protocol.WireRequest) (provider.Request, error)
 	classify       func(provider.Response) provider.Classification
 	extendResponse func(context.Context, provider.UpstreamRuntime, *llm.ChatResponse) error
-	extendError    func(context.Context, provider.UpstreamRuntime, *llm.Error) error
+	extendError    func(context.Context, provider.UpstreamRuntime, *llm.Error) (provider.ErrorClassification, error)
 }
 
 func (d *testDriver) ExtendRequest(ctx context.Context, upstream provider.UpstreamRuntime, request llm.ModelRequest) error {
@@ -167,8 +167,7 @@ func (d *testDriver) Classify(response provider.Response) provider.Classificatio
 		return d.classify(response)
 	}
 	return provider.Classification{
-		Failed:    response.StatusCode >= 400,
-		Retryable: response.StatusCode == 429 || response.StatusCode >= 500,
+		Failed: response.StatusCode >= 400,
 	}
 }
 
@@ -179,11 +178,11 @@ func (d *testDriver) ExtendResponse(ctx context.Context, upstream provider.Upstr
 	return nil
 }
 
-func (d *testDriver) ExtendError(ctx context.Context, upstream provider.UpstreamRuntime, providerError *llm.Error) error {
+func (d *testDriver) ExtendError(ctx context.Context, upstream provider.UpstreamRuntime, providerError *llm.Error) (provider.ErrorClassification, error) {
 	if d.extendError != nil {
 		return d.extendError(ctx, upstream, providerError)
 	}
-	return nil
+	return provider.ErrorClassification{}, nil
 }
 
 type transportFunc func(context.Context, provider.Request) (*provider.Response, error)
@@ -425,13 +424,13 @@ func TestExecuteRunsErrorDecodeAndDriverExtensionInProviderSequence(t *testing.T
 			appendStep("driver raw classification")
 			return provider.Classification{Failed: true}
 		},
-		extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) error {
+		extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) (provider.ErrorClassification, error) {
 			appendStep("driver normalized error extension")
 			if providerError.Kind != llm.ErrContentFiltered || providerError.Message != "decoded vendor refusal" {
 				t.Fatalf("error before Driver extension = %+v", providerError)
 			}
 			providerError.Message = "provider: " + providerError.Message
-			return nil
+			return provider.ErrorClassification{}, nil
 		},
 	}
 	codec := testChatEgress{

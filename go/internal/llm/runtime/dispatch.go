@@ -27,9 +27,15 @@ type execution struct {
 	routeResolved  bool
 	delivered      bool
 	deliveryClosed bool
-	pendingWire    *protocol.WireResponse
+	pendingOpaque  *protocol.WireResponse
+	pendingError   *pendingProviderError
 	pendingHealth  *healthRecord
 	stream         streamState
+}
+
+type pendingProviderError struct {
+	wire       protocol.WireResponse
+	normalized *llm.Error
 }
 
 type healthRecord struct {
@@ -75,6 +81,7 @@ type attemptResult struct {
 	failover  bool
 	terminal  bool
 	origin    failureOrigin
+	unhealthy bool
 }
 
 func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *pipeline.Exchange) *llm.Error {
@@ -146,7 +153,7 @@ func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *
 					execution.pendingHealth = &healthRecord{key: healthKey, latencyMs: result.latencyMs}
 				}
 				if result.opaque != nil {
-					execution.pendingWire = result.opaque
+					execution.pendingOpaque = result.opaque
 					execution.pendingHealth = &healthRecord{key: healthKey, latencyMs: result.latencyMs}
 				}
 				if result.response == nil && result.opaque == nil {
@@ -178,10 +185,13 @@ func (r *Runtime) dispatch(ctx context.Context, execution *execution, exchange *
 			}
 
 			if isProviderFailure(result.origin) {
-				r.router.Record(healthKey, false, result.latencyMs)
+				r.router.Record(healthKey, !result.unhealthy, result.latencyMs)
 			}
 			if result.rawError != nil && r.errorPassthroughAllowed(exchange.Source, egress) {
-				execution.pendingWire = result.rawError
+				execution.pendingError = &pendingProviderError{
+					wire:       *result.rawError,
+					normalized: result.err,
+				}
 			}
 			return result.err
 		}
@@ -284,7 +294,8 @@ func (r *Runtime) executeAttempt(
 		if len(providerError.Raw) == 0 {
 			providerError.Raw = append(json.RawMessage(nil), wire.Body...)
 		}
-		if err := driver.ExtendError(ctx, providerRuntime, providerError); err != nil {
+		errorClassification, err := driver.ExtendError(ctx, providerRuntime, providerError)
+		if err != nil {
 			return attemptResult{
 				err:       llm.ErrorFromStatus(statusBadGateway, "apply provider error extension: "+err.Error()),
 				status:    response.StatusCode,
@@ -292,7 +303,7 @@ func (r *Runtime) executeAttempt(
 				failover:  true,
 			}
 		}
-		retryable := r.settings.RetryOnStatus[response.StatusCode] || classification.Retryable
+		retryable := r.settings.RetryOnStatus[response.StatusCode] || classification.Retryable || errorClassification.Retryable
 		rawError := providerErrorPassthrough(wire)
 		return attemptResult{
 			rawError:  &rawError,
@@ -300,6 +311,7 @@ func (r *Runtime) executeAttempt(
 			status:    response.StatusCode,
 			latencyMs: latencyMs,
 			retry:     retryable,
+			unhealthy: errorClassification.Unhealthy,
 		}
 	}
 

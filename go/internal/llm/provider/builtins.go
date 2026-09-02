@@ -128,8 +128,8 @@ func (standardDriver) ExtendResponse(context.Context, UpstreamRuntime, *llm.Chat
 	return nil
 }
 
-func (standardDriver) ExtendError(context.Context, UpstreamRuntime, *llm.Error) error {
-	return nil
+func (standardDriver) ExtendError(context.Context, UpstreamRuntime, *llm.Error) (ErrorClassification, error) {
+	return ErrorClassification{}, nil
 }
 
 func (driver standardDriver) authenticationScheme(protocolID string) string {

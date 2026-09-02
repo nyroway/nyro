@@ -27,6 +27,14 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]llm.StreamDelta, e
 		d.done = true
 		return []llm.StreamDelta{&llm.DoneDelta{StopReason: d.stop}}, nil
 	}
+	var errorEnvelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal([]byte(payload), &errorEnvelope) == nil && len(errorEnvelope.Error) > 0 && string(errorEnvelope.Error) != "null" {
+		providerError, _ := (egress{}).DecodeError(protocol.WireResponse{Body: []byte(payload)})
+		d.done = true
+		return []llm.StreamDelta{&llm.StreamErrorDelta{Error: providerError}}, nil
+	}
 
 	var w chatCompletionChunk
 	if err := json.Unmarshal([]byte(payload), &w); err != nil {

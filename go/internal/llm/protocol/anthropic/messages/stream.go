@@ -95,6 +95,10 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]llm.StreamDelta, e
 			d.done = true
 			out = append(out, &llm.DoneDelta{StopReason: d.stop})
 		}
+	case "error":
+		providerError, _ := (egress{}).DecodeError(protocol.WireResponse{Body: []byte(payload)})
+		d.done = true
+		out = append(out, &llm.StreamErrorDelta{Error: providerError})
 	default:
 		// Forward unknown events verbatim (server_tool_use, citations_delta,
 		// web_search_tool_result, future events) — "no silent drops" principle.

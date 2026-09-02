@@ -124,7 +124,7 @@ func (r *Runtime) extendStreamProviderError(
 	providerError *llm.Error,
 ) *llm.Error {
 	providerError = cloneError(providerError)
-	if err := driver.ExtendError(ctx, providerRuntime, providerError); err != nil {
+	if _, err := driver.ExtendError(ctx, providerRuntime, providerError); err != nil {
 		return llm.ErrorFromStatus(statusBadGateway, "apply provider stream error extension: "+err.Error())
 	}
 	return providerError

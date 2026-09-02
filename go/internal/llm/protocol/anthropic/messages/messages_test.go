@@ -160,6 +160,25 @@ func TestStreamDecode(t *testing.T) {
 	}
 }
 
+func TestStreamDecodeErrorEventAsCanonicalError(t *testing.T) {
+	payload := `{"type":"error","error":{"type":"overloaded_error","message":"capacity exhausted"}}`
+	deltas, err := (&streamResponseDecoder{}).ParseChunk(payload)
+
+	if err != nil {
+		t.Fatalf("ParseChunk: %v", err)
+	}
+	if len(deltas) != 1 {
+		t.Fatalf("deltas = %#v, want one terminal error", deltas)
+	}
+	terminal, ok := deltas[0].(*llm.StreamErrorDelta)
+	if !ok || terminal.Error == nil {
+		t.Fatalf("terminal delta = %#v", deltas[0])
+	}
+	if terminal.Error.Kind != llm.ErrServiceUnavailable || terminal.Error.Message != "capacity exhausted" || string(terminal.Error.Raw) != payload {
+		t.Fatalf("canonical error = %+v", terminal.Error)
+	}
+}
+
 func TestStreamEncode(t *testing.T) {
 	t.Parallel()
 	e := &streamResponseEncoder{}

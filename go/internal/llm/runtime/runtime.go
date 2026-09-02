@@ -163,16 +163,15 @@ func (execution *execution) terminalize(ctx context.Context, exchange *pipeline.
 	}
 
 	switch {
-	case execution.pendingWire != nil:
+	case exchange.Error != nil && execution.pendingError != nil && exchange.Error == execution.pendingError.normalized:
 		execution.deliveryClosed = true
-		if sendErr := execution.sink.SendOpaque(ctx, *execution.pendingWire); sendErr != nil {
+		if sendErr := execution.sink.SendOpaque(ctx, execution.pendingError.wire); sendErr != nil {
 			exchange.Response = nil
-			exchange.Error = errorFromExecution(fmt.Errorf("send opaque response: %w", sendErr))
+			exchange.Error = errorFromExecution(fmt.Errorf("send provider error: %w", sendErr))
 			exchange.Status = statusOf(exchange.Error, statusBadGateway)
 			return sendErr
 		}
 		execution.delivered = true
-		execution.recordPendingHealth()
 	case exchange.Error != nil:
 		execution.deliveryClosed = true
 		sinkError := cloneError(exchange.Error)
@@ -183,6 +182,16 @@ func (execution *execution) terminalize(ctx context.Context, exchange *pipeline.
 			return sendErr
 		}
 		execution.delivered = true
+	case execution.pendingOpaque != nil:
+		execution.deliveryClosed = true
+		if sendErr := execution.sink.SendOpaque(ctx, *execution.pendingOpaque); sendErr != nil {
+			exchange.Response = nil
+			exchange.Error = errorFromExecution(fmt.Errorf("send opaque response: %w", sendErr))
+			exchange.Status = statusOf(exchange.Error, statusBadGateway)
+			return sendErr
+		}
+		execution.delivered = true
+		execution.recordPendingHealth()
 	case exchange.Response != nil:
 		execution.deliveryClosed = true
 		if sendErr := execution.sink.SendResponse(ctx, exchange.Response); sendErr != nil {

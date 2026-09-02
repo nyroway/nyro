@@ -89,6 +89,8 @@ type streamEvent struct {
 	Response *responseRef `json:"response,omitempty"`
 	Delta    string       `json:"delta,omitempty"`
 	Item     *outputItem  `json:"item,omitempty"`
+	Code     string       `json:"code,omitempty"`
+	Message  string       `json:"message,omitempty"`
 }
 
 // responseRef is the `response` sub-object on created/in_progress/completed.
@@ -97,4 +99,10 @@ type responseRef struct {
 	Model  string         `json:"model,omitempty"`
 	Status string         `json:"status,omitempty"`
 	Usage  *responseUsage `json:"usage,omitempty"`
+	Error  *responseError `json:"error,omitempty"`
+}
+
+type responseError struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
 }
