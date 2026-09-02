@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/nyroway/nyro/go/internal/llm"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 )
 
 // streamResponseDecoder parses Responses SSE events (typed by the "type" field).
@@ -63,12 +64,32 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]llm.StreamDelta, e
 			out = append(out, &llm.DoneDelta{StopReason: "length"})
 		}
 	case "response.failed":
-		if !d.done {
-			d.done = true
-			out = append(out, &llm.DoneDelta{StopReason: "stop"})
+		if d.done {
+			break
 		}
+		d.done = true
+		var detail responseError
+		if ev.Response != nil && ev.Response.Error != nil {
+			detail = *ev.Response.Error
+		}
+		out = append(out, streamErrorDelta(payload, detail.Code, detail.Message))
+	case "error":
+		if d.done {
+			break
+		}
+		d.done = true
+		out = append(out, streamErrorDelta(payload, ev.Code, ev.Message))
 	}
 	return out, nil
+}
+
+func streamErrorDelta(payload, code, message string) llm.StreamDelta {
+	providerError := protocol.ErrorFromWire(
+		protocol.WireResponse{Body: []byte(payload)},
+		message,
+		code,
+	)
+	return &llm.StreamErrorDelta{Error: providerError}
 }
 
 func (d *streamResponseDecoder) Finish() []llm.StreamDelta {

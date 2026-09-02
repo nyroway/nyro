@@ -27,7 +27,9 @@ func (fakeDriver) ExtendResponse(context.Context, UpstreamRuntime, *llm.ChatResp
 	return nil
 }
 
-func (fakeDriver) ExtendError(context.Context, UpstreamRuntime, *llm.Error) error { return nil }
+func (fakeDriver) ExtendError(context.Context, UpstreamRuntime, *llm.Error) (ErrorClassification, error) {
+	return ErrorClassification{}, nil
+}
 
 func fakeRegistration(id string, priority int, name string) Registration {
 	return Registration{

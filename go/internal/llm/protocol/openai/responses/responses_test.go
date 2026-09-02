@@ -224,6 +224,39 @@ func TestStreamDecode(t *testing.T) {
 	}
 }
 
+func TestStreamDecodeResponseFailedAsCanonicalError(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "response.failed",
+			payload: `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","message":"provider crashed"}}}`,
+		},
+		{
+			name:    "top-level error",
+			payload: `{"type":"error","code":"server_error","message":"provider crashed"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			deltas, err := (&streamResponseDecoder{}).ParseChunk(test.payload)
+			if err != nil {
+				t.Fatalf("ParseChunk: %v", err)
+			}
+			if len(deltas) != 1 {
+				t.Fatalf("deltas = %#v, want one terminal error", deltas)
+			}
+			terminal, ok := deltas[0].(*llm.StreamErrorDelta)
+			if !ok || terminal.Error == nil {
+				t.Fatalf("terminal delta = %#v", deltas[0])
+			}
+			if terminal.Error.Kind != llm.ErrServerError || terminal.Error.Message != "provider crashed" || string(terminal.Error.Raw) != test.payload {
+				t.Fatalf("canonical error = %+v", terminal.Error)
+			}
+		})
+	}
+}
+
 func TestStreamEncode(t *testing.T) {
 	t.Parallel()
 	e := &streamResponseEncoder{}

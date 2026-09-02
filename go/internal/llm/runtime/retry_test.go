@@ -135,12 +135,116 @@ func TestExecuteRetriesSemanticClassificationOnCustomStatus(t *testing.T) {
 	}
 }
 
-func TestExecuteMarksClassifiedProviderFailureUnhealthy(t *testing.T) {
+func TestExecuteUsesPostDecodeProviderClassificationForSameStatusBodies(t *testing.T) {
+	const (
+		transientBody = `{"error":{"message":"capacity warming","code":"warming"}}`
+		permanentBody = `{"error":{"message":"account blocked","code":"blocked"}}`
+	)
+	for _, test := range []struct {
+		name         string
+		body         string
+		wantAttempts int32
+		wantSuccess  bool
+	}{
+		{name: "body classified transient", body: transientBody, wantAttempts: 2, wantSuccess: true},
+		{name: "body classified permanent", body: permanentBody, wantAttempts: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			driver := &testDriver{extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) (provider.ErrorClassification, error) {
+				switch string(providerError.Raw) {
+				case transientBody:
+					return provider.ErrorClassification{Retryable: true}, nil
+				case permanentBody:
+					return provider.ErrorClassification{}, nil
+				default:
+					t.Fatalf("Driver received unexpected normalized Raw body %q", providerError.Raw)
+					return provider.ErrorClassification{}, nil
+				}
+			}}
+			runtime := newRuntimeFixture(t, runtimeFixture{
+				routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
+				upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+				settings: map[string]string{
+					"proxy.max_retries":     "2",
+					"proxy.retry_on_status": `[503]`,
+				},
+				ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+				egress:    []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+				providers: []provider.Registration{providerRegistration("test", driver)},
+				transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+					attempt := attempts.Add(1)
+					if test.wantSuccess && attempt == 2 {
+						return response(200, "ok"), nil
+					}
+					return response(409, test.body), nil
+				}),
+			})
+			sink := &recordingSink{}
+
+			completion := runtime.Execute(context.Background(), Call{
+				Request: llm.NewChatRequest("client-model", nil),
+				Source:  protocol.OpenAIChatCompletionsV1,
+				Sink:    sink,
+			})
+
+			if got := attempts.Load(); got != test.wantAttempts {
+				t.Fatalf("transport attempts = %d, want %d for status 409 body %q", got, test.wantAttempts, test.body)
+			}
+			if test.wantSuccess {
+				if completion.Error != nil || completion.Response == nil || completion.Response.Content != "ok" {
+					t.Fatalf("completion = %+v", completion)
+				}
+				return
+			}
+			if completion.Error == nil || completion.Response != nil {
+				t.Fatalf("completion = %+v, want permanent Provider error", completion)
+			}
+		})
+	}
+}
+
+func TestExecuteOrdinaryNonRetriedClientErrorRestoresProviderHealth(t *testing.T) {
 	router := routing.New()
 	target := routeTarget("target", "backend", "served-model", 1)
 	key := routing.KeyOf(routing.Target{UpstreamID: target.UpstreamID, Model: target.Model})
-	driver := &testDriver{classify: func(provider.Response) provider.Classification {
-		return provider.Classification{Failed: true}
+	router.Record(key, false, 0)
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes:    []configsnapshot.Route{chatRoute("route", target)},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		settings: map[string]string{
+			"proxy.max_retries":     "2",
+			"proxy.retry_on_status": `[503]`,
+		},
+		ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress:    []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+		transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return response(418, `{"error":{"message":"ordinary client error"}}`), nil
+		}),
+		router: router,
+	})
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    &recordingSink{},
+	})
+
+	if completion.Error == nil || completion.Response != nil {
+		t.Fatalf("completion = %+v, want non-retried Provider error", completion)
+	}
+	if !router.IsHealthy(key) {
+		t.Fatal("ordinary non-retried 4xx response did not restore Provider health")
+	}
+}
+
+func TestExecuteMarksExplicitProviderHealthFailureUnhealthy(t *testing.T) {
+	router := routing.New()
+	target := routeTarget("target", "backend", "served-model", 1)
+	key := routing.KeyOf(routing.Target{UpstreamID: target.UpstreamID, Model: target.Model})
+	driver := &testDriver{extendError: func(context.Context, provider.UpstreamRuntime, *llm.Error) (provider.ErrorClassification, error) {
+		return provider.ErrorClassification{Unhealthy: true}, nil
 	}}
 	runtime := newRuntimeFixture(t, runtimeFixture{
 		routes:    []configsnapshot.Route{chatRoute("route", target)},
@@ -165,7 +269,7 @@ func TestExecuteMarksClassifiedProviderFailureUnhealthy(t *testing.T) {
 		t.Fatal("completion error = nil")
 	}
 	if router.IsHealthy(key) {
-		t.Fatal("classified Provider failure was recorded healthy")
+		t.Fatal("explicit Provider health failure was recorded healthy")
 	}
 }
 

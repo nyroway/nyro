@@ -13,6 +13,8 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/llm/pipeline"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
+	anthropicmessages "github.com/nyroway/nyro/go/internal/llm/protocol/anthropic/messages"
+	openairesponses "github.com/nyroway/nyro/go/internal/llm/protocol/openai/responses"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/llm/routing"
 )
@@ -195,13 +197,13 @@ func TestExecuteAllowsUnknownDeltaOnlyForSameEndpointNegotiation(t *testing.T) {
 
 func TestExecuteExtendsDecodedStreamErrorBeforeDelivery(t *testing.T) {
 	var extensions atomic.Int32
-	driver := &testDriver{extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) error {
+	driver := &testDriver{extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) (provider.ErrorClassification, error) {
 		extensions.Add(1)
 		if providerError.Kind != llm.ErrRateLimitError || providerError.Message != "decoded stream error" {
 			t.Fatalf("decoded stream error before extension = %+v", providerError)
 		}
 		providerError.Message = "provider: " + providerError.Message
-		return nil
+		return provider.ErrorClassification{}, nil
 	}}
 	runtime := newRuntimeFixture(t, runtimeFixture{
 		routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
@@ -247,10 +249,10 @@ func TestExecuteExtendsDecodedStreamErrorBeforeDelivery(t *testing.T) {
 
 func TestExecuteExtendsUnexpectedEOFProviderErrorBeforeDelivery(t *testing.T) {
 	var extensions atomic.Int32
-	driver := &testDriver{extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) error {
+	driver := &testDriver{extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) (provider.ErrorClassification, error) {
 		extensions.Add(1)
 		providerError.Message = "provider: " + providerError.Message
-		return nil
+		return provider.ErrorClassification{}, nil
 	}}
 	runtime := newRuntimeFixture(t, runtimeFixture{
 		routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
@@ -328,6 +330,71 @@ func TestExecuteSanitizesCrossEndpointStreamErrorRaw(t *testing.T) {
 	terminal, ok := sink.deltas[len(sink.deltas)-1].(*llm.StreamErrorDelta)
 	if !ok || terminal.Error == nil || len(terminal.Error.Raw) != 0 {
 		t.Fatalf("cross-Endpoint terminal delta = %#v", sink.deltas[len(sink.deltas)-1])
+	}
+}
+
+func TestExecuteDecodesBuiltInProviderStreamErrorEvents(t *testing.T) {
+	tests := []struct {
+		name         string
+		egress       protocol.EgressCodec
+		startPayload string
+		errorPayload string
+		wantKind     llm.ErrorKind
+		wantMessage  string
+	}{
+		{
+			name:         "OpenAI Responses response.failed",
+			egress:       openairesponses.NewEgress(),
+			startPayload: `{"type":"response.created","response":{"id":"r1","model":"provider-model","status":"in_progress"}}`,
+			errorPayload: `{"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","message":"provider crashed"}}}`,
+			wantKind:     llm.ErrServerError,
+			wantMessage:  "provider crashed",
+		},
+		{
+			name:         "Anthropic error",
+			egress:       anthropicmessages.NewEgress(),
+			startPayload: `{"type":"message_start","message":{"id":"m1","model":"provider-model","usage":{"input_tokens":1}}}`,
+			errorPayload: `{"type":"error","error":{"type":"overloaded_error","message":"capacity exhausted"}}`,
+			wantKind:     llm.ErrServiceUnavailable,
+			wantMessage:  "capacity exhausted",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := newRuntimeFixture(t, runtimeFixture{
+				routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "provider-model", 1))},
+				upstreams: []configsnapshot.Upstream{upstream("backend", "test", test.egress.Endpoint().Protocol.String())},
+				settings:  map[string]string{"proxy.max_retries": "1"},
+				ingress: []protocol.IngressCodec{testIngress{
+					endpoint: protocol.OpenAIChatCompletionsV1,
+					caps:     protocol.Capabilities{Streaming: true, ErrorPassthrough: true},
+				}},
+				egress:    []protocol.EgressCodec{test.egress},
+				providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+				transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+					return response(200, "data: "+test.startPayload+"\n\ndata: "+test.errorPayload+"\n\n"), nil
+				}),
+			})
+			request := llm.NewChatRequest("client-model", []llm.Message{{
+				Role: llm.RoleUser, Content: &llm.TextContent{Text: "hello"},
+			}})
+			request.Stream.Enabled = true
+			sink := &recordingSink{}
+
+			completion := runtime.Execute(context.Background(), Call{
+				Request: request,
+				Source:  protocol.OpenAIChatCompletionsV1,
+				Sink:    sink,
+			})
+
+			if completion.Error == nil || completion.Error.Kind != test.wantKind || completion.Error.Message != test.wantMessage || string(completion.Error.Raw) != test.errorPayload {
+				t.Fatalf("completion error = %+v", completion.Error)
+			}
+			terminal, ok := sink.deltas[len(sink.deltas)-1].(*llm.StreamErrorDelta)
+			if !ok || terminal.Error == nil || terminal.Error.Kind != test.wantKind || terminal.Error.Message != test.wantMessage || len(terminal.Error.Raw) != 0 {
+				t.Fatalf("cross-Endpoint terminal delta = %#v", sink.deltas[len(sink.deltas)-1])
+			}
+		})
 	}
 }
 
@@ -735,6 +802,53 @@ func TestExecuteAllowsOpaqueResponseOnlyForSameEndpoint(t *testing.T) {
 				t.Fatalf("completion/errors = %+v/%+v", completion, sink.errors)
 			}
 		})
+	}
+}
+
+func TestExecutePostResponseRejectionOverridesPendingOpaqueSuccess(t *testing.T) {
+	postError := llm.NewError(llm.ErrContentFiltered, "response rejected by policy").WithStatus(403)
+	post := testPhase{
+		name: "reject.embedding.response",
+		apply: func(context.Context, *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+			return pipeline.Outcome{Decision: pipeline.Reject, Error: postError}, nil
+		},
+	}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes: []configsnapshot.Route{chatRoute("route",
+			routeTarget("target", "backend", "embedding-model", 1),
+		)},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIEmbeddings)},
+		settings:  map[string]string{"proxy.max_retries": "1"},
+		ingress: []protocol.IngressCodec{testIngress{
+			endpoint: protocol.OpenAIEmbeddingsV1,
+			caps:     protocol.Capabilities{OpaquePassthrough: true},
+		}},
+		egress: []protocol.EgressCodec{testEmbeddingEgress{
+			endpoint: protocol.OpenAIEmbeddingsV1,
+			caps:     protocol.Capabilities{OpaquePassthrough: true},
+		}},
+		providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+		transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return response(200, `{"data":[1]}`), nil
+		}),
+		post: []pipeline.Phase{post},
+	})
+	sink := &recordingSink{}
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewEmbeddingRequest("client-model", &llm.TextInput{Text: "hello"}),
+		Source:  protocol.OpenAIEmbeddingsV1,
+		Sink:    sink,
+	})
+
+	if len(sink.opaque) != 0 || len(sink.errors) != 1 {
+		t.Fatalf("Sink opaque/errors = %d/%d, want 0/1", len(sink.opaque), len(sink.errors))
+	}
+	if completion.Error != postError || completion.Response != nil {
+		t.Fatalf("completion = %+v, want PostResponse error", completion)
+	}
+	if sink.errors[0].Kind != llm.ErrContentFiltered || sink.errors[0].Message != "response rejected by policy" {
+		t.Fatalf("Sink error = %+v", sink.errors[0])
 	}
 }
 

@@ -21,6 +21,14 @@ func (d *streamResponseDecoder) ParseChunk(payload string) ([]llm.StreamDelta, e
 	if payload == "" {
 		return nil, nil
 	}
+	var errorEnvelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal([]byte(payload), &errorEnvelope) == nil && len(errorEnvelope.Error) > 0 && string(errorEnvelope.Error) != "null" {
+		providerError, _ := (egress{}).DecodeError(protocol.WireResponse{Body: []byte(payload)})
+		d.done = true
+		return []llm.StreamDelta{&llm.StreamErrorDelta{Error: providerError}}, nil
+	}
 	var chunk response
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 		return []llm.StreamDelta{&llm.UnknownDelta{Raw: payload}}, nil

@@ -128,6 +128,22 @@ func TestStreamDecode(t *testing.T) {
 	}
 }
 
+func TestStreamDecodeErrorEnvelopeAsCanonicalError(t *testing.T) {
+	payload := `{"error":{"message":"request rate exceeded","type":"rate_limit_error"}}`
+	deltas, err := (&streamResponseDecoder{}).ParseChunk(payload)
+
+	if err != nil {
+		t.Fatalf("ParseChunk: %v", err)
+	}
+	if len(deltas) != 1 {
+		t.Fatalf("deltas = %#v, want one terminal error", deltas)
+	}
+	terminal, ok := deltas[0].(*llm.StreamErrorDelta)
+	if !ok || terminal.Error == nil || terminal.Error.Kind != llm.ErrRateLimitError || terminal.Error.Message != "request rate exceeded" || string(terminal.Error.Raw) != payload {
+		t.Fatalf("terminal delta = %#v", deltas[0])
+	}
+}
+
 func TestStreamEncode(t *testing.T) {
 	t.Parallel()
 	e := &streamResponseEncoder{}

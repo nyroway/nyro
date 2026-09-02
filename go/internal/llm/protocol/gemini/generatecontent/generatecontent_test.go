@@ -267,6 +267,22 @@ func TestStreamDecode(t *testing.T) {
 	}
 }
 
+func TestStreamDecodeErrorEnvelopeAsCanonicalError(t *testing.T) {
+	payload := `{"error":{"code":503,"message":"capacity exhausted","status":"UNAVAILABLE"}}`
+	deltas, err := (&streamResponseDecoder{}).ParseChunk(payload)
+
+	if err != nil {
+		t.Fatalf("ParseChunk: %v", err)
+	}
+	if len(deltas) != 1 {
+		t.Fatalf("deltas = %#v, want one terminal error", deltas)
+	}
+	terminal, ok := deltas[0].(*llm.StreamErrorDelta)
+	if !ok || terminal.Error == nil || terminal.Error.Kind != llm.ErrServiceUnavailable || terminal.Error.Message != "capacity exhausted" || string(terminal.Error.Raw) != payload {
+		t.Fatalf("terminal delta = %#v", deltas[0])
+	}
+}
+
 func TestStreamEncode(t *testing.T) {
 	t.Parallel()
 	e := &streamResponseEncoder{}
