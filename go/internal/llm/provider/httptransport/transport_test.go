@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -108,6 +109,36 @@ func TestNewBuildsTunedHTTPTransportAndConfiguresValidProxy(t *testing.T) {
 	}
 	if httpTransport.IdleConnTimeout == 0 {
 		t.Fatal("IdleConnTimeout is not configured")
+	}
+}
+
+func TestConnectTimeoutGovernsDialContext(t *testing.T) {
+	const connectTimeout = 25 * time.Millisecond
+	deadlineRemaining := make(chan time.Duration, 1)
+	transport, err := newWithDialContext(Config{ConnectTimeout: connectTimeout}, func(ctx context.Context, _, _ string) (net.Conn, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return nil, errors.New("dial context has no deadline")
+		}
+		deadlineRemaining <- time.Until(deadline)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	if err != nil {
+		t.Fatalf("newWithDialContext(): %v", err)
+	}
+	httpTransport, ok := transport.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client transport = %T", transport.client.Transport)
+	}
+
+	_, err = httpTransport.DialContext(context.Background(), "tcp", "unused.example:443")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("DialContext() error = %v, want context.DeadlineExceeded", err)
+	}
+	remaining := <-deadlineRemaining
+	if remaining <= 0 || remaining > connectTimeout {
+		t.Fatalf("dial deadline remaining = %s, want within (0, %s]", remaining, connectTimeout)
 	}
 }
 
