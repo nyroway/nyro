@@ -24,6 +24,19 @@ func newSink(writer http.ResponseWriter, ingress protocol.IngressCodec) *httpSin
 	return &httpSink{writer: writer, ingress: ingress}
 }
 
+func (sink *httpSink) ResetStreamAttempt() error {
+	if sink == nil || sink.writer == nil || sink.ingress == nil {
+		return errors.New("HTTP Sink is not configured")
+	}
+	if sink.streamOpen {
+		return errors.New("HTTP stream Sink is already committed")
+	}
+	sink.encoder = nil
+	sink.usage = llm.Usage{}
+	sink.terminated = false
+	return nil
+}
+
 func (sink *httpSink) SendResponse(ctx context.Context, response *llm.ChatResponse) error {
 	if err := sink.begin(ctx, "HTTP Sink"); err != nil {
 		return err

@@ -13,6 +13,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	httpingress "github.com/nyroway/nyro/go/internal/llm/ingress/http"
+	"github.com/nyroway/nyro/go/internal/llm/pipeline"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
@@ -47,6 +48,7 @@ type testRuntimeSource struct {
 	providers *provider.Catalog
 	transport provider.Transport
 	quota     quota.Store
+	observe   pipeline.Phase
 	snapshot  *configsnapshot.Snapshot
 	runtime   *llmruntime.Runtime
 }
@@ -61,7 +63,7 @@ func (source *testRuntimeSource) Acquire() (*llmruntime.Runtime, func(), bool) {
 	if source.snapshot != snapshot || source.runtime == nil {
 		runtime, err := llmruntime.New(llmruntime.Config{
 			Snapshot: snapshot, Protocols: source.protocols, Providers: source.providers,
-			Transport: source.transport, Quota: source.quota,
+			Transport: source.transport, Quota: source.quota, Observe: source.observe,
 		})
 		if err != nil {
 			return nil, nil, false

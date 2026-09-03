@@ -344,6 +344,32 @@ func TestSinkSendDeltaReturnsSuccessOnlyAfterCompleteFrameAndFlush(t *testing.T)
 	}
 }
 
+func TestSinkResetStreamAttemptDiscardsOnlyUncommittedEncoderState(t *testing.T) {
+	writer := &flushingWriter{}
+	sink := newSink(writer, testIngressCodec{endpoint: protocol.OpenAIChatCompletionsV1, stream: testStreamEncoder{}})
+	committed, err := sink.SendDelta(context.Background(), &llm.UsageDelta{Usage: llm.Usage{TotalTokens: 3}})
+	if err != nil || committed {
+		t.Fatalf("unframed Usage committed/error = %t/%v, want false/nil", committed, err)
+	}
+	if sink.encoder == nil || sink.usage.TotalTokens != 3 {
+		t.Fatalf("uncommitted encoder/usage = %T/%+v, want initialized attempt state", sink.encoder, sink.usage)
+	}
+	if err := sink.ResetStreamAttempt(); err != nil {
+		t.Fatalf("ResetStreamAttempt: %v", err)
+	}
+	if sink.encoder != nil || sink.usage != (llm.Usage{}) || sink.terminated {
+		t.Fatalf("reset encoder/usage/terminal = %T/%+v/%t", sink.encoder, sink.usage, sink.terminated)
+	}
+
+	committed, err = sink.SendDelta(context.Background(), &llm.TextDelta{Text: "visible"})
+	if err != nil || !committed {
+		t.Fatalf("visible Text committed/error = %t/%v, want true/nil", committed, err)
+	}
+	if err := sink.ResetStreamAttempt(); err == nil {
+		t.Fatal("ResetStreamAttempt succeeded after client-visible stream commit")
+	}
+}
+
 func TestSinkEncodesTerminalStreamErrorAndStops(t *testing.T) {
 	writer := &flushingWriter{}
 	sink := newSink(writer, testIngressCodec{endpoint: protocol.AnthropicMessagesV1, stream: testStreamEncoder{}})

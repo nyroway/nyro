@@ -30,6 +30,9 @@ type streamState struct {
 	allowRawErrors      bool
 	errorClassification provider.ErrorClassification
 	canonicalError      bool
+	usage               llm.Usage
+	pending             []llm.StreamDelta
+	authoritative       bool
 }
 
 func (r *Runtime) consumeStream(
@@ -79,7 +82,7 @@ func (r *Runtime) consumeStream(
 						// OpenAI may emit usage after the finish_reason that produced
 						// this logical marker but before its [DONE] sentinel.
 						pending := *done
-						usage := cloneUsage(exchange.Usage)
+						usage := cloneUsage(execution.stream.usage)
 						pending.UsageAtDone = &usage
 						pendingDone = &pending
 						continue
@@ -218,7 +221,11 @@ func (r *Runtime) finishNormalStream(
 			return providerError
 		}
 	}
-	return r.acceptStreamDelta(ctx, execution, exchange, done)
+	if providerError := r.acceptStreamDelta(ctx, execution, exchange, done); providerError != nil {
+		return providerError
+	}
+	r.commitStreamAttempt(ctx, execution, exchange)
+	return nil
 }
 
 func (r *Runtime) acceptStreamDelta(
@@ -255,14 +262,19 @@ func (r *Runtime) sendDelta(ctx context.Context, execution *execution, exchange 
 		return errors.New("stream Sink is closed")
 	}
 	if usage, ok := delta.(*llm.UsageDelta); ok {
-		exchange.Usage = usage.Usage
+		execution.stream.usage = cloneUsage(usage.Usage)
 	}
-	if execution.runner != nil {
-		execution.runner.ObserveDelta(ctx, exchange, delta)
+	if execution.stream.authoritative {
+		r.publishStreamDelta(ctx, execution, exchange, delta)
+	} else {
+		execution.stream.pending = append(execution.stream.pending, delta)
 	}
 	committed, err := execution.sink.SendDelta(ctx, delta)
-	if committed && execution.stream.state == streamUncommitted {
-		execution.stream.state = streamCommitted
+	if committed && !execution.stream.authoritative {
+		r.commitStreamAttempt(ctx, execution, exchange)
+		if execution.stream.state == streamUncommitted {
+			execution.stream.state = streamCommitted
+		}
 	}
 	if err != nil {
 		execution.deliveryClosed = true
@@ -275,6 +287,38 @@ func (r *Runtime) sendDelta(ctx context.Context, execution *execution, exchange 
 		execution.stream.state = streamTerminated
 		execution.deliveryClosed = true
 	}
+	return nil
+}
+
+func (r *Runtime) commitStreamAttempt(ctx context.Context, execution *execution, exchange *pipeline.Exchange) {
+	if execution.stream.authoritative {
+		return
+	}
+	execution.stream.authoritative = true
+	for _, delta := range execution.stream.pending {
+		r.publishStreamDelta(ctx, execution, exchange, delta)
+	}
+	execution.stream.pending = nil
+}
+
+func (r *Runtime) publishStreamDelta(ctx context.Context, execution *execution, exchange *pipeline.Exchange, delta llm.StreamDelta) {
+	if usage, ok := delta.(*llm.UsageDelta); ok {
+		exchange.Usage = cloneUsage(usage.Usage)
+	}
+	if execution.runner != nil {
+		execution.runner.ObserveDelta(ctx, exchange, delta)
+	}
+}
+
+func resetStreamAttempt(execution *execution) error {
+	if execution.stream.authoritative || execution.stream.state != streamUncommitted {
+		return errors.New("cannot reset a committed stream attempt")
+	}
+	if err := execution.sink.ResetStreamAttempt(); err != nil {
+		return err
+	}
+	execution.stream.pending = nil
+	execution.stream.usage = llm.Usage{}
 	return nil
 }
 

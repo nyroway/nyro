@@ -357,7 +357,7 @@ func (r *Runtime) executeAttempt(
 			if streamErr == nil {
 				return attemptResult{status: response.StatusCode, latencyMs: latencyMs}
 			}
-			return attemptResult{
+			result := attemptResult{
 				err:                 streamErr,
 				status:              response.StatusCode,
 				latencyMs:           latencyMs,
@@ -367,6 +367,21 @@ func (r *Runtime) executeAttempt(
 				errorClassification: execution.stream.errorClassification,
 				canonicalStreamErr:  execution.stream.canonicalError,
 			}
+			if result.retry {
+				if err := resetStreamAttempt(execution); err != nil {
+					execution.stream.state = streamTerminated
+					execution.stream.failure = failureDownstream
+					execution.deliveryClosed = true
+					return attemptResult{
+						err:       llm.NewError(llm.ErrStreamMidError, "reset client stream attempt: "+err.Error()),
+						status:    response.StatusCode,
+						latencyMs: latencyMs,
+						terminal:  true,
+						origin:    failureDownstream,
+					}
+				}
+			}
+			return result
 		}
 
 		wire, readErr := readWireResponse(response)

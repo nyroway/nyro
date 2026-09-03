@@ -101,6 +101,24 @@ func (*usageThenProviderErrorStreamDecoder) ParseChunk(payload string) ([]llm.St
 
 func (*usageThenProviderErrorStreamDecoder) Finish() []llm.StreamDelta { return nil }
 
+type streamRecordingObserver struct {
+	deltas     []llm.StreamDelta
+	completion pipeline.Completion
+}
+
+func (*streamRecordingObserver) Name() string { return "stream-recording-observer" }
+
+func (observer *streamRecordingObserver) Apply(context.Context, *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+	return pipeline.Outcome{Decision: pipeline.Continue}, func(_ context.Context, _ *pipeline.Exchange, completion pipeline.Completion) error {
+		observer.completion = completion
+		return nil
+	}
+}
+
+func (observer *streamRecordingObserver) OnDelta(_ context.Context, _ *pipeline.Exchange, delta llm.StreamDelta) {
+	observer.deltas = append(observer.deltas, delta)
+}
+
 type rawProviderErrorStreamDecoder struct{}
 
 func (*rawProviderErrorStreamDecoder) ParseChunk(payload string) ([]llm.StreamDelta, error) {
@@ -284,20 +302,105 @@ func TestExecuteRetriesProviderStreamErrorAfterAcceptedUnframedUsage(t *testing.
 	if got := secondCalls.Load(); got != 1 {
 		t.Fatalf("second backend calls = %d, want 1 after unframed Usage", got)
 	}
-	if completion.Error != nil || !completion.Streamed {
+	if sink.resets != 1 {
+		t.Fatalf("Sink attempt resets = %d, want 1 before retry/failover", sink.resets)
+	}
+	if completion.Error != nil || !completion.Streamed || completion.Usage != (llm.Usage{}) {
 		t.Fatalf("completion = %+v, want failover stream success", completion)
 	}
-	if len(sink.errors) != 0 || len(sink.deltas) != 3 {
-		t.Fatalf("Sink errors/deltas = %d/%#v, want 0/[Usage Text Done]", len(sink.errors), sink.deltas)
+	if len(sink.errors) != 0 || len(sink.deltas) != 2 {
+		t.Fatalf("Sink errors/deltas = %d/%#v, want 0/[Text Done] from successful attempt", len(sink.errors), sink.deltas)
 	}
-	if _, ok := sink.deltas[0].(*llm.UsageDelta); !ok {
-		t.Fatalf("first Sink delta = %#v, want Usage", sink.deltas[0])
+	if text, ok := sink.deltas[0].(*llm.TextDelta); !ok || text.Text != "recovered" {
+		t.Fatalf("first Sink delta = %#v, want recovered Text", sink.deltas[0])
 	}
-	if text, ok := sink.deltas[1].(*llm.TextDelta); !ok || text.Text != "recovered" {
-		t.Fatalf("second Sink delta = %#v, want recovered Text", sink.deltas[1])
+	if done, ok := sink.deltas[1].(*llm.DoneDelta); !ok || done.UsageAtDone == nil || *done.UsageAtDone != (llm.Usage{}) {
+		t.Fatalf("terminal Sink delta = %#v, want zero-usage Done", sink.deltas[1])
 	}
-	if _, ok := sink.deltas[2].(*llm.DoneDelta); !ok {
-		t.Fatalf("terminal Sink delta = %#v, want Done", sink.deltas[2])
+}
+
+func TestExecuteCommitsBufferedUsageAndObservationOnFirstWireEvent(t *testing.T) {
+	observer := &streamRecordingObserver{}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		settings:  map[string]string{"proxy.max_retries": "1"},
+		ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress: []protocol.EgressCodec{testChatEgress{
+			endpoint: protocol.OpenAIChatCompletionsV1,
+			caps:     protocol.Capabilities{Streaming: true},
+			state:    &codecState{newStreamDecoder: func() protocol.StreamDecoder { return &scriptedStreamDecoder{} }},
+		}},
+		providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+		transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return response(200, "data: usage\n\ndata: start\n\ndata: done\n\n"), nil
+		}),
+		observe: observer,
+	})
+	request := llm.NewChatRequest("client-model", nil)
+	request.Stream.Enabled = true
+	sink := &recordingSink{onDelta: func(delta llm.StreamDelta) (bool, error) {
+		_, text := delta.(*llm.TextDelta)
+		return text, nil
+	}}
+
+	completion := runtime.Execute(context.Background(), Call{Request: request, Source: protocol.OpenAIChatCompletionsV1, Sink: sink})
+
+	if completion.Error != nil || completion.Usage.TotalTokens != 5 || observer.completion.Usage.TotalTokens != 5 {
+		t.Fatalf("completion/runtime observer = %+v/%+v, want usage 5", completion, observer.completion)
+	}
+	if len(observer.deltas) != 3 {
+		t.Fatalf("observer deltas = %#v, want Usage/Text/Done exactly once", observer.deltas)
+	}
+	if _, ok := observer.deltas[0].(*llm.UsageDelta); !ok {
+		t.Fatalf("first observer delta = %#v, want Usage", observer.deltas[0])
+	}
+	if text, ok := observer.deltas[1].(*llm.TextDelta); !ok || text.Text != "hello" {
+		t.Fatalf("second observer delta = %#v, want Text", observer.deltas[1])
+	}
+	if done, ok := observer.deltas[2].(*llm.DoneDelta); !ok || done.UsageAtDone == nil || done.UsageAtDone.TotalTokens != 5 {
+		t.Fatalf("third observer delta = %#v, want usage-aware Done", observer.deltas[2])
+	}
+	if sink.resets != 0 {
+		t.Fatalf("Sink attempt resets = %d, want 0 for committed attempt", sink.resets)
+	}
+}
+
+func TestExecuteCommitsSuccessfulZeroWireTerminalAttempt(t *testing.T) {
+	observer := &streamRecordingObserver{}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		settings:  map[string]string{"proxy.max_retries": "1"},
+		ingress:   []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress: []protocol.EgressCodec{testChatEgress{
+			endpoint: protocol.OpenAIChatCompletionsV1,
+			caps:     protocol.Capabilities{Streaming: true},
+			state:    &codecState{newStreamDecoder: func() protocol.StreamDecoder { return &scriptedStreamDecoder{} }},
+		}},
+		providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+		transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return response(200, "data: usage\n\ndata: done\n\n"), nil
+		}),
+		observe: observer,
+	})
+	request := llm.NewChatRequest("client-model", nil)
+	request.Stream.Enabled = true
+	sink := &recordingSink{onDelta: func(llm.StreamDelta) (bool, error) { return false, nil }}
+
+	completion := runtime.Execute(context.Background(), Call{Request: request, Source: protocol.OpenAIChatCompletionsV1, Sink: sink})
+
+	if completion.Error != nil || completion.Usage.TotalTokens != 5 || observer.completion.Usage.TotalTokens != 5 {
+		t.Fatalf("completion/runtime observer = %+v/%+v, want successful usage 5", completion, observer.completion)
+	}
+	if len(observer.deltas) != 2 {
+		t.Fatalf("observer deltas = %#v, want Usage/Done from successful zero-wire attempt", observer.deltas)
+	}
+	if done, ok := observer.deltas[1].(*llm.DoneDelta); !ok || done.UsageAtDone == nil || done.UsageAtDone.TotalTokens != 5 {
+		t.Fatalf("terminal observer delta = %#v, want usage-aware Done", observer.deltas[1])
+	}
+	if sink.resets != 0 {
+		t.Fatalf("Sink attempt resets = %d, want 0 for successful terminal attempt", sink.resets)
 	}
 }
 
@@ -799,6 +902,72 @@ func TestExecuteNeverCallsSinkAfterFirstStreamWriteFailure(t *testing.T) {
 	if len(sink.errors) != 0 || len(sink.responses) != 0 || len(sink.opaque) != 0 {
 		t.Fatalf("Sink was called after terminal stream failure: errors/responses/opaque = %d/%d/%d", len(sink.errors), len(sink.responses), len(sink.opaque))
 	}
+	if sink.resets != 0 {
+		t.Fatalf("Sink attempt resets = %d, want 0 after downstream failure", sink.resets)
+	}
+}
+
+func TestExecuteDoesNotFailOverOrResetAfterDownstreamOrClientFailure(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		onDelta   func(context.CancelFunc) func(llm.StreamDelta) (bool, error)
+		wantError string
+	}{
+		{
+			name: "downstream",
+			onDelta: func(context.CancelFunc) func(llm.StreamDelta) (bool, error) {
+				return func(llm.StreamDelta) (bool, error) { return false, errors.New("downstream closed") }
+			},
+			wantError: "downstream closed",
+		},
+		{
+			name: "client",
+			onDelta: func(cancel context.CancelFunc) func(llm.StreamDelta) (bool, error) {
+				return func(llm.StreamDelta) (bool, error) {
+					cancel()
+					return false, nil
+				}
+			},
+			wantError: "request canceled",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var secondCalls atomic.Int32
+			runtime := streamRuntime(t,
+				[]configsnapshot.RouteTarget{
+					routeTarget("first-target", "first", "first-model", 1),
+					routeTarget("second-target", "second", "second-model", 2),
+				},
+				[]configsnapshot.Upstream{
+					upstream("first", "test", provider.ProtocolOpenAIChatCompletions),
+					upstream("second", "test", provider.ProtocolOpenAIChatCompletions),
+				},
+				transportFunc(func(_ context.Context, request provider.Request) (*provider.Response, error) {
+					if strings.Contains(request.URL, "second.example") {
+						secondCalls.Add(1)
+					}
+					return response(200, "data: start\n\ndata: done\n\n"), nil
+				}), nil,
+			)
+			request := llm.NewChatRequest("client-model", nil)
+			request.Stream.Enabled = true
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			sink := &recordingSink{onDelta: test.onDelta(cancel)}
+
+			completion := runtime.Execute(ctx, Call{Request: request, Source: protocol.OpenAIChatCompletionsV1, Sink: sink})
+
+			if completion.Error == nil || !strings.Contains(completion.Error.Message, test.wantError) {
+				t.Fatalf("completion error = %+v, want %q", completion.Error, test.wantError)
+			}
+			if got := secondCalls.Load(); got != 0 {
+				t.Fatalf("second backend calls = %d, want 0", got)
+			}
+			if sink.resets != 0 {
+				t.Fatalf("Sink attempt resets = %d, want 0", sink.resets)
+			}
+		})
+	}
 }
 
 func TestExecuteKeepsProviderHealthNeutralOnDownstreamStreamFailure(t *testing.T) {
@@ -1076,6 +1245,9 @@ func TestExecuteNeverFailsOverAfterFirstStreamDelta(t *testing.T) {
 	}
 	if terminal, ok := sink.deltas[1].(*llm.StreamErrorDelta); !ok || terminal.Error != completion.Error {
 		t.Fatalf("terminal delta = %#v", sink.deltas[1])
+	}
+	if sink.resets != 0 {
+		t.Fatalf("Sink attempt resets = %d, want 0 after committed stream", sink.resets)
 	}
 }
 
