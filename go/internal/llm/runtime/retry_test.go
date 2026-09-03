@@ -50,6 +50,34 @@ func TestExecuteRetriesConfiguredStatusesUsingCurrentAttemptSemantics(t *testing
 	}
 }
 
+func TestExecuteCustomRetryStatusesExcludeDefaultInternalServerError(t *testing.T) {
+	var attempts atomic.Int32
+	runtime := retryRuntime(t, []configsnapshot.RouteTarget{
+		routeTarget("target", "backend", "served-model", 1),
+	}, []configsnapshot.Upstream{
+		upstream("backend", "test", provider.ProtocolOpenAIChatCompletions),
+	}, map[string]string{
+		"proxy.max_retries":     "3",
+		"proxy.retry_on_status": `[503]`,
+	}, transportFunc(func(_ context.Context, _ provider.Request) (*provider.Response, error) {
+		attempts.Add(1)
+		return response(500, `{"error":{"message":"do not retry"}}`), nil
+	}))
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    &recordingSink{},
+	})
+
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("transport attempts = %d, want 1 when custom retry set excludes 500", got)
+	}
+	if completion.Error == nil || completion.Response != nil {
+		t.Fatalf("completion = %+v, want terminal provider error", completion)
+	}
+}
+
 func TestExecuteFailsOverAfterBackendRetryBudget(t *testing.T) {
 	var firstAttempts atomic.Int32
 	var secondAttempts atomic.Int32
@@ -91,6 +119,40 @@ func TestExecuteFailsOverAfterBackendRetryBudget(t *testing.T) {
 	}
 	if completion.Error != nil || completion.Response == nil || completion.Response.Content != "second response" {
 		t.Fatalf("completion = %+v", completion)
+	}
+}
+
+func TestExecuteWildcardFailoverUsesOriginalClientModel(t *testing.T) {
+	var receivedModels []string
+	runtime := retryRuntime(t, []configsnapshot.RouteTarget{
+		routeTarget("first-target", "first", "first-rewritten-model", 1),
+		routeTarget("second-target", "second", "*", 2),
+	}, []configsnapshot.Upstream{
+		upstream("first", "test", provider.ProtocolOpenAIChatCompletions),
+		upstream("second", "test", provider.ProtocolOpenAIChatCompletions),
+	}, map[string]string{
+		"proxy.max_retries":     "1",
+		"proxy.retry_on_status": `[503]`,
+	}, transportFunc(func(_ context.Context, request provider.Request) (*provider.Response, error) {
+		receivedModels = append(receivedModels, string(request.Body))
+		if strings.Contains(request.URL, "first.example") {
+			return response(503, `{"error":{"message":"first unavailable"}}`), nil
+		}
+		return response(200, "second response"), nil
+	}))
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    &recordingSink{},
+	})
+
+	if completion.Error != nil || completion.Response == nil {
+		t.Fatalf("completion = %+v", completion)
+	}
+	want := []string{"first-rewritten-model", "client-model"}
+	if len(receivedModels) != len(want) || receivedModels[0] != want[0] || receivedModels[1] != want[1] {
+		t.Fatalf("provider models = %v, want %v", receivedModels, want)
 	}
 }
 

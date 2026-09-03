@@ -27,10 +27,16 @@ type Transport struct {
 }
 
 func New(config Config) (*Transport, error) {
+	return newWithDialContext(config, (&net.Dialer{}).DialContext)
+}
+
+type dialContextFunc func(context.Context, string, string) (net.Conn, error)
+
+func newWithDialContext(config Config, dial dialContextFunc) (*Transport, error) {
 	roundTripper := config.RoundTripper
 	if roundTripper == nil {
 		transport := &http.Transport{
-			DialContext:         (&net.Dialer{Timeout: config.ConnectTimeout}).DialContext,
+			DialContext:         withConnectTimeout(config.ConnectTimeout, dial),
 			MaxIdleConns:        256,
 			MaxIdleConnsPerHost: 64,
 			IdleConnTimeout:     90 * time.Second,
@@ -44,6 +50,17 @@ func New(config Config) (*Transport, error) {
 		roundTripper = transport
 	}
 	return &Transport{client: &http.Client{Timeout: config.RequestTimeout, Transport: roundTripper}}, nil
+}
+
+func withConnectTimeout(timeout time.Duration, dial dialContextFunc) dialContextFunc {
+	if timeout <= 0 {
+		return dial
+	}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return dial(ctx, network, address)
+	}
 }
 
 func (transport *Transport) Do(ctx context.Context, request provider.Request) (*provider.Response, error) {

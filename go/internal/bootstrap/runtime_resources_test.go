@@ -16,6 +16,7 @@ import (
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/kernel"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
+	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
 	llmruntime "github.com/nyroway/nyro/go/internal/llm/runtime"
 	platformstate "github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/quota"
@@ -381,12 +382,22 @@ func TestProviderTransportCachesByNormalizedProxyURLWithinGeneration(t *testing.
 		{Method: http.MethodGet, URL: "http://provider.example/first-again", ProxyURL: "http://proxy.example:8080"},
 		{Method: http.MethodGet, URL: "http://provider.example/second", ProxyURL: "http://other-proxy.example:9090"},
 	}
+	instances := make([]*providerhttp.Transport, 0, len(requests))
 	for _, request := range requests {
 		response, err := transport.Do(context.Background(), request)
 		if err != nil {
 			t.Fatal(err)
 		}
 		_ = response.Body.Close()
+		transport.mu.Lock()
+		instances = append(instances, transport.transports[providerhttp.NormalizeProxyURL(request.ProxyURL)])
+		transport.mu.Unlock()
+	}
+	if instances[0] == nil || instances[0] != instances[1] {
+		t.Fatal("direct and invalid proxy requests did not reuse the same normalized transport instance")
+	}
+	if instances[2] == nil || instances[2] != instances[3] {
+		t.Fatal("repeated normalized proxy key did not reuse the same transport instance")
 	}
 	transport.mu.Lock()
 	count := len(transport.transports)
@@ -483,6 +494,77 @@ func TestDefaultLLMFactoryBuildsInactiveResourcesForKernelActivation(t *testing.
 	}
 	if err := telemetryResources.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDefaultLLMGenerationFailsRuntimeSourceClosedWhenStateBindingIsPoisoned(t *testing.T) {
+	protocols, err := NewLLMProtocolCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers, err := NewLLMProviderCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateConfig := platformstate.Config{Kind: platformstate.KindMemory}
+	failedLease := &recordingQuotaLease{err: errors.New("state lease release failed")}
+	stateResource := &stateResource{
+		config: stateConfig,
+		store:  &acquireQuotaStore{lease: failedLease, allowed: true},
+	}
+	stateResource.healthy.Store(true)
+	stateResources := newStatePool()
+	stateResources.entries[stateConfig] = stateResource
+	telemetryResources := newTelemetryPool()
+	factory := newDefaultLLMFactory(protocols, providers, stateResources, telemetryResources, nil)
+	graph := &GraphBuilder{Protocols: protocols, Providers: providers, LLMFactory: factory}
+	candidate, err := graph.Build(context.Background(), (&configsnapshot.Builder{}).Build(), "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var binding *stateBinding
+	for _, component := range candidate.Components {
+		if component.ID != "state" {
+			continue
+		}
+		guarded, ok := component.Lifecycle.(*onceLifecycle)
+		if !ok {
+			t.Fatalf("state lifecycle = %T, want *onceLifecycle", component.Lifecycle)
+		}
+		binding, ok = guarded.lifecycle.(*stateBinding)
+		if !ok {
+			t.Fatalf("guarded state lifecycle = %T, want *stateBinding", guarded.lifecycle)
+		}
+	}
+	if binding == nil {
+		t.Fatal("DefaultLLMFactory candidate has no state binding")
+	}
+	host := kernel.NewHost[*ApplicationRuntime]()
+	t.Cleanup(func() {
+		_ = host.Close(context.Background())
+		_ = telemetryResources.Close(context.Background())
+		_ = stateResources.Close()
+	})
+	if _, err := host.Activate(context.Background(), candidate); err != nil {
+		t.Fatal(err)
+	}
+	source := NewRuntimeSource(host)
+	if !source.Ready() {
+		t.Fatal("RuntimeSource is not ready after activating healthy DefaultLLMFactory generation")
+	}
+
+	lease, allowed, err := binding.Acquire(context.Background(), "consumer", 1, time.Minute)
+	if err != nil || !allowed || lease == nil {
+		t.Fatalf("state binding Acquire() = %#v, %v, %v; want lease", lease, allowed, err)
+	}
+	if err := lease.Release(context.Background()); err == nil {
+		t.Fatal("poisoning state lease Release() returned nil")
+	}
+	if source.Ready() {
+		t.Fatal("RuntimeSource remained ready after its active state binding became unhealthy")
+	}
+	if runtime, release, ok := source.Acquire(); ok || runtime != nil || release != nil {
+		t.Fatalf("RuntimeSource.Acquire() = %p, release present %v, ok %v after state failure", runtime, release != nil, ok)
 	}
 }
 
