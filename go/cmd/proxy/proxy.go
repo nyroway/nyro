@@ -14,8 +14,9 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
-	"github.com/nyroway/nyro/go/internal/gateway"
 	gatewayruntime "github.com/nyroway/nyro/go/internal/gateway/runtime"
+	httpingress "github.com/nyroway/nyro/go/internal/llm/ingress/http"
+	"github.com/nyroway/nyro/go/internal/transport/httpserver"
 )
 
 // NewCmd builds the proxy (data-plane) subcommand.
@@ -117,8 +118,19 @@ func NewCmd() *cobra.Command {
 			}
 		}()
 
-		engine := gateway.NewRouter(gw)
-		return bootstrap.RunServer(engine, addr)
+		ingress, err := httpingress.New(protocols, gw, httpingress.Options{})
+		if err != nil {
+			return fmt.Errorf("compose LLM HTTP ingress: %w", err)
+		}
+		server := httpserver.New(
+			httpserver.Options{Addr: addr, Ready: gw.Ready},
+			httpserver.Handler{Pattern: "/", Handler: ingress},
+		)
+		return bootstrap.RunManagedServers(bootstrap.ManagedServer{
+			Role:     "nyro",
+			Serve:    server.ListenAndServe,
+			Shutdown: server.Shutdown,
+		})
 	}
 	return cmd
 }

@@ -17,7 +17,7 @@ func TestDispatchRecordsUpstreamLatency(t *testing.T) {
 	upstream := nonStreamUpstream(t)
 	defer upstream.Close()
 	gw := newTestGateway(t, upstream.URL)
-	r := NewRouter(gw)
+	r := newTestHandler(t, gw)
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions",
 		bytes.NewReader([]byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`)))

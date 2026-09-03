@@ -188,6 +188,16 @@ type directImport struct {
 }
 
 var foundationBoundaries = []foundationBoundary{
+	{
+		prefix:          "internal/llm/ingress/http",
+		allowThirdParty: true,
+		allowInternalExact: []string{
+			"internal/llm",
+			"internal/llm/protocol",
+			"internal/llm/runtime",
+			"internal/security/authn",
+		},
+	},
 	{prefix: "internal/llm/protocol", allowInternalExact: []string{"internal/llm"}},
 	{prefix: "internal/llm/provider", allowInternalExact: []string{"internal/llm", "internal/llm/protocol"}},
 	{prefix: "internal/llm/routing"},
@@ -216,6 +226,7 @@ var foundationBoundaries = []foundationBoundary{
 	{prefix: "internal/security"},
 	{prefix: "internal/platform", allowThirdParty: true},
 	{prefix: "internal/quota", allowThirdParty: true},
+	{prefix: "internal/transport/httpserver"},
 }
 
 func importAllowedByFoundationBoundary(rule foundationBoundary, imp directImport) bool {
@@ -314,11 +325,13 @@ var packageLayer = map[string]int{
 	"internal/telemetry": layerObs,
 
 	// Layer 3 — serve.
-	"internal/gateway":         layerServe,
-	"internal/gateway/runtime": layerServe,
-	"internal/admin":           layerServe,
-	"internal/bootstrap":       layerServe,
-	"internal/webui":           layerServe,
+	"internal/gateway":              layerServe,
+	"internal/gateway/runtime":      layerServe,
+	"internal/llm/ingress/http":     layerServe,
+	"internal/transport/httpserver": layerServe,
+	"internal/admin":                layerServe,
+	"internal/bootstrap":            layerServe,
+	"internal/webui":                layerServe,
 }
 
 // upwardEdge is a single importer→imported pair that violates the layer rule.

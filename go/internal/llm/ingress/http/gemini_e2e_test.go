@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"fmt"
@@ -34,7 +34,7 @@ func TestDispatchGeminiStreamEndToEnd(t *testing.T) {
 	upstream := geminiStreamUpstream(t)
 	defer upstream.Close()
 
-	engine := NewRouter(newTestGatewayProviderProto(t, upstream.URL, "gemini", "gemini-generatecontent"))
+	engine := newTestHandler(t, newTestSourceProviderProto(t, upstream.URL, "gemini", "gemini-generatecontent"))
 	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gpt-4o:streamGenerateContent", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -62,7 +62,7 @@ func TestDispatchGeminiModelNotFound(t *testing.T) {
 	upstream := geminiStreamUpstream(t)
 	defer upstream.Close()
 
-	engine := NewRouter(newTestGatewayProviderProto(t, upstream.URL, "gemini", "gemini-generatecontent"))
+	engine := newTestHandler(t, newTestSourceProviderProto(t, upstream.URL, "gemini", "gemini-generatecontent"))
 	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
 	// Model alias "unknown-model" has no route → 404.
 	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/unknown-model:generateContent", strings.NewReader(body))
@@ -80,7 +80,7 @@ func TestDispatchGeminiMalformedResourcePathIs404(t *testing.T) {
 	upstream := geminiStreamUpstream(t)
 	defer upstream.Close()
 
-	engine := NewRouter(newTestGatewayProviderProto(t, upstream.URL, "gemini", "gemini-generatecontent"))
+	engine := newTestHandler(t, newTestSourceProviderProto(t, upstream.URL, "gemini", "gemini-generatecontent"))
 	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
 	for _, path := range []string{
 		"/v1beta/models/nocolon",

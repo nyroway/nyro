@@ -37,7 +37,7 @@ func TestDispatchMaxRetries(t *testing.T) {
 		Model:     "gpt-4o",
 		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: p.ID, Model: "gpt-4o"}},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, core))
+	engine := newTestHandler(t, newTestGatewayFromStorage(t, core))
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -78,7 +78,7 @@ func TestDispatchRetryOnStatusCustom(t *testing.T) {
 		Model:     "gpt-4o",
 		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: p.ID, Model: "gpt-4o"}},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, core))
+	engine := newTestHandler(t, newTestGatewayFromStorage(t, core))
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -117,7 +117,7 @@ func TestDispatchConnectTimeout(t *testing.T) {
 		Model:     "gpt-4o",
 		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: p.ID, Model: "gpt-4o"}},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, core))
+	engine := newTestHandler(t, newTestGatewayFromStorage(t, core))
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))

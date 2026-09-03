@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"fmt"
@@ -35,7 +35,7 @@ func TestDispatchResponsesStreamEndToEnd(t *testing.T) {
 	upstream := responsesStreamUpstream(t)
 	defer upstream.Close()
 
-	engine := NewRouter(newTestGatewayProto(t, upstream.URL, "openai-responses"))
+	engine := newTestHandler(t, newTestSourceProto(t, upstream.URL, "openai-responses"))
 	body := `{"model":"gpt-4o","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":true}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

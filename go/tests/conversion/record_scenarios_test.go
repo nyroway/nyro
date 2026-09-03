@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/nyroway/nyro/go/internal/gateway"
 )
 
 // TestRecordScenarios is a gated one-off that records real cassettes for the
@@ -72,7 +70,7 @@ func TestRecordScenarios(t *testing.T) {
 					Out: Outbound{Provider: tg.provider, Protocol: tg.protocol},
 				}
 				gw := buildGateway(t, cell, tr, tg.baseURL, tg.key, model)
-				router := gateway.NewRouter(gw)
+				router := buildHandler(t, gw)
 				req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(sc.body))
 				req.Header.Set("Content-Type", "application/json")
 				rec := httptest.NewRecorder()

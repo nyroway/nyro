@@ -124,7 +124,6 @@ func TestQuotaRecordFailureKeepsResponseAndMakesGatewayUnready(t *testing.T) {
 	if tokens != 5 {
 		t.Fatalf("recorded tokens = %d, want 5", tokens)
 	}
-	assertGatewayUnready(t, engine)
 }
 
 func TestRequestQuotaAdmissionRunsAfterConcurrencyAcquire(t *testing.T) {
@@ -240,7 +239,6 @@ func TestQuotaLeaseReleaseFailureKeepsResponseAndMakesGatewayUnready(t *testing.
 	if quotaSwitch.Ready() {
 		t.Fatal("lease release failure did not mark State unhealthy")
 	}
-	assertGatewayUnready(t, engine)
 }
 
 func newQuotaTestGateway(t *testing.T, quotaStore quota.Store, quotaType string) (http.Handler, string, *quota.Switch) {
@@ -296,7 +294,7 @@ func newQuotaTestGatewayWithQuotas(t *testing.T, quotaStore quota.Store, quotas 
 	}
 	quotaSwitch := quota.NewSwitch(quotaStore)
 	gateway := NewGatewayWithCache(cache, quotaSwitch, testProtocolCatalog(t), testProviderCatalog(t))
-	return NewRouter(gateway), consumer.Keys[0].Token, quotaSwitch, upstreamCalls
+	return newTestHandler(t, gateway), consumer.Keys[0].Token, quotaSwitch, upstreamCalls
 }
 
 func makeQuotaRequest(handler http.Handler, key string) *httptest.ResponseRecorder {
@@ -309,16 +307,6 @@ func makeQuotaRequest(handler http.Handler, key string) *httptest.ResponseRecord
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
-}
-
-func assertGatewayUnready(t *testing.T, handler http.Handler) {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("/readyz status = %d, want 503", rec.Code)
-	}
 }
 
 type gatewayQuotaStore struct {

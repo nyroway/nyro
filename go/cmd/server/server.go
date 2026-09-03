@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,8 +24,8 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
-	"github.com/nyroway/nyro/go/internal/gateway"
 	gatewayruntime "github.com/nyroway/nyro/go/internal/gateway/runtime"
+	httpingress "github.com/nyroway/nyro/go/internal/llm/ingress/http"
 	infradatabase "github.com/nyroway/nyro/go/internal/platform/database"
 	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
 	infraobserve "github.com/nyroway/nyro/go/internal/platform/observe"
@@ -36,6 +35,7 @@ import (
 	statesqlite "github.com/nyroway/nyro/go/internal/platform/state/sqlite"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/telemetry"
+	"github.com/nyroway/nyro/go/internal/transport/httpserver"
 	"github.com/nyroway/nyro/go/internal/webui"
 )
 
@@ -386,7 +386,7 @@ func NewCmd() *cobra.Command {
 		admin.Mount(engine, st, observeSource, observeSource, protocols, providers)
 		webui.Mount(engine, webuiDir)
 
-		var dataPlaneHandler http.Handler
+		var dataPlaneServer *httpserver.Server
 		var dataPlaneAfterShutdown func()
 		if !disableProxy {
 			gw, runtimeMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
@@ -399,7 +399,14 @@ func NewCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("embedded data plane: %w", err)
 			}
-			dataPlaneHandler = gateway.NewRouter(gw)
+			ingress, err := httpingress.New(protocols, gw, httpingress.Options{})
+			if err != nil {
+				return fmt.Errorf("embedded data plane ingress: %w", err)
+			}
+			dataPlaneServer = httpserver.New(
+				httpserver.Options{Addr: proxyAddr, Ready: gw.Ready},
+				httpserver.Handler{Pattern: "/", Handler: ingress},
+			)
 			var shutdownOnce sync.Once
 			dataPlaneAfterShutdown = func() {
 				shutdownOnce.Do(func() {
@@ -420,21 +427,15 @@ func NewCmd() *cobra.Command {
 			}
 		}()
 		managed := make([]bootstrap.ManagedServer, 0, 4)
-		addHTTP := func(role, address string, handler http.Handler, after func()) error {
+		addHTTP := func(role, address string, server *httpserver.Server, after func()) error {
 			listener, err := net.Listen("tcp", address)
 			if err != nil {
 				return fmt.Errorf("%s listener %q: %w", role, address, err)
 			}
 			listeners = append(listeners, listener)
-			server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 			managed = append(managed, bootstrap.ManagedServer{
-				Role: role,
-				Serve: func() error {
-					if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						return err
-					}
-					return nil
-				},
+				Role:          role,
+				Serve:         func() error { return server.Serve(listener) },
 				Shutdown:      server.Shutdown,
 				AfterShutdown: after,
 			})
@@ -443,8 +444,13 @@ func NewCmd() *cobra.Command {
 
 		// Dependencies are registered before consumers because shutdown is
 		// reversed: the data plane flushes while OTLP is still accepting work.
+		alwaysReady := func() bool { return true }
 		if otlpReceiver != nil {
-			if err := addHTTP("OTLP receiver", otlpAddr, otlpReceiver.Handler(), func() {
+			otlpServer := httpserver.New(
+				httpserver.Options{Addr: otlpAddr, Ready: alwaysReady},
+				httpserver.Handler{Pattern: "/", Handler: otlpReceiver.Handler()},
+			)
+			if err := addHTTP("OTLP receiver", otlpAddr, otlpServer, func() {
 				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer shutdownCancel()
 				if err := otlpReceiver.Shutdown(shutdownCtx); err != nil {
@@ -464,11 +470,15 @@ func NewCmd() *cobra.Command {
 				Role: "Redis state server", Serve: func() error { return redisServer.Serve(listener) }, Shutdown: redisServer.Shutdown,
 			})
 		}
-		if err := addHTTP("control plane", addr, engine, nil); err != nil {
+		controlServer := httpserver.New(
+			httpserver.Options{Addr: addr, Ready: alwaysReady},
+			httpserver.Handler{Pattern: "/", Handler: engine},
+		)
+		if err := addHTTP("control plane", addr, controlServer, nil); err != nil {
 			return err
 		}
-		if dataPlaneHandler != nil {
-			if err := addHTTP("data plane", proxyAddr, dataPlaneHandler, dataPlaneAfterShutdown); err != nil {
+		if dataPlaneServer != nil {
+			if err := addHTTP("data plane", proxyAddr, dataPlaneServer, dataPlaneAfterShutdown); err != nil {
 				return err
 			}
 		}

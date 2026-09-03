@@ -50,7 +50,7 @@ func TestConcurrencyQuotaEnforced(t *testing.T) {
 	if err := storage.LoadAndSwap(gw.Cache, core); err != nil {
 		t.Fatalf("load cache: %v", err)
 	}
-	engine := NewRouter(gw)
+	engine := newTestHandler(t, gw)
 
 	do := func() *httptest.ResponseRecorder {
 		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`

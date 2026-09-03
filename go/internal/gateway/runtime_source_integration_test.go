@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,25 +24,6 @@ func (cachedResponsePhase) Apply(_ context.Context, ex *llmpipeline.Exchange) (l
 	response.Content = "cached response"
 	ex.Response = response
 	return llmpipeline.Outcome{Decision: llmpipeline.ShortCircuit}, nil
-}
-
-// TestRejectsOversizedBody verifies handleProxy rejects request bodies larger
-// than settings.proxy.max_body_bytes (default 32MiB) with 413, instead of
-// buffering the whole thing via io.ReadAll.
-func TestRejectsOversizedBody(t *testing.T) {
-	st := memory.New().Storage()
-	engine := NewRouter(newTestGatewayFromStorage(t, st))
-
-	huge := `{"model":"gpt-4o","messages":[{"role":"user","content":"` +
-		strings.Repeat("x", 33<<20) + `"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(huge))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	engine.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("status=%d, want 413 for a >32MiB body", rec.Code)
-	}
 }
 
 func newTestGateway(t *testing.T, upstreamURL string) *Gateway {
@@ -92,31 +72,6 @@ func newTestGatewayProviderProto(t *testing.T, upstreamURL, providerID, protocol
 	return gw
 }
 
-// streamUpstream simulates an OpenAI SSE chat-completion stream.
-func streamUpstream(t *testing.T) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		f := w.(http.Flusher)
-		chunks := []string{
-			`{"id":"c1","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"}}]}`,
-			`{"id":"c1","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
-			`{"id":"c1","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
-		}
-		for _, c := range chunks {
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", c)
-			f.Flush()
-		}
-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
-		f.Flush()
-	}))
-}
-
 func nonStreamUpstream(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,62 +87,7 @@ func nonStreamUpstream(t *testing.T) *httptest.Server {
 	}))
 }
 
-func TestDispatchStreamEndToEnd(t *testing.T) {
-	upstream := streamUpstream(t)
-	defer upstream.Close()
-
-	engine := NewRouter(newTestGateway(t, upstream.URL))
-	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	engine.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	out := rec.Body.String()
-	if !strings.Contains(out, `"content":"Hi"`) {
-		t.Errorf("missing content delta: %s", out)
-	}
-	if !strings.Contains(out, `"finish_reason":"stop"`) {
-		t.Errorf("missing finish_reason: %s", out)
-	}
-	if !strings.Contains(out, `"total_tokens":2`) {
-		t.Errorf("missing usage chunk: %s", out)
-	}
-	if !strings.Contains(out, "data: [DONE]") {
-		t.Errorf("missing [DONE] terminator: %s", out)
-	}
-}
-
-func TestDispatchNonStreamEndToEnd(t *testing.T) {
-	upstream := nonStreamUpstream(t)
-	defer upstream.Close()
-
-	engine := NewRouter(newTestGateway(t, upstream.URL))
-	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	engine.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	out := rec.Body.String()
-	if !strings.Contains(out, `"chat.completion"`) {
-		t.Errorf("missing object marker: %s", out)
-	}
-	if !strings.Contains(out, `"content":"hello"`) {
-		t.Errorf("missing content: %s", out)
-	}
-	if got := strings.Count(out, `"chat.completion"`); got != 1 {
-		t.Errorf("response encoded %d times, want the already-written response preserved: %s", got, out)
-	}
-}
-
-func TestDispatchWritesPreDispatchShortCircuitResponse(t *testing.T) {
+func TestRuntimeSourceDeliversPreDispatchShortCircuitResponse(t *testing.T) {
 	var upstreamCalls int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&upstreamCalls, 1)
@@ -197,7 +97,7 @@ func TestDispatchWritesPreDispatchShortCircuitResponse(t *testing.T) {
 
 	gw := newTestGateway(t, upstream.URL)
 	gw.preDispatchPhases = []llmpipeline.Phase{cachedResponsePhase{}}
-	engine := NewRouter(gw)
+	engine := newTestHandler(t, gw)
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -212,20 +112,5 @@ func TestDispatchWritesPreDispatchShortCircuitResponse(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&upstreamCalls); got != 0 {
 		t.Fatalf("upstream calls = %d, want 0 after short circuit", got)
-	}
-}
-
-func TestDispatchModelNotFound(t *testing.T) {
-	upstream := streamUpstream(t)
-	defer upstream.Close()
-
-	engine := NewRouter(newTestGateway(t, upstream.URL))
-	body := `{"model":"unknown-model","messages":[{"role":"user","content":"hi"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
-	rec := httptest.NewRecorder()
-	engine.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status=%d, want 404, body=%s", rec.Code, rec.Body.String())
 	}
 }

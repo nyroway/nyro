@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"encoding/json"
@@ -41,7 +41,7 @@ func TestDispatchEmbeddingsEndToEnd(t *testing.T) {
 		Model:     "text-embedding",
 		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: up.ID, Model: "text-embedding-3-small"}},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, core))
+	engine := newTestHandler(t, newTestSourceFromStorage(t, core))
 
 	body := `{"model":"text-embedding","input":"hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(body))

@@ -10,7 +10,6 @@ package bootstrap
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,6 +22,7 @@ import (
 	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/database"
+	"github.com/nyroway/nyro/go/internal/transport/httpserver"
 )
 
 // OpenedStorage owns a Config Engine storage backend and its SQL connection.
@@ -152,15 +152,13 @@ type ManagedServer struct {
 func RunServers(servers ...HTTPServer) error {
 	managed := make([]ManagedServer, 0, len(servers))
 	for _, s := range servers {
-		srv := &http.Server{Addr: s.Addr, Handler: s.Handler, ReadHeaderTimeout: 10 * time.Second}
+		srv := httpserver.New(
+			httpserver.Options{Addr: s.Addr, Ready: func() bool { return true }},
+			httpserver.Handler{Pattern: "/", Handler: s.Handler},
+		)
 		managed = append(managed, ManagedServer{
-			Role: s.Role,
-			Serve: func() error {
-				if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-					return err
-				}
-				return nil
-			},
+			Role:          s.Role,
+			Serve:         srv.ListenAndServe,
 			Shutdown:      srv.Shutdown,
 			AfterShutdown: s.AfterShutdown,
 		})

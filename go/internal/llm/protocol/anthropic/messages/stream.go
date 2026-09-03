@@ -171,6 +171,12 @@ func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) []protocol.Event 
 			usage = *v.UsageAtDone
 		}
 		return e.terminate(v.StopReason, usage)
+	case *llm.StreamErrorDelta:
+		body, _ := encodeErrorBody(v.Error)
+		return []protocol.Event{{Event: "error", Data: string(body)}}
+	case *llm.UnexpectedEOFDelta:
+		body, _ := encodeErrorBody(llm.NewError(llm.ErrUnexpectedEOF, "provider stream ended unexpectedly"))
+		return []protocol.Event{{Event: "error", Data: string(body)}}
 	case *llm.UnknownDelta:
 		return []protocol.Event{{Data: v.Raw}}
 	}

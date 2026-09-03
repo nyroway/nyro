@@ -6,8 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/nyroway/nyro/go/internal/gateway"
 )
 
 // TestProbeCapabilities is a one-off diagnostic (not part of the golden matrix):
@@ -73,7 +71,7 @@ func TestProbeCapabilities(t *testing.T) {
 		for _, c := range caps {
 			t.Run(b.protocol+"/"+c.name, func(t *testing.T) {
 				gw := buildGateway(t, cell, nil, b.baseURL, key, c.model) // tr=nil → real network
-				router := gateway.NewRouter(gw)
+				router := buildHandler(t, gw)
 				req := httptest.NewRequest(http.MethodPost, cell.In.Path, strings.NewReader(c.body))
 				req.Header.Set("Content-Type", "application/json")
 				rec := httptest.NewRecorder()

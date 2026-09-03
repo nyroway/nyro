@@ -55,7 +55,7 @@ func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	upstream := nonStreamUpstream(t)
 	defer upstream.Close()
 	gw, captured := newCapturingGateway(t, upstream.URL)
-	r := NewRouter(gw)
+	r := newTestHandler(t, gw)
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -104,7 +104,7 @@ func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 	upstream := nonStreamUpstream(t) // never hit (model not found)
 	defer upstream.Close()
 	gw, captured := newCapturingGateway(t, upstream.URL)
-	r := NewRouter(gw)
+	r := newTestHandler(t, gw)
 
 	body := `{"model":"no-such-model","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(body)))
@@ -132,7 +132,7 @@ func TestDispatchPublishesTargetAndTypedErrorWhenTransportsAreExhausted(t *testi
 	gw.UpstreamTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("synthetic transport failure")
 	})
-	r := NewRouter(gw)
+	r := newTestHandler(t, gw)
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -165,7 +165,7 @@ func TestDispatchPublishesTypedErrorForProviderFailureWithoutChangingWireRespons
 	defer upstream.Close()
 
 	gw, captured := newCapturingGateway(t, upstream.URL)
-	r := NewRouter(gw)
+	r := newTestHandler(t, gw)
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

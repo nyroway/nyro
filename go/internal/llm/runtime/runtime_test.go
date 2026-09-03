@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	"github.com/nyroway/nyro/go/internal/llm/routing"
+	"github.com/nyroway/nyro/go/internal/security/authn"
 )
 
 type recordingSink struct {
@@ -79,7 +82,10 @@ type testIngress struct {
 
 func (c testIngress) Endpoint() protocol.Endpoint         { return c.endpoint }
 func (c testIngress) Capabilities() protocol.Capabilities { return c.caps }
-func (testIngress) IngressCodec()                         {}
+func (testIngress) EncodeError(*llm.Error) (protocol.WireResponse, error) {
+	return protocol.WireResponse{}, nil
+}
+func (testIngress) IngressCodec() {}
 
 type testChatEgress struct {
 	endpoint protocol.Endpoint
@@ -204,6 +210,14 @@ type runtimeFixture struct {
 	observe   pipeline.Phase
 	pre       []pipeline.Phase
 	post      []pipeline.Phase
+	keys      []runtimeConsumerKey
+}
+
+type runtimeConsumerKey struct {
+	rawKey    string
+	routes    []string
+	enabled   bool
+	expiresAt string
 }
 
 func newRuntimeFixture(t *testing.T, fixture runtimeFixture) *Runtime {
@@ -217,6 +231,24 @@ func newRuntimeFixture(t *testing.T, fixture runtimeFixture) *Runtime {
 	}
 	for key, value := range fixture.settings {
 		builder.SetSetting(key, value)
+	}
+	for index, key := range fixture.keys {
+		hash := sha256.Sum256([]byte(key.rawKey))
+		preview := key.rawKey
+		if len(preview) > 15 {
+			preview = preview[:9] + preview[len(preview)-6:]
+		}
+		builder.AddConsumerKey(
+			fmt.Sprintf("key-%d", index),
+			fmt.Sprintf("consumer-%d", index),
+			"primary",
+			preview,
+			fmt.Sprintf("%x", hash),
+			key.enabled,
+			key.expiresAt,
+			key.routes,
+			nil,
+		)
 	}
 	protocols, err := protocol.NewCatalog(fixture.ingress, fixture.egress)
 	if err != nil {
@@ -496,6 +528,36 @@ func TestNewRejectsMissingRuntimeDependencies(t *testing.T) {
 	}
 	if errors.Is(err, context.Canceled) {
 		t.Fatalf("New error = %v", err)
+	}
+}
+
+func TestIngressQueriesUseRuntimeBoundSnapshot(t *testing.T) {
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		settings: map[string]string{"proxy.max_body_bytes": "1234"},
+		routes: []configsnapshot.Route{
+			{ID: "open", Model: "open-model", Enabled: true},
+			{ID: "secret", Model: "secret-model", Enabled: true, EnableAuth: true},
+		},
+		ingress: []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress:  []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		keys: []runtimeConsumerKey{{
+			rawKey:  "granted-token",
+			routes:  []string{"secret-model"},
+			enabled: true,
+		}},
+		transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+			return response(200, "unused"), nil
+		}),
+	})
+
+	if got := runtime.MaxBodyBytes(); got != 1234 {
+		t.Fatalf("MaxBodyBytes = %d, want 1234", got)
+	}
+	if got := runtime.ClientModelNames(authn.Credentials{}); !slices.Equal(got, []string{"open-model"}) {
+		t.Fatalf("anonymous models = %q, want [open-model]", got)
+	}
+	if got := runtime.ClientModelNames(authn.Credentials{APIKey: "granted-token"}); !slices.Equal(got, []string{"open-model", "secret-model"}) {
+		t.Fatalf("granted models = %q, want [open-model secret-model]", got)
 	}
 }
 

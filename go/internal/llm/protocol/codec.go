@@ -5,6 +5,7 @@ import "github.com/nyroway/nyro/go/internal/llm"
 type IngressCodec interface {
 	Endpoint() Endpoint
 	Capabilities() Capabilities
+	EncodeError(*llm.Error) (WireResponse, error)
 	IngressCodec()
 }
 

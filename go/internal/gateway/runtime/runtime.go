@@ -89,8 +89,9 @@ type Options struct {
 // arrive with the first snapshot, after this initial build — are applied
 // instead of being stuck on the stdout default.
 //
-// The returned Gateway's /readyz reflects both cache fill and quota State
-// health. The config-sync client stops when ctx is cancelled; Manager owns the
+// The returned Gateway's Ready method reflects both cache fill and quota State
+// health and is supplied to transport/httpserver by the command composition
+// roots. The config-sync client stops when ctx is cancelled; Manager owns the
 // remaining runtime shutdown.
 func Build(ctx context.Context, opts Options) (*gateway.Gateway, *Manager, error) {
 	if opts.Providers == nil {

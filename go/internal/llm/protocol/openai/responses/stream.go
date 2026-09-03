@@ -81,6 +81,32 @@ func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) []protocol.Event 
 			ev(map[string]any{"type": "response.output_item.done", "output_index": 0, "item": map[string]any{"type": "message", "id": e.itemID, "role": "assistant", "status": "completed", "content": []any{map[string]string{"type": "output_text", "text": fullText}}}}),
 			ev(map[string]any{"type": "response.completed", "response": map[string]any{"id": e.id, "model": e.model, "status": "completed", "usage": map[string]uint32{"input_tokens": usage.PromptTokens, "output_tokens": usage.CompletionTokens, "total_tokens": usage.TotalTokens}}}),
 		}
+	case *llm.StreamErrorDelta:
+		message, kind := "LLM request failed", llm.ErrUnknown
+		if v.Error != nil {
+			if v.Error.Message != "" {
+				message = v.Error.Message
+			}
+			if v.Error.Kind != "" {
+				kind = v.Error.Kind
+			}
+		}
+		type failedResponse struct {
+			Status string        `json:"status"`
+			Error  responseError `json:"error"`
+		}
+		return []protocol.Event{ev(struct {
+			Type     string         `json:"type"`
+			Response failedResponse `json:"response"`
+		}{
+			Type: "response.failed",
+			Response: failedResponse{
+				Status: "failed",
+				Error:  responseError{Code: string(kind), Message: message},
+			},
+		})}
+	case *llm.UnexpectedEOFDelta:
+		return e.formatDelta(&llm.StreamErrorDelta{Error: llm.NewError(llm.ErrUnexpectedEOF, "provider stream ended unexpectedly")})
 	}
 	return nil
 }
