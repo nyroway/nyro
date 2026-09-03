@@ -12,10 +12,9 @@ import (
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
 
-// TestDispatchEmbeddingsEndToEnd verifies the verbatim passthrough: the client
-// sends alias "text-embedding", the gateway rewrites the model to the backend
-// "text-embedding-3-small" and forwards the body; the upstream response is
-// returned to the client verbatim.
+// TestDispatchEmbeddingsEndToEnd verifies the approved opaque passthrough: the
+// client alias is rewritten for the Provider while only the response status,
+// Content-Type, and body cross back through the HTTP ingress boundary.
 func TestDispatchEmbeddingsEndToEnd(t *testing.T) {
 	var receivedModel string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +22,12 @@ func TestDispatchEmbeddingsEndToEnd(t *testing.T) {
 		var obj map[string]any
 		_ = json.Unmarshal(body, &obj)
 		receivedModel, _ = obj["model"].(string)
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/provider+json")
+		w.Header().Set("Set-Cookie", "provider_session=secret")
+		w.Header().Set("Authorization", "Bearer upstream-secret")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Proxy-Authenticate", "Basic realm=provider")
+		w.Header().Set("X-Nyro-Internal", "provider-only")
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{"object":"list","data":[{"object":"embedding","index":0,`+
 			`"embedding":[0.1,0.2]}],"model":"`+receivedModel+`",`+
@@ -57,5 +61,8 @@ func TestDispatchEmbeddingsEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"embedding":[0.1,0.2]`) {
 		t.Errorf("response not verbatim passthrough:\n%s", rec.Body.String())
+	}
+	if rec.Header().Get("Content-Type") != "application/provider+json" || len(rec.Header()) != 1 {
+		t.Errorf("client response headers = %#v, want only Provider Content-Type", rec.Header())
 	}
 }

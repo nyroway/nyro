@@ -82,6 +82,25 @@ func (*providerErrorStreamDecoder) ParseChunk(payload string) ([]llm.StreamDelta
 
 func (*providerErrorStreamDecoder) Finish() []llm.StreamDelta { return nil }
 
+type usageThenProviderErrorStreamDecoder struct{}
+
+func (*usageThenProviderErrorStreamDecoder) ParseChunk(payload string) ([]llm.StreamDelta, error) {
+	switch payload {
+	case "usage":
+		return []llm.StreamDelta{&llm.UsageDelta{Usage: llm.Usage{TotalTokens: 3}}}, nil
+	case "error":
+		return []llm.StreamDelta{&llm.StreamErrorDelta{Error: llm.NewError(llm.ErrRateLimitError, "retry this stream")}}, nil
+	case "start":
+		return []llm.StreamDelta{&llm.TextDelta{Text: "recovered"}}, nil
+	case "done":
+		return []llm.StreamDelta{&llm.DoneDelta{StopReason: "stop"}}, nil
+	default:
+		return nil, nil
+	}
+}
+
+func (*usageThenProviderErrorStreamDecoder) Finish() []llm.StreamDelta { return nil }
+
 type rawProviderErrorStreamDecoder struct{}
 
 func (*rawProviderErrorStreamDecoder) ParseChunk(payload string) ([]llm.StreamDelta, error) {
@@ -206,6 +225,79 @@ func TestExecuteUsesProviderClassificationForUncommittedBuiltInStreamError(t *te
 				t.Fatalf("completion/Sink errors = %+v/%+v, want failover stream success", completion, sink.errors)
 			}
 		})
+	}
+}
+
+func TestExecuteRetriesProviderStreamErrorAfterAcceptedUnframedUsage(t *testing.T) {
+	var firstCalls atomic.Int32
+	var secondCalls atomic.Int32
+	driver := &testDriver{extendError: func(_ context.Context, _ provider.UpstreamRuntime, providerError *llm.Error) (provider.ErrorClassification, error) {
+		if providerError.Message != "retry this stream" {
+			t.Fatalf("normalized stream error = %+v", providerError)
+		}
+		return provider.ErrorClassification{Retryable: true}, nil
+	}}
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes: []configsnapshot.Route{chatRoute("route",
+			routeTarget("first-target", "first", "first-model", 1),
+			routeTarget("second-target", "second", "second-model", 2),
+		)},
+		upstreams: []configsnapshot.Upstream{
+			upstream("first", "test", provider.ProtocolOpenAIChatCompletions),
+			upstream("second", "test", provider.ProtocolOpenAIChatCompletions),
+		},
+		settings: map[string]string{"proxy.max_retries": "1"},
+		ingress:  []protocol.IngressCodec{testIngress{endpoint: protocol.OpenAIChatCompletionsV1}},
+		egress: []protocol.EgressCodec{testChatEgress{
+			endpoint: protocol.OpenAIChatCompletionsV1,
+			caps:     protocol.Capabilities{Streaming: true},
+			state: &codecState{newStreamDecoder: func() protocol.StreamDecoder {
+				return &usageThenProviderErrorStreamDecoder{}
+			}},
+		}},
+		providers: []provider.Registration{providerRegistration("test", driver)},
+		transport: transportFunc(func(_ context.Context, request provider.Request) (*provider.Response, error) {
+			if strings.Contains(request.URL, "first.example") {
+				firstCalls.Add(1)
+				return response(200, "data: usage\n\ndata: error\n\n"), nil
+			}
+			secondCalls.Add(1)
+			return response(200, "data: start\n\ndata: done\n\n"), nil
+		}),
+	})
+	request := llm.NewChatRequest("client-model", nil)
+	request.Stream.Enabled = true
+	sink := &recordingSink{onDelta: func(delta llm.StreamDelta) (bool, error) {
+		_, usage := delta.(*llm.UsageDelta)
+		return !usage, nil
+	}}
+
+	completion := runtime.Execute(context.Background(), Call{
+		Request: request,
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    sink,
+	})
+
+	if got := firstCalls.Load(); got != 1 {
+		t.Fatalf("first backend calls = %d, want 1", got)
+	}
+	if got := secondCalls.Load(); got != 1 {
+		t.Fatalf("second backend calls = %d, want 1 after unframed Usage", got)
+	}
+	if completion.Error != nil || !completion.Streamed {
+		t.Fatalf("completion = %+v, want failover stream success", completion)
+	}
+	if len(sink.errors) != 0 || len(sink.deltas) != 3 {
+		t.Fatalf("Sink errors/deltas = %d/%#v, want 0/[Usage Text Done]", len(sink.errors), sink.deltas)
+	}
+	if _, ok := sink.deltas[0].(*llm.UsageDelta); !ok {
+		t.Fatalf("first Sink delta = %#v, want Usage", sink.deltas[0])
+	}
+	if text, ok := sink.deltas[1].(*llm.TextDelta); !ok || text.Text != "recovered" {
+		t.Fatalf("second Sink delta = %#v, want recovered Text", sink.deltas[1])
+	}
+	if _, ok := sink.deltas[2].(*llm.DoneDelta); !ok {
+		t.Fatalf("terminal Sink delta = %#v, want Done", sink.deltas[2])
 	}
 }
 
@@ -687,9 +779,9 @@ func TestExecuteNeverCallsSinkAfterFirstStreamWriteFailure(t *testing.T) {
 	request := llm.NewChatRequest("client-model", nil)
 	request.Stream.Enabled = true
 	var deltaAttempts atomic.Int32
-	sink := &recordingSink{onDelta: func(llm.StreamDelta) error {
+	sink := &recordingSink{onDelta: func(llm.StreamDelta) (bool, error) {
 		deltaAttempts.Add(1)
-		return errors.New("client stream write failed")
+		return false, errors.New("client stream write failed")
 	}}
 
 	completion := runtime.Execute(context.Background(), Call{
@@ -723,8 +815,8 @@ func TestExecuteKeepsProviderHealthNeutralOnDownstreamStreamFailure(t *testing.T
 			}))
 			request := llm.NewChatRequest("client-model", nil)
 			request.Stream.Enabled = true
-			sink := &recordingSink{onDelta: func(llm.StreamDelta) error {
-				return errors.New("downstream closed")
+			sink := &recordingSink{onDelta: func(llm.StreamDelta) (bool, error) {
+				return false, errors.New("downstream closed")
 			}}
 
 			completion := runtime.Execute(context.Background(), Call{
@@ -1033,9 +1125,9 @@ func TestExecuteFinalizesUnexpectedEOFAndClientCancellation(t *testing.T) {
 		)
 		request := llm.NewChatRequest("client-model", nil)
 		request.Stream.Enabled = true
-		sink := &recordingSink{onDelta: func(llm.StreamDelta) error {
+		sink := &recordingSink{onDelta: func(llm.StreamDelta) (bool, error) {
 			cancel()
-			return nil
+			return true, nil
 		}}
 
 		completion := runtime.Execute(ctx, Call{
@@ -1053,7 +1145,7 @@ func TestExecuteFinalizesUnexpectedEOFAndClientCancellation(t *testing.T) {
 	})
 }
 
-func TestExecuteAllowsOpaqueResponseOnlyForSameEndpoint(t *testing.T) {
+func TestExecuteAllowsAndFiltersOpaqueResponseOnlyForSameEndpoint(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		target     protocol.Endpoint
@@ -1074,6 +1166,9 @@ func TestExecuteAllowsOpaqueResponseOnlyForSameEndpoint(t *testing.T) {
 			if test.wantOpaque {
 				if completion.Error != nil || len(sink.opaque) != 1 || string(sink.opaque[0].Body) != `{"data":[1]}` {
 					t.Fatalf("completion/opaque = %+v/%+v", completion, sink.opaque)
+				}
+				if len(sink.opaque[0].Headers) != 1 || sink.opaque[0].Headers["Content-Type"] != "application/provider+json" {
+					t.Fatalf("opaque headers = %#v, want only Content-Type", sink.opaque[0].Headers)
 				}
 				return
 			}
@@ -1172,7 +1267,16 @@ func embeddingRuntime(t *testing.T, target protocol.Endpoint) *Runtime {
 		}},
 		providers: []provider.Registration{providerRegistration("test", &testDriver{})},
 		transport: transportFunc(func(_ context.Context, _ provider.Request) (*provider.Response, error) {
-			return response(200, `{"data":[1]}`), nil
+			providerResponse := response(200, `{"data":[1]}`)
+			providerResponse.Headers = map[string][]string{
+				"Content-Type":       {"application/provider+json"},
+				"Set-Cookie":         {"provider_session=secret"},
+				"Authorization":      {"Bearer upstream-secret"},
+				"Connection":         {"keep-alive"},
+				"Proxy-Authenticate": {"Basic realm=provider"},
+				"X-Nyro-Internal":    {"provider-only"},
+			}
+			return providerResponse, nil
 		}),
 	})
 }

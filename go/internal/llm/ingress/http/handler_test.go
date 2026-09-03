@@ -182,6 +182,22 @@ func TestNewRejectsDuplicateMethodPatternAcrossCatalogCodecs(t *testing.T) {
 	}
 }
 
+func TestModelsUnavailableUsesOpenAIServerErrorType(t *testing.T) {
+	codec := testIngressCodec{endpoint: protocol.OpenAIChatCompletionsV1}
+	handler, err := New(mustCatalog(t, codec), &runtimeSource{}, Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	wantBody := "{\"error\":{\"message\":\"LLM runtime is unavailable\",\"type\":\"server_error\"}}\n"
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("Content-Type") != "application/json" || response.Body.String() != wantBody {
+		t.Fatalf("models unavailable response = %d %q %q, want 503 application/json %q", response.Code, response.Header().Get("Content-Type"), response.Body.String(), wantBody)
+	}
+}
+
 func TestHandlerUsesOneRuntimeForBodyLimitAndReleasesOnReadFailure(t *testing.T) {
 	var decoded atomic.Bool
 	codec := testIngressCodec{
@@ -291,10 +307,24 @@ func (writer *flushingWriter) Flush() { writer.flushes++ }
 
 func TestSinkSendDeltaReturnsSuccessOnlyAfterCompleteFrameAndFlush(t *testing.T) {
 	codec := testIngressCodec{endpoint: protocol.OpenAIChatCompletionsV1, stream: testStreamEncoder{}}
+	unframedWriter := &flushingWriter{}
+	unframedSink := newSink(unframedWriter, codec)
+	committed, err := unframedSink.SendDelta(context.Background(), &llm.UsageDelta{Usage: llm.Usage{TotalTokens: 3}})
+	if err != nil {
+		t.Fatalf("SendDelta unframed Usage: %v", err)
+	}
+	if committed || unframedWriter.status != 0 || unframedWriter.body.Len() != 0 || unframedWriter.flushes != 0 {
+		t.Fatalf("unframed Usage committed/status/body/flush = %t/%d/%d/%d, want false/0/0/0", committed, unframedWriter.status, unframedWriter.body.Len(), unframedWriter.flushes)
+	}
+
 	writer := &flushingWriter{}
 	sink := newSink(writer, codec)
-	if err := sink.SendDelta(context.Background(), &llm.TextDelta{Text: "hello"}); err != nil {
+	committed, err = sink.SendDelta(context.Background(), &llm.TextDelta{Text: "hello"})
+	if err != nil {
 		t.Fatalf("SendDelta: %v", err)
+	}
+	if !committed {
+		t.Fatal("SendDelta committed = false, want true after event flush")
 	}
 	if writer.status != http.StatusOK || writer.flushes != 1 || writer.body.String() != "event: text\ndata: hello\n\n" {
 		t.Fatalf("stream wire = status %d flushes %d body %q", writer.status, writer.flushes, writer.body.String())
@@ -302,8 +332,12 @@ func TestSinkSendDeltaReturnsSuccessOnlyAfterCompleteFrameAndFlush(t *testing.T)
 
 	failingWriter := &flushingWriter{failWrite: true}
 	failingSink := newSink(failingWriter, codec)
-	if err := failingSink.SendDelta(context.Background(), &llm.TextDelta{Text: "never-accepted"}); !errors.Is(err, io.ErrClosedPipe) {
+	committed, err = failingSink.SendDelta(context.Background(), &llm.TextDelta{Text: "never-accepted"})
+	if !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("failed first SendDelta error = %v, want closed pipe", err)
+	}
+	if committed {
+		t.Fatal("failed first SendDelta committed = true, want false")
 	}
 	if failingWriter.flushes != 0 {
 		t.Fatalf("failed first event flushes = %d, want 0", failingWriter.flushes)
@@ -314,13 +348,17 @@ func TestSinkEncodesTerminalStreamErrorAndStops(t *testing.T) {
 	writer := &flushingWriter{}
 	sink := newSink(writer, testIngressCodec{endpoint: protocol.AnthropicMessagesV1, stream: testStreamEncoder{}})
 	terminal := &llm.StreamErrorDelta{Error: llm.NewError(llm.ErrServerError, "provider failed")}
-	if err := sink.SendDelta(context.Background(), terminal); err != nil {
+	committed, err := sink.SendDelta(context.Background(), terminal)
+	if err != nil {
 		t.Fatalf("SendDelta terminal error: %v", err)
+	}
+	if !committed {
+		t.Fatal("terminal SendDelta committed = false, want true")
 	}
 	if writer.body.String() != "event: error\ndata: {\"type\":\"native_error\",\"message\":\"provider failed\"}\n\n" || writer.flushes != 1 {
 		t.Fatalf("terminal stream = %q flushes %d", writer.body.String(), writer.flushes)
 	}
-	if err := sink.SendDelta(context.Background(), &llm.TextDelta{Text: "late"}); err == nil {
+	if _, err := sink.SendDelta(context.Background(), &llm.TextDelta{Text: "late"}); err == nil {
 		t.Fatal("SendDelta after terminal error succeeded")
 	}
 }
@@ -330,8 +368,12 @@ func TestSinkHonorsClientCancellationBeforeWriting(t *testing.T) {
 	cancel()
 	writer := &flushingWriter{}
 	sink := newSink(writer, testIngressCodec{endpoint: protocol.OpenAIChatCompletionsV1, stream: testStreamEncoder{}})
-	if err := sink.SendDelta(ctx, &llm.TextDelta{Text: "late"}); !errors.Is(err, context.Canceled) {
+	committed, err := sink.SendDelta(ctx, &llm.TextDelta{Text: "late"})
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("SendDelta canceled error = %v, want context canceled", err)
+	}
+	if committed {
+		t.Fatal("canceled SendDelta committed = true, want false")
 	}
 	if writer.status != 0 || writer.body.Len() != 0 || writer.flushes != 0 {
 		t.Fatalf("canceled Sink wrote status/body/flush = %d/%d/%d", writer.status, writer.body.Len(), writer.flushes)

@@ -260,14 +260,17 @@ func (r *Runtime) sendDelta(ctx context.Context, execution *execution, exchange 
 	if execution.runner != nil {
 		execution.runner.ObserveDelta(ctx, exchange, delta)
 	}
-	if err := execution.sink.SendDelta(ctx, delta); err != nil {
+	committed, err := execution.sink.SendDelta(ctx, delta)
+	if committed && execution.stream.state == streamUncommitted {
+		execution.stream.state = streamCommitted
+	}
+	if err != nil {
 		execution.deliveryClosed = true
 		return err
 	}
-	if execution.stream.state == streamUncommitted {
-		execution.stream.state = streamCommitted
+	if committed {
+		execution.delivered = true
 	}
-	execution.delivered = true
 	if isTerminalDelta(delta) {
 		execution.stream.state = streamTerminated
 		execution.deliveryClosed = true

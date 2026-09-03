@@ -37,7 +37,7 @@ func (ingress) EncodeError(providerError *llm.Error) (protocol.WireResponse, err
 	}
 	body, err := json.Marshal(struct {
 		Error errorPayload `json:"error"`
-	}{Error: errorPayload{Message: message, Type: openAIErrorType(kind)}})
+	}{Error: errorPayload{Message: message, Type: protocol.OpenAIErrorType(kind)}})
 	status := 500
 	if providerError != nil && providerError.StatusCode != nil && *providerError.StatusCode > 0 {
 		status = int(*providerError.StatusCode)
@@ -47,25 +47,4 @@ func (ingress) EncodeError(providerError *llm.Error) (protocol.WireResponse, err
 		Headers: map[string]string{"Content-Type": "application/json"},
 		Body:    body,
 	}, err
-}
-
-func openAIErrorType(kind llm.ErrorKind) string {
-	switch kind {
-	case llm.ErrAuthenticationError:
-		return "authentication_error"
-	case llm.ErrAuthorizationError:
-		return "permission_error"
-	case llm.ErrRateLimitError:
-		return "rate_limit_error"
-	case llm.ErrQuotaExceeded:
-		return "insufficient_quota"
-	case llm.ErrInvalidRequest, llm.ErrNotFoundError, llm.ErrContentFiltered,
-		llm.ErrContextLengthExceeded, llm.ErrModelNotAvailable:
-		return "invalid_request_error"
-	case llm.ErrServerError, llm.ErrServiceUnavailable, llm.ErrTimeout,
-		llm.ErrStreamMidError, llm.ErrUnexpectedEOF:
-		return "server_error"
-	default:
-		return "api_error"
-	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/nyroway/nyro/go/internal/llm"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 )
 
 func (handler *handler) serveModels(writer http.ResponseWriter, request *http.Request) {
@@ -48,7 +49,7 @@ func writeOpenAIError(writer http.ResponseWriter, providerError *llm.Error) {
 		}
 	}
 	writeJSON(writer, errorStatus(providerError), map[string]any{
-		"error": map[string]any{"message": message, "type": kind},
+		"error": map[string]any{"message": message, "type": protocol.OpenAIErrorType(kind)},
 	})
 }
 

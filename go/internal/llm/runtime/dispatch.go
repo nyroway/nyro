@@ -305,7 +305,7 @@ func (r *Runtime) executeAttempt(
 			}
 		}
 		retryable := r.settings.RetryOnStatus[response.StatusCode] || classification.Retryable || errorClassification.Retryable
-		rawError := providerErrorPassthrough(wire)
+		rawError := filteredPassthroughResponse(wire)
 		return attemptResult{
 			rawError:            &rawError,
 			err:                 providerError,
@@ -330,7 +330,8 @@ func (r *Runtime) executeAttempt(
 				failover:  true,
 			}
 		}
-		return attemptResult{opaque: &wire, status: response.StatusCode, latencyMs: latencyMs}
+		opaque := filteredPassthroughResponse(wire)
+		return attemptResult{opaque: &opaque, status: response.StatusCode, latencyMs: latencyMs}
 	case *llm.ChatRequest:
 		codec, ok := egress.(protocol.ChatEgressCodec)
 		if !ok {
@@ -483,7 +484,7 @@ func readWireResponse(response *provider.Response) (protocol.WireResponse, error
 	return protocol.WireResponse{Status: response.StatusCode, Headers: headers, Body: body}, nil
 }
 
-func providerErrorPassthrough(response protocol.WireResponse) protocol.WireResponse {
+func filteredPassthroughResponse(response protocol.WireResponse) protocol.WireResponse {
 	headers := make(map[string]string, 1)
 	for key, value := range response.Headers {
 		if strings.EqualFold(key, "Content-Type") && value != "" {
