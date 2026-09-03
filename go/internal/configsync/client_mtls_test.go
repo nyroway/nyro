@@ -49,7 +49,7 @@ func TestConfigClient_MTLS_ReceivesOverSecureChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := &configsnapshot.Cache{}
-	c := NewConfigClient("passthrough:///bufnet", cache, "19530", clientTLS)
+	c := NewConfigClient("passthrough:///bufnet", cacheSnapshotApplier{cache: cache}, "19530", clientTLS)
 	c.initialBackoff = 20 * time.Millisecond
 	c.maxBackoff = 100 * time.Millisecond
 	c.dialOpts = []grpc.DialOption{dialOpt, grpc.WithTransportCredentials(credentials.NewTLS(clientTLS))}
@@ -83,7 +83,7 @@ func TestConfigClient_MTLS_WrongCARejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := &configsnapshot.Cache{}
-	c := NewConfigClient("passthrough:///bufnet", cache, "19530", clientTLS)
+	c := NewConfigClient("passthrough:///bufnet", cacheSnapshotApplier{cache: cache}, "19530", clientTLS)
 	c.initialBackoff = 20 * time.Millisecond
 	c.maxBackoff = 50 * time.Millisecond
 	c.dialOpts = []grpc.DialOption{dialOpt, grpc.WithTransportCredentials(credentials.NewTLS(clientTLS))}

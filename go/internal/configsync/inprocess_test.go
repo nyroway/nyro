@@ -23,7 +23,7 @@ func TestServeInProcess_SubscriberIsLabelledInProcess(t *testing.T) {
 	defer shutdown()
 
 	cache := &configsnapshot.Cache{}
-	client := NewConfigClient(InProcessTarget, cache, "19530", nil)
+	client := NewConfigClient(InProcessTarget, cacheSnapshotApplier{cache: cache}, "19530", nil)
 	client.SetDialOptions(dialOpts...)
 	go func() { _ = client.Run(ctx) }()
 

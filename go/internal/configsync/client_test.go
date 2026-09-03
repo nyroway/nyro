@@ -2,7 +2,9 @@ package configsync
 
 import (
 	"context"
+	"errors"
 	mrand "math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,8 +16,8 @@ import (
 )
 
 // newClient builds a ConfigClient pointed at the bufconn env via dialOpts.
-func newClient(cache *configsnapshot.Cache, dialOpt grpc.DialOption) *ConfigClient {
-	c := NewConfigClient("passthrough:///bufnet", cache, "19530", nil)
+func newClient(applier SnapshotApplier, dialOpt grpc.DialOption) *ConfigClient {
+	c := NewConfigClient("passthrough:///bufnet", applier, "19530", nil)
 	c.initialBackoff = 20 * time.Millisecond
 	c.maxBackoff = 100 * time.Millisecond
 	c.dialOpts = []grpc.DialOption{
@@ -25,13 +27,59 @@ func newClient(cache *configsnapshot.Cache, dialOpt grpc.DialOption) *ConfigClie
 	return c
 }
 
+type recordingApplier struct {
+	mu        sync.Mutex
+	snapshot  *configsnapshot.Snapshot
+	versions  []string
+	rejectFor int
+	applied   chan struct{}
+	attempted chan struct{}
+}
+
+type cacheSnapshotApplier struct{ cache *configsnapshot.Cache }
+
+func (a cacheSnapshotApplier) Apply(_ context.Context, snapshot *configsnapshot.Snapshot, _ string) error {
+	a.cache.Swap(snapshot)
+	return nil
+}
+
+func (a *recordingApplier) Apply(_ context.Context, snapshot *configsnapshot.Snapshot, version string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.versions = append(a.versions, version)
+	if a.attempted != nil {
+		select {
+		case a.attempted <- struct{}{}:
+		default:
+		}
+	}
+	if a.rejectFor > 0 {
+		a.rejectFor--
+		return errors.New("candidate rejected")
+	}
+	a.snapshot = snapshot
+	if a.applied != nil {
+		select {
+		case a.applied <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+func (a *recordingApplier) load() *configsnapshot.Snapshot {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.snapshot
+}
+
 func TestConfigClient_ReceivesAndSwaps(t *testing.T) {
 	st, _, rOpen, _, _, _ := newPopulatedStorage(t)
 	srv, dialOpt, stop := bufconnEnv(t, st)
 	defer stop()
 
-	cache := &configsnapshot.Cache{}
-	c := newClient(cache, dialOpt)
+	applier := &recordingApplier{}
+	c := newClient(applier, dialOpt)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -39,7 +87,8 @@ func TestConfigClient_ReceivesAndSwaps(t *testing.T) {
 
 	// initial snapshot should land in the cache.
 	waitFor(t, 2*time.Second, func() bool {
-		return cache.Ready() && cache.Load().RouteByModel(rOpen.Model) != nil
+		snapshot := applier.load()
+		return snapshot != nil && snapshot.RouteByModel(rOpen.Model) != nil
 	})
 
 	// Bump epoch + add a route, then Notify; cache should reflect the push.
@@ -51,8 +100,42 @@ func TestConfigClient_ReceivesAndSwaps(t *testing.T) {
 	}
 	srv.Notify()
 	waitFor(t, 2*time.Second, func() bool {
-		return cache.Load().RouteByModel("client-model") != nil
+		snapshot := applier.load()
+		return snapshot != nil && snapshot.RouteByModel("client-model") != nil
 	})
+}
+
+func TestConfigClientRejectedCandidateKeepsReceiving(t *testing.T) {
+	st, _, _, _, _, _ := newPopulatedStorage(t)
+	srv, dialOpt, stop := bufconnEnv(t, st)
+	defer stop()
+
+	applier := &recordingApplier{rejectFor: 1, applied: make(chan struct{}, 1), attempted: make(chan struct{}, 1)}
+	c := newClient(applier, dialOpt)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { _ = c.Run(ctx); close(done) }()
+
+	select {
+	case <-applier.attempted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ConfigClient did not submit the initial candidate")
+	}
+	if _, err := st.Storage().Routes().Create(storage.CreateRoute{Model: "accepted-after-reject"}); err != nil {
+		t.Fatal(err)
+	}
+	srv.Notify()
+	select {
+	case <-applier.applied:
+	case <-done:
+		t.Fatal("ConfigClient stopped after SnapshotApplier rejected a candidate")
+	case <-time.After(2 * time.Second):
+		t.Fatal("ConfigClient did not apply a later candidate after rejection")
+	}
+	if snapshot := applier.load(); snapshot == nil || snapshot.RouteByModel("accepted-after-reject") == nil {
+		t.Fatal("later candidate was not applied")
+	}
 }
 
 // TestConfigClient_StopsOnContextCancel verifies Run returns when the context
@@ -62,14 +145,14 @@ func TestConfigClient_StopsOnContextCancel(t *testing.T) {
 	_, dialOpt, stop := bufconnEnv(t, st)
 	defer stop()
 
-	cache := &configsnapshot.Cache{}
-	c := newClient(cache, dialOpt)
+	applier := &recordingApplier{}
+	c := newClient(applier, dialOpt)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _ = c.Run(ctx); close(done) }()
 
-	waitFor(t, 2*time.Second, func() bool { return cache.Ready() })
+	waitFor(t, 2*time.Second, func() bool { return applier.load() != nil })
 	cancel()
 	select {
 	case <-done:

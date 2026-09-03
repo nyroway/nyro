@@ -7,5 +7,5 @@
 // composition. Nothing below layer 3 may import it.
 //
 // The gateway root consumes internal/config/snapshot only. Config-sync
-// transport is assembled by the internal/gateway/runtime composition root.
+// transport is assembled by the internal/bootstrap composition root.
 package gateway

@@ -14,7 +14,6 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
-	gatewayruntime "github.com/nyroway/nyro/go/internal/gateway/runtime"
 	httpingress "github.com/nyroway/nyro/go/internal/llm/ingress/http"
 	"github.com/nyroway/nyro/go/internal/transport/httpserver"
 )
@@ -98,7 +97,7 @@ func NewCmd() *cobra.Command {
 			return fmt.Errorf("compose LLM providers: %w", err)
 		}
 
-		gw, runtimeMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
+		runtimeController, err := bootstrap.BuildDataPlane(ctx, bootstrap.DataPlaneOptions{
 			Protocols:  protocols,
 			Providers:  providers,
 			ConfigPath: cfgPath,
@@ -110,26 +109,28 @@ func NewCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer func() {
-			shutCtx, shutCancel := context.WithTimeout(context.Background(), gatewayruntime.ShutdownTimeout)
+		shutdownRuntime := func() {
+			shutCtx, shutCancel := context.WithTimeout(context.Background(), bootstrap.RuntimeShutdownTimeout)
 			defer shutCancel()
-			if err := runtimeMgr.Shutdown(shutCtx); err != nil {
+			if err := runtimeController.Shutdown(shutCtx); err != nil {
 				slog.Warn("gateway runtime shutdown failed", "error", err)
 			}
-		}()
+		}
+		defer shutdownRuntime()
 
-		ingress, err := httpingress.New(protocols, gw, httpingress.Options{})
+		ingress, err := httpingress.New(protocols, runtimeController.RuntimeSource(), httpingress.Options{})
 		if err != nil {
 			return fmt.Errorf("compose LLM HTTP ingress: %w", err)
 		}
 		server := httpserver.New(
-			httpserver.Options{Addr: addr, Ready: gw.Ready},
+			httpserver.Options{Addr: addr, Ready: runtimeController.Ready},
 			httpserver.Handler{Pattern: "/", Handler: ingress},
 		)
 		return bootstrap.RunManagedServers(bootstrap.ManagedServer{
-			Role:     "nyro",
-			Serve:    server.ListenAndServe,
-			Shutdown: server.Shutdown,
+			Role:          "nyro",
+			Serve:         server.ListenAndServe,
+			Shutdown:      server.Shutdown,
+			AfterShutdown: shutdownRuntime,
 		})
 	}
 	return cmd

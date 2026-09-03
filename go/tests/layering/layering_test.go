@@ -326,7 +326,6 @@ var packageLayer = map[string]int{
 
 	// Layer 3 — serve.
 	"internal/gateway":              layerServe,
-	"internal/gateway/runtime":      layerServe,
 	"internal/llm/ingress/http":     layerServe,
 	"internal/transport/httpserver": layerServe,
 	"internal/admin":                layerServe,
@@ -555,6 +554,78 @@ func TestLLMPluginsUseExplicitComposition(t *testing.T) {
 					t.Errorf("implicit composition: %s blank-imports %s", rel, importPath)
 				}
 			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan %s: %v", sourceRoot, err)
+		}
+	}
+}
+
+func TestBuiltInLLMEnumerationLivesOnlyInBootstrapCatalogs(t *testing.T) {
+	t.Parallel()
+	root := moduleRoot(t)
+	allowed := "internal/bootstrap/catalogs.go"
+	constructors := map[string]bool{
+		"Generic": true, "OpenAI": true, "Anthropic": true,
+		"Gemini": true, "DeepSeek": true, "OpenRouter": true,
+	}
+	for _, sourceRoot := range []string{"internal", "cmd"} {
+		err := filepath.WalkDir(filepath.Join(root, sourceRoot), func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if rel == allowed {
+				return nil
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), path, raw, 0)
+			if err != nil {
+				return err
+			}
+			providerAliases := map[string]bool{}
+			for _, imported := range file.Imports {
+				importPath, err := strconv.Unquote(imported.Path.Value)
+				if err != nil {
+					return err
+				}
+				if strings.HasPrefix(importPath, modulePath+"/internal/llm/protocol/") {
+					t.Errorf("concrete LLM codec import outside %s: %s imports %s", allowed, rel, importPath)
+				}
+				if importPath == modulePath+"/internal/llm/provider" {
+					name := "provider"
+					if imported.Name != nil {
+						name = imported.Name.Name
+					}
+					providerAliases[name] = true
+				}
+			}
+			ast.Inspect(file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || !constructors[selector.Sel.Name] {
+					return true
+				}
+				identifier, ok := selector.X.(*ast.Ident)
+				if ok && providerAliases[identifier.Name] {
+					t.Errorf("built-in Provider enumeration outside %s: %s calls %s.%s", allowed, rel, identifier.Name, selector.Sel.Name)
+				}
+				return true
+			})
 			return nil
 		})
 		if err != nil {

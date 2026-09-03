@@ -11,6 +11,7 @@ import (
 	mrand "math/rand"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,14 +25,20 @@ import (
 	"github.com/nyroway/nyro/go/internal/version"
 )
 
+// SnapshotApplier validates and atomically activates one complete runtime
+// snapshot. Returning an error rejects only that candidate.
+type SnapshotApplier interface {
+	Apply(context.Context, *configsnapshot.Snapshot, string) error
+}
+
 // ConfigClient connects to the admin's gRPC ConfigService, subscribes to the
-// config stream, and swaps each received snapshot into the cache. It reconnects
+// config stream, and submits each received snapshot for activation. It reconnects
 // with exponential backoff on drop, always re-subscribing at version=0 (full
 // resync) — this is the simplest correct option and matches the full-snapshot
 // push model.
 type ConfigClient struct {
-	target string
-	cache  *configsnapshot.Cache
+	target  string
+	applier SnapshotApplier
 
 	// Node identity, generated once at construction and reused across
 	// reconnects so the admin's node registry sees a stable identity rather
@@ -58,7 +65,7 @@ type ConfigClient struct {
 }
 
 // NewConfigClient builds a client that connects to target (host:port) and
-// publishes received snapshots to cache. servicePort is this gateway's own
+// publishes received snapshots through applier. servicePort is this gateway's own
 // data-plane listen port (for node-visibility reporting only — pass "" if
 // unknown/not applicable, e.g. in tests).
 //
@@ -67,14 +74,14 @@ type ConfigClient struct {
 // before constructing the client. When set (see pki.LoadClientTLS), the client
 // authenticates itself to admin with a client certificate and verifies admin's
 // server certificate against the configured CA.
-func NewConfigClient(target string, cache *configsnapshot.Cache, servicePort string, tlsConfig *tls.Config) *ConfigClient {
+func NewConfigClient(target string, applier SnapshotApplier, servicePort string, tlsConfig *tls.Config) *ConfigClient {
 	creds := insecure.NewCredentials()
 	if tlsConfig != nil {
 		creds = credentials.NewTLS(tlsConfig)
 	}
 	return &ConfigClient{
 		target:         target,
-		cache:          cache,
+		applier:        applier,
 		nodeID:         newNodeID(),
 		appVersion:     buildVersion(),
 		hostname:       hostnameOrUnknown(),
@@ -182,7 +189,15 @@ func (c *ConfigClient) runOnce(ctx context.Context) (connected bool, err error) 
 		}
 		connected = true
 		internal := SnapshotFromProto(snap)
-		c.cache.Swap(internal)
+		if c.applier == nil {
+			log.Printf("configsync client: rejected snapshot v%d: SnapshotApplier is not configured", snap.GetVersion())
+			continue
+		}
+		version := strconv.FormatInt(snap.GetVersion(), 10)
+		if err := c.applier.Apply(ctx, internal, version); err != nil {
+			log.Printf("configsync client: rejected snapshot v%d: %v", snap.GetVersion(), err)
+			continue
+		}
 		log.Printf("configsync client: applied snapshot v%d (upstreams=%d routes=%d consumers=%d)",
 			snap.GetVersion(), len(snap.GetUpstreams()), len(snap.GetRoutes()), len(snap.GetConsumers()))
 	}

@@ -31,7 +31,7 @@ func subscribes(t *testing.T, addr, token string) bool {
 	defer cancel()
 
 	cache := &configsnapshot.Cache{}
-	c := NewConfigClient(addr, cache, "19530", nil)
+	c := NewConfigClient(addr, cacheSnapshotApplier{cache: cache}, "19530", nil)
 	c.initialBackoff = 10 * time.Millisecond
 	c.maxBackoff = 20 * time.Millisecond
 	c.SetJoinToken(token)
