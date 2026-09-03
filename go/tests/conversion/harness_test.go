@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/nyroway/nyro/go/internal/gateway"
+	httpingress "github.com/nyroway/nyro/go/internal/llm/ingress/http"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/protocol/anthropic/messages"
 	"github.com/nyroway/nyro/go/internal/llm/protocol/gemini/generatecontent"
@@ -190,6 +191,15 @@ func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey
 	return gw
 }
 
+func buildHandler(t *testing.T, gw *gateway.Gateway) http.Handler {
+	t.Helper()
+	handler, err := httpingress.New(gw.Protocols, gw, httpingress.Options{})
+	if err != nil {
+		t.Fatalf("compose LLM HTTP ingress: %v", err)
+	}
+	return handler
+}
+
 // RunCell drives one cell×scenario through the real router and asserts the
 // request-translation (client→upstream) and response-translation
 // (upstream→client) directions against golden files.
@@ -197,7 +207,7 @@ func RunCell(t *testing.T, cell Cell, sc Scenario) {
 	t.Helper()
 	tr, model, baseURL, apiKey := upstreamFor(t, cell, sc.Name)
 	gw := buildGateway(t, cell, tr, baseURL, apiKey, model)
-	router := gateway.NewRouter(gw)
+	router := buildHandler(t, gw)
 
 	inPath := cell.In.Path
 	if sc.Stream && cell.In.StreamPath != "" {

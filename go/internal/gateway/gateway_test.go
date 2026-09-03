@@ -11,6 +11,7 @@ import (
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
+	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -169,5 +170,54 @@ func TestResolveProxySettings_Overrides(t *testing.T) {
 	}
 	if !ps.RetryOnStatus[408] || !ps.RetryOnStatus[429] || ps.RetryOnStatus[500] {
 		t.Errorf("RetryOnStatus = %v, want exactly {408,429}", ps.RetryOnStatus)
+	}
+}
+
+func TestGatewayAcquirePublishesOneSnapshotBoundRuntime(t *testing.T) {
+	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
+	if runtime, release, ok := gw.Acquire(); ok || runtime != nil || release != nil {
+		t.Fatalf("empty Gateway Acquire = runtime %v, release-present %v, ok %v; want no active Runtime", runtime, release != nil, ok)
+	}
+
+	var first configsnapshot.Builder
+	first.SetSetting("proxy.max_body_bytes", "1024")
+	gw.Cache.Swap(first.Build())
+	runtime, release, ok := gw.Acquire()
+	if !ok || runtime == nil || release == nil {
+		t.Fatalf("filled Gateway Acquire = runtime %v, release-present %v, ok %v", runtime, release != nil, ok)
+	}
+	if runtime.MaxBodyBytes() != 1024 {
+		t.Fatalf("first Runtime MaxBodyBytes = %d, want 1024", runtime.MaxBodyBytes())
+	}
+	release()
+
+	var second configsnapshot.Builder
+	second.SetSetting("proxy.max_body_bytes", "2048")
+	gw.Cache.Swap(second.Build())
+	replacement, replacementRelease, ok := gw.Acquire()
+	if !ok || replacement == nil || replacementRelease == nil {
+		t.Fatalf("replacement Gateway Acquire = runtime %v, release-present %v, ok %v", replacement, replacementRelease != nil, ok)
+	}
+	if replacement == runtime || replacement.MaxBodyBytes() != 2048 {
+		t.Fatalf("replacement Runtime = %p max body %d; want new Runtime with 2048", replacement, replacement.MaxBodyBytes())
+	}
+	replacementRelease()
+}
+
+func TestGatewayReadyTracksPublishedConfigAndQuotaState(t *testing.T) {
+	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
+	if gw.Ready() {
+		t.Fatal("empty Gateway reported ready")
+	}
+	gw.Cache.Swap((&configsnapshot.Builder{}).Build())
+	if !gw.Ready() {
+		t.Fatal("Gateway with published config and healthy quota state reported unready")
+	}
+
+	cache := &configsnapshot.Cache{}
+	cache.Swap((&configsnapshot.Builder{}).Build())
+	unavailable := NewGatewayWithCache(cache, quota.NewUnavailableSwitch(), testProtocolCatalog(t), testProviderCatalog(t))
+	if unavailable.Ready() {
+		t.Fatal("Gateway with unavailable quota state reported ready")
 	}
 }

@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ func TestServeStreamHugeSSELine(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	engine := NewRouter(newTestGateway(t, upstream.URL))
+	engine := newTestHandler(t, newTestSource(t, upstream.URL))
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`,
 	))

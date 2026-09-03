@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"io"
@@ -35,11 +35,8 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 		Name: "test", Keys: []storage.CreateConsumerKey{{Name: "primary"}}, Routes: []string{"gpt-4o"},
 	})
 	token := consumer.Keys[0].Token
-	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
-	if err := storage.LoadAndSwap(gw.Cache, core); err != nil {
-		t.Fatalf("load cache: %v", err)
-	}
-	engine := NewRouter(gw)
+	source := newTestSourceFromStorage(t, core)
+	engine := newTestHandler(t, source)
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	post := func(tok string) int {
@@ -68,9 +65,7 @@ func TestInboundAuthStatusCodes(t *testing.T) {
 	if _, err := core.Consumers().Update(consumer.ID, storage.UpdateConsumer{Enabled: boolPtr(false)}); err != nil {
 		t.Fatalf("disable consumer: %v", err)
 	}
-	if err := storage.LoadAndSwap(gw.Cache, core); err != nil { // reflect the storage change in the in-memory cache
-		t.Fatalf("reload cache: %v", err)
-	}
+	source.reload(t, core)
 	if c := post(token); c != http.StatusForbidden {
 		t.Errorf("disabled consumer's key → %d, want 403", c)
 	}

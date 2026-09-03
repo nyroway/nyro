@@ -11,7 +11,10 @@ type fakeIngress struct{ endpoint Endpoint }
 
 func (f fakeIngress) Endpoint() Endpoint       { return f.endpoint }
 func (fakeIngress) Capabilities() Capabilities { return Capabilities{} }
-func (fakeIngress) IngressCodec()              {}
+func (fakeIngress) EncodeError(*llm.Error) (WireResponse, error) {
+	return WireResponse{}, nil
+}
+func (fakeIngress) IngressCodec() {}
 
 type fakeEgress struct{ endpoint Endpoint }
 

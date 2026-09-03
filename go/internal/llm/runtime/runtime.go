@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
@@ -458,6 +460,47 @@ func SettingsFromSnapshot(snapshot *configsnapshot.Snapshot) Settings {
 		}
 	}
 	return settings
+}
+
+// MaxBodyBytes returns the request-body limit bound to this immutable Runtime.
+func (r *Runtime) MaxBodyBytes() int64 {
+	if r == nil || r.settings.MaxBodyBytes <= 0 {
+		return 32 << 20
+	}
+	return r.settings.MaxBodyBytes
+}
+
+// ClientModelNames returns the sorted, de-duplicated client-facing model names
+// visible to credentials in this Runtime's immutable Snapshot.
+func (r *Runtime) ClientModelNames(credentials authn.Credentials) []string {
+	if r == nil || r.snapshot == nil {
+		return nil
+	}
+	var grantedRoutes []string
+	if credentials.APIKey != "" {
+		if record := r.snapshot.FindKey(credentials.APIKey); record != nil && record.Enabled &&
+			(record.ExpiresAt == "" || !expired(record.ExpiresAt)) {
+			grantedRoutes = record.Routes
+		}
+	}
+	seen := make(map[string]struct{})
+	var names []string
+	for _, route := range r.snapshot.RoutesList() {
+		if route.EnableAuth && !slices.Contains(grantedRoutes, route.Model) {
+			continue
+		}
+		name := strings.TrimSpace(route.Model)
+		if name == "" {
+			continue
+		}
+		if _, duplicate := seen[name]; duplicate {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func expired(iso string) bool {

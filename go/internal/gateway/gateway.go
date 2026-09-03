@@ -16,14 +16,15 @@ import (
 	"github.com/nyroway/nyro/go/internal/telemetry"
 )
 
-// Gateway holds the runtime dependencies for dispatching requests. Config reads
-// (upstreams, routes, consumer keys, proxy settings) go through Cache, an
-// in-memory snapshot published by config-sync or built once from YAML; Quota is
-// a stable facade over the configured quota State backend. The gateway holds NO storage handle:
+// Gateway is the Task 9 transitional RuntimeSource and Provider-transport
+// owner. Config reads (upstreams, routes, consumer keys, proxy settings) go
+// through Cache, an in-memory snapshot published by config-sync or built once
+// from YAML; Quota is a stable facade over the configured quota State backend.
+// The gateway holds NO HTTP handler or storage handle:
 // per-request telemetry flows through the OTel telemetry Phase (Obs/Handles,
 // pointed at a provider once at startup) → configured sink
 // (none/stdout/otlp). Router selects among a route's upstreams and tracks
-// failover.
+// failover. Task 10 replaces this object with generation-owned composition.
 type Gateway struct {
 	Cache     *configsnapshot.Cache
 	Quota     *quota.Switch
@@ -190,6 +191,23 @@ func (g *Gateway) runtimeFor(snapshot *configsnapshot.Snapshot) (*llmruntime.Run
 	g.runtimeSnapshot = snapshot
 	g.llmRuntime = runtime
 	return runtime, nil
+}
+
+// Acquire implements the transitional LLM HTTP ingress RuntimeSource. Task 10
+// replaces this Snapshot-bound no-op lease with a Kernel generation lease.
+func (g *Gateway) Acquire() (*llmruntime.Runtime, func(), bool) {
+	if g == nil || g.Cache == nil {
+		return nil, nil, false
+	}
+	snapshot := g.Cache.Load()
+	if snapshot == nil {
+		return nil, nil, false
+	}
+	runtime, err := g.runtimeFor(snapshot)
+	if err != nil {
+		return nil, nil, false
+	}
+	return runtime, func() {}, true
 }
 
 func (g *Gateway) observePhaseOrDefault() llmpipeline.Phase {

@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"io"
@@ -40,7 +40,7 @@ func TestCrossProtocolAnthropicToOpenAI(t *testing.T) {
 		Model:     "claude-sonnet",
 		Upstreams: []storage.CreateRouteUpstream{{UpstreamID: upstream.ID, Model: "gpt-4o"}},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, core))
+	engine := newTestHandler(t, newTestSourceFromStorage(t, core))
 
 	// Client sends an Anthropic Messages request.
 	body := `{"model":"claude-sonnet","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`

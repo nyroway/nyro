@@ -150,6 +150,12 @@ func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) []protocol.Event 
 		c := e.baseChunk()
 		c.Choices = []chatChunkChoice{{Index: 0, FinishReason: &fr}}
 		return []protocol.Event{e.chunk(c)}
+	case *llm.StreamErrorDelta:
+		body, _ := encodeErrorBody(v.Error)
+		return []protocol.Event{{Data: string(body)}}
+	case *llm.UnexpectedEOFDelta:
+		body, _ := encodeErrorBody(llm.NewError(llm.ErrUnexpectedEOF, "provider stream ended unexpectedly"))
+		return []protocol.Event{{Data: string(body)}}
 	}
 	return nil
 }

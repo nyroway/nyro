@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"net/http"
@@ -44,11 +44,7 @@ func TestModelsList(t *testing.T) {
 	}
 	token := consumer.Keys[0].Token
 
-	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
-	if err := storage.LoadAndSwap(gw.Cache, core); err != nil {
-		t.Fatalf("load cache: %v", err)
-	}
-	r := NewRouter(gw)
+	r := newTestHandler(t, newTestSourceFromStorage(t, core))
 
 	// No API key → only open routes.
 	req := httptest.NewRequest("GET", "/v1/models", nil)

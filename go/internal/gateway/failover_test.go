@@ -39,7 +39,7 @@ func TestDispatchFailover(t *testing.T) {
 			{UpstreamID: p2.ID, Model: "gpt-4o", Priority: 2},
 		},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, core))
+	engine := newTestHandler(t, newTestGatewayFromStorage(t, core))
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -89,7 +89,7 @@ func TestFailoverPreservesClientModel(t *testing.T) {
 			{UpstreamID: p2.ID, Model: "*", Priority: 2},
 		},
 	})
-	engine := NewRouter(newTestGatewayFromStorage(t, st))
+	engine := newTestHandler(t, newTestGatewayFromStorage(t, st))
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))

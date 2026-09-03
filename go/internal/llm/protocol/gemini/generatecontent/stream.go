@@ -134,6 +134,12 @@ func (e *streamResponseEncoder) formatDelta(d llm.StreamDelta) *protocol.Event {
 		// Gemini signals completion via finishReason on the final candidate.
 		b, _ := json.Marshal(response{Candidates: []candidate{{FinishReason: denormalizeGeminiFinishReason(v.StopReason)}}})
 		return &protocol.Event{Data: string(b)}
+	case *llm.StreamErrorDelta:
+		body, _ := encodeErrorBody(v.Error)
+		return &protocol.Event{Data: string(body)}
+	case *llm.UnexpectedEOFDelta:
+		body, _ := encodeErrorBody(llm.NewError(llm.ErrUnexpectedEOF, "provider stream ended unexpectedly"))
+		return &protocol.Event{Data: string(body)}
 	}
 	return nil
 }
