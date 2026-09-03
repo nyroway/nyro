@@ -9,18 +9,18 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 )
 
-func (sink *httpSink) SendDelta(ctx context.Context, delta llm.StreamDelta) error {
+func (sink *httpSink) SendDelta(ctx context.Context, delta llm.StreamDelta) (bool, error) {
 	if err := sink.begin(ctx, "HTTP stream Sink"); err != nil {
-		return err
+		return false, err
 	}
 	if sink.encoder == nil {
 		codec, ok := sink.ingress.(protocol.ChatIngressCodec)
 		if !ok {
-			return fmt.Errorf("ingress endpoint %s cannot encode a chat stream", sink.ingress.Endpoint())
+			return false, fmt.Errorf("ingress endpoint %s cannot encode a chat stream", sink.ingress.Endpoint())
 		}
 		sink.encoder = codec.NewStreamEncoder()
 		if sink.encoder == nil {
-			return fmt.Errorf("ingress endpoint %s returned no stream encoder", sink.ingress.Endpoint())
+			return false, fmt.Errorf("ingress endpoint %s returned no stream encoder", sink.ingress.Endpoint())
 		}
 	}
 	if usage, ok := delta.(*llm.UsageDelta); ok {
@@ -28,12 +28,12 @@ func (sink *httpSink) SendDelta(ctx context.Context, delta llm.StreamDelta) erro
 	}
 	frames, err := sink.encoder.FormatDeltas([]llm.StreamDelta{delta})
 	if err != nil {
-		return fmt.Errorf("format stream delta: %w", err)
+		return false, fmt.Errorf("format stream delta: %w", err)
 	}
 	if _, done := delta.(*llm.DoneDelta); done {
 		completion, err := sink.encoder.FormatDone(sink.usage)
 		if err != nil {
-			return fmt.Errorf("format stream completion: %w", err)
+			return false, fmt.Errorf("format stream completion: %w", err)
 		}
 		frames = append(frames, completion...)
 	}
@@ -42,7 +42,7 @@ func (sink *httpSink) SendDelta(ctx context.Context, delta llm.StreamDelta) erro
 		sink.terminated = true
 	}
 	if len(frames) == 0 {
-		return contextError(ctx)
+		return false, contextError(ctx)
 	}
 	if !sink.streamOpen {
 		sink.writer.Header().Set("Content-Type", "text/event-stream")
@@ -52,12 +52,12 @@ func (sink *httpSink) SendDelta(ctx context.Context, delta llm.StreamDelta) erro
 		sink.streamOpen = true
 	}
 	if err := writeEvents(ctx, sink.writer, frames); err != nil {
-		return err
+		return false, err
 	}
 	if err := http.NewResponseController(sink.writer).Flush(); err != nil {
-		return fmt.Errorf("flush stream events: %w", err)
+		return false, fmt.Errorf("flush stream events: %w", err)
 	}
-	return contextError(ctx)
+	return true, contextError(ctx)
 }
 
 func writeEvents(ctx context.Context, writer http.ResponseWriter, events []protocol.Event) error {

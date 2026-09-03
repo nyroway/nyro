@@ -30,6 +30,29 @@ func ErrorFromWire(response WireResponse, message string, discriminators ...stri
 	return normalized
 }
 
+// OpenAIErrorType maps a canonical error kind to the discriminator shared by
+// OpenAI-compatible error envelopes.
+func OpenAIErrorType(kind llm.ErrorKind) string {
+	switch kind {
+	case llm.ErrAuthenticationError:
+		return "authentication_error"
+	case llm.ErrAuthorizationError:
+		return "permission_error"
+	case llm.ErrRateLimitError:
+		return "rate_limit_error"
+	case llm.ErrQuotaExceeded:
+		return "insufficient_quota"
+	case llm.ErrInvalidRequest, llm.ErrNotFoundError, llm.ErrContentFiltered,
+		llm.ErrContextLengthExceeded, llm.ErrModelNotAvailable:
+		return "invalid_request_error"
+	case llm.ErrServerError, llm.ErrServiceUnavailable, llm.ErrTimeout,
+		llm.ErrStreamMidError, llm.ErrUnexpectedEOF:
+		return "server_error"
+	default:
+		return "api_error"
+	}
+}
+
 func errorKind(discriminator string) (llm.ErrorKind, bool) {
 	value := strings.ToLower(strings.TrimSpace(discriminator))
 	switch {

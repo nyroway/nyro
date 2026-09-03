@@ -29,7 +29,7 @@ type recordingSink struct {
 	opaque     []protocol.WireResponse
 	onResponse func(*llm.ChatResponse) error
 	onError    func(*llm.Error) error
-	onDelta    func(llm.StreamDelta) error
+	onDelta    func(llm.StreamDelta) (bool, error)
 }
 
 func (s *recordingSink) SendResponse(_ context.Context, response *llm.ChatResponse) error {
@@ -52,16 +52,19 @@ func (s *recordingSink) SendError(_ context.Context, err *llm.Error) error {
 	return nil
 }
 
-func (s *recordingSink) SendDelta(_ context.Context, delta llm.StreamDelta) error {
+func (s *recordingSink) SendDelta(_ context.Context, delta llm.StreamDelta) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	committed := true
 	if s.onDelta != nil {
-		if err := s.onDelta(delta); err != nil {
-			return err
+		var err error
+		committed, err = s.onDelta(delta)
+		if err != nil {
+			return false, err
 		}
 	}
 	s.deltas = append(s.deltas, delta)
-	return nil
+	return committed, nil
 }
 
 func (s *recordingSink) SendOpaque(_ context.Context, response protocol.WireResponse) error {
