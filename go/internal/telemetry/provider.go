@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -268,12 +268,39 @@ func tracesBuilders(ctx context.Context) map[schema.ExporterKind]builderFunc {
 // stdout are DELTA; prometheus uses its own pull Reader, which is
 // CUMULATIVE by construction — the two temporalities coexist because they
 // never share a MeterProvider (metrics has exactly one configured exporter).
-//
-// Global registration: the trace and meter providers are registered globally
-// via otel.Set*Provider so libraries instrumented against the OTel API
-// (rather than against this struct's fields) also report. Tests construct
-// their own providers and do not depend on the global.
 func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
+	return newProvider(ctx, cfg, providerBuildHooks{
+		logger: buildLoggerProvider,
+		meter:  buildMeterProvider,
+		tracer: buildTracerProvider,
+	})
+}
+
+// NewSignalProvider constructs resources for exactly one signal. The other
+// two signal providers are no-op SDK providers so the returned handles remain
+// safe to use while Bootstrap shares each configured signal independently.
+func NewSignalProvider(ctx context.Context, signal schema.Signal, config SignalConfig) (*Provider, error) {
+	var cfg Config
+	switch signal {
+	case schema.SignalLogs:
+		cfg.Logs = config
+	case schema.SignalMetrics:
+		cfg.Metrics = config
+	case schema.SignalTraces:
+		cfg.Traces = config
+	default:
+		return nil, fmt.Errorf("observability: unknown signal %q", signal)
+	}
+	return NewProvider(ctx, cfg)
+}
+
+type providerBuildHooks struct {
+	logger func(context.Context, *resource.Resource, SignalConfig) (*sdklog.LoggerProvider, error)
+	meter  func(context.Context, *resource.Resource, SignalConfig) (*sdkmetric.MeterProvider, http.Handler, string, error)
+	tracer func(context.Context, *resource.Resource, SignalConfig) (*sdktrace.TracerProvider, error)
+}
+
+func newProvider(ctx context.Context, cfg Config, hooks providerBuildHooks) (*Provider, error) {
 	signals := []struct {
 		signal schema.Signal
 		cfg    SignalConfig
@@ -295,21 +322,18 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 		return nil, err
 	}
 
-	lp, err := buildLoggerProvider(ctx, res, cfg.Logs)
+	lp, err := hooks.logger(ctx, res, cfg.Logs)
 	if err != nil {
 		return nil, err
 	}
-	mp, promHandler, promListen, err := buildMeterProvider(ctx, res, cfg.Metrics)
+	mp, promHandler, promListen, err := hooks.meter(ctx, res, cfg.Metrics)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, shutdownPartialProvider(lp, nil))
 	}
-	tp, err := buildTracerProvider(ctx, res, cfg.Traces)
+	tp, err := hooks.tracer(ctx, res, cfg.Traces)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, shutdownPartialProvider(lp, mp))
 	}
-
-	otel.SetTracerProvider(tp)
-	otel.SetMeterProvider(mp)
 
 	return &Provider{
 		loggerProvider: lp,
@@ -321,6 +345,19 @@ func NewProvider(ctx context.Context, cfg Config) (*Provider, error) {
 		PromHandler:    promHandler,
 		PromListen:     promListen,
 	}, nil
+}
+
+func shutdownPartialProvider(logger *sdklog.LoggerProvider, meter *sdkmetric.MeterProvider) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var result error
+	if meter != nil {
+		result = errors.Join(result, meter.Shutdown(ctx))
+	}
+	if logger != nil {
+		result = errors.Join(result, logger.Shutdown(ctx))
+	}
+	return result
 }
 
 // buildLoggerProvider constructs the LoggerProvider for sc, via the logs

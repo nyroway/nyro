@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -25,8 +26,13 @@ type stateResource struct {
 	config platformstate.Config
 	store  quota.Store
 	ping   func(context.Context) error
+	probe  func(context.Context) error
 	close  func() error
 	refs   int
+
+	healthy atomic.Bool
+	cancel  context.CancelFunc
+	done    chan struct{}
 }
 
 type statePool struct {
@@ -48,6 +54,10 @@ func (pool *statePool) acquire(ctx context.Context, cfg platformstate.Config) (*
 	if existing := pool.entries[cfg]; existing != nil {
 		existing.refs++
 		pool.mu.Unlock()
+		if err := verifyStateResource(ctx, existing); err != nil {
+			_ = pool.release(existing)
+			return nil, err
+		}
 		return existing, nil
 	}
 	pool.mu.Unlock()
@@ -56,6 +66,7 @@ func (pool *statePool) acquire(ctx context.Context, cfg platformstate.Config) (*
 	if err != nil {
 		return nil, err
 	}
+	candidate.startHealthWatcher()
 	pool.mu.Lock()
 	if pool.closed {
 		pool.mu.Unlock()
@@ -66,6 +77,10 @@ func (pool *statePool) acquire(ctx context.Context, cfg platformstate.Config) (*
 		existing.refs++
 		pool.mu.Unlock()
 		_ = candidate.closeResource()
+		if err := verifyStateResource(ctx, existing); err != nil {
+			_ = pool.release(existing)
+			return nil, err
+		}
 		return existing, nil
 	}
 	candidate.refs = 1
@@ -118,16 +133,83 @@ func (pool *statePool) Close() error {
 }
 
 func (resource *stateResource) closeResource() error {
-	if resource == nil || resource.close == nil {
+	if resource == nil {
+		return nil
+	}
+	if resource.cancel != nil {
+		resource.cancel()
+	}
+	if resource.done != nil {
+		<-resource.done
+	}
+	if resource.close == nil {
 		return nil
 	}
 	return resource.close()
 }
 
+func (resource *stateResource) startHealthWatcher() {
+	if resource == nil || (resource.ping == nil && resource.probe == nil) {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	resource.cancel = cancel
+	resource.done = make(chan struct{})
+	go func() {
+		defer close(resource.done)
+		ticker := time.NewTicker(stateHealthInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := verifyStateResource(ctx, resource); err != nil && ctx.Err() == nil {
+					slog.Warn("state health check failed", "kind", resource.config.Kind)
+				}
+			}
+		}
+	}()
+}
+
+func verifyStateResource(ctx context.Context, resource *stateResource) error {
+	if resource == nil {
+		return errors.New("state resource is required")
+	}
+	if resource.ping == nil && resource.probe == nil {
+		resource.healthy.Store(true)
+		return nil
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, stateConnectTimeout)
+	defer cancel()
+	if resource.ping != nil {
+		if err := resource.ping(checkCtx); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			resource.healthy.Store(false)
+			return redactedStateError("verify", resource.config)
+		}
+	}
+	if resource.probe != nil {
+		if err := resource.probe(checkCtx); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			resource.healthy.Store(false)
+			return redactedStateError("verify", resource.config)
+		}
+	}
+	resource.healthy.Store(true)
+	return nil
+}
+
 func buildStateResource(ctx context.Context, cfg platformstate.Config) (*stateResource, error) {
 	switch cfg.Kind {
 	case platformstate.KindMemory:
-		return &stateResource{config: cfg, store: quota.NewMemory()}, nil
+		resource := &stateResource{config: cfg, store: quota.NewMemory()}
+		resource.healthy.Store(true)
+		return resource, nil
 	case platformstate.KindRedis:
 		connectCtx, cancel := context.WithTimeout(ctx, stateConnectTimeout)
 		defer cancel()
@@ -149,12 +231,15 @@ func buildStateResource(ctx context.Context, cfg platformstate.Config) (*stateRe
 			_ = closeClient()
 			return nil, redactedStateError("probe", cfg)
 		}
-		return &stateResource{
+		resource := &stateResource{
 			config: cfg,
 			store:  store,
 			ping:   func(ctx context.Context) error { return client.Ping(ctx).Err() },
+			probe:  store.Probe,
 			close:  closeClient,
-		}, nil
+		}
+		resource.healthy.Store(true)
+		return resource, nil
 	default:
 		return nil, fmt.Errorf("unsupported state backend %q", cfg.Kind)
 	}
@@ -170,17 +255,14 @@ func redactedStateError(action string, cfg platformstate.Config) error {
 type stateBinding struct {
 	pool   *statePool
 	config platformstate.Config
-	store  *quota.Switch
 
 	mu       sync.Mutex
 	resource *stateResource
-	cancel   context.CancelFunc
-	done     chan struct{}
 	closed   bool
 }
 
 func newStateBinding(pool *statePool, cfg platformstate.Config) *stateBinding {
-	return &stateBinding{pool: pool, config: cfg, store: quota.NewUnavailableSwitch()}
+	return &stateBinding{pool: pool, config: cfg}
 }
 
 func (binding *stateBinding) Start(ctx context.Context) error {
@@ -198,46 +280,15 @@ func (binding *stateBinding) Start(ctx context.Context) error {
 		return errors.New("state binding is closed")
 	}
 	binding.resource = resource
-	binding.store.Swap(resource.store, nil, 0)
-	if resource.ping != nil {
-		var healthCtx context.Context
-		healthCtx, binding.cancel = context.WithCancel(context.Background())
-		binding.done = make(chan struct{})
-		go binding.watchHealth(healthCtx, resource)
-	}
 	binding.mu.Unlock()
 	return nil
 }
 
-func (binding *stateBinding) watchHealth(ctx context.Context, resource *stateResource) {
-	defer close(binding.done)
-	ticker := time.NewTicker(stateHealthInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			err := resource.ping(checkCtx)
-			cancel()
-			binding.store.MarkHealthy(binding.storeGeneration(), err == nil)
-			if err != nil && ctx.Err() == nil {
-				slog.Warn("state health check failed", "kind", binding.config.Kind)
-			}
-		}
-	}
-}
-
-func (binding *stateBinding) storeGeneration() uint64 {
-	// Each binding performs exactly one initial Swap, whose generation is one.
-	return 1
-}
-
-func (binding *stateBinding) Store() quota.Store { return binding.store }
+func (binding *stateBinding) Store() quota.Store { return binding }
 
 func (binding *stateBinding) Ready() bool {
-	return binding != nil && binding.store != nil && binding.store.Ready()
+	resource := binding.currentResource()
+	return resource != nil && resource.healthy.Load()
 }
 
 func (binding *stateBinding) Close(ctx context.Context) error {
@@ -250,21 +301,76 @@ func (binding *stateBinding) Close(ctx context.Context) error {
 		return nil
 	}
 	binding.closed = true
-	resource, cancel, done := binding.resource, binding.cancel, binding.done
-	binding.resource, binding.cancel, binding.done = nil, nil, nil
-	binding.store.Shutdown()
+	resource := binding.resource
+	binding.resource = nil
 	binding.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	if done != nil {
-		select {
-		case <-done:
-		case <-ctx.Done():
-			return errors.Join(ctx.Err(), binding.pool.release(resource))
-		}
-	}
 	return binding.pool.release(resource)
+}
+
+func (binding *stateBinding) currentResource() *stateResource {
+	if binding == nil {
+		return nil
+	}
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	if binding.closed {
+		return nil
+	}
+	return binding.resource
+}
+
+func (binding *stateBinding) backend() (*stateResource, error) {
+	resource := binding.currentResource()
+	if resource == nil || !resource.healthy.Load() {
+		return nil, quota.ErrUnavailable
+	}
+	return resource, nil
+}
+
+func (binding *stateBinding) finish(resource *stateResource, err error) {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, quota.ErrAdmissionContended) {
+		resource.healthy.Store(false)
+	}
+}
+
+func (binding *stateBinding) AdmitRequest(ctx context.Context, consumerID string, limits []quota.RequestLimit) (bool, error) {
+	resource, err := binding.backend()
+	if err != nil {
+		return false, err
+	}
+	allowed, err := resource.store.AdmitRequest(ctx, consumerID, limits)
+	binding.finish(resource, err)
+	return allowed, err
+}
+
+func (binding *stateBinding) TokenValue(ctx context.Context, consumerID string, window time.Duration) (int64, error) {
+	resource, err := binding.backend()
+	if err != nil {
+		return 0, err
+	}
+	value, err := resource.store.TokenValue(ctx, consumerID, window)
+	binding.finish(resource, err)
+	return value, err
+}
+
+func (binding *stateBinding) RecordTokens(ctx context.Context, consumerID string, tokens int64) error {
+	resource, err := binding.backend()
+	if err != nil {
+		return err
+	}
+	err = resource.store.RecordTokens(ctx, consumerID, tokens)
+	binding.finish(resource, err)
+	return err
+}
+
+func (binding *stateBinding) Acquire(ctx context.Context, consumerID string, limit int64, leaseTTL time.Duration) (quota.Lease, bool, error) {
+	resource, err := binding.backend()
+	if err != nil {
+		return nil, false, err
+	}
+	lease, allowed, err := resource.store.Acquire(ctx, consumerID, limit, leaseTTL)
+	binding.finish(resource, err)
+	return lease, allowed, err
 }
 
 func resolveStateConfig(snapshot *configsnapshot.Snapshot) (platformstate.Config, error) {

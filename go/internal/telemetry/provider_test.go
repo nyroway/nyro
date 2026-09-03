@@ -2,15 +2,100 @@ package telemetry
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
+
+func TestNewProviderDoesNotMutateGlobalOTelProviders(t *testing.T) {
+	globalMeter := otel.GetMeterProvider()
+	globalTracer := otel.GetTracerProvider()
+	provider, err := NewProvider(context.Background(), Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Shutdown(context.Background())
+	if otel.GetMeterProvider() != globalMeter || otel.GetTracerProvider() != globalTracer {
+		t.Fatal("NewProvider mutated process-global OTel providers")
+	}
+}
+
+func TestNewProviderCleansPartiallyBuiltSignalsExactlyOnce(t *testing.T) {
+	tests := []struct {
+		name      string
+		meterFail bool
+		wantMeter int32
+	}{
+		{name: "meter failure closes logger", meterFail: true},
+		{name: "tracer failure closes logger and meter", wantMeter: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			logExporter := &shutdownLogExporter{}
+			metricExporter := &shutdownMetricExporter{}
+			hooks := providerBuildHooks{
+				logger: func(context.Context, *resource.Resource, SignalConfig) (*sdklog.LoggerProvider, error) {
+					return sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(logExporter))), nil
+				},
+				meter: func(context.Context, *resource.Resource, SignalConfig) (*sdkmetric.MeterProvider, http.Handler, string, error) {
+					if test.meterFail {
+						return nil, nil, "", errors.New("meter failed")
+					}
+					reader := sdkmetric.NewPeriodicReader(metricExporter)
+					return sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)), nil, "", nil
+				},
+				tracer: func(context.Context, *resource.Resource, SignalConfig) (*sdktrace.TracerProvider, error) {
+					return nil, errors.New("tracer failed")
+				},
+			}
+			if provider, err := newProvider(context.Background(), Config{}, hooks); err == nil || provider != nil {
+				t.Fatalf("newProvider() = %#v, %v; want failure", provider, err)
+			}
+			if got := logExporter.shutdowns.Load(); got != 1 {
+				t.Fatalf("logger exporter shutdowns = %d, want 1", got)
+			}
+			if got := metricExporter.shutdowns.Load(); got != test.wantMeter {
+				t.Fatalf("meter exporter shutdowns = %d, want %d", got, test.wantMeter)
+			}
+		})
+	}
+}
+
+type shutdownLogExporter struct{ shutdowns atomic.Int32 }
+
+func (*shutdownLogExporter) Export(context.Context, []sdklog.Record) error { return nil }
+func (*shutdownLogExporter) ForceFlush(context.Context) error              { return nil }
+func (exporter *shutdownLogExporter) Shutdown(context.Context) error {
+	exporter.shutdowns.Add(1)
+	return nil
+}
+
+type shutdownMetricExporter struct{ shutdowns atomic.Int32 }
+
+func (*shutdownMetricExporter) Temporality(sdkmetric.InstrumentKind) metricdata.Temporality {
+	return metricdata.DeltaTemporality
+}
+func (*shutdownMetricExporter) Aggregation(sdkmetric.InstrumentKind) sdkmetric.Aggregation {
+	return sdkmetric.AggregationDefault{}
+}
+func (*shutdownMetricExporter) Export(context.Context, *metricdata.ResourceMetrics) error { return nil }
+func (*shutdownMetricExporter) ForceFlush(context.Context) error                          { return nil }
+func (exporter *shutdownMetricExporter) Shutdown(context.Context) error {
+	exporter.shutdowns.Add(1)
+	return nil
+}
 
 // TestNewProvider_AllDisabled constructs a provider with every signal
 // disabled (Kind == "", the SignalConfig zero value): no exporters are

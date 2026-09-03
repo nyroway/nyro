@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/kernel"
@@ -47,6 +50,44 @@ func TestStateBindingsReuseUnchangedBackendWithoutResettingQuota(t *testing.T) {
 	}
 }
 
+func TestStateBindingRejectsUnhealthyReusedRedisAndMarksExistingBindingsUnready(t *testing.T) {
+	config := platformstate.Config{Kind: platformstate.KindRedis, URL: "redis://alice:secret@redis.example:6379/0"}
+	var healthy atomic.Bool
+	healthy.Store(true)
+	resource := &stateResource{
+		config: config,
+		store:  quota.NewMemory(),
+		ping: func(context.Context) error {
+			if healthy.Load() {
+				return nil
+			}
+			return errors.New("dial redis with password secret failed")
+		},
+		probe: func(context.Context) error { return nil },
+	}
+	resource.healthy.Store(true)
+	pool := newStatePool()
+	pool.entries[config] = resource
+	first := newStateBinding(pool, config)
+	if err := first.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close(context.Background())
+	healthy.Store(false)
+	second := newStateBinding(pool, config)
+	err := second.Start(context.Background())
+	if err == nil {
+		_ = second.Close(context.Background())
+		t.Fatal("same-config candidate activated without rechecking shared Redis")
+	}
+	if strings.Contains(err.Error(), "secret") || !strings.Contains(err.Error(), "xxxxx") {
+		t.Fatalf("State activation error leaked Redis credentials: %q", err)
+	}
+	if first.Ready() {
+		t.Fatal("existing binding did not observe shared Redis health failure")
+	}
+}
+
 func TestTelemetryBindingsReuseUnchangedPrometheusListener(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -78,6 +119,120 @@ func TestTelemetryBindingsReuseUnchangedPrometheusListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitHTTP(t, "http://"+addr+"/metrics", false)
+}
+
+func TestTelemetryBindingsReusePrometheusWhenOtherSignalConfigurationChanges(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*telemetry.Config)
+	}{
+		{name: "logs", mutate: func(config *telemetry.Config) {
+			config.Logs = telemetry.SignalConfig{Kind: schema.ExporterKindStdout}
+		}},
+		{name: "traces", mutate: func(config *telemetry.Config) {
+			config.Traces = telemetry.SignalConfig{Kind: schema.ExporterKindStdout}
+		}},
+		{name: "retention", mutate: func(config *telemetry.Config) {
+			config.LogsRetentionDays++
+			config.MetricsRetentionDays++
+			config.TracesRetentionDays++
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr := listener.Addr().String()
+			_ = listener.Close()
+			base := telemetry.Config{Metrics: telemetry.SignalConfig{
+				Kind:   schema.ExporterKindPrometheus,
+				Params: map[string]string{"listen": addr, "path": "/metrics"},
+			}}
+			changed := base
+			test.mutate(&changed)
+			pool := newTelemetryPool()
+			first := newTelemetryBinding(pool, base)
+			second := newTelemetryBinding(pool, changed)
+			if err := first.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			defer first.Close(context.Background())
+			if err := second.Start(context.Background()); err != nil {
+				t.Fatalf("hot update changing %s rebound unchanged Prometheus listener: %v", test.name, err)
+			}
+			defer second.Close(context.Background())
+			if first.metricResource() != second.metricResource() {
+				t.Fatal("unchanged Prometheus MeterProvider/handler/listener was not reused")
+			}
+			switch test.name {
+			case "logs":
+				if first.logResource() == second.logResource() || second.logResource().config.Kind != schema.ExporterKindStdout {
+					t.Fatal("changed logs configuration did not install the requested logs resource")
+				}
+			case "traces":
+				if first.traceResource() == second.traceResource() || second.traceResource().config.Kind != schema.ExporterKindStdout {
+					t.Fatal("changed traces configuration did not install the requested traces resource")
+				}
+			case "retention":
+				if first.logResource() != second.logResource() || first.traceResource() != second.traceResource() {
+					t.Fatal("retention-only update churned signal providers")
+				}
+			}
+		})
+	}
+}
+
+func TestRejectedTelemetryCandidateKeepsGlobalsAndLastKnownGood(t *testing.T) {
+	protocols, err := NewLLMProtocolCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers, err := NewLLMProviderCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := newStatePool()
+	telemetryResources := newTelemetryPool()
+	host := kernel.NewHost[*ApplicationRuntime]()
+	factory := newDefaultLLMFactory(protocols, providers, states, telemetryResources, nil)
+	reconciler := NewReconciler(host, &GraphBuilder{Protocols: protocols, Providers: providers, LLMFactory: factory})
+	t.Cleanup(func() {
+		_ = host.Close(context.Background())
+		_ = telemetryResources.Close(context.Background())
+		_ = states.Close()
+	})
+
+	globalMeter := otel.GetMeterProvider()
+	globalTracer := otel.GetTracerProvider()
+	good := (&configsnapshot.Builder{}).Build()
+	if err := reconciler.Apply(context.Background(), good, "good"); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	var badBuilder configsnapshot.Builder
+	badBuilder.SetSetting("candidate", "bad")
+	badBuilder.SetSetting("obs_metrics_exporter", "prometheus")
+	badBuilder.SetSetting("obs_metrics_prometheus_listen", listener.Addr().String())
+	if err := reconciler.Apply(context.Background(), badBuilder.Build(), "bad"); err == nil {
+		t.Fatal("candidate with conflicting Prometheus listener activated")
+	}
+	if otel.GetMeterProvider() != globalMeter || otel.GetTracerProvider() != globalTracer {
+		t.Fatal("failed candidate or rollback mutated process-global OTel providers")
+	}
+	lease, ok := host.Acquire()
+	if !ok {
+		t.Fatal("last-known-good generation became unavailable")
+	}
+	defer lease.Release()
+	if lease.Value().Snapshot != good {
+		t.Fatal("failed telemetry candidate replaced last-known-good generation")
+	}
 }
 
 func TestProviderTransportActivatesAndClosesWithGeneration(t *testing.T) {

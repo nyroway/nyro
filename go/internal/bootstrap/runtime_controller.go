@@ -58,6 +58,8 @@ type RuntimeController struct {
 	dependencies []runtimeDependency
 
 	shutdownOnce sync.Once
+	shutdownDone chan struct{}
+	shutdownMu   sync.Mutex
 	shutdownErr  error
 }
 
@@ -71,6 +73,7 @@ func newRuntimeController(
 		host: host, source: NewRuntimeSource(host),
 		sourceCancel: sourceCancel, sourceDone: sourceDone,
 		dependencies: append([]runtimeDependency(nil), dependencies...),
+		shutdownDone: make(chan struct{}),
 	}
 }
 
@@ -92,31 +95,48 @@ func (controller *RuntimeController) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	controller.shutdownOnce.Do(func() {
-		if controller.sourceCancel != nil {
-			controller.sourceCancel()
+	controller.shutdownOnce.Do(func() { go controller.runShutdown() })
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-controller.shutdownDone:
+		controller.shutdownMu.Lock()
+		defer controller.shutdownMu.Unlock()
+		return controller.shutdownErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (controller *RuntimeController) runShutdown() {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), RuntimeShutdownTimeout)
+	defer cancel()
+	if controller.sourceCancel != nil {
+		controller.sourceCancel()
+	}
+	var sourceErr error
+	if controller.sourceDone != nil {
+		select {
+		case <-controller.sourceDone:
+		case <-cleanupCtx.Done():
+			sourceErr = cleanupCtx.Err()
 		}
-		var sourceErr error
-		if controller.sourceDone != nil {
-			select {
-			case <-controller.sourceDone:
-			case <-ctx.Done():
-				sourceErr = ctx.Err()
-			}
+	}
+	var hostErr error
+	if controller.host != nil {
+		hostErr = controller.host.Close(cleanupCtx)
+	}
+	var dependencyErr error
+	for _, dependency := range controller.dependencies {
+		if dependency != nil {
+			dependencyErr = errors.Join(dependencyErr, dependency.Close(cleanupCtx))
 		}
-		var hostErr error
-		if controller.host != nil {
-			hostErr = controller.host.Close(ctx)
-		}
-		var dependencyErr error
-		for _, dependency := range controller.dependencies {
-			if dependency != nil {
-				dependencyErr = errors.Join(dependencyErr, dependency.Close(ctx))
-			}
-		}
-		controller.shutdownErr = errors.Join(sourceErr, hostErr, dependencyErr)
-	})
-	return controller.shutdownErr
+	}
+	controller.shutdownMu.Lock()
+	controller.shutdownErr = errors.Join(sourceErr, hostErr, dependencyErr)
+	controller.shutdownMu.Unlock()
+	close(controller.shutdownDone)
 }
 
 // BuildDataPlane constructs the explicit catalogs' runtime graph and starts

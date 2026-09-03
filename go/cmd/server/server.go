@@ -398,6 +398,8 @@ func NewCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("embedded data plane: %w", err)
 			}
+			dataPlaneAfterShutdown = newDataPlaneRuntimeCleanup(runtimeController)
+			defer dataPlaneAfterShutdown()
 			ingress, err := httpingress.New(protocols, runtimeController.RuntimeSource(), httpingress.Options{})
 			if err != nil {
 				return fmt.Errorf("embedded data plane ingress: %w", err)
@@ -406,17 +408,6 @@ func NewCmd() *cobra.Command {
 				httpserver.Options{Addr: proxyAddr, Ready: runtimeController.Ready},
 				httpserver.Handler{Pattern: "/", Handler: ingress},
 			)
-			var shutdownOnce sync.Once
-			dataPlaneAfterShutdown = func() {
-				shutdownOnce.Do(func() {
-					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), bootstrap.RuntimeShutdownTimeout)
-					defer shutdownCancel()
-					if err := runtimeController.Shutdown(shutdownCtx); err != nil {
-						slog.Warn("embedded data plane runtime shutdown failed", "error", err)
-					}
-				})
-			}
-			defer dataPlaneAfterShutdown()
 		}
 
 		var listeners []net.Listener
@@ -484,6 +475,23 @@ func NewCmd() *cobra.Command {
 		return bootstrap.RunManagedServers(managed...)
 	}
 	return cmd
+}
+
+type dataPlaneRuntimeShutdowner interface {
+	Shutdown(context.Context) error
+}
+
+func newDataPlaneRuntimeCleanup(runtime dataPlaneRuntimeShutdowner) func() {
+	var shutdownOnce sync.Once
+	return func() {
+		shutdownOnce.Do(func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), bootstrap.RuntimeShutdownTimeout)
+			defer shutdownCancel()
+			if err := runtime.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("embedded data plane runtime shutdown failed", "error", err)
+			}
+		})
+	}
 }
 
 type runtimeServiceOptions struct {

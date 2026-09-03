@@ -52,6 +52,18 @@ func NewSwappableProvider(p *Provider) *SwappableProvider {
 	return s
 }
 
+// NewSwappableProviderFromSignals binds one generation-local active set to
+// independently lifecycle-managed signal providers.
+func NewSwappableProviderFromSignals(logs, metrics, traces *Provider) *SwappableProvider {
+	s := &SwappableProvider{}
+	s.cur.Store(&activeSet{
+		logger:  logs.Logger,
+		tracer:  traces.Tracer,
+		handles: NewHandles(metrics.Meter),
+	})
+	return s
+}
+
 // newSwappableFromParts builds a SwappableProvider directly from raw handles,
 // bypassing a Provider. Used by tests that assemble a tracer/logger/handles
 // harness without a full provider; its active set carries no prov, so Swap

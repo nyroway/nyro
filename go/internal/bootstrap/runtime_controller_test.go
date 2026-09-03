@@ -2,12 +2,14 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/kernel"
@@ -106,6 +108,97 @@ func TestRuntimeControllerShutdownStopsSourceThenHostThenDependenciesAndIsIdempo
 	mu.Unlock()
 	if want := []string{"source", "host", "dependency"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("shutdown events = %v, want %v", got, want)
+	}
+}
+
+func TestRuntimeControllerShutdownCanceledFirstCallerDoesNotCancelOwnedCleanup(t *testing.T) {
+	sourceCtx, sourceCancel := context.WithCancel(context.Background())
+	sourceDone := make(chan struct{})
+	releaseSource := make(chan struct{})
+	go func() {
+		<-sourceCtx.Done()
+		<-releaseSource
+		close(sourceDone)
+	}()
+	controller := newRuntimeController(nil, sourceCancel, sourceDone, nil)
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := controller.Shutdown(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("first Shutdown() error = %v, want context.Canceled", err)
+	}
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- controller.Shutdown(context.Background()) }()
+	select {
+	case err := <-secondDone:
+		t.Fatalf("second Shutdown returned before owned cleanup completed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(releaseSource)
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second Shutdown() error = %v, want nil", err)
+	}
+}
+
+func TestRuntimeControllerShutdownTimeoutThenLaterCallerCanWaitForCompletion(t *testing.T) {
+	sourceCtx, sourceCancel := context.WithCancel(context.Background())
+	sourceDone := make(chan struct{})
+	releaseSource := make(chan struct{})
+	go func() {
+		<-sourceCtx.Done()
+		<-releaseSource
+		close(sourceDone)
+	}()
+	controller := newRuntimeController(nil, sourceCancel, sourceDone, nil)
+
+	firstCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := controller.Shutdown(firstCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first Shutdown() error = %v, want context deadline", err)
+	}
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- controller.Shutdown(context.Background()) }()
+	select {
+	case err := <-secondDone:
+		t.Fatalf("second Shutdown returned before owned cleanup completed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(releaseSource)
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second Shutdown() error = %v, want nil", err)
+	}
+}
+
+func TestRuntimeControllerConcurrentShutdownCallersUseIndependentDeadlines(t *testing.T) {
+	sourceCtx, sourceCancel := context.WithCancel(context.Background())
+	sourceDone := make(chan struct{})
+	releaseSource := make(chan struct{})
+	go func() {
+		<-sourceCtx.Done()
+		<-releaseSource
+		close(sourceDone)
+	}()
+	controller := newRuntimeController(nil, sourceCancel, sourceDone, nil)
+
+	longDone := make(chan error, 1)
+	go func() { longDone <- controller.Shutdown(context.Background()) }()
+	<-sourceCtx.Done()
+	shortCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	shortDone := make(chan error, 1)
+	go func() { shortDone <- controller.Shutdown(shortCtx) }()
+	select {
+	case err := <-shortDone:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("short Shutdown() error = %v, want context deadline", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		close(releaseSource)
+		t.Fatal("short Shutdown caller was blocked by another caller's deadline")
+	}
+	close(releaseSource)
+	if err := <-longDone; err != nil {
+		t.Fatalf("long Shutdown() error = %v, want nil", err)
 	}
 }
 
