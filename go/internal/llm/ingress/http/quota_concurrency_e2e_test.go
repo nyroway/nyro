@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"io"
@@ -46,11 +46,7 @@ func TestConcurrencyQuotaEnforced(t *testing.T) {
 	})
 	rawKey := consumer.Keys[0].Token
 
-	gw := NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
-	if err := storage.LoadAndSwap(gw.Cache, core); err != nil {
-		t.Fatalf("load cache: %v", err)
-	}
-	engine := newTestHandler(t, gw)
+	engine := newTestHandler(t, newTestSourceFromStorage(t, core))
 
 	do := func() *httptest.ResponseRecorder {
 		body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`

@@ -1,9 +1,8 @@
 // Package state defines a small, binary-safe String and TTL state engine.
 // Protocol adapters such as Redis depend on these semantics rather than on a
 // concrete persistence backend.
-//
-// Layer: 0 (foundation). It may import the standard library, infrastructure
-// dependencies, and its own subpackages, but no other Nyro domain.
+// It may import the standard library, infrastructure dependencies, and its
+// own subpackages, but no workload domain.
 package state
 
 import (

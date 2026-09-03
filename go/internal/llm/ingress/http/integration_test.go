@@ -17,6 +17,7 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
+	"github.com/nyroway/nyro/go/internal/llm/routing"
 	llmruntime "github.com/nyroway/nyro/go/internal/llm/runtime"
 	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/storage"
@@ -49,6 +50,8 @@ type testRuntimeSource struct {
 	transport provider.Transport
 	quota     quota.Store
 	observe   pipeline.Phase
+	pre       []pipeline.Phase
+	router    *routing.Router
 	snapshot  *configsnapshot.Snapshot
 	runtime   *llmruntime.Runtime
 }
@@ -64,6 +67,7 @@ func (source *testRuntimeSource) Acquire() (*llmruntime.Runtime, func(), bool) {
 		runtime, err := llmruntime.New(llmruntime.Config{
 			Snapshot: snapshot, Protocols: source.protocols, Providers: source.providers,
 			Transport: source.transport, Quota: source.quota, Observe: source.observe,
+			PreDispatch: source.pre, Router: source.router,
 		})
 		if err != nil {
 			return nil, nil, false
@@ -110,6 +114,7 @@ func newTestSourceFromStorage(t *testing.T, storageSource storage.Storage) *test
 		providers: testProviderCatalog(t),
 		transport: transport,
 		quota:     quota.NewMemory(),
+		router:    routing.New(),
 	}
 	source.reload(t, storageSource)
 	return source

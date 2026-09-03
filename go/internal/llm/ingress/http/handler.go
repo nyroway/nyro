@@ -1,7 +1,6 @@
 // Package httpingress adapts explicitly composed LLM protocol codecs to HTTP.
-//
-// Layer: 3 (serve) — it owns LLM northbound wire concerns and depends on the
-// transport-neutral LLM Runtime and Protocol contracts.
+// It owns LLM northbound wire concerns and depends on transport-neutral LLM
+// Runtime and Protocol contracts.
 package httpingress
 
 import (
@@ -19,8 +18,7 @@ import (
 )
 
 // RuntimeSource leases the one immutable LLM Runtime used for a complete HTTP
-// request. Task 10 replaces the transitional Gateway implementation with a
-// Kernel generation lease.
+// request. Production supplies a Kernel generation-backed implementation.
 type RuntimeSource interface {
 	Acquire() (runtime *llmruntime.Runtime, release func(), ok bool)
 }

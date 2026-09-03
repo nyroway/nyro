@@ -1,8 +1,5 @@
 // Package webui mounts the Go management console for the admin control plane.
-//
-// Layer: 3 (serve) — it registers HTTP routes, which is what places it here
-// despite importing only webutil. May import any lower layer; nothing below
-// layer 3 may import it.
+// It registers HTTP routes and depends only on HTTP-facing helpers.
 package webui
 
 import (

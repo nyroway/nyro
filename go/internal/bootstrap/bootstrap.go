@@ -2,10 +2,8 @@
 // and admin commands: storage backend selection, OAuth driver registration,
 // and the signal-driven HTTP server runner.
 //
-// Layer: 3 (serve) — grouped by responsibility (process startup), not by
-// dependency count: it imports only storage today but belongs with the other
-// wiring packages. May import any lower layer; nothing below layer 3 may
-// import it.
+// Bootstrap is a composition root and may assemble capabilities from every
+// internal domain; domain packages must not import it.
 package bootstrap
 
 import (

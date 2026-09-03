@@ -1,7 +1,6 @@
 // Package redis adapts Redis counters and Sorted Sets to the quota Store.
-//
-// Layer: 0 (foundation). It imports only its parent quota contract, standard
-// library packages, and go-redis.
+// It imports only its parent quota contract, standard library packages, and
+// go-redis.
 package redis
 
 import (

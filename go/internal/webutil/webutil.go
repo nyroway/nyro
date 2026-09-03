@@ -1,8 +1,7 @@
 // Package webutil provides the small set of net/http JSON helpers used across
 // the nyro HTTP layer (admin API + proxy), replacing gin's c.JSON /
 // c.ShouldBind.
-//
-// Layer: 0 (foundation) — stdlib only. Must not import any other internal
+// It depends only on the standard library and must not import another internal
 // package.
 package webutil
 

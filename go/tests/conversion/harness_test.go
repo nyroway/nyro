@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nyroway/nyro/go/internal/gateway"
 	httpingress "github.com/nyroway/nyro/go/internal/llm/ingress/http"
 	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/protocol/anthropic/messages"
@@ -18,6 +17,9 @@ import (
 	"github.com/nyroway/nyro/go/internal/llm/protocol/openai/embeddings"
 	"github.com/nyroway/nyro/go/internal/llm/protocol/openai/responses"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
+	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
+	llmruntime "github.com/nyroway/nyro/go/internal/llm/runtime"
+	"github.com/nyroway/nyro/go/internal/quota"
 	"github.com/nyroway/nyro/go/internal/storage"
 	"github.com/nyroway/nyro/go/internal/storage/memory"
 )
@@ -162,9 +164,21 @@ func upstreamFor(t *testing.T, cell Cell, scenario string) (tr capturingTranspor
 	return &replayTransport{cas: cas}, model, "https://replay.invalid", "replay-key"
 }
 
-// buildGateway assembles a storage-less gateway with one upstream (cell.Out) and
-// a route mapping routeModel to it, then injects the capturing transport.
-func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey, upstreamModel string) *gateway.Gateway {
+type runtimeSource struct {
+	runtime *llmruntime.Runtime
+}
+
+func (source runtimeSource) Acquire() (*llmruntime.Runtime, func(), bool) {
+	if source.runtime == nil {
+		return nil, nil, false
+	}
+	return source.runtime, func() {}, true
+}
+
+// buildRuntimeSource projects the matrix cell into an immutable Snapshot and
+// composes the real LLM Runtime with the Provider HTTP transport used to
+// capture request and response wire formats.
+func buildRuntimeSource(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey, upstreamModel string) (*protocol.Catalog, runtimeSource) {
 	t.Helper()
 	core := memory.New().Storage()
 	up, err := core.Upstreams().Create(storage.CreateUpstream{
@@ -183,17 +197,34 @@ func buildGateway(t *testing.T, cell Cell, tr http.RoundTripper, baseURL, apiKey
 	}); err != nil {
 		t.Fatalf("create route: %v", err)
 	}
-	gw := gateway.NewGateway(testProtocolCatalog(t), testProviderCatalog(t))
-	gw.UpstreamTransport = tr
-	if err := storage.LoadAndSwap(gw.Cache, core); err != nil {
-		t.Fatalf("load cache: %v", err)
+	snapshot, err := storage.LoadSnapshot(core)
+	if err != nil {
+		t.Fatalf("load Snapshot: %v", err)
 	}
-	return gw
+	settings := llmruntime.SettingsFromSnapshot(snapshot)
+	transport, err := providerhttp.New(providerhttp.Config{
+		RequestTimeout: settings.RequestTimeout,
+		ConnectTimeout: settings.ConnectTimeout,
+		RoundTripper:   tr,
+	})
+	if err != nil {
+		t.Fatalf("compose Provider HTTP transport: %v", err)
+	}
+	t.Cleanup(transport.CloseIdleConnections)
+	protocols := testProtocolCatalog(t)
+	runtime, err := llmruntime.New(llmruntime.Config{
+		Snapshot: snapshot, Protocols: protocols, Providers: testProviderCatalog(t),
+		Transport: transport, Quota: quota.NewMemory(),
+	})
+	if err != nil {
+		t.Fatalf("compose LLM Runtime: %v", err)
+	}
+	return protocols, runtimeSource{runtime: runtime}
 }
 
-func buildHandler(t *testing.T, gw *gateway.Gateway) http.Handler {
+func buildHandler(t *testing.T, protocols *protocol.Catalog, source runtimeSource) http.Handler {
 	t.Helper()
-	handler, err := httpingress.New(gw.Protocols, gw, httpingress.Options{})
+	handler, err := httpingress.New(protocols, source, httpingress.Options{})
 	if err != nil {
 		t.Fatalf("compose LLM HTTP ingress: %v", err)
 	}
@@ -206,8 +237,8 @@ func buildHandler(t *testing.T, gw *gateway.Gateway) http.Handler {
 func RunCell(t *testing.T, cell Cell, sc Scenario) {
 	t.Helper()
 	tr, model, baseURL, apiKey := upstreamFor(t, cell, sc.Name)
-	gw := buildGateway(t, cell, tr, baseURL, apiKey, model)
-	router := buildHandler(t, gw)
+	protocols, source := buildRuntimeSource(t, cell, tr, baseURL, apiKey, model)
+	router := buildHandler(t, protocols, source)
 
 	inPath := cell.In.Path
 	if sc.Stream && cell.In.StreamPath != "" {

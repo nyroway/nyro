@@ -1,6 +1,6 @@
 package routing
 
-// Target is one in-memory route candidate. Gateway projects it from a
+// Target is one in-memory route candidate. Runtime projects it from a
 // persisted/config-synchronized route binding before selection.
 type Target struct {
 	UpstreamID string

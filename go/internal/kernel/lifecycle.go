@@ -1,6 +1,5 @@
 // Package kernel manages workload-neutral component lifecycles and runtime generations.
-//
-// Layer: 0 (foundation). Kernel production code imports only the Go standard library.
+// Kernel production code imports only the Go standard library.
 package kernel
 
 import "context"

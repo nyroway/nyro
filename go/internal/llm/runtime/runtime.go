@@ -408,7 +408,7 @@ func reject(exchange *pipeline.Exchange, status int, message string) pipeline.Ou
 }
 
 // Settings is the immutable subset of proxy settings used by Runtime and its
-// transitional Provider transport owner.
+// generation-owned Provider transport.
 type Settings struct {
 	RequestTimeout time.Duration
 	ConnectTimeout time.Duration

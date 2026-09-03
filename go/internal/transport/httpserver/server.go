@@ -1,7 +1,6 @@
 // Package httpserver owns the process-level northbound HTTP server skeleton.
-//
-// Layer: 3 (serve) — it depends only on net/http-facing infrastructure and
-// handlers explicitly supplied by a composition root.
+// It depends only on net/http-facing infrastructure and handlers explicitly
+// supplied by a composition root.
 package httpserver
 
 import (

@@ -69,8 +69,8 @@ func TestRecordScenarios(t *testing.T) {
 					In:  Inbound{Name: "anthropic-messages", Path: "/v1/messages"},
 					Out: Outbound{Provider: tg.provider, Protocol: tg.protocol},
 				}
-				gw := buildGateway(t, cell, tr, tg.baseURL, tg.key, model)
-				router := buildHandler(t, gw)
+				protocols, source := buildRuntimeSource(t, cell, tr, tg.baseURL, tg.key, model)
+				router := buildHandler(t, protocols, source)
 				req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(sc.body))
 				req.Header.Set("Content-Type", "application/json")
 				rec := httptest.NewRecorder()

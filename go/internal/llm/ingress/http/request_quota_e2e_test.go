@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"net/http"
@@ -12,7 +12,7 @@ import (
 
 func TestRequestQuotaConcurrentAdmissionIsExact(t *testing.T) {
 	store := quota.NewMemory()
-	engine, key, _, upstreamCalls := newQuotaTestGatewayWithQuotas(t, store, []storage.CreateConsumerQuota{{
+	engine, key, _, upstreamCalls := newQuotaTestSourceWithQuotas(t, store, []storage.CreateConsumerQuota{{
 		QuotaType:  "requests",
 		QuotaLimit: 7,
 		Window:     "1m",

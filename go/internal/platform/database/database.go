@@ -1,7 +1,6 @@
 // Package database opens SQL connection pools shared by Nyro infrastructure.
-//
-// Layer: 0 (foundation). It may import the standard library, database drivers,
-// and its own driver subpackages, but no other Nyro domain.
+// It may import the standard library, database drivers, and its own driver
+// subpackages, but no workload domain.
 package database
 
 import (

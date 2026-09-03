@@ -1,3 +1,4 @@
+// Package snapshot owns immutable configuration views and their atomic publication cache.
 package snapshot
 
 // Snapshot is an immutable view of the gateway's configuration at one point
