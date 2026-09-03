@@ -142,6 +142,52 @@ func TestConnectTimeoutGovernsDialContext(t *testing.T) {
 	}
 }
 
+func TestNegativeConnectTimeoutExpiresDialContextImmediately(t *testing.T) {
+	called := false
+	transport, err := newWithDialContext(Config{ConnectTimeout: -time.Second}, func(ctx context.Context, _, _ string) (net.Conn, error) {
+		called = true
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return nil, errors.New("dial context has no deadline")
+		}
+		if time.Until(deadline) >= 0 {
+			return nil, errors.New("dial deadline is not expired")
+		}
+		return nil, ctx.Err()
+	})
+	if err != nil {
+		t.Fatalf("newWithDialContext(): %v", err)
+	}
+	httpTransport := transport.client.Transport.(*http.Transport)
+
+	_, err = httpTransport.DialContext(context.Background(), "tcp", "unused.example:443")
+	if !called {
+		t.Fatal("DialContext() did not call the configured dial function")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("DialContext() error = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestZeroConnectTimeoutLeavesDialContextWithoutDeadline(t *testing.T) {
+	dialErr := errors.New("dial invoked")
+	transport, err := newWithDialContext(Config{}, func(ctx context.Context, _, _ string) (net.Conn, error) {
+		if _, ok := ctx.Deadline(); ok {
+			return nil, errors.New("zero timeout unexpectedly set a deadline")
+		}
+		return nil, dialErr
+	})
+	if err != nil {
+		t.Fatalf("newWithDialContext(): %v", err)
+	}
+	httpTransport := transport.client.Transport.(*http.Transport)
+
+	_, err = httpTransport.DialContext(context.Background(), "tcp", "unused.example:443")
+	if !errors.Is(err, dialErr) {
+		t.Fatalf("DialContext() error = %v, want configured dial error", err)
+	}
+}
+
 func TestNewIgnoresInvalidProxyURL(t *testing.T) {
 	t.Parallel()
 	transport, err := New(Config{ProxyURL: "enabled"})

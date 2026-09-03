@@ -53,7 +53,7 @@ func newWithDialContext(config Config, dial dialContextFunc) (*Transport, error)
 }
 
 func withConnectTimeout(timeout time.Duration, dial dialContextFunc) dialContextFunc {
-	if timeout <= 0 {
+	if timeout == 0 {
 		return dial
 	}
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
