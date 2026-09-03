@@ -30,6 +30,21 @@ type recordingSink struct {
 	onResponse func(*llm.ChatResponse) error
 	onError    func(*llm.Error) error
 	onDelta    func(llm.StreamDelta) (bool, error)
+	attemptAt  int
+	committed  bool
+	resets     int
+}
+
+func (s *recordingSink) ResetStreamAttempt() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.committed {
+		return errors.New("cannot reset a committed stream")
+	}
+	s.deltas = s.deltas[:s.attemptAt]
+	s.attemptAt = len(s.deltas)
+	s.resets++
+	return nil
 }
 
 func (s *recordingSink) SendResponse(_ context.Context, response *llm.ChatResponse) error {
@@ -64,6 +79,9 @@ func (s *recordingSink) SendDelta(_ context.Context, delta llm.StreamDelta) (boo
 		}
 	}
 	s.deltas = append(s.deltas, delta)
+	if committed {
+		s.committed = true
+	}
 	return committed, nil
 }
 
