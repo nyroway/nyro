@@ -143,16 +143,18 @@ generation.
 Standalone mode performs the initial activation synchronously and fails startup
 when the first candidate cannot be built or started. ConfigSync starts live but
 not ready until one candidate activates; a rejected hot candidate does not stop
-the stream and does not replace the last-known-good generation. Each request
-lease pins its full Snapshot, LLM Runtime, and generation-owned resources until
-the request releases it.
+the stream and does not replace the last-known-good generation. Later pushed
+snapshots remain eligible for activation. Each request lease pins its full
+Snapshot, LLM Runtime, and generation-owned resources until the request
+releases it.
 
 ## Field Reference
 
 - `settings.proxy`
   - `request_timeout`, `connect_timeout`: Go duration strings; invalid or
     omitted values use the gateway defaults (`120s` and `30s`).
-  - `max_retries`: retry attempts per backend (default `2`).
+  - `max_retries`: total attempts per upstream, including the first attempt
+    (default `2`; the runtime always makes at least one attempt).
   - `retry_on_status`: upstream HTTP statuses that trigger retry/failover.
   - `max_body_bytes`: gateway-wide request-body cap in bytes (default
     `33554432`, 32 MiB). This is distinct from
@@ -180,8 +182,9 @@ the request releases it.
   - Standalone YAML validates and connects to the selected backend during
     startup; an unavailable Redis backend fails startup instead of silently
     falling back to memory. With config-sync, `state.type` and `state.url` are
-    pushed to every data-plane node. A hot-update candidate is retried in the
-    background while the last-known-good backend continues serving.
+    pushed to every data-plane node. A failed hot-update candidate is rejected
+    while the last-known-good backend continues serving; later pushed snapshots
+    remain eligible for activation.
   - One pushed Redis URL must be reachable from every subscribed data-plane
     node. Use shared Redis when quotas must be enforced across replicas;
     process-local memory gives each node an independent quota view.
