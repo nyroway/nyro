@@ -24,7 +24,6 @@ import (
 	"github.com/nyroway/nyro/go/internal/bootstrap"
 	"github.com/nyroway/nyro/go/internal/configsync"
 	"github.com/nyroway/nyro/go/internal/configsync/pki"
-	gatewayruntime "github.com/nyroway/nyro/go/internal/gateway/runtime"
 	httpingress "github.com/nyroway/nyro/go/internal/llm/ingress/http"
 	infradatabase "github.com/nyroway/nyro/go/internal/platform/database"
 	dbsqlite "github.com/nyroway/nyro/go/internal/platform/database/sqlite"
@@ -64,7 +63,7 @@ func defaultDSN() string {
 // `nyro serve` is the single-command deployment: the REST API + WebUI on
 // --listen, and — unless --disable-proxy is set — an embedded data plane on
 // --proxy-listen, so one process is a complete, usable nyro. The embedded data
-// plane is assembled by internal/gateway/runtime over an in-process config-sync
+// plane is assembled by internal/bootstrap over an in-process config-sync
 // channel, i.e. the exact code path a remote `nyro proxy` uses; it never reads
 // storage directly.
 //
@@ -389,30 +388,30 @@ func NewCmd() *cobra.Command {
 		var dataPlaneServer *httpserver.Server
 		var dataPlaneAfterShutdown func()
 		if !disableProxy {
-			gw, runtimeMgr, err := gatewayruntime.Build(ctx, gatewayruntime.Options{
-				Protocols:    protocols,
-				Providers:    providers,
-				SyncTarget:   configsync.InProcessTarget,
-				SyncDialOpts: inProcDialOpts,
-				ListenAddr:   proxyAddr,
+			runtimeController, err := bootstrap.BuildDataPlane(ctx, bootstrap.DataPlaneOptions{
+				Protocols:       protocols,
+				Providers:       providers,
+				SyncTarget:      configsync.InProcessTarget,
+				SyncDialOptions: inProcDialOpts,
+				ListenAddr:      proxyAddr,
 			})
 			if err != nil {
 				return fmt.Errorf("embedded data plane: %w", err)
 			}
-			ingress, err := httpingress.New(protocols, gw, httpingress.Options{})
+			ingress, err := httpingress.New(protocols, runtimeController.RuntimeSource(), httpingress.Options{})
 			if err != nil {
 				return fmt.Errorf("embedded data plane ingress: %w", err)
 			}
 			dataPlaneServer = httpserver.New(
-				httpserver.Options{Addr: proxyAddr, Ready: gw.Ready},
+				httpserver.Options{Addr: proxyAddr, Ready: runtimeController.Ready},
 				httpserver.Handler{Pattern: "/", Handler: ingress},
 			)
 			var shutdownOnce sync.Once
 			dataPlaneAfterShutdown = func() {
 				shutdownOnce.Do(func() {
-					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), gatewayruntime.ShutdownTimeout)
+					shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), bootstrap.RuntimeShutdownTimeout)
 					defer shutdownCancel()
-					if err := runtimeMgr.Shutdown(shutdownCtx); err != nil {
+					if err := runtimeController.Shutdown(shutdownCtx); err != nil {
 						slog.Warn("embedded data plane runtime shutdown failed", "error", err)
 					}
 				})

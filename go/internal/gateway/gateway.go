@@ -65,7 +65,7 @@ type Gateway struct {
 
 // NewGateway builds a Gateway with a fresh, empty snapshot Cache. Tests use this
 // and populate the cache directly via Cache.LoadAndSwap / Cache.Swap. Production
-// callers use NewGatewayWithCache through gateway/runtime with a snapshot built
+// callers use NewGatewayWithCache with a snapshot built
 // from YAML or filled by the config-sync stream.
 func NewGateway(protocols *protocol.Catalog, providers *provider.Catalog) *Gateway {
 	return NewGatewayWithCache(
@@ -79,7 +79,8 @@ func NewGateway(protocols *protocol.Catalog, providers *provider.Catalog) *Gatew
 // NewGatewayWithCache builds a Gateway using a caller-provided snapshot Cache
 // (standalone-YAML and config-sync path): the caller builds the snapshot from YAML or
 // from the config-sync stream and swaps it in, so the gateway never needs storage for
-// config. Obs/Handles are attached by gateway/runtime after construction.
+// config. This compatibility type is retained until the remaining Gateway
+// tests migrate in Task 11; production composition lives in Bootstrap.
 func NewGatewayWithCache(cache *configsnapshot.Cache, quotas *quota.Switch, protocols *protocol.Catalog, providers *provider.Catalog) *Gateway {
 	if cache == nil {
 		cache = &configsnapshot.Cache{}
