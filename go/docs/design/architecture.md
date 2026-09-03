@@ -71,10 +71,11 @@ immutable typed catalogs, builds a Snapshot-bound LLM runtime, declares its
 resource lifecycle graph, and submits a typed application candidate to the
 kernel host.
 
-There is no module discovery through `init`, blank imports, or a mutable global
-registry. Importing a codec or provider has no registration side effect. Nyro
-uses normal static Go composition; it does not use `buildmode=plugin`, `.so`
-loading, or a third-party plugin ABI.
+There is no module discovery through `init`, no blank imports used for Nyro
+module registration, and no mutable global module registry. Importing a codec
+or provider has no registration side effect. Nyro uses normal static Go
+composition; it does not use `buildmode=plugin`, `.so` loading, or a third-party
+plugin ABI.
 
 The blank import of `github.com/glebarez/go-sqlite` under
 `internal/platform/database/sqlite` is a reviewed `database/sql` driver
@@ -139,9 +140,9 @@ candidate transaction:
    after its leases drain.
 
 Construction or startup failure closes the candidate and leaves the last
-known-good generation active. Every HTTP request acquires one generation lease,
-pinning its Snapshot, LLM Runtime, and generation-owned resources for the full
-request.
+known-good generation active. Every LLM ingress request acquires one generation
+lease, pinning its Snapshot, LLM Runtime, and generation-owned resources for
+the full request.
 
 Standalone mode performs initial activation synchronously and fails startup if
 it cannot build and start the first generation. ConfigSync mode starts live but

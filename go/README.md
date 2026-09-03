@@ -89,8 +89,9 @@ Redis-compatible State Engine on `127.0.0.1:16379`, and an OTLP/HTTP Observe
 Engine on `127.0.0.1:14318`. Local databases default to
 `~/.nyro/data/{config,state,observe}.db`. The
 embedded data plane subscribes to config over an in-process pipe — the same
-config-sync client, cache and router a remote node uses, so there is no second
-config path that can drift. No config-sync TCP port is opened for it.
+ConfigSync client used by a remote node feeds snapshots through the Reconciler,
+Kernel Host generation, and trusted LLM Runtime. This preserves one activation
+path without opening a config-sync TCP port for the embedded data plane.
 
 The two roles can also be split, for horizontal scaling or to keep the node
 holding credentials out of the traffic path:
@@ -119,8 +120,9 @@ must be version 7.0 or newer. Startup probes the
 request, token, and concurrency quota paths before installing the backend;
 the Redis account must permit the commands documented in the standalone
 configuration reference. An unavailable or incapable standalone backend fails
-startup; a failed config-sync hot update keeps the last-known-good backend
-while retrying.
+startup. A failed ConfigSync hot update is rejected while the last-known-good
+backend continues serving; later pushed snapshots remain eligible for
+activation.
 
 Request quotas are admitted atomically across replicas that share Redis. A
 clean `429` denial does not consume quota, while an admitted request counts

@@ -39,7 +39,7 @@ The implemented architecture is documented in
 - component identity and dependency-graph validation;
 - deterministic dependency ordering;
 - lifecycle startup, rollback, retirement, and shutdown;
-- typed runtime-generation construction and atomic activation;
+- typed Candidate and Host contracts plus atomic runtime-generation activation;
 - leases that keep retiring generations alive until release; and
 - readiness and runtime-generation status.
 

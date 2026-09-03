@@ -63,7 +63,7 @@ compiled and routable but intentionally omitted from those selectors.
 |---|---|---|
 | Gemini Interactions | `gemini-interactions` | GA 2026-06; stateful (`previous_interaction_id`), `steps` replaces `outputs` |
 | AWS Bedrock Converse | `bedrock-converse` | cross-model unified schema |
-| Azure AI Model Inference | `azure/inference` | deployment in path, `api-version` query |
+| Azure AI Model Inference | `azure-inference` | deployment in path, `api-version` query |
 
 ## Notes
 

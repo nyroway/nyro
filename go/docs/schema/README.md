@@ -36,6 +36,7 @@ the storage tables.
 ## Status
 
 Design reference, fully landed in code as of the `provider`/`models_url`/
-protocol-id refactor. Keep this doc in sync when the schema changes (see
-`AGENTS.md` database-change rules for the Rust side; mirror the same discipline
-here for the Go side).
+protocol-id refactor. Keep this doc in sync when the schema changes. Follow the
+[Go database rules](../../AGENTS.md); the repository-root
+[Rust database rules](../../../AGENTS.md) apply only to Rust reference
+artifacts.
