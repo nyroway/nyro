@@ -1,3 +1,4 @@
+// Package telemetry builds and runs Nyro logging, metrics, and tracing pipelines.
 package telemetry
 
 import (

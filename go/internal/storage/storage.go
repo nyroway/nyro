@@ -1,3 +1,4 @@
+// Package storage defines typed persistence contracts for Nyro configuration data.
 package storage
 
 import (

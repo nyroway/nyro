@@ -368,6 +368,40 @@ func TestProviderTransportActivatesAndClosesWithGeneration(t *testing.T) {
 	}
 }
 
+func TestProviderTransportCachesByNormalizedProxyURLWithinGeneration(t *testing.T) {
+	roundTripper := &lifecycleRoundTripper{}
+	transport := newProviderTransport(llmruntime.SettingsFromSnapshot(nil), roundTripper)
+	if err := transport.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	requests := []provider.Request{
+		{Method: http.MethodGet, URL: "http://provider.example/direct"},
+		{Method: http.MethodGet, URL: "http://provider.example/legacy", ProxyURL: "enabled"},
+		{Method: http.MethodGet, URL: "http://provider.example/first", ProxyURL: "http://proxy.example:8080"},
+		{Method: http.MethodGet, URL: "http://provider.example/first-again", ProxyURL: "http://proxy.example:8080"},
+		{Method: http.MethodGet, URL: "http://provider.example/second", ProxyURL: "http://other-proxy.example:9090"},
+	}
+	for _, request := range requests {
+		response, err := transport.Do(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+	}
+	transport.mu.Lock()
+	count := len(transport.transports)
+	transport.mu.Unlock()
+	if count != 3 {
+		t.Fatalf("cached transports = %d, want direct plus two valid proxy URLs", count)
+	}
+	if err := transport.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := roundTripper.closes.Load(); got != 3 {
+		t.Fatalf("CloseIdleConnections calls = %d, want one per cached transport", got)
+	}
+}
+
 func TestProviderTransportRetiresOnlyAfterGenerationLeaseDrains(t *testing.T) {
 	roundTripper := &lifecycleRoundTripper{}
 	transport := newProviderTransport(llmruntime.SettingsFromSnapshot(nil), roundTripper)

@@ -1,3 +1,4 @@
+// Package pki creates and loads certificates for authenticated config-sync channels.
 package pki
 
 import (

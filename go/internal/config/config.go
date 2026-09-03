@@ -1,3 +1,4 @@
+// Package config loads standalone YAML configuration into immutable runtime snapshots.
 package config
 
 import (

@@ -1,6 +1,5 @@
 // Package quota defines State-backed usage and concurrency accounting.
-//
-// Layer: 0 (foundation). It must not import other Nyro internal packages.
+// The core quota package must not import other Nyro internal packages.
 package quota
 
 import (

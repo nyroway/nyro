@@ -70,8 +70,8 @@ func TestProbeCapabilities(t *testing.T) {
 		}
 		for _, c := range caps {
 			t.Run(b.protocol+"/"+c.name, func(t *testing.T) {
-				gw := buildGateway(t, cell, nil, b.baseURL, key, c.model) // tr=nil → real network
-				router := buildHandler(t, gw)
+				protocols, source := buildRuntimeSource(t, cell, nil, b.baseURL, key, c.model) // tr=nil → real network
+				router := buildHandler(t, protocols, source)
 				req := httptest.NewRequest(http.MethodPost, cell.In.Path, strings.NewReader(c.body))
 				req.Header.Set("Content-Type", "application/json")
 				rec := httptest.NewRecorder()

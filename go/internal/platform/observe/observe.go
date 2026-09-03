@@ -1,8 +1,7 @@
 // Package observe defines lossless OTLP persistence and indexed query
 // contracts independent of any application-specific telemetry model.
-//
-// Layer: 0 (foundation). It may import the standard library, OTLP/protobuf
-// dependencies, and its own subpackages, but no other Nyro domain.
+// It may import the standard library, OTLP/protobuf dependencies, and its own
+// subpackages, but no workload domain.
 package observe
 
 import (

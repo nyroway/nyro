@@ -16,8 +16,7 @@
 //	nyro tool ca init        --dir          -> NYRO_TOOL_CA_INIT_DIR
 //	nyro tool ca sign-server --out          -> NYRO_TOOL_CA_SIGN_SERVER_OUT
 //
-// Layer: 0 (foundation) — cobra/pflag and stdlib only. Must not import any
-// other internal package.
+// This support package depends only on cobra/pflag and the standard library.
 package envflag
 
 import (

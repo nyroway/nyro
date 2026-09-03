@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"bytes"
@@ -16,8 +16,8 @@ import (
 func TestDispatchRecordsUpstreamLatency(t *testing.T) {
 	upstream := nonStreamUpstream(t)
 	defer upstream.Close()
-	gw := newTestGateway(t, upstream.URL)
-	r := newTestHandler(t, gw)
+	source := newTestSource(t, upstream.URL)
+	r := newTestHandler(t, source)
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions",
 		bytes.NewReader([]byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`)))
@@ -28,13 +28,13 @@ func TestDispatchRecordsUpstreamLatency(t *testing.T) {
 		t.Fatalf("dispatch → %d %s", rec.Code, rec.Body.String())
 	}
 
-	rt := gw.snapshot().RouteByModel("gpt-4o")
+	rt := source.cache.Load().RouteByModel("gpt-4o")
 	if rt == nil || len(rt.Upstreams) == 0 {
 		t.Fatalf("route/backends missing: %+v", rt)
 	}
 	target := rt.Upstreams[0]
 	key := routing.KeyOf(routing.Target{UpstreamID: target.UpstreamID, Model: target.Model})
-	if lat := gw.Router.Latency(key); lat <= 0 {
+	if lat := source.router.Latency(key); lat <= 0 {
 		t.Errorf("upstream latency not recorded (got %v); Record must receive real latency, not 0", lat)
 	}
 }

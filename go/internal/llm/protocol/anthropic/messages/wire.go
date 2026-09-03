@@ -93,7 +93,7 @@ type responseUsage struct {
 //
 // Anthropic SSE pairs an `event:` line with a `data:` line. The data payload
 // always carries a `type` field matching the event name, so the stream decoder
-// can dispatch on the parsed data alone (the Gateway's SSE reader passes it the
+// can dispatch on the parsed data alone (the Runtime's SSE reader passes it the
 // `data:` payload).
 
 type streamEvent struct {

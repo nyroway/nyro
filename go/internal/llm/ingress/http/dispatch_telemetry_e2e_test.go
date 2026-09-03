@@ -1,4 +1,4 @@
-package gateway
+package httpingress_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/nyroway/nyro/go/internal/llm"
 	"github.com/nyroway/nyro/go/internal/llm/pipeline"
+	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
 )
 
 // capturePhase records the Exchange from the Observe finalizer, at the same
@@ -33,13 +34,13 @@ func (c capturePhase) Apply(context.Context, *pipeline.Exchange) (pipeline.Outco
 	}
 }
 
-// newCapturingGateway replaces only the mandatory Observe implementation.
-func newCapturingGateway(t *testing.T, upstreamURL string) (*Gateway, func(*testing.T) *pipeline.Exchange) {
+// newCapturingSource replaces only the mandatory Observe implementation.
+func newCapturingSource(t *testing.T, upstreamURL string) (*testRuntimeSource, func(*testing.T) *pipeline.Exchange) {
 	t.Helper()
-	gw := newTestGateway(t, upstreamURL)
+	source := newTestSource(t, upstreamURL)
 	var captured *pipeline.Exchange
-	gw.observePhase = capturePhase{got: &captured}
-	return gw, func(t *testing.T) *pipeline.Exchange {
+	source.observe = capturePhase{got: &captured}
+	return source, func(t *testing.T) *pipeline.Exchange {
 		t.Helper()
 		if captured == nil {
 			t.Fatal("no Exchange captured: the chain never ran")
@@ -54,8 +55,8 @@ func newCapturingGateway(t *testing.T, upstreamURL string) (*Gateway, func(*test
 func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	upstream := nonStreamUpstream(t)
 	defer upstream.Close()
-	gw, captured := newCapturingGateway(t, upstream.URL)
-	r := newTestHandler(t, gw)
+	source, captured := newCapturingSource(t, upstream.URL)
+	r := newTestHandler(t, source)
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -103,8 +104,8 @@ func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 	upstream := nonStreamUpstream(t) // never hit (model not found)
 	defer upstream.Close()
-	gw, captured := newCapturingGateway(t, upstream.URL)
-	r := newTestHandler(t, gw)
+	source, captured := newCapturingSource(t, upstream.URL)
+	r := newTestHandler(t, source)
 
 	body := `{"model":"no-such-model","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(body)))
@@ -128,11 +129,16 @@ func TestDispatchPopulatesExchangeOnEarlyExit(t *testing.T) {
 }
 
 func TestDispatchPublishesTargetAndTypedErrorWhenTransportsAreExhausted(t *testing.T) {
-	gw, captured := newCapturingGateway(t, "https://upstream.invalid")
-	gw.UpstreamTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+	source, captured := newCapturingSource(t, "https://upstream.invalid")
+	transport, err := providerhttp.New(providerhttp.Config{RoundTripper: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("synthetic transport failure")
-	})
-	r := newTestHandler(t, gw)
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.transport = transport
+	t.Cleanup(transport.CloseIdleConnections)
+	r := newTestHandler(t, source)
 
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -164,8 +170,8 @@ func TestDispatchPublishesTypedErrorForProviderFailureWithoutChangingWireRespons
 	}))
 	defer upstream.Close()
 
-	gw, captured := newCapturingGateway(t, upstream.URL)
-	r := newTestHandler(t, gw)
+	source, captured := newCapturingSource(t, upstream.URL)
+	r := newTestHandler(t, source)
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

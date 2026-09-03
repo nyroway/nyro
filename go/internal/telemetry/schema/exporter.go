@@ -1,3 +1,4 @@
+// Package schema defines telemetry configuration shared across configuration and runtime code.
 package schema
 
 // ExporterKind identifies an exporter engine. An empty value means the signal

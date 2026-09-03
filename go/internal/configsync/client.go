@@ -1,3 +1,4 @@
+// Package configsync transports complete configuration snapshots over authenticated gRPC streams.
 package configsync
 
 import (
