@@ -51,30 +51,51 @@ func TestExecuteRetriesConfiguredStatusesUsingCurrentAttemptSemantics(t *testing
 }
 
 func TestExecuteCustomRetryStatusesExcludeDefaultInternalServerError(t *testing.T) {
+	const body = `{"error":{"message":"do not retry"}}`
 	var attempts atomic.Int32
-	runtime := retryRuntime(t, []configsnapshot.RouteTarget{
-		routeTarget("target", "backend", "served-model", 1),
-	}, []configsnapshot.Upstream{
-		upstream("backend", "test", provider.ProtocolOpenAIChatCompletions),
-	}, map[string]string{
-		"proxy.max_retries":     "3",
-		"proxy.retry_on_status": `[503]`,
-	}, transportFunc(func(_ context.Context, _ provider.Request) (*provider.Response, error) {
-		attempts.Add(1)
-		return response(500, `{"error":{"message":"do not retry"}}`), nil
-	}))
+	runtime := newRuntimeFixture(t, runtimeFixture{
+		routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
+		upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+		settings: map[string]string{
+			"proxy.max_retries":     "3",
+			"proxy.retry_on_status": `[503]`,
+		},
+		ingress: []protocol.IngressCodec{testIngress{
+			endpoint: protocol.OpenAIChatCompletionsV1,
+			caps:     protocol.Capabilities{ErrorPassthrough: true},
+		}},
+		egress: []protocol.EgressCodec{testChatEgress{
+			endpoint: protocol.OpenAIChatCompletionsV1,
+			caps:     protocol.Capabilities{ErrorPassthrough: true},
+		}},
+		providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+		transport: transportFunc(func(_ context.Context, _ provider.Request) (*provider.Response, error) {
+			attempts.Add(1)
+			return response(500, body), nil
+		}),
+	})
 
+	sink := &recordingSink{}
 	completion := runtime.Execute(context.Background(), Call{
 		Request: llm.NewChatRequest("client-model", nil),
 		Source:  protocol.OpenAIChatCompletionsV1,
-		Sink:    &recordingSink{},
+		Sink:    sink,
 	})
 
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("transport attempts = %d, want 1 when custom retry set excludes 500", got)
 	}
-	if completion.Error == nil || completion.Response != nil {
+	if completion.Error == nil || completion.Error.StatusCode == nil || *completion.Error.StatusCode != 500 || completion.Response != nil {
 		t.Fatalf("completion = %+v, want terminal provider error", completion)
+	}
+	if len(sink.responses) != 0 {
+		t.Fatalf("canonical sink responses = %d, want 0", len(sink.responses))
+	}
+	if len(sink.opaque) != 1 {
+		t.Fatalf("opaque sink responses = %d, want 1", len(sink.opaque))
+	}
+	if got := sink.opaque[0]; got.Status != 500 || string(got.Body) != body {
+		t.Fatalf("opaque sink response = status %d body %q, want status 500 body %q", got.Status, got.Body, body)
 	}
 }
 
