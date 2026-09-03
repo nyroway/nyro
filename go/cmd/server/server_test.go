@@ -50,6 +50,25 @@ func TestNewCmdFlags(t *testing.T) {
 	}
 }
 
+func TestDataPlaneRuntimeCleanupIsIdempotent(t *testing.T) {
+	runtime := new(recordingRuntimeShutdowner)
+	cleanup := newDataPlaneRuntimeCleanup(runtime)
+	cleanup()
+	cleanup()
+	if runtime.calls != 1 {
+		t.Fatalf("runtime Shutdown calls = %d, want 1", runtime.calls)
+	}
+}
+
+type recordingRuntimeShutdowner struct {
+	calls int
+}
+
+func (runtime *recordingRuntimeShutdowner) Shutdown(context.Context) error {
+	runtime.calls++
+	return nil
+}
+
 func TestNewCmdDSNFlagDefault(t *testing.T) {
 	cmd := NewCmd()
 	if v, _ := cmd.Flags().GetString("dsn"); v != "" {

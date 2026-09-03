@@ -14,10 +14,13 @@ import (
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/llm/pipeline"
 	"github.com/nyroway/nyro/go/internal/telemetry"
+	"github.com/nyroway/nyro/go/internal/telemetry/schema"
 )
 
 type telemetryResource struct {
 	key      string
+	signal   schema.Signal
+	config   telemetry.SignalConfig
 	provider *telemetry.Provider
 	server   *http.Server
 	listener net.Listener
@@ -34,13 +37,13 @@ func newTelemetryPool() *telemetryPool {
 	return &telemetryPool{entries: make(map[string]*telemetryResource)}
 }
 
-func telemetryKey(config telemetry.Config) string {
+func telemetrySignalKey(signal schema.Signal, config telemetry.SignalConfig) string {
 	encoded, _ := json.Marshal(config)
-	return string(encoded)
+	return string(signal) + "\x00" + string(encoded)
 }
 
-func (pool *telemetryPool) acquire(ctx context.Context, config telemetry.Config) (*telemetryResource, error) {
-	key := telemetryKey(config)
+func (pool *telemetryPool) acquire(ctx context.Context, signal schema.Signal, config telemetry.SignalConfig) (*telemetryResource, error) {
+	key := telemetrySignalKey(signal, config)
 	pool.mu.Lock()
 	if pool.closed {
 		pool.mu.Unlock()
@@ -53,18 +56,18 @@ func (pool *telemetryPool) acquire(ctx context.Context, config telemetry.Config)
 	}
 	pool.mu.Unlock()
 
-	provider, err := telemetry.NewProvider(ctx, config)
+	provider, err := telemetry.NewSignalProvider(ctx, signal, config)
 	if err != nil {
 		return nil, err
 	}
-	candidate := &telemetryResource{key: key, provider: provider}
-	if provider.PromHandler != nil {
+	candidate := &telemetryResource{key: key, signal: signal, config: config, provider: provider}
+	if signal == schema.SignalMetrics && provider.PromHandler != nil {
 		listener, listenErr := net.Listen("tcp", provider.PromListen)
 		if listenErr != nil {
 			_ = provider.Shutdown(context.Background())
 			return nil, listenErr
 		}
-		path := config.Metrics.Params["path"]
+		path := config.Params["path"]
 		if path == "" {
 			path = "/metrics"
 		}
@@ -161,9 +164,9 @@ type telemetryBinding struct {
 	config telemetry.Config
 	target atomic.Pointer[telemetry.SwappableProvider]
 
-	mu       sync.Mutex
-	resource *telemetryResource
-	closed   bool
+	mu        sync.Mutex
+	resources [3]*telemetryResource
+	closed    bool
 }
 
 func newTelemetryBinding(pool *telemetryPool, config telemetry.Config) *telemetryBinding {
@@ -178,18 +181,33 @@ func (binding *telemetryBinding) Start(ctx context.Context) error {
 	if binding == nil || binding.pool == nil {
 		return errors.New("telemetry binding pool is required")
 	}
-	resource, err := binding.pool.acquire(ctx, binding.config)
-	if err != nil {
-		return err
+	configs := []struct {
+		signal schema.Signal
+		config telemetry.SignalConfig
+	}{
+		{schema.SignalLogs, binding.config.Logs},
+		{schema.SignalMetrics, binding.config.Metrics},
+		{schema.SignalTraces, binding.config.Traces},
+	}
+	var resources [3]*telemetryResource
+	for index, config := range configs {
+		resource, err := binding.pool.acquire(ctx, config.signal, config.config)
+		if err != nil {
+			return errors.Join(err, binding.releaseResources(context.Background(), resources))
+		}
+		resources[index] = resource
 	}
 	binding.mu.Lock()
 	defer binding.mu.Unlock()
 	if binding.closed {
-		_ = binding.pool.release(context.Background(), resource)
-		return errors.New("telemetry binding is closed")
+		return errors.Join(errors.New("telemetry binding is closed"), binding.releaseResources(context.Background(), resources))
 	}
-	binding.resource = resource
-	binding.target.Store(telemetry.NewSwappableProvider(resource.provider))
+	binding.resources = resources
+	binding.target.Store(telemetry.NewSwappableProviderFromSignals(
+		resources[0].provider,
+		resources[1].provider,
+		resources[2].provider,
+	))
 	return nil
 }
 
@@ -203,12 +221,24 @@ func (binding *telemetryBinding) Close(ctx context.Context) error {
 		return nil
 	}
 	binding.closed = true
-	resource := binding.resource
-	binding.resource = nil
+	resources := binding.resources
+	binding.resources = [3]*telemetryResource{}
 	binding.target.Store(nil)
 	binding.mu.Unlock()
-	return binding.pool.release(ctx, resource)
+	return binding.releaseResources(ctx, resources)
 }
+
+func (binding *telemetryBinding) releaseResources(ctx context.Context, resources [3]*telemetryResource) error {
+	var result error
+	for index := len(resources) - 1; index >= 0; index-- {
+		result = errors.Join(result, binding.pool.release(ctx, resources[index]))
+	}
+	return result
+}
+
+func (binding *telemetryBinding) logResource() *telemetryResource    { return binding.resources[0] }
+func (binding *telemetryBinding) metricResource() *telemetryResource { return binding.resources[1] }
+func (binding *telemetryBinding) traceResource() *telemetryResource  { return binding.resources[2] }
 
 func resolveTelemetryConfig(snapshot *configsnapshot.Snapshot) (telemetry.Config, error) {
 	config, err := telemetry.LoadConfig(func(key string) (string, error) {
