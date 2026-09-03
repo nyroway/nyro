@@ -88,6 +88,113 @@ func TestStateBindingRejectsUnhealthyReusedRedisAndMarksExistingBindingsUnready(
 	}
 }
 
+func TestStateLeaseReleaseFailureMarksEverySharedBindingUnreadyAndIsIdempotent(t *testing.T) {
+	releaseErr := errors.New("release backend failed")
+	inner := &recordingQuotaLease{err: releaseErr}
+	first, second := startedBindingsForStore(t, &acquireQuotaStore{lease: inner, allowed: true})
+
+	lease, allowed, err := first.Acquire(context.Background(), "consumer", 1, time.Minute)
+	if err != nil || !allowed || lease == nil {
+		t.Fatalf("Acquire() = %#v, %v, %v; want lease success", lease, allowed, err)
+	}
+	firstErr := lease.Release(context.Background())
+	secondErr := lease.Release(context.Background())
+	if firstErr != releaseErr || secondErr != releaseErr {
+		t.Fatalf("Release() errors = %v, %v; want stable %v", firstErr, secondErr, releaseErr)
+	}
+	if calls := inner.calls.Load(); calls != 1 {
+		t.Fatalf("underlying Release calls = %d, want 1", calls)
+	}
+	if first.Ready() || second.Ready() {
+		t.Fatal("shared bindings remained ready after lease release backend failure")
+	}
+}
+
+func TestStateBindingRejectsNilSuccessfulLeaseAndMarksSharedStateUnready(t *testing.T) {
+	first, second := startedBindingsForStore(t, &acquireQuotaStore{allowed: true})
+
+	lease, allowed, err := first.Acquire(context.Background(), "consumer", 1, time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "empty lease") {
+		t.Fatalf("Acquire() error = %v, want clear empty lease contract error", err)
+	}
+	if lease != nil || allowed {
+		t.Fatalf("Acquire() = %#v, %v; nil lease must not be admission success", lease, allowed)
+	}
+	if first.Ready() || second.Ready() {
+		t.Fatal("shared bindings remained ready after backend violated lease contract")
+	}
+}
+
+func TestStateLeaseCanceledReleaseIsIdempotentWithoutMarkingBackendUnhealthy(t *testing.T) {
+	inner := &recordingQuotaLease{err: context.Canceled}
+	first, second := startedBindingsForStore(t, &acquireQuotaStore{lease: inner, allowed: true})
+	lease, allowed, err := first.Acquire(context.Background(), "consumer", 1, time.Minute)
+	if err != nil || !allowed || lease == nil {
+		t.Fatalf("Acquire() = %#v, %v, %v; want lease success", lease, allowed, err)
+	}
+	if err := lease.Release(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Release() error = %v, want context.Canceled", err)
+	}
+	if err := lease.Release(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("second Release() error = %v, want cached context.Canceled", err)
+	}
+	if calls := inner.calls.Load(); calls != 1 {
+		t.Fatalf("underlying Release calls = %d, want 1", calls)
+	}
+	if !first.Ready() || !second.Ready() {
+		t.Fatal("context cancellation incorrectly marked shared backend unhealthy")
+	}
+}
+
+func startedBindingsForStore(t *testing.T, store quota.Store) (*stateBinding, *stateBinding) {
+	t.Helper()
+	config := platformstate.Config{Kind: platformstate.KindMemory}
+	resource := &stateResource{config: config, store: store}
+	resource.healthy.Store(true)
+	pool := newStatePool()
+	pool.entries[config] = resource
+	first := newStateBinding(pool, config)
+	second := newStateBinding(pool, config)
+	if err := first.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = first.Close(context.Background())
+		_ = second.Close(context.Background())
+	})
+	return first, second
+}
+
+type acquireQuotaStore struct {
+	lease   quota.Lease
+	allowed bool
+	err     error
+}
+
+func (*acquireQuotaStore) AdmitRequest(context.Context, string, []quota.RequestLimit) (bool, error) {
+	return true, nil
+}
+func (*acquireQuotaStore) TokenValue(context.Context, string, time.Duration) (int64, error) {
+	return 0, nil
+}
+func (*acquireQuotaStore) RecordTokens(context.Context, string, int64) error { return nil }
+func (store *acquireQuotaStore) Acquire(context.Context, string, int64, time.Duration) (quota.Lease, bool, error) {
+	return store.lease, store.allowed, store.err
+}
+
+type recordingQuotaLease struct {
+	calls atomic.Int32
+	err   error
+}
+
+func (lease *recordingQuotaLease) Release(context.Context) error {
+	lease.calls.Add(1)
+	return lease.err
+}
+
 func TestTelemetryBindingsReuseUnchangedPrometheusListener(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -370,7 +370,35 @@ func (binding *stateBinding) Acquire(ctx context.Context, consumerID string, lim
 	}
 	lease, allowed, err := resource.store.Acquire(ctx, consumerID, limit, leaseTTL)
 	binding.finish(resource, err)
-	return lease, allowed, err
+	if err != nil {
+		return nil, false, err
+	}
+	if !allowed {
+		return nil, false, nil
+	}
+	if lease == nil {
+		err = errors.New("quota backend returned an empty lease")
+		binding.finish(resource, err)
+		return nil, false, err
+	}
+	return &stateLease{binding: binding, resource: resource, inner: lease}, true, nil
+}
+
+type stateLease struct {
+	binding  *stateBinding
+	resource *stateResource
+	inner    quota.Lease
+
+	once sync.Once
+	err  error
+}
+
+func (lease *stateLease) Release(ctx context.Context) error {
+	lease.once.Do(func() {
+		lease.err = lease.inner.Release(ctx)
+		lease.binding.finish(lease.resource, lease.err)
+	})
+	return lease.err
 }
 
 func resolveStateConfig(snapshot *configsnapshot.Snapshot) (platformstate.Config, error) {
