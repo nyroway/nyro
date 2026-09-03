@@ -1,14 +1,14 @@
 # Nyro Gateway (Go)
 
-Go rewrite of the Nyro AI protocol gateway core (`crates/nyro-core`). This is
-the target architecture; the Rust implementation keeps running in parallel
-until parity is reached (P0–P6 migration plan).
+Go implementation of the Nyro AI protocol gateway. It is being developed
+alongside the Rust implementation, which remains available until the Go
+cutover is complete.
 
 > **Decision record — why not Ollama as a base?** Ollama was evaluated and
 > **rejected**. It is a *local inference engine* (≈90% of its code is inference
 > — scheduler, llama.cpp subprocess, GGUF/model management), structurally the
 > inverse of a *gateway*. It lacks Gemini, multi-upstream routing, per-request
-> key selection, the admin/control plane, the request-lifecycle/plugin
+> key selection, the admin/control plane, the trusted request pipeline
 > framework, OAuth-for-upstream-credentials, and multi-backend storage. We
 > therefore **port Nyro's own Rust architecture** and use Ollama's
 > `openai/` + `anthropic/` converters only as a *wire-format reference*
@@ -17,23 +17,31 @@ until parity is reached (P0–P6 migration plan).
 
 ## Layout
 
-| Path | Rust source | Responsibility |
-|---|---|---|
-| `internal/config/` | `config.rs` | standalone YAML loading and storage seeding |
-| `internal/config/snapshot/` | — | immutable runtime config, builder, atomic publication cache, and storage-backed loading |
-| `internal/configsync/` | — | gRPC/protobuf transport, authentication, conversion, and node tracking |
-| `internal/llm/protocol/` | `protocol/` | LLM wire-protocol identity, split ingress/egress codecs, and immutable explicitly composed catalogs |
-| `internal/llm/provider/` | `provider/` | immutable provider catalog, transport-neutral drivers, built-in provider definitions, and generic fallback |
-| `internal/llm/provider/httptransport/` | — | outbound HTTP transport implementation, proxy handling, connection policy, and test transport seam |
-| `internal/llm/routing/` | `router/` | runtime target selection, weighted/priority/cooldown/latency ordering, health state |
-| `internal/gateway/` | `proxy/` | Gateway data-plane orchestration, ingress shells, and streaming dual-path (passthrough + IR round-trip) |
-| `internal/quota/` | `quota/` | backend-neutral request/token windows and concurrency leases, with memory and Redis implementations |
-| `internal/plugin/` | `plugin/` | five-phase lifecycle (`OnRequest`/`OnAccess`/`OnUpstream`/`OnResponse`/`OnLog`) |
-| `internal/admin/` | `admin/` | control plane: keys+quotas, models/routing, providers, OAuth, logs/stats, import/export |
-| `internal/auth/` | `auth/` + `admin/oauth.rs` | inbound API key + quotas; outbound OAuth drivers (Claude/Codex/Vertex) |
-| `internal/storage/` | `db/` + `storage/` | `Storage` interface, idempotent migrations, sqlite/pg/memory |
-| `internal/logging/` | `logging/` | async request-log collector + retention |
-| `nyro.go` | `src-server/` + `crates/nyro-tools/` | unified CLI: `nyro proxy` (data plane), `nyro serve` (control plane), `nyro tool ca`, and `nyro tool migrate` |
+| Path | Responsibility |
+|---|---|
+| `internal/kernel/` | workload-neutral lifecycle graph, atomic typed generations, request leases, readiness, and status |
+| `internal/llm/` | Canonical LLM IR for chat and embedding workloads |
+| `internal/llm/ingress/http/` | LLM HTTP routing, ingress decoding, response encoding, and streaming sink |
+| `internal/llm/pipeline/` | fixed trusted phase order, terminal delivery hook, and reverse finalizers |
+| `internal/llm/protocol/` | endpoint identity, ingress/egress codec contracts, and immutable protocol catalog |
+| `internal/llm/provider/` | immutable provider catalog, transport-neutral drivers, definitions, and generic fallback |
+| `internal/llm/provider/httptransport/` | outbound HTTP transport, proxy handling, and connection policy |
+| `internal/llm/routing/` | weighted, priority, cooldown, and latency target selection plus health state |
+| `internal/llm/runtime/` | trusted LLM orchestration, retry/failover, errors, streaming, and client delivery |
+| `internal/transport/httpserver/` | generic process-level HTTP server, health/readiness, recovery, and shutdown |
+| `internal/config/` | standalone YAML parsing, defaults, validation, and Snapshot construction |
+| `internal/config/snapshot/` | immutable runtime configuration and deterministic fingerprinting |
+| `internal/configsync/` | authenticated full-Snapshot distribution and hot-update source |
+| `internal/security/` | transport-neutral authentication and authorization contracts |
+| `internal/quota/` | backend-neutral request/token windows and concurrency leases |
+| `internal/telemetry/` | logs, metrics, traces, and request-pipeline observation |
+| `internal/storage/` | control-plane storage contracts, migrations, and database/memory implementations |
+| `internal/admin/` | management API for keys, quotas, models, routes, providers, settings, and observability |
+| `internal/bootstrap/` | explicit catalogs, runtime candidate construction, reconciliation, and process wiring |
+| `nyro.go`, `cmd/` | unified CLI: `nyro proxy`, `nyro serve`, and operator tools |
+
+The implemented data-plane architecture is described in
+[docs/design/architecture.md](docs/design/architecture.md).
 
 Nyro-owned runtime infrastructure lives under `internal/platform/`:
 
@@ -51,13 +59,13 @@ embedded.
 
 | Rust | Go | Notes |
 |---|---|---|
-| axum | **Gin** (`github.com/gin-gonic/gin`) | full-featured router/middleware; Ollama's `middleware/` is Gin, so a direct cross-reference for protocol-conversion patterns |
+| axum | `net/http` + **Chi** (`github.com/go-chi/chi/v5`) | generic server infrastructure plus explicitly mounted LLM, Admin, and WebUI handlers |
 | tokio | goroutines + channels | native |
 | reqwest | `net/http` | |
-| sqlx (sqlite/pg/mysql) | **GORM** (`gorm.io/gorm`) + sqlite/postgres drivers | **AutoMigrate OFF** — schema source-of-truth is the migration layer (`deploy/schema/*.sql`); GORM is used for CRUD/struct mapping only |
+| sqlx (sqlite/pg/mysql) | **GORM** (`gorm.io/gorm`) + sqlite/postgres drivers | Go models and explicit migration logic are the schema sources of truth; automatic migration is opt-in |
 | serde | `encoding/json` + struct tags | |
 | tracing | `log/slog` | stdlib |
-| `inventory` | explicit constructors + catalogs | Protocol codecs and provider drivers are assembled in Bootstrap without blank imports or `init()` registration |
+| `inventory` | explicit constructors + immutable catalogs | Protocol codecs and provider drivers are enumerated by Bootstrap; imports have no Nyro registration side effects |
 
 **SQLite without CGO:** GORM's default sqlite driver (`gorm.io/driver/sqlite`)
 pulls `mattn/go-sqlite3` (CGO). To keep the build pure-Go (no C toolchain,

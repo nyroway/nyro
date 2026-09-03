@@ -25,11 +25,10 @@ the storage tables.
   - `models_url`: a discovery endpoint URL fetched live at control-plane
     request time with a short in-memory TTL cache (only the URL is persisted;
     the fetched list is not).
-- Provider presets (`provider/*.go`) are pure configuration data
-  (`Definition`): id, name, protocols, default protocol/model, credential
-  schema, default discovery URL (`models_url`), auth scheme. Authentication
-  behavior lives in a small Go auth-scheme registry keyed by `Definition.auth`,
-  not by protocol.
+- Provider presets (`internal/llm/provider/*.go`) expose immutable
+  `Definition` data and Driver factories through the explicitly assembled
+  Bootstrap catalog. Drivers apply Provider authentication and endpoint rules;
+  importing a provider does not register it implicitly.
 - Protocol IDs identify a concrete API wire surface (an interface), not a
   provider "family"; they are vendor-prefixed but vendor-orthogonal in use.
   See [protocols.md](protocols.md).

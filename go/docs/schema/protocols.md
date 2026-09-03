@@ -42,30 +42,27 @@ now steers new projects to the Interactions API. New protocols get no alias by
 default. Alias collisions are resolved at add time by refusing the alias (a
 future `gemini-embedcontent` does not get `embed`, which is taken).
 
-## Active Protocols (defined and exposed)
+## Compiled protocols and HTTP ingress
 
-The current iteration focuses on the chat protocols; only these are exposed as
-selectable protocols in config and the WebUI.
+Bootstrap explicitly compiles all five codecs below and the LLM HTTP ingress
+mounts every declared route. `Selectable` is a narrower UI/CLI choice: the four
+chat protocols are offered by protocol selectors, while OpenAI Embeddings is
+compiled and routable but intentionally omitted from those selectors.
 
-| Identifier | Display Name | Alias |
-|---|---|---|
-| `anthropic-messages` | Anthropic Messages | `claude` |
-| `openai-chatcompletions` | OpenAI Chat Completions | `openai` |
-| `openai-responses` | OpenAI Responses | `codex` |
-| `gemini-generatecontent` | Gemini generateContent | `gemini` |
-
-## Declared but Commented (enable when implemented / re-exposed)
-
-| Identifier | Display Name | Alias |
-|---|---|---|
-| `openai-embeddings` | OpenAI Embeddings | `embed` |
+| Identifier | Display Name | Alias | HTTP ingress | Selectable |
+|---|---|---|---|---|
+| `anthropic-messages` | Anthropic Messages | `claude` | `POST /v1/messages` | yes |
+| `gemini-generatecontent` | Gemini generateContent | `gemini` | `POST /v1beta/models/{resource:.+:.+}` | yes |
+| `openai-chatcompletions` | OpenAI Chat Completions | `openai` | `POST /v1/chat/completions` | yes |
+| `openai-embeddings` | OpenAI Embeddings | `embed` | `POST /v1/embeddings` | no |
+| `openai-responses` | OpenAI Responses | `codex` | `POST /v1/responses` | yes |
 
 ## Not yet declared
 
 | API | Would be | Note |
 |---|---|---|
 | Gemini Interactions | `gemini-interactions` | GA 2026-06; stateful (`previous_interaction_id`), `steps` replaces `outputs` |
-| AWS Bedrock Converse | `bedrock/converse` | cross-model unified schema |
+| AWS Bedrock Converse | `bedrock-converse` | cross-model unified schema |
 | Azure AI Model Inference | `azure/inference` | deployment in path, `api-version` query |
 
 ## Notes
@@ -85,11 +82,9 @@ selectable protocols in config and the WebUI.
 - The former `openai-compatible` "family" (which grouped chat-completions and
   embeddings) is removed; every protocol is now interface-level, unifying the
   concept across the whole set.
-- `openai-embeddings` currently has a working codec
-  (`internal/llm/protocol/openai/embeddings`) and e2e tests. It is defined but kept
-  commented/unexposed for now so this iteration can focus on the chat protocols;
-  re-expose it (and confirm the `/v1/embeddings` ingress) when embeddings work
-  resumes.
+- `openai-embeddings` has a compiled codec, a mounted `/v1/embeddings` HTTP
+  ingress, and end-to-end coverage. Its `Selectable=false` flag only keeps it
+  out of the current WebUI and CLI protocol selectors.
 - A protocol is independent of transport (authentication, URL structure, query
   params); transport is owned by the provider's auth scheme and URL
   construction. `Endpoint.Version` is the version segment of the

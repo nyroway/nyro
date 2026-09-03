@@ -130,6 +130,23 @@ error.
 Neither `models` nor `models_url` affects data-plane routing; routing always
 uses `routes[].upstreams[].model`.
 
+## Runtime activation
+
+Standalone YAML and ConfigSync both produce a complete immutable runtime
+Snapshot. The reconciler compares its deterministic fingerprint with the active
+generation, treats an equal fingerprint as a no-op, and otherwise builds an
+inactive typed candidate. The kernel validates and starts that candidate's
+resource dependencies before atomically publishing it. Candidate construction
+or startup failure closes the candidate and preserves the last-known-good
+generation.
+
+Standalone mode performs the initial activation synchronously and fails startup
+when the first candidate cannot be built or started. ConfigSync starts live but
+not ready until one candidate activates; a rejected hot candidate does not stop
+the stream and does not replace the last-known-good generation. Each request
+lease pins its full Snapshot, LLM Runtime, and generation-owned resources until
+the request releases it.
+
 ## Field Reference
 
 - `settings.proxy`
@@ -222,15 +239,16 @@ uses `routes[].upstreams[].model`.
   `metrics`, `traces`. Each signal picks its own exporter and owns a flat set
   of engine-specific fields; there is no shared/global exporter, endpoint, or
   export interval. The authoritative field schema (per exporter kind, per
-  signal) lives in `go/internal/telemetry/schema/exporter.go`'s registry
-  (`ExportersFor`); this section summarizes it.
+  signal) lives in the schema definition tables in
+  `go/internal/telemetry/schema/exporter.go` (exposed by `ExportersFor`); this
+  section summarizes it.
   - A signal block that is **absent** means that signal is disabled (no-op
     provider) — this is the normal way to turn a signal off.
   - A signal block that is **present** (even `logs: {}` or bare `logs:`)
     **must** set `exporter`, or `LoadConfig` rejects it — an empty block is
     treated as a mistake, not "disabled".
-  - `exporter` must be one of the kinds registered for that signal (below);
-    an unregistered kind is a validation error. There is no `"none"`
+  - `exporter` must be one of the kinds listed for that signal (below); an
+    unknown kind is a validation error. There is no `"none"`
     sentinel value.
   - Valid exporters per signal:
     - `logs`: `stdout` | `otlp`
