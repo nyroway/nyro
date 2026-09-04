@@ -68,7 +68,7 @@ func TestSnapshotFromProto_RoutesWithTargets(t *testing.T) {
 	}
 	snap := protoRoundtrip(t, in)
 	r := snap.RouteByModel("gpt-4")
-	if r == nil || !r.EnableAuth || string(r.Balance) != "weighted" {
+	if r == nil || !r.EnableAuth || r.Balance != "weighted" {
 		t.Errorf("route fields not carried: %+v", r)
 	}
 	if len(r.Upstreams) != 1 || r.Upstreams[0].UpstreamID != "up-1" || r.Upstreams[0].Weight != 3 {

@@ -54,7 +54,7 @@ func TestTransportConvertsProviderRequestAndResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do(): %v", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("StatusCode = %d", response.StatusCode)
 	}
