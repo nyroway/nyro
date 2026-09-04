@@ -48,7 +48,7 @@ func (factory *defaultLLMFactory) Build(_ context.Context, snapshot *configsnaps
 	case factory.providers == nil:
 		return nil, nil, errors.New("LLM provider catalog is required")
 	case factory.states == nil:
-		return nil, nil, errors.New("State resource pool is required")
+		return nil, nil, errors.New("state resource pool is required")
 	case factory.telemetry == nil:
 		return nil, nil, errors.New("telemetry resource pool is required")
 	}

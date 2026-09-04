@@ -71,7 +71,8 @@ func (transport *Transport) Do(ctx context.Context, request provider.Request) (*
 	for key, value := range request.Headers {
 		httpRequest.Header.Set(key, value)
 	}
-	httpResponse, err := transport.client.Do(httpRequest)
+	// The caller owns the returned provider.Response body and must close it.
+	httpResponse, err := transport.client.Do(httpRequest) //nolint:bodyclose
 	if err != nil {
 		return nil, err
 	}

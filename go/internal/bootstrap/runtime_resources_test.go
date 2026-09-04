@@ -36,7 +36,7 @@ func TestStateBindingsReuseUnchangedBackendWithoutResettingQuota(t *testing.T) {
 	if err := first.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close(context.Background())
+	defer func() { _ = first.Close(context.Background()) }()
 	limits := []quota.RequestLimit{{Limit: 1, Window: time.Minute}}
 	if allowed, err := first.Store().AdmitRequest(context.Background(), "consumer", limits); err != nil || !allowed {
 		t.Fatalf("first admission = %v, %v", allowed, err)
@@ -44,7 +44,7 @@ func TestStateBindingsReuseUnchangedBackendWithoutResettingQuota(t *testing.T) {
 	if err := second.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	defer second.Close(context.Background())
+	defer func() { _ = second.Close(context.Background()) }()
 	if allowed, err := second.Store().AdmitRequest(context.Background(), "consumer", limits); err != nil || allowed {
 		t.Fatalf("second generation admission = %v, %v; unchanged State must preserve counters", allowed, err)
 	}
@@ -78,7 +78,7 @@ func TestStateBindingRejectsUnhealthyReusedRedisAndMarksExistingBindingsUnready(
 	if err := first.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close(context.Background())
+	defer func() { _ = first.Close(context.Background()) }()
 	healthy.Store(false)
 	second := newStateBinding(pool, config)
 	err := second.Start(context.Background())
@@ -219,11 +219,11 @@ func TestTelemetryBindingsReuseUnchangedPrometheusListener(t *testing.T) {
 	if err := first.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close(context.Background())
+	defer func() { _ = first.Close(context.Background()) }()
 	if err := second.Start(context.Background()); err != nil {
 		t.Fatalf("second unchanged telemetry Start collided with listener: %v", err)
 	}
-	defer second.Close(context.Background())
+	defer func() { _ = second.Close(context.Background()) }()
 	waitHTTP(t, "http://"+addr+"/metrics", true)
 	if err := first.Close(context.Background()); err != nil {
 		t.Fatal(err)
@@ -272,11 +272,11 @@ func TestTelemetryBindingsReusePrometheusWhenOtherSignalConfigurationChanges(t *
 			if err := first.Start(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			defer first.Close(context.Background())
+			defer func() { _ = first.Close(context.Background()) }()
 			if err := second.Start(context.Background()); err != nil {
 				t.Fatalf("hot update changing %s rebound unchanged Prometheus listener: %v", test.name, err)
 			}
-			defer second.Close(context.Background())
+			defer func() { _ = second.Close(context.Background()) }()
 			if first.metricResource() != second.metricResource() {
 				t.Fatal("unchanged Prometheus MeterProvider/handler/listener was not reused")
 			}
@@ -451,7 +451,7 @@ func TestRejectedTelemetryCandidateKeepsGlobalsAndLastKnownGood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	var badBuilder configsnapshot.Builder
 	badBuilder.SetSetting("candidate", "bad")
 	badBuilder.SetSetting("obs_metrics_exporter", "prometheus")

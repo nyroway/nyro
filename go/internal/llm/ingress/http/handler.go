@@ -4,6 +4,7 @@
 package httpingress
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -132,7 +133,7 @@ func writeCodecError(writer http.ResponseWriter, codec protocol.IngressCodec, pr
 	// A downstream write failure cannot be repaired by appending a second HTTP
 	// response. Runtime observes Sink delivery failures on accepted calls; these
 	// pre-execution errors therefore stop after the single attempted wire value.
-	_ = sink.writeWire(nil, wire, "application/json")
+	_ = sink.writeWire(context.Background(), wire, "application/json")
 }
 
 func credentialsFromRequest(request *http.Request) authn.Credentials {

@@ -270,7 +270,7 @@ func (r *Runtime) executeAttempt(
 			retry:     true,
 		}
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	classification := driver.Classify(*response)
 	if classification.Failed || classification.Retryable || classification.Error != nil || r.settings.RetryOnStatus[response.StatusCode] {

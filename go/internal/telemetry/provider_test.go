@@ -26,7 +26,7 @@ func TestNewProviderDoesNotMutateGlobalOTelProviders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer provider.Shutdown(context.Background())
+	defer func() { _ = provider.Shutdown(context.Background()) }()
 	if otel.GetMeterProvider() != globalMeter || otel.GetTracerProvider() != globalTracer {
 		t.Fatal("NewProvider mutated process-global OTel providers")
 	}
