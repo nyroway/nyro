@@ -136,7 +136,7 @@ func (r *Runtime) Execute(ctx context.Context, call Call) pipeline.Completion {
 		Started:       time.Now(),
 		Streamed:      requestStreams(request),
 		Status:        statusOK,
-		RequestInfo:   r.requestInfo(call.Source, request),
+		RequestInfo:   r.requestInfo(call, request),
 		ClientAddress: call.ClientAddress,
 		RequestID:     call.RequestID,
 	}
@@ -238,16 +238,27 @@ func (r *Runtime) deliverImmediateError(ctx context.Context, sink Sink, provider
 	return pipeline.Completion{Error: providerError}
 }
 
-func (r *Runtime) requestInfo(source protocol.Endpoint, request llm.ModelRequest) pipeline.RequestInfo {
-	info := pipeline.RequestInfo{ClientModel: request.ModelID()}
-	ingress, ok := r.protocols.Ingress(source)
+func (r *Runtime) requestInfo(call Call, request llm.ModelRequest) pipeline.RequestInfo {
+	info := pipeline.RequestInfo{
+		ClientModel: request.ModelID(),
+		Operation:   call.Operation,
+		Resource:    call.Resource,
+	}
+	if info.Operation != "" && info.Resource != "" {
+		return info
+	}
+	ingress, ok := r.protocols.Ingress(call.Source)
 	if !ok {
 		return info
 	}
 	routes := ingress.Capabilities().IngressRoutes
 	if len(routes) > 0 {
-		info.Operation = routes[0].Method
-		info.Resource = routes[0].Pattern
+		if info.Operation == "" {
+			info.Operation = routes[0].Method
+		}
+		if info.Resource == "" {
+			info.Resource = routes[0].Pattern
+		}
 	}
 	return info
 }

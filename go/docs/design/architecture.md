@@ -144,6 +144,14 @@ known-good generation active. Every LLM ingress request acquires one generation
 lease, pinning its Snapshot, LLM Runtime, and generation-owned resources for
 the full request.
 
+Bootstrap owns one concurrency-safe Router for the data-plane controller
+lifetime and injects it into every Snapshot-bound LLM Runtime. Reconciliation
+therefore preserves target cooldown, least-recently-used, and latency state;
+building an inactive candidate does not mutate that shared routing state.
+Telemetry Providers are pooled independently from Prometheus HTTP listeners.
+Listeners are pooled by normalized address, while generation-owned path
+registrations coexist until their respective generation leases drain.
+
 Standalone mode performs initial activation synchronously and fails startup if
 it cannot build and start the first generation. ConfigSync mode starts live but
 not ready, keeps receiving snapshots after a rejected candidate, and retains
