@@ -136,7 +136,6 @@ func TestRunnerRunsTerminalizerBeforeReverseFinalizers(t *testing.T) {
 		current.Response = terminalResponse
 		return nil
 	})
-
 	if err != nil {
 		t.Fatalf("RunWithTerminalizer: %v", err)
 	}

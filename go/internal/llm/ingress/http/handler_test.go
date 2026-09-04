@@ -38,6 +38,7 @@ func (codec testIngressCodec) DecodeRequest(request protocol.IngressRequest) (*l
 	}
 	return llm.NewChatRequest("client-model", nil), nil
 }
+
 func (testIngressCodec) EncodeResponse(response *llm.ChatResponse) (protocol.WireResponse, error) {
 	return protocol.WireResponse{
 		Status:  http.StatusCreated,
@@ -45,6 +46,7 @@ func (testIngressCodec) EncodeResponse(response *llm.ChatResponse) (protocol.Wir
 		Body:    []byte("response:" + response.Content),
 	}, nil
 }
+
 func (testIngressCodec) EncodeError(providerError *llm.Error) (protocol.WireResponse, error) {
 	status := http.StatusInternalServerError
 	message := "LLM request failed"
@@ -79,6 +81,7 @@ func (testStreamEncoder) FormatDeltas(deltas []llm.StreamDelta) ([]protocol.Even
 		return nil, nil
 	}
 }
+
 func (testStreamEncoder) FormatDone(llm.Usage) ([]protocol.Event, error) {
 	return []protocol.Event{{Data: "[DONE]"}}, nil
 }
@@ -406,5 +409,7 @@ func TestSinkHonorsClientCancellationBeforeWriting(t *testing.T) {
 	}
 }
 
-var _ protocol.ChatIngressCodec = testIngressCodec{}
-var _ llmruntime.Sink = (*httpSink)(nil)
+var (
+	_ protocol.ChatIngressCodec = testIngressCodec{}
+	_ llmruntime.Sink           = (*httpSink)(nil)
+)

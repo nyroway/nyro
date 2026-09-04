@@ -97,6 +97,7 @@ type hijackerPusherResponseWriter struct{ *responseState }
 func (writer *hijackerPusherResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return writer.hijack()
 }
+
 func (writer *hijackerPusherResponseWriter) Push(target string, options *http.PushOptions) error {
 	return writer.push(target, options)
 }
@@ -107,6 +108,7 @@ func (writer *flusherHijackerPusherResponseWriter) Flush() { writer.flush() }
 func (writer *flusherHijackerPusherResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return writer.hijack()
 }
+
 func (writer *flusherHijackerPusherResponseWriter) Push(target string, options *http.PushOptions) error {
 	return writer.push(target, options)
 }

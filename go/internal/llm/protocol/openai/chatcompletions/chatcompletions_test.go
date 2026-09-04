@@ -24,7 +24,6 @@ func TestEgressDecodeErrorPreservesOpenAISemantics(t *testing.T) {
 	body := []byte(`{"error":{"message":"maximum context is 8k","type":"invalid_request_error","code":"context_length_exceeded"}}`)
 
 	got, err := codec.DecodeError(protocol.WireResponse{Status: 400, Body: body})
-
 	if err != nil {
 		t.Fatalf("DecodeError: %v", err)
 	}
@@ -131,7 +130,6 @@ func TestStreamDecode(t *testing.T) {
 func TestStreamDecodeErrorEnvelopeAsCanonicalError(t *testing.T) {
 	payload := `{"error":{"message":"request rate exceeded","type":"rate_limit_error"}}`
 	deltas, err := (&streamResponseDecoder{}).ParseChunk(payload)
-
 	if err != nil {
 		t.Fatalf("ParseChunk: %v", err)
 	}

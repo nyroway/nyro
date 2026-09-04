@@ -119,22 +119,26 @@ func (writer *capabilityWriter) WriteHeader(status int) {
 		writer.status = status
 	}
 }
+
 func (writer *capabilityWriter) Write(payload []byte) (int, error) {
 	if writer.status == 0 {
 		writer.status = http.StatusOK
 	}
 	return writer.body.Write(payload)
 }
+
 func (writer *capabilityWriter) Flush() {
 	if writer.status == 0 {
 		writer.status = http.StatusOK
 	}
 	writer.flushes++
 }
+
 func (writer *capabilityWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	writer.hijacks++
 	return nil, nil, writer.hijackErr
 }
+
 func (writer *capabilityWriter) Push(string, *http.PushOptions) error {
 	writer.pushes++
 	return nil

@@ -123,18 +123,21 @@ func (c testChatEgress) EncodeRequest(request *llm.ChatRequest) (protocol.WireRe
 	}
 	return protocol.WireRequest{Method: "POST", Path: "/invoke", Body: []byte(request.Model), Stream: request.Stream.Enabled}, nil
 }
+
 func (c testChatEgress) DecodeResponse(response protocol.WireResponse) (*llm.ChatResponse, error) {
 	if c.state != nil && c.state.decode != nil {
 		return c.state.decode(response)
 	}
 	return &llm.ChatResponse{ID: "response", Model: "served", Content: string(response.Body)}, nil
 }
+
 func (c testChatEgress) DecodeError(response protocol.WireResponse) (*llm.Error, error) {
 	if c.state != nil && c.state.decodeError != nil {
 		return c.state.decodeError(response)
 	}
 	return llm.ErrorFromStatus(uint16(response.Status), "decoded provider error").WithRaw(response.Body), nil
 }
+
 func (c testChatEgress) NewStreamDecoder() protocol.StreamDecoder {
 	if c.state != nil && c.state.newStreamDecoder != nil {
 		return c.state.newStreamDecoder()
@@ -153,6 +156,7 @@ func (testEmbeddingEgress) EgressCodec()                          {}
 func (testEmbeddingEgress) EncodeRequest(request *llm.EmbeddingRequest) (protocol.WireRequest, error) {
 	return protocol.WireRequest{Method: "POST", Path: "/embeddings", Body: []byte(request.Model)}, nil
 }
+
 func (testEmbeddingEgress) DecodeError(response protocol.WireResponse) (*llm.Error, error) {
 	return llm.ErrorFromStatus(uint16(response.Status), "decoded embedding error").WithRaw(response.Body), nil
 }

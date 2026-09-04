@@ -24,7 +24,6 @@ func TestEgressDecodeErrorPreservesEmbeddingErrorSemantics(t *testing.T) {
 	body := []byte(`{"error":{"message":"unknown embedding model","type":"invalid_request_error","code":"model_not_found"}}`)
 
 	got, err := codec.DecodeError(protocol.WireResponse{Status: 404, Body: body})
-
 	if err != nil {
 		t.Fatalf("DecodeError: %v", err)
 	}

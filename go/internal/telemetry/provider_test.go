@@ -87,6 +87,7 @@ type shutdownMetricExporter struct{ shutdowns atomic.Int32 }
 func (*shutdownMetricExporter) Temporality(sdkmetric.InstrumentKind) metricdata.Temporality {
 	return metricdata.DeltaTemporality
 }
+
 func (*shutdownMetricExporter) Aggregation(sdkmetric.InstrumentKind) sdkmetric.Aggregation {
 	return sdkmetric.AggregationDefault{}
 }
