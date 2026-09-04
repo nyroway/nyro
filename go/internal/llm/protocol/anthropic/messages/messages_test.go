@@ -24,7 +24,6 @@ func TestEgressDecodeErrorPreservesAnthropicSemantics(t *testing.T) {
 	body := []byte(`{"type":"error","error":{"type":"overloaded_error","message":"capacity exhausted"}}`)
 
 	got, err := codec.DecodeError(protocol.WireResponse{Status: 529, Body: body})
-
 	if err != nil {
 		t.Fatalf("DecodeError: %v", err)
 	}
@@ -163,7 +162,6 @@ func TestStreamDecode(t *testing.T) {
 func TestStreamDecodeErrorEventAsCanonicalError(t *testing.T) {
 	payload := `{"type":"error","error":{"type":"overloaded_error","message":"capacity exhausted"}}`
 	deltas, err := (&streamResponseDecoder{}).ParseChunk(payload)
-
 	if err != nil {
 		t.Fatalf("ParseChunk: %v", err)
 	}

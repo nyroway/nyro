@@ -24,7 +24,6 @@ func TestEgressDecodeErrorPreservesResponsesSemantics(t *testing.T) {
 	body := []byte(`{"error":{"message":"request rate exceeded","type":"rate_limit_error"}}`)
 
 	got, err := codec.DecodeError(protocol.WireResponse{Status: 429, Body: body})
-
 	if err != nil {
 		t.Fatalf("DecodeError: %v", err)
 	}

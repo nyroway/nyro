@@ -183,6 +183,7 @@ type acquireQuotaStore struct {
 func (*acquireQuotaStore) AdmitRequest(context.Context, string, []quota.RequestLimit) (bool, error) {
 	return true, nil
 }
+
 func (*acquireQuotaStore) TokenValue(context.Context, string, time.Duration) (int64, error) {
 	return 0, nil
 }

@@ -20,6 +20,7 @@ func (ingress) IngressCodec() {}
 func (ingress) DecodeRequest(request protocol.IngressRequest) (*llm.ChatRequest, error) {
 	return requestDecoder{}.DecodeWithPath(request.Body, request.Params)
 }
+
 func (ingress) EncodeResponse(response *llm.ChatResponse) (protocol.WireResponse, error) {
 	body, err := responseEncoder{}.Format(response)
 	return protocol.WireResponse{Status: 200, Body: body}, err
@@ -37,10 +38,13 @@ func (egress) EgressCodec() {}
 func (egress) EncodeRequest(request *llm.ChatRequest) (protocol.WireRequest, error) {
 	return requestEncoder{}.Encode(request)
 }
+
 func (egress) DecodeResponse(response protocol.WireResponse) (*llm.ChatResponse, error) {
 	return responseDecoder{}.Parse(response.Body)
 }
 func (egress) NewStreamDecoder() protocol.StreamDecoder { return &streamResponseDecoder{} }
 
-var _ protocol.ChatIngressCodec = ingress{}
-var _ protocol.ChatEgressCodec = egress{}
+var (
+	_ protocol.ChatIngressCodec = ingress{}
+	_ protocol.ChatEgressCodec  = egress{}
+)

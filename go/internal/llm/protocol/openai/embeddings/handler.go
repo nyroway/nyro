@@ -33,5 +33,7 @@ func (egress) EncodeRequest(request *llm.EmbeddingRequest) (protocol.WireRequest
 	return requestEncoder{}.Encode(request)
 }
 
-var _ protocol.EmbeddingIngressCodec = ingress{}
-var _ protocol.EmbeddingEgressCodec = egress{}
+var (
+	_ protocol.EmbeddingIngressCodec = ingress{}
+	_ protocol.EmbeddingEgressCodec  = egress{}
+)

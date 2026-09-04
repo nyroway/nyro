@@ -24,7 +24,6 @@ func TestEgressDecodeErrorPreservesGeminiSemantics(t *testing.T) {
 	body := []byte(`{"error":{"code":429,"message":"resource exhausted","status":"RESOURCE_EXHAUSTED"}}`)
 
 	got, err := codec.DecodeError(protocol.WireResponse{Status: 429, Body: body})
-
 	if err != nil {
 		t.Fatalf("DecodeError: %v", err)
 	}
@@ -270,7 +269,6 @@ func TestStreamDecode(t *testing.T) {
 func TestStreamDecodeErrorEnvelopeAsCanonicalError(t *testing.T) {
 	payload := `{"error":{"code":503,"message":"capacity exhausted","status":"UNAVAILABLE"}}`
 	deltas, err := (&streamResponseDecoder{}).ParseChunk(payload)
-
 	if err != nil {
 		t.Fatalf("ParseChunk: %v", err)
 	}
