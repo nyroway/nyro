@@ -18,6 +18,7 @@ type defaultLLMFactory struct {
 	providers *provider.Catalog
 	states    *statePool
 	telemetry *telemetryPool
+	router    *routing.Router
 	roundTrip http.RoundTripper
 }
 
@@ -33,6 +34,7 @@ func newDefaultLLMFactory(
 		providers: providers,
 		states:    states,
 		telemetry: telemetryResources,
+		router:    routing.New(),
 		roundTrip: roundTripper,
 	}
 }
@@ -70,7 +72,7 @@ func (factory *defaultLLMFactory) Build(_ context.Context, snapshot *configsnaps
 		Snapshot:  snapshot,
 		Protocols: factory.protocols,
 		Providers: factory.providers,
-		Router:    routing.New(),
+		Router:    factory.router,
 		Transport: transport,
 		Quota:     state.Store(),
 		Observe:   observe.Phase(),

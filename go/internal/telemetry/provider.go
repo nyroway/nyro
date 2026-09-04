@@ -46,8 +46,8 @@ type Provider struct {
 
 	// PromHandler and PromListen are populated when Metrics.Kind ==
 	// schema.ExporterKindPrometheus by the prometheus builder in metricsBuilders.
-	// Nil/empty otherwise; the data plane uses PromHandler != nil to
-	// decide whether to start a second HTTP server on PromListen.
+	// Nil/empty otherwise. Bootstrap registers PromHandler on its pooled scrape
+	// listener; PromListen supplies the fallback address when none is configured.
 	PromHandler http.Handler
 	PromListen  string
 

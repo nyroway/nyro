@@ -32,9 +32,8 @@ const contractPath = path.resolve(
   "..",
   "..",
   "internal",
-  "protocol",
   "llm",
-  "spec",
+  "protocol",
   "protocols.json",
 );
 const contract = JSON.parse(readFileSync(contractPath, "utf8")) as Contract;

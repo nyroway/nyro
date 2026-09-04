@@ -98,6 +98,34 @@ func TestDispatchPopulatesExchangeBeforeTelemetry(t *testing.T) {
 	}
 }
 
+func TestGeminiTelemetryUsesActualHTTPRequestPath(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`))
+	}))
+	defer upstream.Close()
+
+	source := newTestSourceProviderProto(t, upstream.URL, "gemini", "gemini-generatecontent")
+	var captured *pipeline.Exchange
+	source.observe = capturePhase{got: &captured}
+	handler := newTestHandler(t, source)
+	const resource = "/v1beta/models/gpt-4o:generateContent"
+	request := httptest.NewRequest(http.MethodPost, resource, strings.NewReader(
+		`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`,
+	))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("dispatch = %d %s", response.Code, response.Body.String())
+	}
+	if captured == nil {
+		t.Fatal("no Exchange captured: the chain never ran")
+	}
+	if captured.RequestInfo.Operation != http.MethodPost || captured.RequestInfo.Resource != resource {
+		t.Fatalf("request metadata = %+v, want actual POST %s", captured.RequestInfo, resource)
+	}
+}
+
 // TestDispatchPopulatesExchangeOnEarlyExit asserts the Exchange still carries
 // the status when the request is rejected BEFORE reaching an upstream
 // (model-not-found): Resolve rejects, but the Observe Finalizer still runs.

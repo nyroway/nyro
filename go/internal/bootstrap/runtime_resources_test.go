@@ -6,7 +6,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,8 +17,11 @@ import (
 
 	configsnapshot "github.com/nyroway/nyro/go/internal/config/snapshot"
 	"github.com/nyroway/nyro/go/internal/kernel"
+	"github.com/nyroway/nyro/go/internal/llm"
+	"github.com/nyroway/nyro/go/internal/llm/protocol"
 	"github.com/nyroway/nyro/go/internal/llm/provider"
 	providerhttp "github.com/nyroway/nyro/go/internal/llm/provider/httptransport"
+	"github.com/nyroway/nyro/go/internal/llm/routing"
 	llmruntime "github.com/nyroway/nyro/go/internal/llm/runtime"
 	platformstate "github.com/nyroway/nyro/go/internal/platform/state"
 	"github.com/nyroway/nyro/go/internal/quota"
@@ -292,6 +297,129 @@ func TestTelemetryBindingsReusePrometheusWhenOtherSignalConfigurationChanges(t *
 	}
 }
 
+func TestPrometheusPathChangeCoexistsUntilOldGenerationLeaseDrains(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	_ = listener.Close()
+
+	pool := newTelemetryPool()
+	host := kernel.NewHost[string]()
+	t.Cleanup(func() {
+		_ = host.Close(context.Background())
+		_ = pool.Close(context.Background())
+	})
+	oldBinding := newTelemetryBinding(pool, prometheusTelemetryConfig(addr, "/metrics-old", ""))
+	if _, err := host.Activate(context.Background(), prometheusGenerationCandidate("old", oldBinding)); err != nil {
+		t.Fatal(err)
+	}
+	waitHTTPStatus(t, "http://"+addr+"/metrics-old", http.StatusOK)
+	oldLease, ok := host.Acquire()
+	if !ok {
+		t.Fatal("Host.Acquire() rejected old Prometheus generation")
+	}
+
+	// Surrounding whitespace must normalize to the listener already owned by
+	// the old generation instead of triggering a second bind.
+	newBinding := newTelemetryBinding(pool, prometheusTelemetryConfig("  "+addr+"  ", "/metrics-new", ""))
+	if _, err := host.Activate(context.Background(), prometheusGenerationCandidate("new", newBinding)); err != nil {
+		oldLease.Release()
+		t.Fatalf("path-only Prometheus generation failed to activate on shared address: %v", err)
+	}
+	waitHTTPStatus(t, "http://"+addr+"/metrics-old", http.StatusOK)
+	waitHTTPStatus(t, "http://"+addr+"/metrics-new", http.StatusOK)
+
+	oldLease.Release()
+	waitHTTPStatus(t, "http://"+addr+"/metrics-old", http.StatusNotFound)
+	waitHTTPStatus(t, "http://"+addr+"/metrics-new", http.StatusOK)
+	if err := host.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitHTTP(t, "http://"+addr+"/metrics-new", false)
+}
+
+func TestPrometheusCandidateRollbackRemovesOnlyCandidateRegistration(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	_ = listener.Close()
+
+	pool := newTelemetryPool()
+	host := kernel.NewHost[string]()
+	t.Cleanup(func() {
+		_ = host.Close(context.Background())
+		_ = pool.Close(context.Background())
+	})
+	active := newTelemetryBinding(pool, prometheusTelemetryConfig(addr, "/active", ""))
+	if _, err := host.Activate(context.Background(), prometheusGenerationCandidate("active", active)); err != nil {
+		t.Fatal(err)
+	}
+	waitHTTPStatus(t, "http://"+addr+"/active", http.StatusOK)
+
+	rejected := errors.New("reject after Prometheus registration")
+	candidate := newTelemetryBinding(pool, prometheusTelemetryConfig(addr, "/candidate", ""))
+	failed := prometheusGenerationCandidate("candidate", candidate)
+	failed.Components = append(failed.Components, kernel.Component{
+		ID: "reject", After: []kernel.ComponentID{"telemetry"},
+		Lifecycle: &reconcilerLifecycle{startErr: rejected},
+	})
+	if _, err := host.Activate(context.Background(), failed); !errors.Is(err, rejected) {
+		t.Fatalf("candidate activation error = %v, want post-registration rejection", err)
+	}
+	waitHTTPStatus(t, "http://"+addr+"/active", http.StatusOK)
+	waitHTTPStatus(t, "http://"+addr+"/candidate", http.StatusNotFound)
+}
+
+func TestPrometheusRejectsDifferentProviderOnOccupiedListenerPath(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	_ = listener.Close()
+
+	pool := newTelemetryPool()
+	first := newTelemetryBinding(pool, prometheusTelemetryConfig(addr, "/metrics", "first"))
+	if err := first.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = first.Close(context.Background())
+		_ = pool.Close(context.Background())
+	})
+	waitHTTPStatus(t, "http://"+addr+"/metrics", http.StatusOK)
+
+	second := newTelemetryBinding(pool, prometheusTelemetryConfig(addr, "/metrics", "second"))
+	if err := second.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "already registered") {
+		_ = second.Close(context.Background())
+		t.Fatalf("conflicting Prometheus path Start() error = %v, want safe registration collision", err)
+	}
+	waitHTTPStatus(t, "http://"+addr+"/metrics", http.StatusOK)
+}
+
+func prometheusTelemetryConfig(addr, path, identity string) telemetry.Config {
+	params := map[string]string{"listen": addr, "path": path}
+	if identity != "" {
+		// Direct construction lets this lifecycle test distinguish Provider
+		// identities independently of the listener fields.
+		params["identity"] = identity
+	}
+	return telemetry.Config{Metrics: telemetry.SignalConfig{
+		Kind: schema.ExporterKindPrometheus, Params: params,
+	}}
+}
+
+func prometheusGenerationCandidate(version string, binding *telemetryBinding) kernel.Candidate[string] {
+	return kernel.Candidate[string]{
+		Version: version, Fingerprint: version, Value: version,
+		Components: []kernel.Component{{ID: "telemetry", Lifecycle: binding}},
+	}
+}
+
 func TestRejectedTelemetryCandidateKeepsGlobalsAndLastKnownGood(t *testing.T) {
 	protocols, err := NewLLMProtocolCatalog()
 	if err != nil {
@@ -497,6 +625,177 @@ func TestDefaultLLMFactoryBuildsInactiveResourcesForKernelActivation(t *testing.
 	}
 }
 
+func TestDefaultLLMFactoryPreservesRoutingSelectionStateAcrossSnapshotGenerations(t *testing.T) {
+	tests := []struct {
+		name                 string
+		balance              routing.Strategy
+		callsBeforeReconcile int
+		failFirstTargetOnce  bool
+		delays               map[string]time.Duration
+		wantHosts            []string
+	}{
+		{
+			name:                 "cooldown",
+			balance:              routing.StrategyPriority,
+			callsBeforeReconcile: 1,
+			failFirstTargetOnce:  true,
+			wantHosts:            []string{"first.example", "second.example", "second.example"},
+		},
+		{
+			name:                 "least recently used",
+			balance:              routing.StrategyCooldown,
+			callsBeforeReconcile: 1,
+			wantHosts:            []string{"first.example", "second.example"},
+		},
+		{
+			name:                 "latency",
+			balance:              routing.StrategyLatency,
+			callsBeforeReconcile: 2,
+			delays: map[string]time.Duration{
+				"first.example":  25 * time.Millisecond,
+				"second.example": time.Millisecond,
+			},
+			wantHosts: []string{"first.example", "second.example", "second.example"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			protocols, err := NewLLMProtocolCatalog()
+			if err != nil {
+				t.Fatal(err)
+			}
+			providers, err := NewLLMProviderCatalog()
+			if err != nil {
+				t.Fatal(err)
+			}
+			transport := &routingSelectionRoundTripper{
+				failFirstTargetOnce: test.failFirstTargetOnce,
+				delays:              test.delays,
+			}
+			states := newStatePool()
+			telemetryResources := newTelemetryPool()
+			host := kernel.NewHost[*ApplicationRuntime]()
+			factory := newDefaultLLMFactory(protocols, providers, states, telemetryResources, transport)
+			reconciler := NewReconciler(host, &GraphBuilder{
+				Protocols: protocols, Providers: providers, LLMFactory: factory,
+			})
+			t.Cleanup(func() {
+				_ = host.Close(context.Background())
+				_ = telemetryResources.Close(context.Background())
+				_ = states.Close()
+			})
+
+			first := routingSelectionSnapshot(test.balance, "one")
+			if err := reconciler.Apply(context.Background(), first, "v1"); err != nil {
+				t.Fatal(err)
+			}
+			for range test.callsBeforeReconcile {
+				executeActiveRoutingCall(t, host)
+			}
+
+			second := routingSelectionSnapshot(test.balance, "two")
+			if first.Fingerprint() == second.Fingerprint() {
+				t.Fatal("test snapshots unexpectedly have equal fingerprints")
+			}
+			if err := reconciler.Apply(context.Background(), second, "v2"); err != nil {
+				t.Fatal(err)
+			}
+			executeActiveRoutingCall(t, host)
+
+			if got := transport.hostsSnapshot(); !slices.Equal(got, test.wantHosts) {
+				t.Fatalf("selected hosts = %v, want %v; routing state reset across reconciliation", got, test.wantHosts)
+			}
+		})
+	}
+}
+
+type routingSelectionRoundTripper struct {
+	mu                  sync.Mutex
+	hosts               []string
+	firstTargetCalls    int
+	failFirstTargetOnce bool
+	delays              map[string]time.Duration
+}
+
+func (transport *routingSelectionRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	host := request.URL.Hostname()
+	transport.mu.Lock()
+	transport.hosts = append(transport.hosts, host)
+	if host == "first.example" {
+		transport.firstTargetCalls++
+	}
+	firstTargetCall := transport.firstTargetCalls
+	transport.mu.Unlock()
+	if delay := transport.delays[host]; delay > 0 {
+		time.Sleep(delay)
+	}
+	if transport.failFirstTargetOnce && host == "first.example" && firstTargetCall == 1 {
+		return nil, errors.New("synthetic first-target failure")
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"response","model":"backend-model","choices":[{"message":{"role":"assistant","content":"ok"}}]}`,
+		)),
+	}, nil
+}
+
+func (transport *routingSelectionRoundTripper) hostsSnapshot() []string {
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	return append([]string(nil), transport.hosts...)
+}
+
+func (*routingSelectionRoundTripper) CloseIdleConnections() {}
+
+type routingSelectionSink struct{}
+
+func (routingSelectionSink) ResetStreamAttempt() error                             { return nil }
+func (routingSelectionSink) SendResponse(context.Context, *llm.ChatResponse) error { return nil }
+func (routingSelectionSink) SendError(context.Context, *llm.Error) error           { return nil }
+func (routingSelectionSink) SendDelta(context.Context, llm.StreamDelta) (bool, error) {
+	return true, nil
+}
+func (routingSelectionSink) SendOpaque(context.Context, protocol.WireResponse) error { return nil }
+
+func routingSelectionSnapshot(balance routing.Strategy, generation string) *configsnapshot.Snapshot {
+	var builder configsnapshot.Builder
+	for _, id := range []string{"first", "second"} {
+		builder.SetUpstream(configsnapshot.Upstream{
+			ID: id, Name: id, Provider: "openai", Protocol: provider.ProtocolOpenAIChatCompletions,
+			BaseURL: "https://" + id + ".example/v1", CredentialsJSON: []byte(`{"api_key":"test"}`), Enabled: true,
+		})
+	}
+	builder.SetRoute(configsnapshot.Route{
+		ID: "route", Model: "client-model", Balance: string(balance), Enabled: true,
+		Upstreams: []configsnapshot.RouteTarget{
+			{ID: "first", RouteID: "route", UpstreamID: "first", Model: "backend-model", Weight: 1, Priority: 1, Enabled: true},
+			{ID: "second", RouteID: "route", UpstreamID: "second", Model: "backend-model", Weight: 1, Priority: 2, Enabled: true},
+		},
+	})
+	builder.SetSetting("proxy.max_retries", "1")
+	builder.SetSetting("test.generation", generation)
+	return builder.Build()
+}
+
+func executeActiveRoutingCall(t *testing.T, host *kernel.Host[*ApplicationRuntime]) {
+	t.Helper()
+	lease, ok := host.Acquire()
+	if !ok {
+		t.Fatal("Host.Acquire() rejected active generation")
+	}
+	defer lease.Release()
+	completion := lease.Value().LLM.Execute(context.Background(), llmruntime.Call{
+		Request: llm.NewChatRequest("client-model", nil),
+		Source:  protocol.OpenAIChatCompletionsV1,
+		Sink:    routingSelectionSink{},
+	})
+	if completion.Error != nil {
+		t.Fatalf("routing call failed: %v", completion.Error)
+	}
+}
+
 func TestDefaultLLMGenerationFailsRuntimeSourceClosedWhenStateBindingIsPoisoned(t *testing.T) {
 	protocols, err := NewLLMProtocolCatalog()
 	if err != nil {
@@ -594,4 +893,24 @@ func waitHTTP(t *testing.T, url string, wantUp bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("endpoint %s up=%v, want %v", url, !wantUp, wantUp)
+}
+
+func waitHTTPStatus(t *testing.T, url string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	lastStatus := 0
+	var lastErr error
+	for time.Now().Before(deadline) {
+		response, err := http.Get(url)
+		lastErr = err
+		if response != nil {
+			lastStatus = response.StatusCode
+			_ = response.Body.Close()
+		}
+		if err == nil && lastStatus == want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("endpoint %s status=%d error=%v, want %d", url, lastStatus, lastErr, want)
 }

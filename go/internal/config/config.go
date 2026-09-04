@@ -339,8 +339,8 @@ func LoadYAML(path string) (*Config, []string, error) {
 
 // ApplyTo is the single YAML→storage conversion path: it seeds upstreams,
 // routes (with upstream targets resolved by name), and consumers (keys, route
-// grants, quotas) into st. BuildSnapshot reuses this against a throwaway
-// in-memory store rather than maintaining a parallel construction path.
+// grants, quotas) into st. BuildSnapshot constructs its immutable Snapshot
+// directly while sharing the same defaults and reference-validation semantics.
 func (c *Config) ApplyTo(st storage.Storage, providers *provider.Catalog) error {
 	if providers == nil {
 		return fmt.Errorf("provider catalog is required")

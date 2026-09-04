@@ -361,6 +361,65 @@ func (p testPhase) Apply(ctx context.Context, exchange *pipeline.Exchange) (pipe
 	return pipeline.Outcome{Decision: pipeline.Continue}, nil
 }
 
+func TestExecuteUsesCallRequestInfoWithCodecFallback(t *testing.T) {
+	tests := []struct {
+		name          string
+		operation     string
+		resource      string
+		wantOperation string
+		wantResource  string
+	}{
+		{
+			name: "actual transport metadata", operation: "PATCH", resource: "/actual/resource",
+			wantOperation: "PATCH", wantResource: "/actual/resource",
+		},
+		{
+			name:          "direct caller fallback",
+			wantOperation: "POST", wantResource: "/declared/{resource}",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var captured pipeline.RequestInfo
+			observe := testPhase{name: "observe", apply: func(_ context.Context, exchange *pipeline.Exchange) (pipeline.Outcome, pipeline.Finalizer) {
+				captured = exchange.RequestInfo
+				return pipeline.Outcome{Decision: pipeline.Continue}, nil
+			}}
+			runtime := newRuntimeFixture(t, runtimeFixture{
+				routes:    []configsnapshot.Route{chatRoute("route", routeTarget("target", "backend", "served-model", 1))},
+				upstreams: []configsnapshot.Upstream{upstream("backend", "test", provider.ProtocolOpenAIChatCompletions)},
+				settings:  map[string]string{"proxy.max_retries": "1"},
+				ingress: []protocol.IngressCodec{testIngress{
+					endpoint: protocol.OpenAIChatCompletionsV1,
+					caps: protocol.Capabilities{IngressRoutes: []protocol.IngressRoute{{
+						Method: "POST", Pattern: "/declared/{resource}",
+					}}},
+				}},
+				egress:    []protocol.EgressCodec{testChatEgress{endpoint: protocol.OpenAIChatCompletionsV1}},
+				providers: []provider.Registration{providerRegistration("test", &testDriver{})},
+				transport: transportFunc(func(context.Context, provider.Request) (*provider.Response, error) {
+					return response(200, "ok"), nil
+				}),
+				observe: observe,
+			})
+
+			completion := runtime.Execute(context.Background(), Call{
+				Request:   llm.NewChatRequest("client-model", nil),
+				Source:    protocol.OpenAIChatCompletionsV1,
+				Operation: test.operation,
+				Resource:  test.resource,
+				Sink:      &recordingSink{},
+			})
+			if completion.Error != nil {
+				t.Fatalf("completion error = %v", completion.Error)
+			}
+			if captured.Operation != test.wantOperation || captured.Resource != test.wantResource {
+				t.Fatalf("RequestInfo = %+v, want %s %s", captured, test.wantOperation, test.wantResource)
+			}
+		})
+	}
+}
+
 func TestExecuteRunsFixedProviderSequenceAfterLogicalRouteResolution(t *testing.T) {
 	var sequence []string
 	appendStep := func(step string) { sequence = append(sequence, step) }

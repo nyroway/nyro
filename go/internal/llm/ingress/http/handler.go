@@ -88,11 +88,23 @@ func (handler *handler) serveCodec(writer http.ResponseWriter, request *http.Req
 	runtime.Execute(request.Context(), llmruntime.Call{
 		Request:       modelRequest,
 		Source:        codec.Endpoint(),
+		Operation:     request.Method,
+		Resource:      requestResource(request),
 		Credentials:   credentialsFromRequest(request),
 		ClientAddress: request.RemoteAddr,
 		RequestID:     request.Header.Get("X-Request-ID"),
 		Sink:          sink,
 	})
+}
+
+func requestResource(request *http.Request) string {
+	if request == nil || request.URL == nil {
+		return ""
+	}
+	if escaped := request.URL.EscapedPath(); escaped != "" {
+		return escaped
+	}
+	return request.URL.Path
 }
 
 func decodeRequest(codec protocol.IngressCodec, request protocol.IngressRequest) (llm.ModelRequest, error) {
