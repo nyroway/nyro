@@ -1,6 +1,10 @@
 # Nyro 请求生命周期与扩展框架设计 RFC
 
-> 状态:Draft · 关联文档:[observability.md](./observability.md)(可观测性 exporter 是本框架的 `TelemetryExporter` capability)、[architecture.md](./architecture.md)
+> 状态：历史提案与实现背景，非本次 Rust 重构的目标规范（2026-09-07）。
+>
+> 本文保留旧架构下的请求生命周期提案；五阶段管线及 `PluginKernel` 的职责归属均属于旧方案。新目标区分微内核的资源生命周期与 LLM 层的可信请求流程，以 [Rust 目标架构](./architecture.md)（设计定稿，分阶段实施中）为权威依据。本文及目标文档均不表示代码已完成迁移。
+>
+> 关联历史文档：[可观测性提案](./observability.md)。以下正文保留原有语境。
 
 ---
 

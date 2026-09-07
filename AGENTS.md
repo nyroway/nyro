@@ -9,7 +9,7 @@ Nyro is a Rust workspace for a local AI protocol gateway with a Tauri desktop ap
 
 | File | Description |
 |------|-------------|
-| `Cargo.toml` | Rust workspace definition for `nyro-core`, `nyro-tools`, `src-tauri`, and `src-server`. |
+| `Cargo.toml` | Rust workspace definition for `nyro-kernel`, `nyro-core`, `nyro-tools`, `src-tauri`, and `src-server`. |
 | `Cargo.lock` | Locked Rust dependency graph. |
 | `README.md` / `README_CN.md` | User-facing project documentation in English and Chinese. |
 | `Makefile` | Common development and release commands. |
@@ -20,6 +20,7 @@ Nyro is a Rust workspace for a local AI protocol gateway with a Tauri desktop ap
 
 | Directory | Purpose |
 |-----------|---------|
+| `crates/nyro-kernel/` | Workload-neutral lifecycle/generation library; not yet wired into existing applications. |
 | `crates/nyro-core/` | Core Rust library: gateway, proxy, protocol conversion, provider adapters, storage, admin service. |
 | `crates/nyro-tools/` | Rust CLI/tooling crate. |
 | `src-server/` | Standalone server binary exposing proxy/admin HTTP surfaces. |
@@ -48,6 +49,7 @@ Nyro is a Rust workspace for a local AI protocol gateway with a Tauri desktop ap
 - Documentation-only changes should still be checked for path/name accuracy.
 
 ### Common Patterns
+- `nyro-kernel` owns resource/generation invariants only; keep business rules, configuration, HTTP, databases, and global module discovery outside it. See its README for lifecycle ownership and cancellation contracts.
 - `nyro-core` should remain transport-agnostic; desktop IPC and server HTTP layers call into core APIs rather than embedding core business logic.
 - Admin service code should be split by functional responsibility and tested through public APIs where possible; keep private state-machine tests internal instead of exposing private APIs just for tests.
 - Protocol/provider logic should keep protocol conversion boundaries explicit and avoid coupling provider adapters to UI/server transport concerns.
