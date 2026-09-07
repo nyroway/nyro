@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/nyro-core", "crates/nyro-tools", "src-tauri", "src-server"]
+members = ["crates/nyro-kernel", "crates/nyro-core", "crates/nyro-tools", "src-tauri", "src-server"]
 
 [workspace.package]
 version = "1.8.3"

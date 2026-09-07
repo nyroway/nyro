@@ -1,888 +1,583 @@
-# Nyro AI Gateway — 架构设计
+# Nyro Rust 目标架构
 
----
+> 状态：设计定稿，分阶段实施中；独立内核已实现，尚未接入业务。更新日期：2026-09-07。
+>
+> 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-## 1. 产品定位与部署形态
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，提供组件生命周期、类型化代际和租约管理。现有 `nyro-core`、Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro proxy` 和 `nyro tool` 仍是目标入口。
 
-Nyro 是一个 **AI 协议网关（AI Gateway）**：在 AI 客户端工具与模型提供商之间做实时协议转换与统一调度。任意使用 OpenAI / Anthropic / Gemini SDK 的客户端无需改代码，仅修改 `base_url` 即可路由到任意 LLM Provider。既可作为**桌面应用**本地零部署运行，也可作为**独立服务端**自托管或团队共享，管理与配置保持私有可控。
+## 1. 产品定位与范围
 
-```
-Claude Code · Codex CLI · Gemini CLI · OpenCode
-     OpenAI SDK · Anthropic SDK · Gemini SDK
-              Any HTTP API Client
-                      ↓
-              Nyro AI Gateway
-            (localhost:19530)
-                      ↓
-    OpenAI · Anthropic · Google · DeepSeek
-    MiniMax · xAI · Zhipu · Ollama · ...
-```
+Nyro 是统一的 AI Gateway，目标是在一个进程内承载 LLM Gateway 和 MCP Gateway。两者是并列的应用，各自拥有协议类型、业务规则和执行流程，共享微内核、控制面及基础能力。
 
-**部署形态：**
+当前范围聚焦 LLM。MCP 仅确定应用边界；Image、Audio、Video 等交互在实际接入时定义，不预建空包、空类型或通用执行框架。LLM 对话里的工具调用不等于已经实现 MCP Gateway。
 
-| 形态 | 实现 | 适用场景 |
-|---|---|---|
-| Desktop | Tauri v2 桌面应用（macOS / Windows / Linux） | 个人开发者，零部署，数据不离开本机 |
-| Server `--mode all` | 独立 Rust 二进制，Proxy + Admin API + 内嵌 WebUI | 自托管、团队共享（默认） |
-| Server `--mode proxy` | 同上，仅启动代理端口 `:19530` | 分布式纯调度节点，无管理面 |
-| Server `--mode admin` | 同上，仅启动管理端口 `:19531` | 内部系统对接控制面；可搭配 `--no-default-features`（slim）去除内嵌 WebUI |
-| Server Standalone | `--config config.yaml`，MemoryStorage，无 Admin | 边缘/最小化部署，YAML 静态配置 |
+目标只分发一个 `nyro` 二进制：
 
-核心原则：`nyro-core` 只暴露纯 Rust API（struct + async fn），**不感知传输层**。Desktop 版通过 Tauri IPC 调用，Server 版通过 HTTP REST 调用。
+| 入口 | 职责 |
+|---|---|
+| `nyro serve` | 控制面与数据面融合运行，提供管理 API 和 WebUI |
+| `nyro proxy` | 只运行数据面，从 standalone 文件或控制面获取配置 |
+| `nyro tool` | 承接录制、回放、调试透传和 schema 导出等现有工具能力 |
 
----
+`serve` 与 `proxy` 使用同一套数据面构建和执行流程，区别在于配置来源及是否装配控制面。将来可以按配置启用 LLM、MCP 或两者；本次不实现 MCP。具体 CLI 参数在实施阶段对照现有功能确定，本文不声明这些新命令已经可用。
 
-## 2. Workspace 分层
+## 2. 核心原则
 
-```
+**微内核负责运行一致性，应用负责业务规则，独立能力库负责可复用机制，根程序负责装配。**
+
+- 微内核只管理组件依赖、生命周期、类型化运行代际、发布、请求租约和就绪状态，不理解 LLM、MCP、HTTP、认证、限额、存储或配置文件格式。
+- “一切皆模块”表达职责可组合、实现可替换；架构模块不要求与 crate 一一对应，也不要求纯类型、算法和编解码器实现启停接口。
+- 模块按能力定义输入、输出和权限。避免把整个 `Gateway`、数据库实体或无约束上下文传给每个模块。
+- 共享机制与业务策略分开：授权机制不知道模型或工具的具体业务规则，额度机制不知道模型价格，应用负责这些映射。
+- Rust 中优先使用已有依赖和必要的运行时设施，不机械照搬 Go 的标准库限制，也不为目录对称增加抽象。
+- 首版模块代码编译进入二进制，由装配层显式选择和注册；配置可以变更模块实例与组合。首版不设计动态库、WASM、插件 ABI 或进程隔离。
+
+## 3. 目标目录树
+
+以下完整展开到 crate 和主要职责模块层级。所有目标路径都是迁移后的组织方案，不是待立即生成的空目录清单。每个 crate 内部继续按实际复杂度拆文件，不按每个策略或每个厂商拆包。
+
+```text
 nyro/
-├── Cargo.toml                   # Rust workspace
+├── Cargo.toml                       # 根 package：nyro，同时定义 workspace
+├── Cargo.lock
+├── AGENTS.md
+├── Makefile
+├── LICENSE
+├── README.md
+├── README_CN.md
+├── CHANGELOG.md
+├── CHANGELOG_CN.md
+├── .gitignore
+├── .env.example
+│
+├── src/                             # 唯一产品入口与装配层
+│   ├── main.rs
+│   ├── cli.rs
+│   ├── command/
+│   │   ├── mod.rs
+│   │   ├── serve.rs
+│   │   ├── proxy.rs
+│   │   └── tool.rs
+│   ├── bootstrap/
+│   │   ├── mod.rs
+│   │   ├── catalog.rs               # 显式内置能力目录
+│   │   ├── candidate.rs             # 应用候选与内核生命周期适配
+│   │   ├── reconcile.rs             # 配置变更协调
+│   │   └── resource.rs              # 跨代际资源的持有与注入
+│   ├── http.rs                      # 通用监听、挂载、健康检查
+│   ├── webui.rs                     # 静态资源嵌入与托管
+│   ├── shutdown.rs                  # 进程信号与退出协调
+│   └── tool/
+│       ├── mod.rs
+│       ├── record.rs
+│       ├── replay.rs
+│       ├── passthrough.rs
+│       ├── fixture.rs
+│       ├── scenario.rs
+│       ├── protocol.rs
+│       └── schema.rs
+│
 ├── crates/
-│   └── nyro-core/
-│       └── src/
-│           ├── lib.rs            # 13 个顶层 pub mod + Gateway / GatewayConfig 根类型
-│           ├── proxy/            # 代理面
-│           │   ├── mod.rs
-│           │   ├── auth.rs
-│           │   ├── client.rs     # ProxyClient（HTTP 调用封装）
-│           │   ├── context.rs    # RequestContext / ContextBag
-│           │   ├── handler.rs    # models_list 只读端点（≤110 行）
-│           │   ├── intake.rs     # 请求接入预处理
-│           │   ├── observability.rs  # 日志工具（header 脱敏、URL 脱敏等）
-│           │   ├── security.rs   # 安全过滤
-│           │   ├── server.rs     # axum HTTP Server 启动
-│           │   ├── stream.rs     # StreamBridge 状态机
-│           │   ├── dispatcher/   # 单点编排管线
-│           │   │   ├── mod.rs        # dispatch_pipeline / dispatch / error_response
-│           │   │   ├── accumulator.rs
-│           │   │   ├── auth.rs       # authorize_model_access / get_provider
-│           │   │   ├── non_stream.rs # handle_non_stream / handle_non_stream_via_upstream_stream
-│           │   │   ├── stream.rs     # handle_stream
-│           │   │   └── util.rs
-│           │   ├── planner/      # 协议协商
-│           │   │   ├── mod.rs        # ProtocolPlan / ProtocolMode 等 re-export
-│           │   │   └── negotiator.rs # negotiate() / RoutingStrategy / OrderedStrategy
-│           │   └── ingress/      # 5 个薄 ingress shell（按协议族分目录）
-│           │       ├── mod.rs
-│           │       ├── openai_compatible/
-│           │       │   ├── mod.rs
-│           │       │   ├── chat_completions.rs   # decode → dispatch_pipeline
-│           │       │   └── embeddings.rs
-│           │       ├── openai_responses/
-│           │       │   ├── mod.rs
-│           │       │   └── responses.rs
-│           │       ├── anthropic_messages/
-│           │       │   ├── mod.rs
-│           │       │   └── messages.rs
-│           │       └── google_generative/
-│           │           ├── mod.rs
-│           │           └── generate_content.rs
-│           ├── plugin/           # 扩展框架（PluginKernel + 生命周期插点）
-│           │   ├── mod.rs        # PluginKernel / CapabilityKind / PluginManifest
-│           │   └── phase.rs      # Phase / PhaseHook / PhaseCtx / PhaseOutcome /
-│           │                     # ResponseView / HostContext / ResponseStats /
-│           │                     # PhaseHookRegistration / PhaseHookRegistry
-│           ├── protocol/         # 协议转换引擎
-│           │   ├── mod.rs        # ProviderProtocols / ResolvedEgress 等
-│           │   ├── ids.rs        # ProtocolEndpoint（ProtocolId 为别名）/ ProtocolCapabilities
-│           │   ├── traits.rs     # EndpointHandler trait + 6 个 codec trait
-│           │   ├── registry.rs   # ProtocolRegistry / EndpointRegistration
-│           │   ├── ir/           # 统一内部表示（IR）
-│           │   │   ├── mod.rs
-│           │   │   ├── request.rs   # AiRequest
-│           │   │   ├── response.rs  # AiResponse
-│           │   │   ├── stream.rs    # AiStreamDelta
-│           │   │   ├── usage.rs     # Usage
-│           │   │   └── ...          # envelope / ext / vendor_ext / cache / error 等
-│           │   └── codec/        # 编解码器 + EndpointHandler 注册壳
-│           │       ├── mod.rs
-│           │       ├── reasoning.rs       # think-tag 提取工具
-│           │       ├── tool_correlation.rs
-│           │       ├── openai/
-│           │       │   ├── compatible/    # chat_completions + embeddings
-│           │       │   └── responses/     # OpenAI Responses API
-│           │       ├── anthropic/
-│           │       │   └── messages/
-│           │       └── google/
-│           │           └── gemini/
-│           ├── provider/         # 厂商扩展层
-│           │   ├── mod.rs
-│           │   ├── vendor.rs     # Vendor trait / ProviderCtx / VendorRegistration
-│           │   ├── vendor_ext.rs # VendorExtension trait / VendorCtx / ExtensionRegistration
-│           │   ├── registry.rs   # VendorRegistry
-│           │   ├── metadata.rs   # VendorMetadata / Label / AuthMode
-│           │   ├── outbound.rs   # OutboundRequest
-│           │   ├── inbound.rs    # InboundResponse
-│           │   ├── common/
-│           │   │   ├── openai.rs     # OpenAI 兼容共用逻辑
-│           │   │   └── pipeline.rs   # 7 步 build_request / parse_response 自由函数
-│           │   ├── openai/           # OpenAiVendor + OpenAIFamilyExt
-│           │   │   └── codex/        # OpenAiCodexChannel（OAuth channel）
-│           │   ├── anthropic/        # AnthropicVendor + AnthropicFamilyExt
-│           │   │   └── claude_code/  # AnthropicClaudeCodeChannel
-│           │   ├── google/           # GoogleVendor + GoogleFamilyExt
-│           │   ├── vertexai/         # VertexVendor
-│           │   ├── deepseek/ · moonshotai/ · zhipuai/ · minimax/
-│           │   ├── xai/ · zai/ · nvidia/ · openrouter/ · ollama/ · custom/
-│           │   └── ...
-│           ├── admin/            # AdminService 管理面（按职责拆分）
-│           │   ├── mod.rs
-│           │   ├── extensions.rs # list_loaded_extensions（PluginKernel 聚合）
-│           │   ├── providers.rs · oauth.rs · routes.rs · api_keys.rs
-│           │   ├── settings.rs · observability.rs · import_export.rs
-│           │   ├── model_catalog.rs · auth_data.rs · route_data.rs
-│           │   └── session_tests.rs
-│           ├── error.rs          # GatewayError taxonomy
-│           ├── router/           # TargetSelector / HealthRegistry
-│           ├── storage/          # 多后端存储（sqlite / postgres / mysql / memory）
-│           ├── db/               # SQLite schema / migrate()
-│           ├── logging/          # LogEntry / send_log
-│           ├── cache/
-│           ├── integrations/     # HookRegistry（旧版 request/response hook）
-│           └── auth/
-├── src-tauri/
-├── src-server/
-└── webui/
+│   ├── nyro-kernel/
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── component.rs         # 组件身份、依赖与生命周期契约
+│   │   │   ├── graph.rs             # 依赖校验与确定性顺序
+│   │   │   ├── lifecycle.rs         # 启停、回滚与清理
+│   │   │   ├── generation.rs        # 类型化代际与请求租约
+│   │   │   ├── host.rs              # 激活、发布与退役
+│   │   │   ├── status.rs
+│   │   │   └── error.rs
+│   │   └── tests/
+│   ├── nyro-config/
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── model.rs             # 组合数据面领域配置
+│   │   │   ├── snapshot.rs
+│   │   │   ├── validate.rs
+│   │   │   ├── fingerprint.rs
+│   │   │   ├── source/
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── file.rs          # standalone 启动时读取
+│   │   │   │   └── remote.rs        # 订阅控制面快照
+│   │   │   └── error.rs
+│   │   └── tests/
+│   ├── nyro-security/
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── identity.rs
+│   │   │   ├── authn.rs
+│   │   │   ├── authz.rs
+│   │   │   └── error.rs
+│   │   └── tests/
+│   ├── nyro-limit/
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── rate.rs
+│   │   │   ├── quota.rs
+│   │   │   ├── concurrency.rs
+│   │   │   ├── store.rs             # 限制能力所需的原子状态操作
+│   │   │   ├── backend/             # 按实际采用的状态后端实现
+│   │   │   └── error.rs
+│   │   └── tests/
+│   ├── nyro-protocol/
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── framing.rs           # 公共流帧处理，不持有网络连接
+│   │   │   ├── openai/
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── chat.rs
+│   │   │   │   ├── response.rs
+│   │   │   │   ├── embedding.rs
+│   │   │   │   ├── stream.rs
+│   │   │   │   └── error.rs
+│   │   │   ├── anthropic/
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── message.rs
+│   │   │   │   ├── stream.rs
+│   │   │   │   └── error.rs
+│   │   │   └── gemini/
+│   │   │       ├── mod.rs
+│   │   │       ├── content.rs
+│   │   │       ├── stream.rs
+│   │   │       └── error.rs
+│   │   └── tests/
+│   ├── nyro-llm/
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── config.rs            # LLM 自己拥有的配置类型
+│   │   │   ├── ir/
+│   │   │   │   ├── mod.rs           # Request、Response 枚举及导出
+│   │   │   │   ├── chat/
+│   │   │   │   │   ├── mod.rs
+│   │   │   │   │   ├── request.rs
+│   │   │   │   │   ├── response.rs
+│   │   │   │   │   ├── stream.rs
+│   │   │   │   │   ├── message.rs
+│   │   │   │   │   └── tool.rs
+│   │   │   │   ├── embedding/
+│   │   │   │   │   ├── mod.rs
+│   │   │   │   │   ├── request.rs
+│   │   │   │   │   └── response.rs
+│   │   │   │   ├── content.rs
+│   │   │   │   ├── usage.rs
+│   │   │   │   ├── metadata.rs
+│   │   │   │   ├── extension.rs
+│   │   │   │   └── error.rs
+│   │   │   ├── codec/              # 基础协议与 LLM IR 的转换
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── openai.rs
+│   │   │   │   ├── anthropic.rs
+│   │   │   │   └── gemini.rs
+│   │   │   ├── ingress/
+│   │   │   │   ├── mod.rs
+│   │   │   │   └── http.rs          # LLM 路由、接入与响应交付
+│   │   │   ├── runtime/
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── pipeline.rs
+│   │   │   │   ├── exchange.rs
+│   │   │   │   ├── security.rs
+│   │   │   │   ├── admission.rs
+│   │   │   │   ├── dispatch.rs
+│   │   │   │   ├── retry.rs
+│   │   │   │   ├── stream.rs
+│   │   │   │   └── finalize.rs
+│   │   │   ├── routing/            # 目标选择、负载分配与健康状态
+│   │   │   ├── provider/
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── driver.rs
+│   │   │   │   ├── credential.rs    # 上游凭证，不等同于入站身份
+│   │   │   │   ├── metadata.rs
+│   │   │   │   ├── common/
+│   │   │   │   └── builtin/         # 现有供应商实现按厂商迁入
+│   │   │   ├── transport/          # 上游 HTTP 请求与响应流
+│   │   │   ├── extension.rs         # 应用扩展契约
+│   │   │   ├── observation.rs       # LLM 观测语义
+│   │   │   └── error.rs
+│   │   └── tests/
+│   ├── nyro-control/
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── config.rs            # 控制面启动配置，由根程序组装
+│   │   │   ├── service/
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── provider.rs
+│   │   │   │   ├── model.rs
+│   │   │   │   ├── api_key.rs
+│   │   │   │   ├── setting.rs
+│   │   │   │   ├── session.rs
+│   │   │   │   ├── oauth.rs
+│   │   │   │   └── import_export.rs
+│   │   │   ├── http/               # 管理 API 与配置分发端点
+│   │   │   ├── publish.rs           # 管理数据转换为配置快照
+│   │   │   ├── storage/
+│   │   │   │   ├── mod.rs
+│   │   │   │   ├── entity.rs
+│   │   │   │   ├── repository.rs
+│   │   │   │   ├── database/
+│   │   │   │   │   ├── mod.rs
+│   │   │   │   │   ├── pool.rs
+│   │   │   │   │   ├── sqlite.rs
+│   │   │   │   │   └── postgres.rs
+│   │   │   │   ├── sql/            # 按业务组织查询，保留方言差异
+│   │   │   │   ├── migration/
+│   │   │   │   │   ├── mod.rs
+│   │   │   │   │   ├── sqlite/
+│   │   │   │   │   └── postgres/
+│   │   │   │   └── memory.rs        # 测试/内存仓储
+│   │   │   ├── observation.rs       # 管理日志与统计查询
+│   │   │   └── error.rs
+│   │   └── tests/
+│   └── nyro-telemetry/
+│       ├── Cargo.toml
+│       ├── src/
+│       │   ├── lib.rs
+│       │   ├── config.rs
+│       │   ├── log.rs
+│       │   ├── metric.rs
+│       │   └── trace.rs
+│       └── tests/
+│
+├── webui/
+│   ├── package.json
+│   ├── index.html
+│   ├── vite.config.ts
+│   ├── public/
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx
+│       ├── pages/
+│       ├── components/
+│       ├── hooks/
+│       ├── lib/
+│       └── assets/
+├── tests/
+│   ├── common/
+│   ├── conftest.py
+│   └── e2e/
+│       ├── proxy/
+│       ├── admin/
+│       ├── storage/
+│       └── fixtures/
+├── pytest.ini
+├── requirements-dev.txt
+├── docs/
+│   ├── design/
+│   │   ├── architecture.md
+│   │   ├── lifecycle.md
+│   │   ├── observability.md
+│   │   └── ir/
+│   ├── database/
+│   │   └── schema.md
+│   ├── server/
+│   ├── standalone/
+│   ├── testing/
+│   ├── images/
+│   └── release.md
+├── deploy/
+│   └── schema/
+│       └── postgres.sql            # 从迁移源生成的参考 schema
+├── scripts/
+│   ├── install/
+│   └── release/
+├── .github/
+│   └── workflows/
+│       ├── ci.yml
+│       ├── storage-backends.yml
+│       └── release-server.yml
+└── go/                             # 现有 Go 实现与设计参考
 ```
 
-**依赖关系：**
+当前目标是八个能力 crate，加根目录的 `nyro` package。包名采用 `nyro-limit`；不引入 `nyro-provider`、`nyro-llm-types`、`nyro-llm-runtime`、`nyro-plugins`、`nyro-modules` 或通用 `nyro-storage`/`nyro-database` 包。
+
+`crates/nyro-mcp/` 仅作为未来并列应用的位置，不创建、不加入当前 workspace。构建产物、运行数据及开发者本地工具配置未在目标树中展开。已有缓存控制、字段修复、协议扩展等细分实现按职责迁入相应模块，目录合并不表示删除功能。
+
+## 4. 职责与依赖方向
+
+| 包或位置 | 拥有的职责 | 不应承担的职责 |
+|---|---|---|
+| 根 `src/` | 命令、显式目录、资源注入、候选构建、内核适配、进程退出 | 协议转换、业务 SQL、供应商特殊行为 |
+| `nyro-kernel` | 通用组件图、生命周期、代际、租约、就绪状态 | 配置来源、网络协议及所有业务策略 |
+| `nyro-config` | 数据面配置组合、解析、快照、校验、指纹、来源 | 启动业务模块、控制面数据库读写 |
+| `nyro-security` | 身份、凭证验证、授权契约和通用实现 | HTTP 凭证提取、模型/工具专用权限规则 |
+| `nyro-limit` | 频率、累计额度、并发许可及必要状态操作 | 模型价格、协议响应、控制面实体 |
+| `nyro-protocol` | 基础 wire 类型、序列化、协议错误与流帧处理 | LLM IR、Provider 凭证、路由、重试 |
+| `nyro-llm` | LLM 配置、IR、转换、可信执行、路由、Provider、传输 | 管理数据库、进程装配、MCP 执行规则 |
+| `nyro-control` | 管理业务、业务仓储、配置快照发布 | 在请求路径中执行 LLM/MCP 调度 |
+| `nyro-telemetry` | 可共享的日志、指标、追踪设施 | 模型计费策略、控制面的业务查询 |
+
+以下箭头表示主要的编译依赖方向；第三方库省略：
 
 ```mermaid
-graph TD
-    nyroCoreLib["nyro-core (lib)"]
-    srcTauri["src-tauri (Desktop binary)"]
-    srcServer["src-server (Server binary)"]
-    webui["webui (React + TypeScript)"]
-    tauriIPC["Tauri IPC"]
-    httpREST["HTTP REST :19531"]
-
-    srcTauri --> nyroCoreLib
-    srcServer --> nyroCoreLib
-    webui --> tauriIPC
-    webui --> httpREST
-    tauriIPC --> srcTauri
-    httpREST --> srcServer
+flowchart TD
+    root["nyro / src"] --> kernel["nyro-kernel"]
+    root --> config["nyro-config"]
+    root --> control["nyro-control"]
+    root --> llm["nyro-llm"]
+    root --> telemetry["nyro-telemetry"]
+    config --> llm
+    config --> security["nyro-security"]
+    config --> limit["nyro-limit"]
+    config --> telemetry
+    control --> config
+    control --> security
+    control --> telemetry
+    llm --> protocol["nyro-protocol"]
+    llm --> security
+    llm --> limit
+    llm --> telemetry
 ```
 
-**nyro-core 顶层 `pub mod`（lib.rs，共 13 个）：**
+领域配置由领域自己定义。`nyro-config` 组合 LLM 和共享能力的数据面配置；它不导入 `nyro-control`。控制面自己的启动配置由根程序组装和传入，避免 `control → config → control` 的循环。LLM 接收自己的配置及已构建资源，不反向依赖产品级快照包。
 
-```
-admin · auth · config · db · error · integrations · logging
-plugin · protocol · provider · proxy · router · storage
-```
+根程序可以直接引用共享能力包以完成构造和注入。内核与共享库不反向引用根程序；配置、控制面及应用也不通过全局单例访问它。将应用接入内核的生命周期适配留在装配层，独立库可以在不启动内核的情况下使用。
 
-**核心 API：**
+未来 MCP 自己定义配置、请求类型和运行时，消费同一组共享能力；不通过导入 LLM 的请求模型获取认证或限额能力。现阶段不为将来的跨应用业务编排建立 Integration 包。
 
-```
-Gateway::new(config)      → 初始化数据库、启动代理服务
-Gateway::start_proxy()    → 启动 axum HTTP Server（代理面）
-Gateway::admin()          → 返回 AdminService，提供全部管理操作
-  ├── .list_models()
-  ├── .create_model(input)
-  ├── .list_providers()
-  ├── .create_provider(input)
-  ├── .test_provider(id)
-  ├── .list_api_keys()
-  ├── .query_logs(filter)
-  ├── .get_stats_overview()
-  ├── .list_loaded_extensions()  ← PluginKernel 聚合 manifest
-  └── ...
-Gateway::shutdown()       → 优雅关闭
-```
+## 5. 模块契约、嵌套与资源所有权
 
-`AdminService` 是管理面唯一入口；`admin/` 子模块按功能职责分布，不引入新传输层抽象。
+### 5.1 显式装配与类型化契约
 
----
+`src/bootstrap/catalog.rs` 显式列出编译进入产品的能力实现。配置选择已存在的实现；引用一个库本身不触发全局注册。目录中的身份、能力种类和构造入口必须匹配宿主要求的契约，未知实现或不支持的组合在候选构建时拒绝。
 
-## 3. 协议转换架构
+| 模块类别 | 主要契约 | 生命周期要求 |
+|---|---|---|
+| 应用运行时 | 自己的配置、类型化请求入口和就绪条件 | 由装配适配器接入组件图 |
+| Protocol codec | 特定交互的编解码与流事件能力 | 纯函数/无状态对象不强制启停；流解析状态按请求持有 |
+| Provider driver | 供应商扩展、凭证使用、请求准备与错误分类 | 不自行获取整个网关或控制面仓储 |
+| 认证、授权、限制实现 | 身份/资源/用量输入及明确结果 | 按状态后端或许可的实际生命周期持有资源 |
+| 请求扩展 | 声明的槽位、允许访问的数据和返回结果 | 不拥有必需阶段、重试或最终交付权 |
+| 有资源的组件 | 依赖、启动、停止、清理及失败报告 | 构建失败、部分启动和正常退出均有释放路径 |
 
-### 3.1 核心设计原则
+本文固定职责契约，不预定一套所有模块都必须实现的庞大 trait。首版已有接口和普通类型足够表达的能力，不另建工厂层。
 
-- **统一错误 taxonomy**：`GatewayError` 覆盖 15 种错误类型，每个错误有稳定 code、HTTP status、user message、internal detail 和 retryable 标志。
-- **请求生命周期追踪**：`RequestContext` 携带 request_id、deadline、cancellation token、outcome，以及类型键扩展袋 `ContextBag`，端到端贯穿所有层（见 §4）。
-- **确定性协议协商**：`negotiate()`（`proxy/planner/negotiator.rs`）实现三级 egress 解析（Exact → Same-family → Provider Default），`ProtocolRegistry` 统一别名规范化。
-- **Pass-Through 已落地**：`ingress == egress` 且 `Vendor` 声明无请求/响应 mutation（`declared_request_mutations()` / `declared_response_mutations()` 均为 false）时，dispatcher 绕过 IR 往返，直接透传原始 body / SSE 字节，最小化延迟与 CPU 开销。
-- **完整字段映射**：每个 codec 明确处理已知字段；vendor-specific 字段走三段化路径，不隐式丢弃。
-- **Vendor 单点接口**：`dispatch_pipeline` 只通过 `Vendor` trait 与厂商层交互，一次注册覆盖请求/响应编解码与流式处理的完整生命周期。
-- **五阶段生命周期**：请求/响应全程经过 OnRequest / OnAccess / OnUpstream / OnResponse / OnLog 五个插点，通过 `PhaseHook` 做非侵入扩展（见 §4）。
+### 5.2 三种关系分别建模
 
-### 3.2 完整调用流程
+- **配置嵌套关系**：父配置在明确位置选择子能力，例如 LLM 应用选择 Provider、codec 和请求扩展。父模块负责验证子模块的类型、能力与配置组合。
+- **资源依赖图**：描述组件启动前需要哪些资源，以及停止时的顺序。共享连接池可以被多个模块使用，不要求复制到每个配置子树。
+- **请求执行流程**：由应用规定阶段顺序和数据传递，不由配置树的遍历顺序或模块声明顺序决定。
 
-```
-+--------------------+                  +------------------------------------------+
-| Client / CLI / SDK | -- HTTP/SSE --> | Ingress Shell（proxy/ingress/<family>/）   |
-|                    |                  |  RequestContext 注入（axum Extension）      |
-|                    |                  |  decode body → AiRequest（IR）             |
-+--------------------+                  +-------------------+----------------------+
-                                                            |
-                                                            ▼
-                                         +------------------------------------------+
-                                         | dispatch_pipeline（薄包装）               |
-                                         |  HostContext::new(&gw)                    |
-                                         |  ↓ dispatch_pipeline_inner(ctx, req, host)|
-                                         +-------------------+----------------------+
-                                                            |
-                                  ┌─ Phase ①  OnRequest ───┤  路由键派生前
-                                  │  PhaseHook chain        │  可改写 request.model
-                                  │  ShortCircuit → 直接返回 │  Reject → 渲染错误
-                                  └─────────────────────────┤
-                                                            │
-                                              Route lookup（model_cache）
-                                              Auth / Quota（authorize_model_access）
-                                                            │
-                                  ┌─ Phase ②  OnAccess ────┤  身份 + 路由已定
-                                  │  PhaseHook chain        │  可 Reject（限流/鉴权策略）
-                                  └─────────────────────────┤
-                                                            │
-                                         Target iteration（HealthRegistry 感知）
-                                                            │
-                                  ┌─────────── 每个 target ──────────────────────┐
-                                  │  negotiate() → egress / base_url              │
-                                  │  VendorRegistry.get_vendor(vendor_id)         │
-                                  │                                               │
-                                  │  ┌─ Phase ③  OnUpstream ──────────────────┐  │
-                                  │  │  per-attempt（重试循环内）               │  │
-                                  │  │  可 ShortCircuit（缓存命中）             │  │
-                                  │  └────────────────────────────────────────┘  │
-                                  │                                               │
-                                  │  provider_ctx = ProviderCtx{...}              │
-                                  │  build outbound（passthrough_run | 7 步）      │
-                                  │  CallCtx{ req_ext = ctx.extensions.clone() }  │
-                                  │                                               │
-                                  │  ┌────────────── handlers ──────────────────┐ │
-                                  │  │ is_stream                                 │ │
-                                  │  │  → handle_stream                          │ │
-                                  │  │    · IR path: spawn 内逐 AiStreamDelta    │ │
-                                  │  │        ┌─ Phase ④ OnResponse(Stream) ─┐  │ │
-                                  │  │    · SSE passthrough: 不接 OnResponse   │ │
-                                  │  │ force_upstream_stream                    │ │
-                                  │  │  → handle_non_stream_via_upstream_stream  │ │
-                                  │  │        ┌─ Phase ④ OnResponse(Full) ──┐  │ │
-                                  │  │ else                                     │ │
-                                  │  │  → handle_non_stream                     │ │
-                                  │  │        ┌─ Phase ④ OnResponse(Full) ──┐  │ │
-                                  │  │    · LogBuilder.emit()                   │ │
-                                  │  │        └▶ 注入 ResponseStats → ctx.ext  │ │
-                                  │  └──────────────────────────────────────────┘ │
-                                  │  status<400 → record_success, return          │
-                                  │  retryable → continue; else → return          │
-                                  └───────────────────────────────────────────────┘
-                                                            │
-                                         ┌─ Phase ⑤  OnLog ┤  单一汇聚点（所有返回路径）
-                                         │  fire-and-forget │  只读 ctx.extensions 的
-                                         │  不可改/不可短路  │  ResponseStats 快照
-                                         └──────────────────┤
-                                                            │
-                                              Return to Client（JSON / SSE）
+一个资源只有一个明确的生命周期所有者。使用方持有引用或租约；依赖共享资源不等于取得关闭它的权限。父候选在构建中创建的资源要立即纳入清理范围，后续子模块失败时也能释放。组件按依赖顺序启动，按逆依赖顺序退役；已启动与仅完成构建的资源分别走适当清理路径，避免漏清理或重复清理。
+
+共享库负责关闭自身内部资源的操作；协调何时关闭由持有它的应用或装配层负责。内核只调用通用生命周期契约，不识别数据库、供应商或模型。
+
+## 6. 配置来源与代际生命周期
+
+### 6.1 配置路径
+
+```text
+standalone 文件 → nyro-config 解析、校验 ─────────────────┐
+                                                        ├→ Snapshot
+SQLite / Postgres → 控制面业务读取 → publish 构建、校验 ──┘
+                                                             ↓
+                           进程内交付或控制面配置分发 → 数据面协调器
 ```
 
-### 3.3 内部表示（IR）
+standalone 默认启动时读取一次，变更文件后重启生效；本次不引入文件自动监听。控制面通过配置分发路径驱动在线更新。`serve` 内置的数据面也消费同样的不可变快照，不在每个模型请求中直接读取管理数据库。
 
-位于 `crates/nyro-core/src/protocol/ir/`，定义统一内部结构：
+快照保存生效配置，不保存正在变化的许可、计数器、连接和请求状态。有效配置的确定性指纹用于跳过重复更新，不承诺某个序列化格式、hash 算法或 PATCH API。
 
-- `AiRequest`（`ir/request.rs`）：入站请求，含消息列表、工具定义、模型参数
-- `AiResponse`（`ir/response.rs`）：出站响应，含 content / tool_calls / usage / reasoning_content
-- `AiStreamDelta`（`ir/stream.rs`）：流式增量事件，支持 reasoning delta、text、tool_call
-- `Usage`（`ir/usage.rs`）：prompt_tokens / completion_tokens / total_tokens / cache_read_tokens
+### 6.2 候选构建与发布
 
-**vendor-specific 字段命名约定（存于 IR extra 字段）：**
+1. 配置来源产生完整快照，完成格式、领域参数和引用关系校验。
+2. 比较有效配置指纹；与当前已生效配置一致时跳过重建。
+3. 装配层解析能力目录，构建非活动应用候选，注入共享资源并登记候选自有资源。
+4. 完成实例级校验和资源依赖图检查；未知依赖、循环依赖或能力不匹配均拒绝候选。
+5. 按依赖顺序启动候选组件。候选启动期间不成为活动请求入口；监听和路由挂载由进程层协调。
+6. 候选就绪后原子发布。后续新请求取得新代际租约，旧请求继续持有旧代际。
+7. 旧代际停止接受新请求，待租约排空后按逆依赖顺序停止和清理。
 
-| 前缀 | 用途 |
+构建或启动失败时清理候选，保留最后已知有效代际。首次 standalone 激活失败则启动失败；远程来源尚未获得有效快照时，进程可以存活但不就绪，持续等待有效配置。共享资源的健康状态仍独立影响实际就绪状态。
+
+“原子发布”保证活动配置切换的一致性，不代表任意外部副作用可以回滚。启动应尽量避免不可逆副作用；已发送请求、写入的外部数据或产生的费用不能通过回退配置自动撤销。
+
+### 6.3 资源寿命
+
+| 资源 | 主要寿命 | 变更时的要求 |
+|---|---|---|
+| 不可变快照、配置绑定的运行时与 Driver | 配置代际 | 请求持有期间保持有效 |
+| 通用监听、数据库连接池、共享观测设施 | 进程或显式资源作用域 | 候选失败不能关闭仍被活动代际使用的资源 |
+| 路由健康状态、限额计数器、并发状态 | 稳定业务身份对应的共享作用域 | 同一身份的配置重建不能意外清零 |
+| 网络调用、流解析器、请求上下文 | 请求或单次尝试 | 取消或失败时释放；重试隔离尝试状态 |
+| 并发许可、额度预留 | 对应操作 | 与运行代际租约分开管理和收尾 |
+
+资源配置确实变化时，构建新的资源实例并让旧引用排空，不在原地破坏旧代际依赖。退出时先停止接入，再等待请求和清理任务；关闭超时或强制终止必须可观测，不能将未完成的收尾报告为成功。
+
+## 7. LLM 请求执行与扩展权限
+
+### 7.1 固定流程
+
+```text
+HTTP 基础接入
+  → 获取并固定活动代际
+  → 配置相关的领域解码与能力选择
+  → Observe → Resolve → Authenticate → Authorize → Admit
+  → 可选 PreDispatch → Dispatch → 可选 PostResponse
+  → 可信的终态交付 → 逆序 Finalizers
+```
+
+接入层先完成与代际无关的基础解析；依赖配置的解码、能力选择和后续执行使用同一个代际。认证身份、截止时间、路由结果、尝试状态和原始传输信息放在请求执行上下文，不扩散为每个 IR 的通用业务字段。
+
+LLM runtime 掌握必需阶段顺序、最终路由选择、重试预算、流提交状态及终态交付。可选扩展只能在声明槽位继续、拒绝或短路；提前产生结果仍由 runtime 完成协议交付和收尾。扩展不能跳过认证、授权或准入，不能自行调用下一阶段、发送上游请求或写入客户端响应，也不能取消已登记的 Finalizers。
+
+不同交互共享必要机制，但具体执行路径保持请求与响应类型配对。上游是否支持相应工作负载在配置/能力校验及分发时确认，不通过空实现或 `unreachable!` 表达缺失能力。
+
+### 7.2 Codec、Provider 与 Transport
+
+每次上游尝试按以下边界执行：
+
+```text
+克隆请求并选择上游模型
+  → Provider 扩展领域请求
+  → Codec 将 IR 编码为基础 wire 请求
+  → Provider 准备 URL、凭证、请求头与签名
+  → Transport 发送请求
+
+原始响应
+  → Provider 分类原始状态与元数据
+  → Codec 解码为 IR 或领域错误
+  → Provider 应用供应商响应/错误扩展
+  → Runtime 决定交付、重试或故障转移
+```
+
+Provider 留在 `nyro-llm/provider`，但其接口只接收执行必需的配置、凭证和类型，不继续传入整个 `Gateway` 或控制面 `Provider` 数据库实体。上游账号授权流程和凭证持久化归控制面，使用凭证和签名归 Provider。
+
+同一协议端点的透明转发需要明确声明兼容能力，并服从同一条认证、准入和交付流程；原始请求保留机制不等于任意扩展字段、凭证或响应头都可以跨协议转发。不支持的转换必须明确处理，不能静默丢弃核心语义。
+
+### 7.3 流、失败与取消
+
+流式响应在首个完整客户端可见帧成功写入并刷新后提交。提交前的缓冲、解析、用量累积和供应商状态按尝试隔离；只有确认客户端尚未收到本次尝试的响应字节、且策略允许时才能重试，并必须丢弃失败尝试的未提交输出。部分写入、写入或刷新失败、以及交付状态不确定时，即使尚未达到完整帧提交点，也禁止重试和切换上游。提交后禁止重试和切换上游，后续错误只能按已提交协议终止当前流。
+
+非流式响应在开始向客户端交付后同样不能重新执行上游。客户端断开、超时、正常完成和错误均进入适当收尾路径：取消在途工作，释放并发许可，按已知消耗结算额度，释放代际租约。结算需要异步 I/O 时由运行时显式管理，不能仅依赖同步析构完成。
+
+取消不表示消耗为零；用量缺失也不等于可以退还全部额度。具体预留、结算和失败策略由限制契约及业务策略明确，避免重复结算，并报告无法完成的收尾。
+
+## 8. IR 与协议类型
+
+### 8.1 统一入口与具体工作负载
+
+入口名称由包命名空间区分。以下是目标 IR 的结构示意，`ChatRequest` 等具体类型来自同一包的工作负载模块，并由 `nyro-llm/src/lib.rs` 公开导出：
+
+```rust
+pub enum Request {
+    Chat(ChatRequest),
+    Embedding(EmbeddingRequest),
+}
+
+pub enum Response {
+    Chat(ChatResponse),
+    Embedding(EmbeddingResponse),
+}
+```
+
+外部使用 `nyro_llm::Request` / `nyro_llm::Response`，或导入包别名后使用 `llm::Request`。统一枚举用于调度边界；Chat codec 和执行路径使用 `ChatRequest` / `ChatResponse`，Embedding 使用 `EmbeddingRequest` / `EmbeddingResponse`。两个入口枚举本身不保证配对，保证来自具体接口。
+
+Chat 流使用自己的事件类型，不要求所有交互实现流接口。当前重点是消除 Embedding 借用空 Chat 消息、把核心字段藏进扩展袋以及响应转换绕过类型契约的问题，不只改入口名称。
+
+### 8.2 内容模态与操作分开
+
+包含图片或音频内容的对话仍然可以是 Chat。图片生成、图片编辑、音频转写、语音合成等操作在需要时定义自己的请求和结果；不能仅按媒体名称制造装满可选字段的万能结构。如果未来的视频操作是异步任务，还应表达任务提交、状态与产物，而非强套普通同步响应。
+
+共享内容引用、错误和用量类型以语义一致为前提。已知的交互核心字段进入类型化 IR；协议特有和供应商特有字段具有明确归属，不把无约束 JSON 作为常规交互数据模型。
+
+### 8.3 对外复用范围
+
+`nyro-protocol` 独立提供 OpenAI、Anthropic、Gemini 基础协议格式，社区项目解析这些协议时不需要构建 Nyro runtime、内核或数据库。IR 与跨协议转换暂留 `nyro-llm`，本次不承诺一个独立的 IR/转换 SDK。
+
+## 9. 共享安全、限制与观测能力
+
+| 能力 | 共享机制 | 应用负责的语义 |
+|---|---|---|
+| authn | 凭证验证、身份结果 | 入口凭证提取、身份来源适配 |
+| authz | 主体、操作、资源的授权契约 | 模型访问、未来 MCP 工具/资源访问策略 |
+| rate | 指定作用域下的频率控制 | 限制对象、阈值和协议拒绝结果 |
+| quota | 累计用量、预留和结算 | token/其他计量单位映射及成本策略 |
+| concurrency | 在途许可获取与释放 | 受限操作的边界和生命周期 |
+| telemetry | 日志、指标、追踪的共享设施 | LLM 或控制面的事件含义和业务查询 |
+
+这些能力同时包含策略与执行机制，不统一归为一个 `policy` 或 `plugins` 大包。`nyro-security` 不预设 `Model`、`RouteID` 等 LLM 字段；`nyro-limit` 不要求所有计量都叫 token。不同工作负载共享实现不自动意味着共享同一额度，作用域由业务配置与映射明确。
+
+严格累计限额需要考虑并发预留与结算，单纯事前读计数、事后累加不能承诺硬上限。额度状态与并发许可的存储契约必须表达所需的原子性，不能用普通 KV 的 get/set 假定事务成立。
+
+观测初始化与资源装配由根程序协调。共享观测实现不认识模型数据库表；控制面的历史日志和统计读取归其业务存储。配置代际租约与限流并发许可是不同概念，不能复用一个计数器代替二者。
+
+## 10. 存储与数据库访问
+
+### 10.1 文件来源与数据库仓储
+
+| 方式 | 所在位置 | 语义 |
+|---|---|---|
+| file / standalone | `nyro-config/src/source/file.rs` | 文件解析、校验、构建不可变配置快照 |
+| SQLite | `nyro-control/src/storage/` | 管理数据的持久化与事务 |
+| Postgres | `nyro-control/src/storage/` | 与 SQLite 对齐的管理业务存储契约 |
+| 内存仓储 | `nyro-control/src/storage/memory.rs` | 测试或内存实现，不等于生产配置文件后端 |
+
+文件不强制实现模型 CRUD、事务和管理 API 写回接口。文件模式不依赖控制面配置数据库；运行期额度和观测状态是否持久化，由各自能力配置决定，不能由“配置来自文件”推断为所有状态均持久化或均不持久化。
+
+### 10.2 SQLite 与 Postgres 操作归属
+
+- `storage/database/`：连接参数、连接池、驱动差异和健康检查。使用已有 SQLx 及必要辅助代码，不创造新的通用数据库操作框架。
+- `storage/sql/`：按模型、Provider、API Key、设置、会话等业务组织查询和写入。能够共享的实现继续共享，保留真实的数据库方言差异。
+- `storage/repository.rs`：对管理业务提供必要的仓储和事务契约。业务服务决定哪些修改必须一起成功，仓储执行对应事务。
+- `storage/migration/`：控制面表结构、迁移源及 schema 校验。通用连接工具不执行任意业务模块的迁移。
+
+根装配层选择后端并持有连接资源，使用者持有连接池引用。候选重建不能关闭仍在使用的共享池。若后续限制模块确实需要自己的 SQL 状态，其查询和 schema 归 `nyro-limit`；只有实际出现共用连接代码时才考虑提取轻量数据库包，不能让限制模块反向依赖控制面。
+
+schema 的所有权不因共用数据库而合并。修改实际迁移源时仍必须遵守仓库的数据库文档与生成流程；参考 SQL 是派生产物，不手写。本轮不修改现有表结构、迁移或生成文件。
+
+## 11. 现有实现与目标对应
+
+采用新旧实现并行开发、最后统一切换入口的迁移方式。新能力包逐步加入 workspace，不依赖旧 `nyro-core`；旧入口继续承担现有发布，新实现独立构建和测试。第一步交付独立内核及本文档，随后接通新数据面、补齐现有能力，再接入控制面与工具。
+
+完成协议与 Provider 回归、流式响应和取消收尾、配置更新、SQLite/Postgres 数据兼容、管理 API/WebUI 及工具命令验证后，再统一切换构建、安装和发布流程，移除 Tauri、旧 Server/Tools 入口及失去消费者的旧代码。旧五阶段 Hook 框架随旧运行时退出，认证、准入、响应处理、终态日志和资源收尾先由新运行时承接。
+
+本表描述迁移归属，不表示独立内核落地时已经执行删除、重命名或兼容切换。
+
+| 当前实现或历史方案 | 目标归属与差异 |
 |---|---|
-| `__anthropic_raw_*` | Anthropic cache_control / exotic blocks 无损往返 |
-| `__google_raw_*` | Google systemInstruction / built-in tools / generationConfig |
-| `__emb_*` | Embeddings 已知字段（input / dimensions / encoding_format / user） |
-| `__vendor_ingress` | 未知 vendor 字段集合（由 VendorFieldPolicy 决定是否转发） |
+| `crates/nyro-core/` 与整体 `Gateway` | 拆为八个职责包；按使用者注入必要资源，减少全局状态依赖 |
+| `src-server/`、`nyro-server --mode ...` | 根 `src/` 与 `nyro-control`；目标为 `nyro serve` / `nyro proxy` |
+| `src-tauri/`、桌面 IPC、桌面发布工作流 | 退出目标产品形态；WebUI 通过服务端管理 API 工作 |
+| `crates/nyro-tools/` 独立工具二进制 | 现有能力迁入唯一二进制的 `nyro tool` 命令族 |
+| `crates/nyro-core/src/protocol/ir/` 的 `AiRequest` / `AiResponse` | `nyro-llm` 内入口枚举与 Chat、Embedding 配对类型 |
+| 当前协议 codec 中混合的 wire 格式与 IR 转换 | 基础协议进入 `nyro-protocol`，转换留在 `nyro-llm/codec` |
+| `crates/nyro-core/src/provider/` | 留在 `nyro-llm/provider`，先消除对整体网关和数据库实体的依赖 |
+| 当前 `PluginKernel`、全局注册表与五阶段 Hook 方案 | 微内核只管理资源；应用掌握可信执行；根程序显式装配 |
+| 当前 `crates/nyro-core/src/storage/` 与 `src-server/src/yaml_config.rs` | 管理仓储归控制面，文件来源归配置包，领域状态归所属模块 |
+| 旧 Rust 的 MySQL 后端及 `deploy/schema/mysql.sql` | 不进入本轮目标支持范围；本轮文档更新不删除实现或生成文件 |
+| 当前 `README.md` / `README_CN.md`、运行手册、`AGENTS.md` | 继续说明现有实现，实际代码迁移时再同步用户操作文档 |
 
----
+目标支持范围为 standalone 文件配置、SQLite 和 Postgres。现有 schema、数据和 CLI 的迁移兼容措施属于后续实施计划；本设计不授权删除用户数据或隐式迁移数据库。
 
-## 4. 请求生命周期与扩展框架
+## 12. 验收场景与文档维护
 
-> 权威设计文档：[docs/design/lifecycle.md](lifecycle.md)。本节提供概要，细节以 RFC 为准。
+以下是后续实现必须证明的行为，本次文档定稿不表示相关测试已经通过：
 
-### 4.1 五阶段定义
-
-| 阶段 | 时机 | 可做的事 | PhaseOutcome |
-|---|---|---|---|
-| **OnRequest** | 路由键派生前 | 改写 `request.model`、添加头 | Continue / ShortCircuit / Reject |
-| **OnAccess** | 鉴权完成后 | 限流拒绝、自定义 ACL | Continue / ShortCircuit / Reject |
-| **OnUpstream** | 上游调用前，per-attempt | 缓存命中短路、参数注入 | Continue / ShortCircuit / Reject |
-| **OnResponse** | 响应解码后（非流式: Full；流式: 逐 delta） | 整形输出、屏蔽字段、写缓存 | Continue / ShortCircuit / Reject（非流式）；仅 Continue（流式） |
-| **OnLog** | 管线边界（所有返回路径汇聚后） | 只读采样、指标上报、外部投递 | Continue（终态，不可短路） |
-
-### 4.2 核心类型
-
-```rust
-// 钩子接口（inventory::submit! 注册，进程内静态链接）
-#[async_trait]
-pub trait PhaseHook: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn phase(&self) -> Phase;
-    async fn run(&self, ctx: &mut PhaseCtx<'_>) -> PhaseOutcome;
-}
-
-// 每次调用时传给 hook 的上下文四件套
-pub struct PhaseCtx<'a> {
-    pub req_ctx:  &'a mut RequestContext,  // 端到端请求上下文（含 ContextBag）
-    pub request:  &'a mut AiRequest,       // 协议中性 IR
-    pub response: ResponseView<'a>,        // Pending / Full / Stream
-    pub host:     &'a HostContext<'a>,     // 网关能力边界（存储/配置/HTTP 等）
-}
-
-// ResponseStats: emit() 单点注入，OnLog 及 OnLogHook 读取
-pub struct ResponseStats {
-    pub client_status:       u16,
-    pub upstream_status:     Option<u16>,
-    pub usage:               Usage,
-    pub upstream_latency_ms: Option<i64>,
-    pub ttfb_ms:             Option<i64>,
-    pub stream_chunks:       u32,
-}
-```
-
-### 4.3 数据通道
-
-```
-RequestContext.extensions: ContextBag
-  └─ 类型键（TypeId）→ Box<dyn Any + Send + Sync>
-     共享引用（Arc<Mutex<HashMap>>），clone 后仍指向同一份数据
-
-写入：LogBuilder::emit() → ctx.extensions.insert::<ResponseStats>(...)
-读取：OnLog / OnLogHook → ctx.extensions.get::<ResponseStats>()
-```
-
-### 4.4 PluginKernel 与 admin 视图
-
-`PluginKernel`（`plugin/mod.rs`）聚合所有 `inventory` 注册表：
-
-```
-PluginKernel::global()
-  ├── HookRegistry（旧版 integrations）
-  ├── VendorRegistry
-  ├── ProtocolRegistry
-  └── PhaseHookRegistry
-        → manifests() → [{id, capability}]
-              ↓
-        GET /api/v1/system/extensions
-        Tauri: get_loaded_extensions
-        WebUI: /extensions 只读页
-```
-
-### 4.5 框架级 vs 插件级（当前状态）
-
-```
-框架级 ✅ 已交付
-  五个 PhaseHook 插点接线（OnRequest/OnAccess/OnUpstream/OnResponse/OnLog）
-  RequestContext.extensions（ContextBag）端到端贯穿
-  ResponseStats 单点注入（emit()）
-  HostContext 稳定边界
-  PhaseHookRegistry（inventory 注册，空注册表零开销 no-op）
-  PluginKernel + admin "已加载扩展" 只读视图
-
-插件级 🔲 待做（A4）
-  限流插件（OnAccess → Reject）
-  语义缓存插件（OnUpstream ShortCircuit + OnResponse 落缓存）
-  可观测性 exporter（OnLog 消费 ResponseStats → OTel / Prometheus）
-```
-
----
-
-## 5. 协议层（codec/）详情
-
-### 5.1 EndpointHandler 注册体系
-
-每个 dialect 的注册壳位于 `codec/<family>/<dialect>/` 对应目录，通过 `inventory::submit!` 自动注册进 `ProtocolRegistry`：
-
-```rust
-inventory::submit! {
-    EndpointRegistration { make: || Box::new(XxxHandler) }
-}
-// ProtocolRegistration 为 EndpointRegistration 的向后兼容别名
-```
-
-| 目录 | 注册的 ProtocolId（ProtocolEndpoint） |
+| 场景 | 验收要求 |
 |---|---|
-| `codec/openai/compatible/` | `openai/chat/v1`、`openai/embeddings/v1` |
-| `codec/openai/responses/` | `openai/responses/v1` |
-| `codec/anthropic/messages/` | `anthropic/messages/2023-06-01` |
-| `codec/google/gemini/` | `google/generate/v1beta` |
-
-`ProtocolId` 现为 `ProtocolEndpoint`（`protocol/ids.rs`）的类型别名，保持向后兼容。
-
-### 5.2 EndpointHandler trait 与 codec trait
-
-`EndpointHandler`（原 `ProtocolHandler`，`protocol/traits.rs`）：
-
-```rust
-trait EndpointHandler: Send + Sync {
-    fn id(&self) -> ProtocolEndpoint;
-    fn capabilities(&self) -> ProtocolCapabilities;
-    fn make_request_decoder(&self)         -> Box<dyn RequestDecoder>;
-    fn make_request_encoder(&self)         -> Box<dyn RequestEncoder>;
-    fn make_response_decoder(&self)        -> Box<dyn ResponseDecoder>;
-    fn make_response_encoder(&self)        -> Box<dyn ResponseEncoder>;
-    fn make_stream_response_decoder(&self) -> Box<dyn StreamResponseDecoder>;
-    fn make_stream_response_encoder(&self) -> Box<dyn StreamResponseEncoder>;
-}
-```
-
-6 个 codec trait（`protocol/mod.rs`）：`RequestDecoder`、`RequestEncoder`、`ResponseDecoder`、`ResponseEncoder`、`StreamResponseDecoder`、`StreamResponseEncoder`。流式解析在 protocol 层（`StreamResponseDecoder::parse_chunk` / `finish`），**非** Vendor 层。
-
-### 5.3 ProtocolCapabilities 矩阵
-
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `streaming` | bool | 支持 SSE 流式 |
-| `tools` / `function_calling` | bool | 支持 tool call |
-| `reasoning` / `extended_reasoning` | bool | 支持 thinking / reasoning |
-| `embeddings` | bool | Embeddings 端点 |
-| `force_upstream_stream` | bool | 强制上游 streaming（Responses API） |
-| `override_model_in_body` | bool | model 写入 URL path（Google） |
-| `unknown_field_policy` | VendorFieldPolicy | Pass / Drop |
-| `lossy_default_reject` | bool | lossy 转换默认拒绝 |
-
-### 5.4 Codec 完整字段映射
-
-**OpenAI Chat**：完整映射 logprobs、seed、response_format、parallel_tool_calls、audio 等 20+ 字段；reasoning 字段透传。
-
-**OpenAI Responses**：`force_upstream_stream=true`；独立 decoder/encoder/parser/formatter；reasoning_item 的 summary text 提取。
-
-**Anthropic Messages**：cache_control、thinking config、context_management、exotic blocks（Document / InputAudio）保留 `__anthropic_raw_*` 做无损往返；built-in tools（web_search_call）作为 sentinel ToolDef 处理。
-
-**Google GenerateContent**：完整 generationConfig（20+ fields）、safety_settings、built-in tools（googleSearch / codeExecution）；`__google_generation_config` 在 encoder 中被 model 参数 overlay。
-
-**OpenAI Embeddings**：`VendorFieldPolicy::Drop`；`__emb_*` 明确解析；unknown fields 进 `__vendor_ingress` 但不转发。
-
-### 5.5 语义工具（codec/reasoning.rs & codec/tool_correlation.rs）
-
-**reasoning.rs**：
-- `normalize_response_reasoning`：结构化字段优先，`<think>` tag 兜底提取
-- `split_think_tags`：多 `<think>` block 支持，未闭合 tag 保留为文本
-
-**tool_correlation.rs**：`normalize_request_tool_results`，统一 tool_call_id 关联（精确 ID → content hint → 工具名 hint → FIFO fallback → 自动补合成 assistant message）。
-
----
-
-## 6. 厂商扩展层（provider/）
-
-三层职责分离：
-
-```
-protocol/codec/   ← 序列化层：AiRequest/AiResponse ↔ wire-format JSON
-provider/         ← 编排层：Vendor trait（build_request / parse_response）+ VendorExtension hooks
-```
-
-### 6.1 Vendor trait（原 ProviderAdapter）
-
-`dispatcher` 的唯一接触点（`provider/vendor.rs`）：
-
-```rust
-#[async_trait]
-pub trait Vendor: Send + Sync + 'static {
-    // 标识 / 元数据
-    fn scope(&self) -> VendorScope;              // Vendor | Channel
-    fn vendor_id(&self) -> &'static str;
-    fn supported_protocols(&self) -> &'static [ProtocolId];
-    fn metadata(&self) -> &'static VendorMetadata;
-
-    // Auth / URL
-    fn auth_headers(&self, ctx: &VendorCtx) -> HeaderMap;
-    fn build_url(&self, ctx: &VendorCtx, base_url: &str, path: &str) -> String;
-
-    // 编解码 hook（可选，默认 no-op）
-    async fn pre_request(&self, ctx, req: &mut AiRequest, gw: &Gateway);
-    async fn pre_encode(&self, ctx, req: &mut AiRequest);
-    async fn post_encode(&self, ctx, body: &mut Value, headers: &mut HeaderMap);
-    async fn pre_parse(&self, ctx, body: &mut Value);
-    async fn post_parse(&self, ctx, resp: &mut AiResponse);
-
-    // 流式 hook
-    async fn on_stream_raw_chunk(&self, ctx, chunk: &str);
-    async fn on_stream_delta(&self, ctx, delta: &mut AiStreamDelta);
-
-    // 编排（required）
-    async fn build_request(&self, req: &mut AiRequest, ctx: &ProviderCtx)
-        -> Result<OutboundRequest, GatewayError>;
-    async fn parse_response(&self, resp: InboundResponse, ctx: &ProviderCtx)
-        -> Result<AiResponse, GatewayError>;
-    fn map_error(&self, status: u16, body: Value) -> GatewayError;
-    fn validate_environment(&self, provider: &Provider) -> Result<(), GatewayError>;
-
-    // PassThrough 声明（no mutation → dispatcher 走 passthrough 路径）
-    fn declared_request_mutations(&self) -> bool { false }
-    fn declared_response_mutations(&self) -> bool { false }
-}
-```
-
-**7 步 build_request pipeline**（`provider/common/pipeline.rs`）：
-`pre_request` → `normalize_tool_results` → `pre_encode` → `codec_encode` → `post_encode` → `auth_headers` → `build_url`
-
-**ProviderCtx**（`provider/vendor.rs`）：
-
-```rust
-pub struct ProviderCtx<'a> {
-    pub provider:             &'a Provider,
-    pub protocol:             ProtocolId,        // 即 ProtocolEndpoint
-    pub egress_base_url:      &'a str,
-    pub api_key:              &'a str,
-    pub actual_model:         &'a str,
-    pub credential:           Option<&'a StoredCredential>,
-    pub gw:                   &'a Gateway,
-    pub disable_default_auth: bool,
-}
-```
-
-### 6.2 VendorExtension（channel / family ext）
-
-`VendorExtension`（`provider/vendor_ext.rs`）仍存在，包含 9 个 hook（auth_headers / build_url / pre_encode / post_encode / pre_parse / post_parse / on_stream_raw_chunk / on_stream_delta / pre_request）。
-
-**关系：**
-- `Vendor` 通过 blanket `impl<T: Vendor> VendorExtension for T` 自动实现 `VendorExtension`
-- Channel-only 类型（`OpenAiCodexChannel`、`AnthropicClaudeCodeChannel`）仅 impl `VendorExtension`
-
-**两套注册（均通过 `inventory::submit!`）：**
-
-```rust
-// 完整 vendor
-inventory::submit! { VendorRegistration { make: || Box::new(XxxVendor) } }
-// Channel / family ext
-inventory::submit! { ExtensionRegistration { make: || Box::new(XxxChannel) } }
-```
-
-`VendorRegistry::resolve(provider, protocol_id)` 返回 `Arc<dyn VendorExtension>`，内部通过 `VendorAsExt` 包装统一两类注册。
-
-### 6.3 共用 helpers（provider/common/openai.rs）
-
-所有 OpenAI 兼容厂商共用：`openai_bearer_auth_headers`、`openai_build_url`、`openai_map_error`、`openai_compat_build_request`、`openai_compat_parse_response`、`GenericOpenAICompatibleAdapter`、`ThinkTagExtractingParser`。
-
-### 6.4 厂商列表
-
-| 厂商 | vendor_id | 特殊处理 |
-|---|---|---|
-| OpenAI | `openai` | 含 `codex` channel（OAuth） |
-| Anthropic | `anthropic` | `x-api-key` + `anthropic-version`；含 `claude-code` channel |
-| Google | `google` | URL 追加 `?key=<api_key>`；`override_model_in_body=true` |
-| Vertex AI | `vertexai` | Service account auth + 区域 endpoint |
-| DeepSeek / Moonshot / Zhipu / MiniMax / xAI / ZAI / OpenRouter / Nvidia / Ollama | 各自 vendor_id | 委托 `GenericOpenAICompatibleAdapter` / openai_compat_* |
-| custom | `custom` | 用户自定义 vendor preset |
-
----
-
-## 7. 错误处理
-
-`GatewayError` 统一 taxonomy：
-
-| 变体 | HTTP | 含义 |
-|---|---|---|
-| `BadRequest` | 400 | 客户端格式错误 |
-| `Unauthorized` | 401 | 无有效 API Token |
-| `Forbidden` | 403 | Token 状态异常或无权限 |
-| `QuotaExceeded` | 429 | RPM / TPM / TPD 超限 |
-| `RouteNotFound` | 404 | 无匹配模型/路由 |
-| `ProtocolUnsupported` | 400 | 协议不支持 |
-| `ProtocolLossyRejected` | 422 | lossy 转换被拒绝 |
-| `ProviderUnavailable` | 503 | 无可用 vendor extension |
-| `UpstreamStatus` | 上游 status | 上游返回错误 |
-| `UpstreamTimeout` | 504 | 上游超时 |
-| `StreamParseError` | 502 | SSE chunk 解析失败 |
-| `ClientCancelled` | 499 | 客户端断开 |
-| `Internal` | 500 | 内部错误 |
-
-每个错误由 `GatewayError::render(request_id)` 统一序列化为 OpenAI 兼容 JSON 错误格式。
-
----
-
-## 8. 模型（路由）与访问控制
-
-### 8.1 Model 模型（原 Route）
-
-模型唯一键为 `name`，客户端请求中的 `model` 值与之精确匹配即命中：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` | TEXT PK | UUID |
-| `name` | TEXT | 显示名称，同时作为模型匹配键 |
-| `balance` | TEXT | 负载策略：`weighted` / `priority` / `cooldown` / `latency` |
-| `target_provider` | TEXT FK | 默认目标 Provider（兜底）|
-| `target_model` | TEXT | 默认上游模型名 |
-| `enable_auth` | BOOL | API Token 访问控制，默认 false |
-| `enable_payload` | BOOL/NULL | 是否记录 payload；NULL 时跟随全局开关 |
-| `is_enabled` | BOOL | 模型启用状态，默认 true |
-
-> `ingress_protocol` 不在数据库中。协议在运行时由 `RequestContext` 携带，日志写入 `request_logs.client_protocol`。
-
-**后端列表（model_backends）**：一个 Model 可绑定多个 backend，每个 backend 指向 `provider_id` + `model`，带 `weight`（weighted balance）和 `priority`（priority balance）；后端健康状态在内存 `HealthRegistry` 管理，不入库。
-
-### 8.2 API Token 模型
-
-Model 与 API Token 是**独立管理、多对多绑定**的关系（经 `api_key_models` 表）：
-
-```
-API Token ──── (授权绑定) ──── Model
-  │                             │
-  ├── 配额: RPM / RPD / TPM / TPD  ├── 匹配键 (name)
-  ├── 过期时间                  ├── 后端列表 (model_backends)
-  ├── 状态: is_enabled           ├── 负载策略 (balance)
-  └── 名称                       └── 访问控制 (enable_auth)
-```
-
-Token 格式：`sk-<32位hex>`（存储字段名 `token`）。
-
-### 8.3 代理请求鉴权流程
-
-```
-1. 解析请求 → 提取 model, api_token
-   (优先级: Authorization: Bearer > x-api-key)
-2. match(model) → models 表精确匹配 name
-   └── 未匹配 → GatewayError::RouteNotFound (404)
-3. if model.enable_auth == false:
-   └── 直接放行
-4. if api_token 为空 → GatewayError::Unauthorized (401)
-5. 验证 api_token:
-   a. 不存在 → 401 invalid token
-   b. is_enabled == false → 403 token revoked
-   c. expires_at < now → 403 token expired
-   d. model 不在 token 绑定列表（api_key_models）→ 403 forbidden
-   e. 配额超限 (rpm / tpm / tpd) → GatewayError::QuotaExceeded (429)
-6. 执行路由转发 → model_backends → 健康感知 target 选择
-```
-
----
-
-## 9. 模型能力识别
-
-### 9.1 ai:// 内部协议
-
-Provider 配置中通过 `modelsSource` / `capabilitiesSource` 声明数据来源：
-
-| 值类型 | 示例 | 说明 |
-|---|---|---|
-| HTTP URL | `https://api.openai.com/v1/models` | 直接向 HTTP 端点请求 |
-| 内部协议 | `ai://models.dev/openai` | 从 Nyro 内嵌 / 缓存的 models.dev 数据中查询 |
-
-### 9.2 VendorMetadata
-
-每个厂商通过 `const METADATA: VendorMetadata`（位于 `provider/<vendor>/mod.rs`）声明，由 `VendorRegistry::list_metadata_for_webui()` 聚合输出给 WebUI。
-
----
-
-## 10. 存储与数据层
-
-### 10.1 多后端
-
-| 后端 | 适用形态 | 路径 |
-|---|---|---|
-| SQLite | Desktop（单用户本地） | `crates/nyro-core/src/storage/sqlite/` |
-| PostgreSQL | Server（多用户自托管） | `crates/nyro-core/src/storage/postgres/` |
-| MySQL | Server（多用户自托管） | `crates/nyro-core/src/storage/mysql.rs` |
-| Memory | 测试 / mock | `crates/nyro-core/src/storage/memory.rs` |
-
-统一接口定义在 `crates/nyro-core/src/storage/traits.rs`，上层代码不感知具体后端。
-权威 Schema 文档：[docs/database/schema.md](../database/schema.md)（含 `deploy/schema/postgres.sql` / `mysql.sql`）。
-
-### 10.2 核心表结构（最终态，post-migration）
-
-> 历史迁移：`routes` → `models`，`route_targets` → `model_backends`，`api_key_routes` → `api_key_models`，`api_keys.key` → `api_keys.token`。
-
-```sql
--- 提供商配置
-CREATE TABLE providers (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL,
-    vendor          TEXT,             -- canonical vendor_id
-    protocol        TEXT NOT NULL,
-    base_url        TEXT NOT NULL,
-    api_key         TEXT NOT NULL,    -- static api key
-    auth_mode       TEXT NOT NULL,
-    use_proxy       INTEGER NOT NULL DEFAULT 0,
-    is_enabled      INTEGER NOT NULL DEFAULT 1,
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL
-);
-
--- 模型（路由规则）
-CREATE TABLE models (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL UNIQUE,  -- 匹配键 + 显示名
-    balance         TEXT NOT NULL DEFAULT 'weighted',
-    target_provider TEXT NOT NULL REFERENCES providers(id),
-    target_model    TEXT NOT NULL,
-    enable_auth     INTEGER NOT NULL DEFAULT 0,
-    enable_payload  INTEGER,               -- NULL = 跟随全局
-    is_enabled      INTEGER NOT NULL DEFAULT 1,
-    created_at      TEXT NOT NULL
-);
-
--- 模型后端列表
-CREATE TABLE model_backends (
-    id          TEXT PRIMARY KEY,
-    model_id    TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
-    provider_id TEXT NOT NULL REFERENCES providers(id),
-    model       TEXT NOT NULL,        -- 上游实际模型名
-    weight      INTEGER NOT NULL DEFAULT 100,
-    priority    INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT NOT NULL
-);
-
--- 访问控制 Token
-CREATE TABLE api_keys (
-    id         TEXT PRIMARY KEY,
-    token      TEXT NOT NULL UNIQUE,  -- sk-<32位hex>
-    name       TEXT NOT NULL,
-    rpm        INTEGER,
-    rpd        INTEGER,
-    tpm        INTEGER,
-    tpd        INTEGER,
-    is_enabled INTEGER NOT NULL DEFAULT 1,
-    expires_at TEXT
-);
-
--- Token 与 Model 的绑定关系
-CREATE TABLE api_key_models (
-    api_key_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
-    model_id   TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
-    PRIMARY KEY (api_key_id, model_id)
-);
-
--- 请求日志（append-only，快照，无 FK）
-CREATE TABLE request_logs (
-    id                        TEXT PRIMARY KEY,
-    created_at                INTEGER NOT NULL,  -- Unix 毫秒
-    api_key_id                TEXT,
-    api_key_name              TEXT,
-    client_protocol           TEXT,              -- ingress 协议
-    upstream_protocol         TEXT,              -- egress 协议
-    provider_id               TEXT,
-    provider_name             TEXT,
-    model_id                  TEXT,
-    model_name                TEXT,
-    upstream_url              TEXT,
-    client_model              TEXT,
-    upstream_model            TEXT,
-    method                    TEXT,
-    path                      TEXT,
-    upstream_status_code      INTEGER,
-    client_status_code        INTEGER NOT NULL,
-    latency_total_ms          INTEGER,
-    latency_upstream_ms       INTEGER,
-    input_tokens              INTEGER,
-    output_tokens             INTEGER,
-    cache_read_tokens         INTEGER,
-    is_stream                 INTEGER,
-    stream_chunks_count       INTEGER,
-    stream_first_chunk_ms     INTEGER,
-    -- payload（仅 enable_payload=true 时填充）
-    client_request_headers    TEXT,
-    client_request_body       TEXT,
-    client_response_headers   TEXT,
-    client_response_body      TEXT,
-    upstream_request_headers  TEXT,
-    upstream_request_body     TEXT,
-    upstream_response_headers TEXT,
-    upstream_response_body    TEXT
-);
-
--- 全局配置 KV
-CREATE TABLE settings (
-    name       TEXT PRIMARY KEY,
-    value      TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
--- OAuth 凭据（与 providers 1:1）
-CREATE TABLE provider_oauth_credentials (
-    provider_id    TEXT PRIMARY KEY REFERENCES providers(id) ON DELETE CASCADE,
-    driver_key     TEXT NOT NULL,
-    scheme         TEXT NOT NULL,
-    access_token   TEXT,
-    refresh_token  TEXT,
-    expires_at     TEXT,
-    status         TEXT NOT NULL,
-    last_error     TEXT,
-    created_at     TEXT NOT NULL,
-    updated_at     TEXT NOT NULL
-);
-```
-
-> 后端健康状态（熔断 / 成功率）在运行时内存 `HealthRegistry`（`router/health.rs`）管理，**不持久化到数据库**。
-
-### 10.3 安全
-
-- Desktop 模式下管理 API 仅监听 `127.0.0.1`，外部不可访问
-- Server 模式下管理端口与代理端口独立，可配置鉴权
-
----
-
-## 11. 前端适配层
-
-前端（`webui/`）通过薄抽象层兼容两种部署形态（`webui/src/lib/backend.ts`）：
-
-- **Desktop 版**：通过 Tauri IPC（`invoke(cmd, args)`）调用
-- **Server 版**：通过 HTTP 调用（`fetch(/api/v1/...)`）
-
-**技术栈：**
-
-| 层 | 技术 |
-|---|---|
-| 框架 | React 19 + TypeScript + Vite |
-| 状态 | Zustand |
-| 数据获取 | TanStack Query |
-| 路由 | React Router v7 |
-| 样式 | Tailwind CSS 4 |
-| 图表 | Recharts |
-
----
-
-## 12. 未实施能力 / Future Work
-
-### 12.1 Pass-Through 路径 ✅ 已实现
-
-当 ingress/egress 协议一致且 `Vendor` 声明无 mutation（`declared_request/response_mutations()` 均为 false）时，dispatcher 走 passthrough 路径，绕过 IR 解析直接透传 body / SSE 字节，最小化延迟。
-
-### 12.2 Quota 预留与结算
-
-当前 quota 检查仅在请求前执行，并发场景存在超额风险。建议改为：preflight 估算 → atomic 预留 → 执行请求 → settle 实际用量 → refund 未消费预留。stream 客户端 cancel 时也需结算已产生的 token。
-
-### 12.3 Fixture 契约测试体系
-
-```
-tests/fixtures/protocol/
-  openai_chat/ · openai_responses/ · anthropic_messages/ · google_generate/
-
-tests/contract/
-  openai_chat_to_anthropic.rs  anthropic_to_openai_chat.rs  ...
-
-tests/stream/
-  normal_done.rs  upstream_disconnect.rs  malformed_chunk.rs
-  client_cancel.rs  usage_in_final_chunk.rs
-```
-
-### 12.4 Compatibility Matrix CI
-
-自动化验证每个 ingress→egress protocol 组合的支持程度（Native / Transform / LossyTransform / Reject），在 CI 生成兼容性报告，防止回归。
-
-### 12.5 Record-Replay
-
-捕获真实上游请求/响应 pair，存为 fixture，用于离线复现 bug、provider 更新后兼容性测试、流式异常场景精确重放。
-
-### 12.6 可观测性 Exporter（Plugin-Level）
-
-OnLog 阶段 + `ResponseStats` 已提供标准化的请求指标消费点（见 §4）。下一步：通过 `PhaseHook`（`OnLog`）实现 exporter 插件，输出 trace / metrics / logs 到 OTel Collector / Jaeger / Prometheus / Grafana 等平台。详见 [docs/design/lifecycle.md](lifecycle.md)。
-
-### 12.7 长尾厂商适配
-
-当前覆盖主流厂商（OpenAI / Anthropic / Google / Vertex AI / DeepSeek / Moonshot / Zhipu / MiniMax / xAI / ZAI / OpenRouter / Nvidia / Ollama）。待补充：
-- AWS Bedrock（SigV4 签名 + wrapper protocol）
-- Azure AI Foundry（Azure AD token + deployment URL pattern）
-- Cohere / Mistral / Together AI 等
-
-### 12.8 Router 故障策略（部分已落地）
-
-已落地：多 backend 健康感知迭代（`HealthRegistry`）+ `balance` 策略（weighted / priority / cooldown / latency）+ 可重试状态码自动续跑。待补充：指数退避 + jitter、可配置重试上限、单 backend 精细化熔断（滑动窗口）。
-
-### 12.9 Transport 策略
-
-- HTTP/2 上游连接（降低延迟，复用连接）
-- 连接池配置（per-provider max connections）
-- 请求级超时精细化（connect_timeout / read_timeout / total_timeout 分离）
-- 可配置重试策略
+| 候选构造、配置校验或启动失败 | 候选资源清理完整，活动代际不被替换或破坏 |
+| 重复有效配置 | 跳过重建，不清零状态、不重复创建资源 |
+| 长请求跨配置更新 | 请求保持原代际，新请求使用新代际，旧资源在租约排空后释放 |
+| 客户端取消、超时或部分流失败 | 释放许可，执行相应结算，完成或报告清理结果 |
+| 扩展拒绝、短路或报错 | 不绕过必需安全阶段，不抑制终态交付及 Finalizers |
+| 确认尚无客户端可见输出的上游失败 | 仅在策略允许时重试，失败尝试的未提交输出不泄露 |
+| 首帧部分写入、写入/刷新失败或交付状态不确定 | 即使尚未达到完整帧提交点也禁止重试，终止当前交付 |
+| 首帧提交后上游失败 | 不重试、不故障转移，按当前协议终止流 |
+| Chat 与 Embedding 混合接入 | 具体 codec 和执行路径保持类型配对，不通过虚假流接口适配 |
+| standalone 与控制面来源 | 同一有效配置产生一致的数据面行为；文件模式不要求配置数据库 |
+| SQLite 与 Postgres 管理操作 | 仓储业务行为与事务要求一致，方言差异由后端承担 |
+| 共享协议或安全/限制库的独立引用 | 无须构造整个 Gateway、启动内核或连接控制面数据库 |
+
+本次文档检查包括：八个 crate 名称与目录一致、相对链接有效、依赖图无反向依赖、示例明确是目标 API、旧文档已标记历史范围、上述生命周期场景均有约束。只更新文档时不运行无关 Rust/WebUI 构建，也不生成数据库 schema。
+
+设计参考：[Go 架构](../../go/docs/design/architecture.md)与 [Go 开发约束](../../go/AGENTS.md)。这些资料用于参考职责边界，不自动成为 Rust 的语言级实现限制。Go 目前的部分安全和 quota 接口仍带有 LLM 语义，不能直接当作独立共享库接口照搬。
+
+历史细节参考：[生命周期 RFC](lifecycle.md)、[观测 RFC](observability.md)、[旧 IR 概览](ir/README.md)和[字段归属记录](ir/FIELD_HOMING.md)。它们保留旧架构与历史提案背景；与本文目标架构冲突时以本文为准。当前数据库定义仍以[数据库文档](../database/schema.md)和实际迁移源为准。

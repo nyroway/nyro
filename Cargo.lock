@@ -2930,6 +2930,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nyro-kernel"
+version = "1.8.3"
+dependencies = [
+ "async-trait",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "nyro-server"
 version = "1.8.3"
 dependencies = [
@@ -5530,6 +5539,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

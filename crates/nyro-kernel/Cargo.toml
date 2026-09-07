@@ -1,0 +1,15 @@
+[package]
+name = "nyro-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Workload-neutral resource lifecycle and runtime generation host"
+
+[dependencies]
+async-trait.workspace = true
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }

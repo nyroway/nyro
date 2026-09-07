@@ -1,6 +1,10 @@
 # Nyro 可观测性框架设计 RFC
 
-> 状态:Draft · 关联文档:[lifecycle.md](./lifecycle.md)(本框架的 `TelemetryExporter` 是其扩展层的一个 capability)、[architecture.md](./architecture.md)
+> 状态：历史提案与实现背景，非本次 Rust 重构的目标规范（2026-09-07）。
+>
+> 本文保留旧架构下的可观测性提案，其中内核、插件与 `TelemetryExporter` 的职责归属属于旧方案。新目标由 `nyro-telemetry` 与应用负责观测，不归微内核；以 [Rust 目标架构](./architecture.md)（设计定稿，分阶段实施中）为权威依据。本文及目标文档均不表示代码已完成迁移。
+>
+> 关联历史文档：[请求生命周期提案](./lifecycle.md)。以下正文保留原有语境。
 
 ---
 

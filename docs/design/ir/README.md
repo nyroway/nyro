@@ -1,7 +1,10 @@
 # Nyro IR 设计文档
 
-> 本目录包含 Nyro Internal Representation (IR) 的设计决策文档。  
-> 代码实现位于 `crates/nyro-core/src/protocol/ir/`。
+> 状态：旧实现的设计记录，非本次 Rust 重构的目标规范（2026-09-07）。
+>
+> 本目录记录旧架构下 `AiRequest` / `AiResponse` 等 Internal Representation（IR）的设计决策与实现背景，代码位于 `crates/nyro-core/src/protocol/ir/`。新目标采用 `nyro_llm::Request` / `nyro_llm::Response` 入口枚举及 Chat / Embedding 配对类型，IR 保留在 `nyro-llm` 内；以 [Rust 目标架构](../architecture.md)（设计定稿，分阶段实施中）为权威依据。本文及目标文档均不表示代码已完成迁移。
+>
+> 以下正文及目录中的历史决策保留原有语境，不作为本次重构目标的权威依据。
 
 ---
 
