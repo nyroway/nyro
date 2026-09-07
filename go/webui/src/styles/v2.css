@@ -456,6 +456,18 @@ body {
 .v2-provider-form-grid .provider-preset-card { min-width: 0; min-height: 68px; flex-direction: column; gap: 7px; padding: 9px 5px; border-radius: var(--v2-radius-control); }
 .v2-provider-form-grid .provider-preset-icon { border: 0; border-radius: 0; background: transparent; }
 .v2-provider-form-grid .provider-region-group { margin-top: 8px; }
+.v2-model-tag-input { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 40px; max-height: 176px; overflow-y: auto; padding: 5px 8px; color: var(--v2-ink); background: var(--v2-raised); border: 1px solid var(--v2-line-strong); border-radius: var(--v2-radius-control); cursor: text; }
+.v2-model-tag-input:focus-within { border-color: var(--v2-primary); box-shadow: 0 0 0 2px var(--v2-primary-soft); }
+.v2-model-tag-input-list { display: contents; margin: 0; padding: 0; list-style: none; }
+.v2-model-tag-input-tag { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; gap: 3px; padding: 3px 4px 3px 7px; color: var(--v2-ink-soft); background: var(--v2-muted-surface); border: 1px solid var(--v2-line); border-radius: 5px; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.v2-model-tag-input-tag code { min-width: 0; overflow-wrap: anywhere; font: inherit; }
+.v2-model-tag-input-remove { width: 22px; height: 22px; flex: 0 0 auto; display: grid; place-items: center; padding: 0; color: var(--v2-muted); background: transparent; border: 0; border-radius: 3px; cursor: pointer; }
+.v2-model-tag-input-remove:hover { color: var(--v2-danger); background: var(--v2-danger-soft); }
+.v2-model-tag-input-remove:focus-visible { outline: 2px solid var(--v2-primary); outline-offset: 1px; }
+.v2-model-tag-input-remove svg { width: 13px; height: 13px; }
+.v2-model-tag-input-field { min-width: 148px; flex: 1 1 148px; height: 28px; padding: 0 2px; color: var(--v2-ink); background: transparent; border: 0; outline: 0; font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.v2-model-tag-input-field::placeholder { color: var(--v2-muted-light); }
+.v2-model-tag-input-help { margin: 6px 0 0; color: var(--v2-muted); font-size: 10px; line-height: 1.45; }
 .v2-inspector-footer-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .v2-inspector-footer-actions [data-slot="button"] { height: 32px; border-radius: var(--v2-radius-control); font-size: 11px; }
 .v2-provider-form-error { margin: 0 0 18px; padding: 9px 10px; color: var(--v2-danger); background: var(--v2-danger-soft); border-left: 2px solid var(--v2-danger); font-size: 10px; }
