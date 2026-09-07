@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { backend, streamProviderDraftHealth, streamProviderEditDraftHealth, streamProviderHealth, streamProviderRouteImport } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
@@ -67,6 +67,8 @@ import { PageLayout } from "@/components/v2/page-layout";
 import { ResourceEditorDialog } from "@/components/v2/resource-editor-dialog";
 import { Status } from "@/components/v2/status";
 import { Surface } from "@/components/v2/surface";
+import { ModelTagInput } from "@/features/providers/model-tag-input";
+import { normalizeModelTags } from "@/features/providers/model-tags";
 import { filterProviders, type ProviderFilters } from "@/features/providers/provider-view-model";
 import { localizedMessage, type MessageKey } from "@/lib/messages";
 
@@ -146,8 +148,8 @@ function credentialsRecord(value: unknown): Record<string, string> {
 
 function modelsArrayFromText(text?: string): string[] | undefined {
   if (!text) return undefined;
-  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
-  return lines.length ? lines : undefined;
+  const models = normalizeModelTags(text.split("\n"));
+  return models.length ? models : undefined;
 }
 
 // buildCreateUpstreamInput serializes this page's create-form state into the
@@ -493,18 +495,6 @@ function pickModelsMode(current: ModelsMode, modelsSource?: string, staticModels
   return current;
 }
 
-// autoGrowTextarea sizes a manual-model-list textarea to exactly fit its
-// content (no internal scrollbar, no user-draggable resize handle — see
-// the `resize-none` class on the element): height tracks line count only,
-// growing as the user adds lines and shrinking as they remove them.
-// Resetting to "auto" before reading scrollHeight is required so a shrink
-// (fewer lines) is measured correctly, not clamped to the previous height.
-function autoGrowTextarea(el: HTMLTextAreaElement | null) {
-  if (!el) return;
-  el.style.height = "auto";
-  el.style.height = `${el.scrollHeight}px`;
-}
-
 // isCredentialFieldRequired resolves a field's `required`/`required_when`
 // gate against the currently entered credential values. `required_when`
 // values may be a single string or a list of acceptable strings (see e.g.
@@ -815,8 +805,6 @@ export default function ProvidersPage() {
   const activeTestRunRef = useRef(0);
   const activeTestAbortRef = useRef<AbortController | null>(null);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
-  const modelsTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const editModelsTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const { data: providers = [], isLoading } = useQuery<Upstream[]>({
     queryKey: ["providers"],
@@ -1393,24 +1381,6 @@ export default function ProvidersPage() {
     logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
   }, [testLogs]);
 
-  // Auto-grow the manual model-list textareas to fit their content (see
-  // autoGrowTextarea) — re-measured whenever the text changes (typing,
-  // preset/protocol fill-in) or the segmented control switches into
-  // "static"/manual mode (the edit form's textarea isn't in the DOM at all
-  // while in "url"/auto mode, so it needs re-measuring the moment it mounts).
-  // showForm/editingId are also deps: closing and reopening the same
-  // provider leaves form.models/editForm.models textually unchanged, so
-  // without them the effect would see no dependency change and skip
-  // re-measuring the freshly (re)mounted textarea, leaving it at its
-  // default unsized height.
-  useLayoutEffect(() => {
-    autoGrowTextarea(modelsTextareaRef.current);
-  }, [form.models, modelsMode, showForm]);
-
-  useLayoutEffect(() => {
-    autoGrowTextarea(editModelsTextareaRef.current);
-  }, [editForm.models, editModelsMode, editingId]);
-
   useEffect(() => {
     saveProviderTestResults(testResult);
   }, [testResult]);
@@ -1612,7 +1582,7 @@ export default function ProvidersPage() {
           discovery={(
             <div className="v2-field-span-2">
               <FieldLabel required info={localizedMessage(isZh, "v2.providers.usedToAutoFetchAvailableModelListWhen")}>{localizedMessage(isZh, "v2.providers.modelDiscovery2")}</FieldLabel>
-              {modelsMode === "url" ? <Input placeholder={localizedMessage(isZh, "v2.providers.eGHttpsApiOpenaiComV1Models")} value={form.models_url ?? ""} onChange={(event) => setForm({ ...form, models_url: event.target.value })} /> : <textarea ref={modelsTextareaRef} rows={1} className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50" placeholder={localizedMessage(isZh, "v2.providers.oneModelPerLineEGGpt4o")} value={form.models ?? ""} onChange={(event) => { setForm({ ...form, models: event.target.value }); autoGrowTextarea(event.target); }} />}
+              {modelsMode === "url" ? <Input placeholder={localizedMessage(isZh, "v2.providers.eGHttpsApiOpenaiComV1Models")} value={form.models_url ?? ""} onChange={(event) => setForm({ ...form, models_url: event.target.value })} /> : <ModelTagInput value={modelsArrayFromText(form.models) ?? []} onChange={(models) => setForm((current) => ({ ...current, models: models.join("\n") }))} inputLabel={localizedMessage(isZh, "v2.providers.manualModelInput")} listLabel={localizedMessage(isZh, "v2.providers.manualModelList")} placeholder={localizedMessage(isZh, "v2.providers.enterModelId")} helpText={localizedMessage(isZh, "v2.providers.manualModelsHelp")} removeLabel={(model) => localizedMessage(isZh, "v2.providers.removeModel", { model })} />}
               <ToggleGroup type="single" value={modelsMode} onValueChange={(value) => { if (value) setModelsMode(value as ModelsMode); }} className="provider-region-group"><ToggleGroupItem value="url" variant="outline" size="sm">{localizedMessage(isZh, "v2.providers.autoDiscovery")}</ToggleGroupItem><ToggleGroupItem value="static" variant="outline" size="sm">{localizedMessage(isZh, "v2.providers.manualEntry")}</ToggleGroupItem></ToggleGroup>
             </div>
           )}
@@ -1805,7 +1775,7 @@ export default function ProvidersPage() {
               discovery={(
                 <div className="v2-field-span-2">
                   <FieldLabel required info={localizedMessage(isZh, "v2.providers.usedToAutoFetchAvailableModelListWhen")}>{localizedMessage(isZh, "v2.providers.modelDiscovery2")}</FieldLabel>
-                  {editModelsMode === "url" ? <Input placeholder={localizedMessage(isZh, "v2.providers.eGHttpsApiOpenaiComV1Models")} value={editForm.models_url ?? ""} onChange={(event) => setEditForm({ ...editForm, models_url: event.target.value })} /> : <textarea ref={editModelsTextareaRef} rows={1} className="model-textarea nyro-shadcn-input flex min-h-[40px] w-full resize-none overflow-hidden rounded-md border border-border bg-background px-3 text-sm text-foreground transition-[border-color,background-color,color] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-slate-300 disabled:cursor-not-allowed disabled:opacity-50" placeholder={localizedMessage(isZh, "v2.providers.oneModelPerLineEGGpt4o")} value={editForm.models ?? ""} onChange={(event) => { setEditForm({ ...editForm, models: event.target.value }); autoGrowTextarea(event.target); }} />}
+                  {editModelsMode === "url" ? <Input placeholder={localizedMessage(isZh, "v2.providers.eGHttpsApiOpenaiComV1Models")} value={editForm.models_url ?? ""} onChange={(event) => setEditForm({ ...editForm, models_url: event.target.value })} /> : <ModelTagInput value={modelsArrayFromText(editForm.models) ?? []} onChange={(models) => setEditForm((current) => ({ ...current, models: models.join("\n") }))} inputLabel={localizedMessage(isZh, "v2.providers.manualModelInput")} listLabel={localizedMessage(isZh, "v2.providers.manualModelList")} placeholder={localizedMessage(isZh, "v2.providers.enterModelId")} helpText={localizedMessage(isZh, "v2.providers.manualModelsHelp")} removeLabel={(model) => localizedMessage(isZh, "v2.providers.removeModel", { model })} />}
                   <ToggleGroup type="single" value={editModelsMode} onValueChange={(value) => { if (value) setEditModelsMode(value as ModelsMode); }} className="provider-region-group"><ToggleGroupItem value="url" variant="outline" size="sm">{localizedMessage(isZh, "v2.providers.autoDiscovery")}</ToggleGroupItem><ToggleGroupItem value="static" variant="outline" size="sm">{localizedMessage(isZh, "v2.providers.manualEntry")}</ToggleGroupItem></ToggleGroup>
                 </div>
               )}
