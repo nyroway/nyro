@@ -28,7 +28,8 @@ class Upstream(BaseHTTPRequestHandler):
         else:
             result = {"id": "smoke", "object": "chat.completion", "created": 1,
                       "model": payload["model"], "choices": [{"index": 0,
-                      "message": {"role": "assistant", "content": "Hello"}, "finish_reason": "stop"}]}
+                      "message": {"role": "assistant", "content": "Hello"}, "finish_reason": "stop"}],
+                      "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
         streaming = payload.get("stream", False)
         if streaming:
             result["object"] = "chat.completion.chunk"
@@ -52,12 +53,12 @@ def main():
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
 
-    def request(path, payload=None, key="client-secret"):
+    def request(path, payload=None, key="client-secret", credential_header="Authorization"):
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
         try:
             connection.request("POST" if payload is not None else "GET", path,
                                json.dumps(payload) if payload is not None else None,
-                               {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+                               {credential_header: f"Bearer {key}" if credential_header == "Authorization" else key, "Content-Type": "application/json"})
             response = connection.getresponse()
             return response.status, response.read()
         finally:
@@ -101,7 +102,21 @@ def main():
                 status, body = request("/v1/chat/completions", {**chat, "stream": True})
                 assert status == 200 and body.endswith(b"data: [DONE]\n\n")
                 assert json.loads(body.decode().split("\n\n")[0][6:])["model"] == "public"
-                assert len(Upstream.calls) == 3
+                for streaming in (False, True):
+                    status, body = request("/v1/messages", {
+                        "model": "public", "messages": [{"role": "user", "content": "Hello"}],
+                        "max_tokens": 32, "stream": streaming}, credential_header="x-api-key")
+                    assert status == 200 and b"Hello" in body and b"public" in body
+                    if streaming:
+                        assert b"message_stop" in body
+                    action = "streamGenerateContent?alt=sse" if streaming else "generateContent"
+                    status, body = request(f"/v1beta/models/public:{action}", {
+                        "contents": [{"role": "user", "parts": [{"text": "Hello"}]}],
+                        "generationConfig": {"maxOutputTokens": 32}}, credential_header="x-goog-api-key")
+                    assert status == 200 and b"Hello" in body and b"public" in body
+                    if streaming:
+                        assert b"finishReason" in body
+                assert len(Upstream.calls) == 7
                 assert all(key == "Bearer upstream-secret" and payload["model"] == "internal"
                            for _, key, payload in Upstream.calls)
                 process.terminate()
@@ -116,7 +131,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print("proxy smoke passed: config, probes, auth, Chat, Embedding, SSE, SIGTERM")
+    print("proxy smoke passed: config, probes, auth, OpenAI/Anthropic/Gemini Chat, Embedding, SSE, SIGTERM")
 
 
 if __name__ == "__main__":

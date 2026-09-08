@@ -11,7 +11,25 @@ llm:
       kind: openai
       base_url: https://api.example.com/v1
       api_key: replace-with-provider-key
+    anthropic-example:
+      kind: anthropic
+      base_url: https://api.anthropic.com/v1
+      api_key: replace-with-anthropic-key
+    gemini-example:
+      kind: gemini
+      base_url: https://generativelanguage.googleapis.com/v1beta
+      api_key: replace-with-gemini-key
   models:
+    claude-default:
+      provider: anthropic-example
+      upstream_model: example-claude-model
+      workloads: [chat]
+      subjects: [local-client]
+    gemini-default:
+      provider: gemini-example
+      upstream_model: example-gemini-model
+      workloads: [chat]
+      subjects: [local-client]
     chat-default:
       provider: example
       upstream_model: example-chat-model

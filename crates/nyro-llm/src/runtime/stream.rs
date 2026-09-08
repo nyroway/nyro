@@ -1,0 +1,168 @@
+use super::Failure;
+use crate::{
+    ChatEvent,
+    codec::{CodecError, anthropic, gemini, openai},
+    config::ProviderKind,
+};
+use bytes::Bytes;
+use futures::{StreamExt, stream::BoxStream};
+use nyro_protocol::framing::{Decoder, Event};
+use std::collections::VecDeque;
+
+enum Decode {
+    Openai { done: bool },
+    Anthropic(anthropic::StreamDecoder),
+    Gemini(gemini::StreamDecoder),
+}
+impl Decode {
+    fn push(&mut self, event: &Event) -> Result<Vec<ChatEvent>, CodecError> {
+        match self {
+            Self::Openai { done } => {
+                if *done {
+                    return Err(CodecError("event after stream completion".into()));
+                }
+                let event = openai::decode_chat_event(&event.data)?;
+                *done = event.is_done();
+                Ok(vec![event])
+            }
+            Self::Anthropic(decoder) => decoder.push(event),
+            Self::Gemini(decoder) => decoder.push(event),
+        }
+    }
+    fn finish(&mut self) -> Result<Vec<ChatEvent>, CodecError> {
+        match self {
+            Self::Openai { done: true } => Ok(vec![]),
+            Self::Openai { done: false } => Err(CodecError("missing stream completion".into())),
+            Self::Anthropic(decoder) => decoder.finish(),
+            Self::Gemini(decoder) => decoder.finish(),
+        }
+    }
+}
+enum Encode {
+    Openai { model: String, include_usage: bool },
+    Anthropic(anthropic::StreamEncoder),
+    Gemini(gemini::StreamEncoder),
+}
+impl Encode {
+    fn push(&mut self, event: &ChatEvent) -> Result<String, CodecError> {
+        match self {
+            Self::Openai {
+                model,
+                include_usage,
+            } => {
+                if !*include_usage && let ChatEvent::Chunk(chunk) = event {
+                    if chunk.choices.is_empty() {
+                        return Ok(String::new());
+                    }
+                    let mut chunk = chunk.clone();
+                    chunk.usage = None;
+                    return openai::encode_chat_event(&ChatEvent::Chunk(chunk), model);
+                }
+                openai::encode_chat_event(event, model)
+            }
+            Self::Anthropic(encoder) => encoder.push(event),
+            Self::Gemini(encoder) => encoder.push(event),
+        }
+    }
+}
+
+pub(super) struct StreamState {
+    input: BoxStream<'static, Result<Bytes, reqwest::Error>>,
+    pending: Bytes,
+    framing: Decoder,
+    events: VecDeque<Event>,
+    canonical: VecDeque<ChatEvent>,
+    decoder: Decode,
+    encoder: Encode,
+    done: bool,
+    eof: bool,
+    max_bytes: usize,
+}
+impl StreamState {
+    pub(super) fn new(
+        response: reqwest::Response,
+        upstream: ProviderKind,
+        downstream: ProviderKind,
+        model: String,
+        max_bytes: usize,
+        include_usage: bool,
+    ) -> Self {
+        let decoder = match upstream {
+            ProviderKind::Openai => Decode::Openai { done: false },
+            ProviderKind::Anthropic => {
+                Decode::Anthropic(anthropic::StreamDecoder::with_limit(max_bytes))
+            }
+            ProviderKind::Gemini => Decode::Gemini(gemini::StreamDecoder::with_limit(max_bytes)),
+        };
+        let encoder = match downstream {
+            ProviderKind::Openai => Encode::Openai {
+                model,
+                include_usage,
+            },
+            ProviderKind::Anthropic => {
+                Encode::Anthropic(anthropic::StreamEncoder::with_limit(model, max_bytes))
+            }
+            ProviderKind::Gemini => {
+                Encode::Gemini(gemini::StreamEncoder::with_limit(model, max_bytes))
+            }
+        };
+        Self {
+            input: response.bytes_stream().boxed(),
+            pending: Bytes::new(),
+            framing: Decoder::new(max_bytes),
+            events: VecDeque::new(),
+            canonical: VecDeque::new(),
+            decoder,
+            encoder,
+            done: false,
+            eof: false,
+            max_bytes,
+        }
+    }
+    pub(super) async fn next_frame(&mut self) -> Result<Option<String>, Failure> {
+        loop {
+            if let Some(event) = self.canonical.pop_front() {
+                self.done = event.is_done();
+                let output = self.encoder.push(&event).map_err(|_| Failure::upstream())?;
+                if output.len() > self.max_bytes {
+                    return Err(Failure::upstream());
+                }
+                if !output.is_empty() {
+                    return Ok(Some(output));
+                }
+                continue;
+            }
+            if self.done {
+                return Ok(None);
+            }
+            if let Some(event) = self.events.pop_front() {
+                self.canonical
+                    .extend(self.decoder.push(&event).map_err(|_| Failure::upstream())?);
+                continue;
+            }
+            if self.eof {
+                self.canonical
+                    .extend(self.decoder.finish().map_err(|_| Failure::upstream())?);
+                if self.canonical.is_empty() {
+                    return Err(Failure::upstream());
+                }
+                continue;
+            }
+            if !self.pending.is_empty() {
+                let bytes = self.pending.split_to(self.pending.len().min(8192));
+                self.events
+                    .extend(self.framing.push(&bytes).map_err(|_| Failure::upstream())?);
+                continue;
+            }
+            match self.input.next().await {
+                Some(Ok(bytes)) => self.pending = bytes,
+                Some(Err(_)) => return Err(Failure::upstream()),
+                None => {
+                    self.eof = true;
+                    self.events
+                        .extend(self.framing.finish().map_err(|_| Failure::upstream())?);
+                }
+            }
+        }
+    }
+}

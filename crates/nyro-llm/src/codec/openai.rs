@@ -1,16 +1,9 @@
 //! Explicit OpenAI wire ↔ typed workload conversion; unsupported fields are rejected.
+pub use super::CodecError;
 use crate::ir::*;
 use nyro_protocol::openai::{chat, embedding, stream};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-#[derive(Debug, thiserror::Error)]
-#[error("unsupported or invalid OpenAI payload: {0}")]
-pub struct CodecError(pub String);
-impl From<serde_json::Error> for CodecError {
-    fn from(error: serde_json::Error) -> Self {
-        Self(error.to_string())
-    }
-}
 fn invalid(message: &str) -> CodecError {
     CodecError(message.into())
 }

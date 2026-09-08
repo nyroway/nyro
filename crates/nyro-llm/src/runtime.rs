@@ -1,22 +1,13 @@
 //! Trusted single-attempt LLM execution. Business policy stays outside the kernel.
 
-use std::{
-    collections::{BTreeMap, VecDeque},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
-    http::{HeaderMap, Method, Request as HttpRequest, Response as HttpResponse, StatusCode},
+    http::{Request as HttpRequest, Response as HttpResponse, StatusCode},
 };
-use bytes::Bytes;
-use futures::{
-    StreamExt,
-    stream::{self, BoxStream},
-};
+use futures::StreamExt;
 use nyro_limit::{ConcurrencyLimit, Permit};
-use nyro_protocol::framing::{Decoder, Event};
 use nyro_security::{ApiKeys, Authorizer, Grant};
 use serde_json::{Value, json};
 use tokio::time::Instant;
@@ -24,11 +15,15 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Request, Workload,
-    codec::openai,
+    codec::{anthropic, gemini, openai},
     config,
     ingress::body::{self, Outcome},
-    provider::OpenAi,
+    provider::Driver,
 };
+
+mod endpoint;
+mod stream;
+use self::stream::StreamState;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Options {
@@ -55,7 +50,7 @@ pub struct BuildError;
 
 pub struct Runtime {
     models: BTreeMap<String, config::Model>,
-    providers: BTreeMap<String, OpenAi>,
+    providers: BTreeMap<String, Driver>,
     keys: Arc<ApiKeys>,
     authorizer: Authorizer,
     limit: ConcurrencyLimit,
@@ -83,7 +78,7 @@ impl Runtime {
         let providers = config
             .providers
             .iter()
-            .map(|(id, provider)| OpenAi::new(provider).map(|driver| (id.clone(), driver)))
+            .map(|(id, provider)| Driver::new(provider).map(|driver| (id.clone(), driver)))
             .collect::<Result<_, _>>()?;
         let grants = config
             .models
@@ -117,6 +112,7 @@ impl Runtime {
         request: HttpRequest<Body>,
         cancellation: CancellationToken,
     ) -> HttpResponse<Body> {
+        let format = endpoint::kind(request.uri().path());
         let started = Instant::now();
         let deadline = started + self.options.request_timeout;
         let mut exchange = Exchange {
@@ -135,7 +131,10 @@ impl Runtime {
         let (response, body_deadline) = match result {
             Ok(response) => (response, deadline),
             // Error delivery is a separate, bounded terminal action, so a 504 body can be read.
-            Err(failure) => (failure.response(), Instant::now() + Duration::from_secs(5)),
+            Err(failure) => (
+                failure.response(format),
+                Instant::now() + Duration::from_secs(5),
+            ),
         };
         exchange.status = Some(response.status());
         let (parts, response_body) = response.into_parts();
@@ -152,24 +151,8 @@ impl Runtime {
         request: HttpRequest<Body>,
         exchange: &mut Exchange,
     ) -> Result<HttpResponse<Body>, Failure> {
-        let workload = match request.uri().path() {
-            "/v1/chat/completions" => Workload::Chat,
-            "/v1/embeddings" => Workload::Embedding,
-            _ => {
-                return Err(Failure::new(
-                    StatusCode::NOT_FOUND,
-                    "not_found",
-                    "Unknown endpoint",
-                ));
-            }
-        };
-        if request.method() != Method::POST {
-            return Err(Failure::new(
-                StatusCode::METHOD_NOT_ALLOWED,
-                "method_not_allowed",
-                "POST is required",
-            ));
-        }
+        let endpoint = endpoint::Endpoint::parse(request.uri(), request.method())?;
+        let workload = endpoint.workload;
         let (parts, body) = request.into_parts();
         let mut input = Vec::new();
         let mut data = body.into_data_stream();
@@ -186,16 +169,7 @@ impl Runtime {
         }
         let value: Value =
             serde_json::from_slice(&input).map_err(|_| Failure::invalid("Invalid JSON request"))?;
-        let mut request = match workload {
-            Workload::Chat => Request::Chat(
-                openai::decode_chat(value)
-                    .map_err(|_| Failure::invalid("Invalid or unsupported Chat request"))?,
-            ),
-            Workload::Embedding => Request::Embedding(
-                openai::decode_embedding(value)
-                    .map_err(|_| Failure::invalid("Invalid or unsupported Embedding request"))?,
-            ),
-        };
+        let mut request = endpoint.decode(value)?;
         let public_model = request.model().to_owned();
         exchange.model = Some(public_model.clone());
         // Resolve -> Authenticate -> Authorize -> Admit are mandatory ordinary runtime steps.
@@ -205,7 +179,7 @@ impl Runtime {
         if !model.workloads.contains(&workload) {
             return Err(Failure::invalid("Model does not support this workload"));
         }
-        match credential(&parts.headers)? {
+        match endpoint.credential(&parts.headers)? {
             Some(secret) => {
                 let identity = self
                     .keys
@@ -234,18 +208,30 @@ impl Runtime {
             )
         })?);
         let streaming = request.is_streaming();
+        let include_usage = matches!(&request, Request::Chat(chat) if chat.openai.stream_options.as_ref().is_some_and(|options| options.include_usage == Some(true)));
         request.set_model(model.upstream_model.clone());
-        let encoded = match &request {
-            Request::Chat(chat) => openai::encode_chat(chat),
-            Request::Embedding(embedding) => openai::encode_embedding(embedding),
-        }
-        .map_err(|_| Failure::invalid("Cannot encode request"))?;
         let provider = self
             .providers
             .get(&model.provider)
             .ok_or_else(Failure::upstream)?;
+        if streaming
+            && provider.kind == config::ProviderKind::Openai
+            && endpoint.kind != config::ProviderKind::Openai
+            && let Request::Chat(chat) = &mut request
+        {
+            chat.openai
+                .stream_options
+                .get_or_insert(nyro_protocol::openai::chat::StreamOptions {
+                    include_usage: None,
+                    include_obfuscation: None,
+                })
+                .include_usage = Some(true);
+        }
+        let encoded = provider.encode(&request).map_err(|_| {
+            Failure::invalid("Request cannot be represented by the configured provider")
+        })?;
         let response = provider
-            .send(workload, &encoded)
+            .send(&request, &encoded)
             .await
             .map_err(|_| Failure::upstream())?;
         if !response.status().is_success() {
@@ -277,26 +263,24 @@ impl Runtime {
             if !is_sse {
                 return Err(Failure::upstream());
             }
-            let mut state = StreamState {
-                input: response.bytes_stream().boxed(),
-                pending: Bytes::new(),
-                decoder: Decoder::new(self.options.max_frame_bytes),
-                events: VecDeque::new(),
-                done: false,
-                eof: false,
+            let mut state = StreamState::new(
+                response,
+                provider.kind,
+                endpoint.kind,
                 public_model,
-            };
+                self.options.max_frame_bytes,
+                include_usage,
+            );
             // Validate one complete frame before handing the response to HTTP. This is not a flush acknowledgement.
             let first = state.next_frame().await?.ok_or_else(Failure::upstream)?;
-            let output = stream::once(async { Ok::<_, Failure>(first) }).chain(stream::try_unfold(
-                state,
-                |mut state| async move {
+            let output = futures::stream::once(async { Ok::<_, Failure>(first) }).chain(
+                futures::stream::try_unfold(state, |mut state| async move {
                     state
                         .next_frame()
                         .await
                         .map(|frame| frame.map(|frame| (frame, state)))
-                },
-            ));
+                }),
+            );
             return Ok(HttpResponse::builder()
                 .header("content-type", "text/event-stream")
                 .header("cache-control", "no-cache")
@@ -315,10 +299,18 @@ impl Runtime {
         let payload: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::upstream())?;
         let payload = match workload {
             Workload::Chat => {
-                let mut response =
-                    openai::decode_chat_response(payload).map_err(|_| Failure::upstream())?;
+                let mut response = match provider.kind {
+                    config::ProviderKind::Openai => openai::decode_chat_response(payload),
+                    config::ProviderKind::Anthropic => anthropic::decode_chat_response(payload),
+                    config::ProviderKind::Gemini => gemini::decode_chat_response(payload),
+                }
+                .map_err(|_| Failure::upstream())?;
                 response.model = public_model;
-                openai::encode_chat_response(&response)
+                match endpoint.kind {
+                    config::ProviderKind::Openai => openai::encode_chat_response(&response),
+                    config::ProviderKind::Anthropic => anthropic::encode_chat_response(&response),
+                    config::ProviderKind::Gemini => gemini::encode_chat_response(&response),
+                }
             }
             Workload::Embedding => {
                 let mut response =
@@ -330,25 +322,6 @@ impl Runtime {
         .map_err(|_| Failure::upstream())?;
         Ok(json_response(StatusCode::OK, payload))
     }
-}
-
-fn credential(headers: &HeaderMap) -> Result<Option<&str>, Failure> {
-    let mut values = headers.get_all("authorization").iter();
-    let Some(value) = values.next() else {
-        return Ok(None);
-    };
-    if values.next().is_some() {
-        return Err(Failure::unauthorized());
-    }
-    let value = value.to_str().map_err(|_| Failure::unauthorized())?;
-    let (scheme, secret) = value.split_once(' ').ok_or_else(Failure::unauthorized)?;
-    if !scheme.eq_ignore_ascii_case("bearer")
-        || secret.is_empty()
-        || secret.bytes().any(|b| b.is_ascii_whitespace())
-    {
-        return Err(Failure::unauthorized());
-    }
-    Ok(Some(secret))
 }
 
 struct Exchange {
@@ -370,52 +343,6 @@ impl Drop for Exchange {
         tracing::info!(target: "nyro::request", model = self.model.as_deref().unwrap_or(""), status = self.status.map_or(0, |status| status.as_u16()),
             duration_ms = self.started.elapsed().as_millis() as u64, outcome = ?self.outcome, "LLM request finished");
         // This slice owns only synchronous finalization; the permit releases after observation.
-    }
-}
-
-struct StreamState {
-    input: BoxStream<'static, Result<Bytes, reqwest::Error>>,
-    pending: Bytes,
-    decoder: Decoder,
-    events: VecDeque<Event>,
-    done: bool,
-    eof: bool,
-    public_model: String,
-}
-
-impl StreamState {
-    async fn next_frame(&mut self) -> Result<Option<String>, Failure> {
-        loop {
-            if self.done {
-                return Ok(None);
-            }
-            if let Some(event) = self.events.pop_front() {
-                let event =
-                    openai::decode_chat_event(&event.data).map_err(|_| Failure::upstream())?;
-                self.done = event.is_done();
-                return openai::encode_chat_event(&event, &self.public_model)
-                    .map(Some)
-                    .map_err(|_| Failure::upstream());
-            }
-            if self.eof {
-                return Err(Failure::upstream());
-            }
-            if !self.pending.is_empty() {
-                let bytes = self.pending.split_to(self.pending.len().min(8192));
-                self.events
-                    .extend(self.decoder.push(&bytes).map_err(|_| Failure::upstream())?);
-                continue;
-            }
-            match self.input.next().await {
-                Some(Ok(bytes)) => self.pending = bytes,
-                Some(Err(_)) => return Err(Failure::upstream()),
-                None => {
-                    self.eof = true;
-                    self.events
-                        .extend(self.decoder.finish().map_err(|_| Failure::upstream())?);
-                }
-            }
-        }
     }
 }
 
@@ -466,11 +393,23 @@ impl Failure {
             "Request cancelled",
         )
     }
-    fn response(&self) -> HttpResponse<Body> {
-        json_response(
-            self.status,
-            json!({"error":{"message":self.message,"type":self.code,"code":self.code,"param":null}}),
-        )
+    fn response(&self, kind: config::ProviderKind) -> HttpResponse<Body> {
+        let payload = match kind {
+            config::ProviderKind::Openai => {
+                json!({"error":{"message":self.message,"type":self.code,"code":self.code,"param":null}})
+            }
+            config::ProviderKind::Anthropic => {
+                json!({"type":"error","error":{"type":match self.status {
+                StatusCode::UNAUTHORIZED=>"authentication_error", StatusCode::FORBIDDEN=>"permission_error", StatusCode::NOT_FOUND=>"not_found_error", StatusCode::TOO_MANY_REQUESTS=>"rate_limit_error", StatusCode::BAD_REQUEST|StatusCode::PAYLOAD_TOO_LARGE=>"invalid_request_error", _=>"api_error"
+            },"message":self.message}})
+            }
+            config::ProviderKind::Gemini => {
+                json!({"error":{"code":self.status.as_u16(),"message":self.message,"status":match self.status {
+                    StatusCode::UNAUTHORIZED=>"UNAUTHENTICATED",StatusCode::FORBIDDEN=>"PERMISSION_DENIED",StatusCode::NOT_FOUND=>"NOT_FOUND",StatusCode::TOO_MANY_REQUESTS=>"RESOURCE_EXHAUSTED",StatusCode::BAD_REQUEST|StatusCode::PAYLOAD_TOO_LARGE=>"INVALID_ARGUMENT",StatusCode::GATEWAY_TIMEOUT=>"DEADLINE_EXCEEDED",_=>"UNAVAILABLE"
+                }}})
+            }
+        };
+        json_response(self.status, payload)
     }
 }
 
