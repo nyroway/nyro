@@ -1,0 +1,24 @@
+[package]
+name = "nyro-llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nyro-protocol = { path = "../nyro-protocol" }
+nyro-security = { path = "../nyro-security" }
+nyro-limit = { path = "../nyro-limit" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util = { version = "0.7", features = ["rt"] }
+axum.workspace = true
+reqwest.workspace = true
+tracing.workspace = true
+futures = "0.3"
+bytes = "1"
+
+[dev-dependencies]
+tracing-subscriber.workspace = true

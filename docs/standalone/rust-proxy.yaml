@@ -1,0 +1,33 @@
+server:
+  listen: 127.0.0.1:19530
+  request_timeout_ms: 120000
+  max_body_bytes: 1048576
+  max_response_bytes: 16777216
+  max_frame_bytes: 1048576
+
+llm:
+  providers:
+    example:
+      kind: openai
+      base_url: https://api.example.com/v1
+      api_key: replace-with-provider-key
+  models:
+    chat-default:
+      provider: example
+      upstream_model: example-chat-model
+      workloads: [chat]
+      allow_anonymous: false
+      subjects: [local-client]
+    embed-default:
+      provider: example
+      upstream_model: example-embedding-model
+      workloads: [embedding]
+      allow_anonymous: true
+
+security:
+  api_keys:
+    - id: local-client
+      secret: replace-with-client-secret
+
+limit:
+  concurrency: 64

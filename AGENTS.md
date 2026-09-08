@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-21 | Updated: 2026-05-21 -->
+<!-- Generated: 2026-05-21 | Updated: 2026-09-07 -->
 
 # Nyro AI Gateway
 
@@ -9,7 +9,7 @@ Nyro is a Rust workspace for a local AI protocol gateway with a Tauri desktop ap
 
 | File | Description |
 |------|-------------|
-| `Cargo.toml` | Rust workspace definition for `nyro-kernel`, `nyro-core`, `nyro-tools`, `src-tauri`, and `src-server`. |
+| `Cargo.toml` | Root `nyro` package plus workspace definition for the new data-plane crates and legacy applications. |
 | `Cargo.lock` | Locked Rust dependency graph. |
 | `README.md` / `README_CN.md` | User-facing project documentation in English and Chinese. |
 | `Makefile` | Common development and release commands. |
@@ -20,7 +20,13 @@ Nyro is a Rust workspace for a local AI protocol gateway with a Tauri desktop ap
 
 | Directory | Purpose |
 |-----------|---------|
-| `crates/nyro-kernel/` | Workload-neutral lifecycle/generation library; not yet wired into existing applications. |
+| `src/` | Experimental source-built root `nyro proxy` entrypoint and bootstrap; separate from released legacy entries. |
+| `crates/nyro-kernel/` | Workload-neutral lifecycle/generation library used by the experimental root proxy. |
+| `crates/nyro-protocol/` | Protocol wire types and bounded stream framing for the new data plane. |
+| `crates/nyro-llm/` | New typed LLM runtime, OpenAI-compatible codec/provider, and request execution. |
+| `crates/nyro-config/` | Strict standalone file configuration for the experimental root proxy. |
+| `crates/nyro-security/` | Transport-neutral credential authentication and authorization primitives. |
+| `crates/nyro-limit/` | Shared concurrency admission primitive. |
 | `crates/nyro-core/` | Core Rust library: gateway, proxy, protocol conversion, provider adapters, storage, admin service. |
 | `crates/nyro-tools/` | Rust CLI/tooling crate. |
 | `src-server/` | Standalone server binary exposing proxy/admin HTTP surfaces. |
@@ -57,6 +63,7 @@ Nyro is a Rust workspace for a local AI protocol gateway with a Tauri desktop ap
 ## Dependencies
 
 ### Internal
+- The root `nyro` package composes `nyro-kernel`, `nyro-config`, `nyro-llm`, `nyro-security`, and `nyro-limit` for the experimental file-config proxy.
 - `src-tauri/` and `src-server/` depend on `crates/nyro-core/`.
 - `webui/` talks to the desktop IPC/server admin surfaces and should not duplicate core business rules.
 - Documentation in `docs/` should reflect current crate and module boundaries.

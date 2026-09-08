@@ -1,10 +1,10 @@
 # Nyro Rust 目标架构
 
-> 状态：设计定稿，分阶段实施中；独立内核已实现，尚未接入业务。更新日期：2026-09-07。
+> 状态：设计定稿，分阶段实施中；独立内核与首个实验性 standalone LLM 数据面已实现。更新日期：2026-09-07。
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，提供组件生命周期、类型化代际和租约管理。现有 `nyro-core`、Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro proxy` 和 `nyro tool` 仍是目标入口。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI 兼容 Chat/Embedding 与 SSE、认证授权、共享并发限制和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
 
 ## 1. 产品定位与范围
 
@@ -20,7 +20,7 @@ Nyro 是统一的 AI Gateway，目标是在一个进程内承载 LLM Gateway 和
 | `nyro proxy` | 只运行数据面，从 standalone 文件或控制面获取配置 |
 | `nyro tool` | 承接录制、回放、调试透传和 schema 导出等现有工具能力 |
 
-`serve` 与 `proxy` 使用同一套数据面构建和执行流程，区别在于配置来源及是否装配控制面。将来可以按配置启用 LLM、MCP 或两者；本次不实现 MCP。具体 CLI 参数在实施阶段对照现有功能确定，本文不声明这些新命令已经可用。
+目标中的 `serve` 与 `proxy` 使用同一套数据面构建和执行流程，区别在于配置来源及是否装配控制面。将来可以按配置启用 LLM、MCP 或两者；当前仅 `nyro proxy --config PATH` 可从源码运行，且只装配 LLM 文件数据面。`serve`、`tool` 和 MCP 仍是目标能力。
 
 ## 2. 核心原则
 
@@ -535,7 +535,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 
 ## 11. 现有实现与目标对应
 
-采用新旧实现并行开发、最后统一切换入口的迁移方式。新能力包逐步加入 workspace，不依赖旧 `nyro-core`；旧入口继续承担现有发布，新实现独立构建和测试。第一步交付独立内核及本文档，随后接通新数据面、补齐现有能力，再接入控制面与工具。
+采用新旧实现并行开发、最后统一切换入口的迁移方式。新能力包已加入 workspace，且不依赖旧 `nyro-core`；旧入口继续承担现有发布，新实现独立构建和测试。当前已交付独立内核、协议／LLM／配置／安全／并发能力包，以及从严格 YAML 启动的实验性根 `nyro proxy`。接下来仍需补齐现有能力，再接入控制面与工具。
 
 完成协议与 Provider 回归、流式响应和取消收尾、配置更新、SQLite/Postgres 数据兼容、管理 API/WebUI 及工具命令验证后，再统一切换构建、安装和发布流程，移除 Tauri、旧 Server/Tools 入口及失去消费者的旧代码。旧五阶段 Hook 框架随旧运行时退出，认证、准入、响应处理、终态日志和资源收尾先由新运行时承接。
 
@@ -544,7 +544,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 | 当前实现或历史方案 | 目标归属与差异 |
 |---|---|
 | `crates/nyro-core/` 与整体 `Gateway` | 拆为八个职责包；按使用者注入必要资源，减少全局状态依赖 |
-| `src-server/`、`nyro-server --mode ...` | 根 `src/` 与 `nyro-control`；目标为 `nyro serve` / `nyro proxy` |
+| `src-server/`、`nyro-server --mode ...` | 继续承担现有发布；根 `src/` 已实现实验性文件配置 `nyro proxy`，`nyro serve` 与 `nyro-control` 仍是目标 |
 | `src-tauri/`、桌面 IPC、桌面发布工作流 | 退出目标产品形态；WebUI 通过服务端管理 API 工作 |
 | `crates/nyro-tools/` 独立工具二进制 | 现有能力迁入唯一二进制的 `nyro tool` 命令族 |
 | `crates/nyro-core/src/protocol/ir/` 的 `AiRequest` / `AiResponse` | `nyro-llm` 内入口枚举与 Chat、Embedding 配对类型 |
@@ -553,13 +553,13 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 | 当前 `PluginKernel`、全局注册表与五阶段 Hook 方案 | 微内核只管理资源；应用掌握可信执行；根程序显式装配 |
 | 当前 `crates/nyro-core/src/storage/` 与 `src-server/src/yaml_config.rs` | 管理仓储归控制面，文件来源归配置包，领域状态归所属模块 |
 | 旧 Rust 的 MySQL 后端及 `deploy/schema/mysql.sql` | 不进入本轮目标支持范围；本轮文档更新不删除实现或生成文件 |
-| 当前 `README.md` / `README_CN.md`、运行手册、`AGENTS.md` | 继续说明现有实现，实际代码迁移时再同步用户操作文档 |
+| 当前 `README.md` / `README_CN.md`、运行手册、`AGENTS.md` | 继续说明已发布旧入口，并单独标出实验性源码构建代理及其独立配置格式 |
 
 目标支持范围为 standalone 文件配置、SQLite 和 Postgres。现有 schema、数据和 CLI 的迁移兼容措施属于后续实施计划；本设计不授权删除用户数据或隐式迁移数据库。
 
 ## 12. 验收场景与文档维护
 
-以下是后续实现必须证明的行为，本次文档定稿不表示相关测试已经通过：
+以下是整体迁移必须证明的行为。实验性文件代理已经覆盖其中部分内核、请求期限、取消收尾、Chat/Embedding 和 standalone 场景；其余仍是后续验收要求，不能由首个数据面切片推定已经完成：
 
 | 场景 | 验收要求 |
 |---|---|

@@ -3,8 +3,8 @@
 [English](README.md)
 
 为静态组装的 Rust 应用提供与业务无关的资源生命周期和运行时代际管理。
-这是 Nyro 微内核重构的第一阶段，**尚未接入现有请求路径**；`nyro-core`、
-`nyro-server` 和 Tauri 当前均不依赖它。Rust API 仍处于实验阶段。
+实验性的源码构建根命令 `nyro proxy` 已使用本 crate 管理强类型运行代际和请求 lease。
+现有 `nyro-core`、已发布的 `nyro-server` 和 Tauri 请求路径仍不依赖它。Rust API 仍处于实验阶段。
 
 ## 职责边界
 
