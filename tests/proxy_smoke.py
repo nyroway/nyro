@@ -21,6 +21,11 @@ class Upstream(BaseHTTPRequestHandler):
     def do_POST(self):
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.calls.append((self.path, self.headers.get("Authorization"), payload))
+        if payload["model"] == "temporary-error":
+            self.send_response(503)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if self.path == "/v1/embeddings":
             result = {"object": "list", "model": payload["model"], "data": [
                 {"object": "embedding", "index": 0, "embedding": [0.25, 0.5]}],
@@ -78,6 +83,12 @@ def main():
                 "backends": [
                     {"id": "disabled", "provider": "mock", "upstream_model": "must-not-run", "weight": 0},
                     {"id": "enabled", "provider": "mock", "upstream_model": "internal"}],
+                "workloads": ["chat"], "subjects": ["tester"]}
+            data["llm"]["models"]["public-failover"] = {
+                "backends": [
+                    {"id": "primary", "provider": "mock", "upstream_model": "temporary-error", "priority": 0},
+                    {"id": "backup", "provider": "mock", "upstream_model": "internal", "priority": 1}],
+                "max_attempts": 2, "health": {"failure_threshold": 1, "cooldown_ms": 30000},
                 "workloads": ["chat"], "subjects": ["tester"]}
             config.write_text(json.dumps({**data, "unknown": "secret-marker"}))
             invalid = subprocess.run([binary, "proxy", "--config", config], capture_output=True, timeout=5)
@@ -137,8 +148,17 @@ def main():
                     assert status == 200 and b"public-routed" in body
                     if streaming:
                         assert body.endswith(b"data: [DONE]\n\n")
-                assert len(Upstream.calls) == 11
-                assert all(key == "Bearer upstream-secret" and payload["model"] == "internal"
+                # First request fails over; subsequent SSE request skips the open primary.
+                for streaming in (False, True):
+                    status, body = request("/v1/chat/completions", {
+                        **chat, "model": "public-failover", "stream": streaming})
+                    assert status == 200 and b"public-failover" in body
+                    if streaming:
+                        assert body.endswith(b"data: [DONE]\n\n")
+                assert len(Upstream.calls) == 14
+                assert [payload["model"] for _, _, payload in Upstream.calls[-3:]] == [
+                    "temporary-error", "internal", "internal"]
+                assert all(key == "Bearer upstream-secret" and payload["model"] in {"internal", "temporary-error"}
                            for _, key, payload in Upstream.calls)
                 process.terminate()
                 output, errors = process.communicate(timeout=5)
@@ -152,7 +172,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print("proxy smoke passed: config, weighted routing, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
+    print("proxy smoke passed: config, weighted routing, failover, passive health, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
 
 
 if __name__ == "__main__":

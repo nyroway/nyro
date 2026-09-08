@@ -100,6 +100,73 @@ limit: {{concurrency: 1}}
     }
 
     #[tokio::test]
+    async fn root_resources_preserve_open_health_across_generation_changes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let upstream = Router::new().route(
+            "/v1/chat/completions",
+            post(move || {
+                let calls = observed.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut config = config(&format!("http://{}/v1", listener.local_addr().unwrap()));
+        config.llm.models.get_mut("public").unwrap().health =
+            Some(nyro_llm::config::HealthConfig {
+                failure_threshold: 1,
+                cooldown_ms: 30_000,
+            });
+        let task = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let resources = bootstrap::Resources::new(&config).unwrap();
+        let host = bootstrap::host(&config, &resources).await.unwrap();
+        let tracker = TaskTracker::new();
+        let router = router(host.clone(), tracker.clone());
+        for step in 0..3 {
+            if step > 0 {
+                let backend = &mut config.llm.models.get_mut("public").unwrap().backends[0];
+                if step == 1 {
+                    backend.weight = 20;
+                    backend.priority = 5;
+                } else {
+                    backend.upstream_model = "replacement".into();
+                }
+                host.activate(
+                    resources.candidate(&config).unwrap(),
+                    Context {
+                        deadline: Instant::now() + Duration::from_secs(1),
+                        cancellation: CancellationToken::new(),
+                    },
+                )
+                .await
+                .unwrap();
+            }
+            let response = router.clone().oneshot(request()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let body = to_bytes(response.into_body(), 16384).await.unwrap();
+            let payload: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(
+                payload["error"]["code"],
+                if step == 1 {
+                    "backends_unavailable"
+                } else {
+                    "upstream_error"
+                }
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), if step == 2 { 2 } else { 1 });
+        }
+        host.shutdown().await.unwrap();
+        tracker.close();
+        tracker.wait().await;
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn ready_and_dispatch_use_the_active_generation_and_shared_limit() {
         let upstream = Router::new().route("/v1/chat/completions", post(|axum::Json(input):axum::Json<Value>| async move {
             axum::Json(json!({"id":"test","object":"chat.completion","created":1,"model":input["model"],"choices":[{"index":0,"message":{"role":"assistant","content":input["model"]},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}))

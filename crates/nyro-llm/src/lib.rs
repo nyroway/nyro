@@ -1,6 +1,7 @@
 //! nyro-llm.
 
 pub mod config;
+pub mod health;
 mod ingress;
 mod provider;
 mod router;

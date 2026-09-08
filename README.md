@@ -43,7 +43,7 @@ Claude Code · Codex CLI · Gemini CLI · OpenCode
 
 Nyro ships as a **desktop app** (macOS / Windows / Linux) and a **standalone server binary** for headless and self-hosted deployments.
 
-An experimental new Rust `nyro proxy` data plane is also available for source builds. It has its own strict file format and currently supports OpenAI Chat/Embedding, stateless Responses, and Anthropic/Gemini Chat subsets, with weighted selection across compatible backends; see the [Rust file-config proxy guide](docs/standalone/rust-proxy.md). Released `nyro-server` commands and configuration remain unchanged.
+An experimental new Rust `nyro proxy` data plane is also available for source builds. It has its own strict file format and currently supports OpenAI Chat/Embedding, stateless Responses, and Anthropic/Gemini Chat subsets, with priority and weighted backend selection, opt-in bounded failover, and passive health; see the [Rust file-config proxy guide](docs/standalone/rust-proxy.md). Released `nyro-server` commands and configuration remain unchanged.
 
 ---
 

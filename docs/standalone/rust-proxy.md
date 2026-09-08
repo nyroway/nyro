@@ -27,7 +27,7 @@ The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless
 
 ## Configuration
 
-All structures reject unknown fields. `kind` is required and accepts `openai`, `anthropic`, or `gemini`. OpenAI providers optionally select `api: chat_completions` (default) or `api: responses`; other kinds reject the `api` field. Provider URLs must use HTTP or HTTPS, have a host, and contain no user information, query, or fragment. Nyro appends the native endpoint to the configured base path. Upstream requests use only the provider's optional `api_key`; caller credentials are not forwarded. Redirects and environment-configured HTTP proxies are disabled for upstream calls.
+All structures reject unknown fields. `kind` is required and accepts `openai`, `anthropic`, or `gemini`. OpenAI providers optionally select `api: chat_completions` (default) or `api: responses`; other kinds reject the `api` field. Provider URLs must use HTTP or HTTPS, have a host, and contain no user information, query, or fragment. Nyro appends the native endpoint to the configured base path. Upstream requests use only the provider's optional `api_key`; caller credentials are not forwarded. Redirects, environment-configured HTTP proxies, and Reqwest automatic protocol retries are disabled for upstream calls; the LLM runtime owns the retry budget.
 
 | Provider kind | Example base URL | Appended endpoint | Upstream credential |
 |---|---|---|---|
@@ -40,7 +40,9 @@ Gemini upstream model names accept a single ASCII letter/digit/`-_.` segment, op
 
 Each model declares:
 
-- `backends`: a nonempty list of upstream backends. Each has a model-scoped, unique, nonblank `id`, a `provider` ID from `llm.providers`, an `upstream_model`, and an optional integer `weight` (default `100`).
+- `backends`: a nonempty list of upstream backends. Each has a model-scoped, unique, nonblank `id`, a `provider` ID from `llm.providers`, an `upstream_model`, and an optional integer `weight` (default `100`), and `priority` (default `0`, smaller values preferred).
+- `max_attempts`: positive integer, default `1`, including the first upstream send. Each backend ID is attempted at most once per request.
+- `health`: optional passive breaker policy, disabled when omitted. An empty object enables `failure_threshold: 3` and `cooldown_ms: 30000`; both must be positive.
 - `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both when every backend uses OpenAI Chat Completions; Responses, Anthropic, and Gemini support only `chat`. Every backend, including disabled entries, must support the model's declared workloads. Invalid combinations fail startup.
 - `allow_anonymous`: optional, default `false`.
 - `subjects`: client credential IDs allowed to invoke a protected model; optional only for anonymous models.
@@ -64,9 +66,30 @@ chat-default:
   subjects: [local-client]
 ```
 
-Authentication, authorization, and shared admission apply once to the public model. Nyro then prepares each enabled backend locally with its own protocol codec, excludes backends that cannot represent the request, and randomly selects one eligible backend in proportion to its weight. The weights apply to the eligible subset; they are not per-batch traffic guarantees. Preparation sends no network requests. If none can represent the request, the response is `400` and no upstream is called. For example, without a token limit an Anthropic backend is ineligible while a compatible OpenAI backend can still be selected. Preparation cannot determine actual provider availability or whether its eventual response is convertible.
+Authentication, authorization, and shared admission apply once to the public model. Nyro then prepares each enabled backend locally with its own protocol codec, excludes backends that cannot represent the request, and selects from the lowest available `priority`, randomly in proportion to weight within that priority. The weights apply to the eligible subset; they are not per-batch traffic guarantees. Preparation sends no network requests. If none can represent the request, the response is `400` and no upstream is called. For example, without a token limit an Anthropic backend is ineligible while a compatible OpenAI backend can still be selected. Preparation cannot determine actual provider availability or whether its eventual response is convertible.
 
-Each invocation makes exactly one upstream attempt. An upstream error, malformed response, or broken stream never triggers another backend. Request logs include the selected backend ID alongside the public model. Priority, retry/failover, and health-based selection remain subsequent work. Local routing regressions: `cargo test -p nyro-llm --test routing_runtime`.
+By default, each invocation makes one upstream attempt. Setting `max_attempts` above `1` enables failover to another eligible backend after a connection-establishment failure or an upstream HTTP `429`, `500`, `502`, `503`, `504`, or `529`. Remaining backends at the same priority are tried before larger priorities. Skipped incompatible, disabled, or unhealthy backends do not consume the budget. There is no backoff or separate attempt timeout: all attempts share one whole-request deadline and concurrency permit. A slow attempt can exhaust that deadline before failover is possible. Cancellation or dropping the request/body stops owned work.
+
+Other HTTP statuses and ambiguous transport failures do not trigger failover. Once an upstream returns `2xx`, the backend is fixed: a malformed JSON response, wrong content type, invalid first SSE frame, or later broken stream fails without another attempt. Failed-attempt headers and bodies are discarded. Opting into retries can still result in work at multiple upstreams; it does not guarantee exactly-once provider execution. Request logs include the public model, last selected backend ID, and number of attempts.
+
+For example, this model prefers `primary` and can fall back to `secondary`:
+
+```yaml
+chat-failover:
+  backends:
+    - {id: primary, provider: example, upstream_model: example-chat-model, priority: 0}
+    - {id: secondary, provider: responses-example, upstream_model: example-responses-model, priority: 1}
+  max_attempts: 2
+  health: {failure_threshold: 3, cooldown_ms: 30000}
+  workloads: [chat]
+  subjects: [local-client]
+```
+
+With `health` enabled, observed network errors, the transient statuses above, and invalid upstream responses count toward the failure threshold. A fully validated response resets the counter; for SSE this requires protocol completion, not headers or the first frame. Other statuses, client cancellation, body drop, and the overall deadline are neutral. After the threshold is reached, the backend is skipped for the cooldown. The first eligible request afterward claims a single recovery probe; concurrent requests use other available backends or receive `503`. A successful probe restores service; a failed probe starts another cooldown. A cancelled/dropped probe releases its claim without declaring recovery. If all compatible backends are blocked before an attempt, the response is `503`; after an attempted failure, the last sanitized upstream error is returned.
+
+Health is scoped to a public model and backend identity. The root composition shares it across generations for unchanged provider URL/API/credentials, upstream model, and health policy; weight or priority changes retain it. A changed binding gets fresh health state. Retired bindings are released after their generations and requests drop. There is no background probe or persistence across process restarts.
+
+Local routing regressions: `cargo test -p nyro-llm --test routing_runtime --test failover_runtime`.
 
 For a protected model, `subjects` must be nonempty and every value must match an `id` in `security.api_keys`. A request without a supported header credential, or with an unknown credential, receives `401`; a known subject not granted that model receives `403`. For an anonymous model, a missing credential is accepted. If a credential is supplied, it must still authenticate, but any known credential may use the anonymous model.
 
@@ -133,9 +156,9 @@ References: [OpenAI Responses migration](https://developers.openai.com/api/docs/
 ## Health and current scope
 
 - `GET /healthz` returns `200` while the HTTP process is serving.
-- `GET /readyz` returns `200` while the kernel host accepts new generation leases and `503` once it does not. This source-built proxy has no database readiness check.
+- `GET /readyz` returns `200` while the kernel host accepts new generation leases and `503` once it does not. This source-built proxy has no database or upstream-backend readiness check.
 
-Each request makes one attempt against its selected upstream. It does not implement retries, failover, rate limits, quotas, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
+Retries and passive health are opt-in as described above. It does not implement rate limits, quotas, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
 
 Contributors can exercise the root process, probes, authentication, Chat, Embedding, SSE, redaction, and graceful termination without a real provider:
 

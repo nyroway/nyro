@@ -3,7 +3,10 @@ use std::{sync::Arc, time::Duration};
 use nyro_config::Config;
 use nyro_kernel::{Candidate, Context, Host};
 use nyro_limit::ConcurrencyLimit;
-use nyro_llm::runtime::{Options, Runtime};
+use nyro_llm::{
+    health::HealthRegistry,
+    runtime::{Options, Runtime},
+};
 use nyro_security::ApiKeys;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -11,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct Resources {
     limit: ConcurrencyLimit,
     capacity: usize,
+    health: Arc<HealthRegistry>,
 }
 
 impl Resources {
@@ -19,6 +23,7 @@ impl Resources {
         Ok(Self {
             limit: ConcurrencyLimit::new(config.limit.concurrency)?,
             capacity: config.limit.concurrency,
+            health: Arc::new(HealthRegistry::default()),
         })
     }
 
@@ -38,7 +43,13 @@ impl Resources {
         Ok(Candidate {
             version: "standalone".into(),
             fingerprint: Some(config.fingerprint()?),
-            value: Runtime::new(config.llm.clone(), keys, self.limit.clone(), options)?,
+            value: Runtime::with_health(
+                config.llm.clone(),
+                keys,
+                self.limit.clone(),
+                options,
+                self.health.clone(),
+            )?,
             // Reqwest clients have synchronous RAII cleanup; no background component is needed.
             components: vec![],
         })

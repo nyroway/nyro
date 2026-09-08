@@ -26,11 +26,14 @@ fn valid_config() -> Config {
             models: BTreeMap::from([(
                 "chat".into(),
                 Model {
+                    max_attempts: 1,
+                    health: None,
                     backends: vec![Backend {
                         id: "default".into(),
                         provider: "openai".into(),
                         upstream_model: "gpt-example".into(),
                         weight: 100,
+                        priority: 0,
                     }],
                     workloads: vec![Workload::Chat, Workload::Embedding],
                     allow_anonymous: false,
@@ -320,6 +323,7 @@ fn fingerprint_ignores_backend_order_and_retains_every_backend_setting() {
         "{id: secondary, provider: p, upstream_model: v, weight: 0}",
         "{id: secondary, provider: q, upstream_model: different, weight: 0}",
         "{id: secondary, provider: q, upstream_model: v, weight: 1}",
+        "{id: secondary, provider: q, upstream_model: v, weight: 0, priority: 1}",
     ] {
         let changed = Config::from_yaml(&yaml_with_routing(&format!(
             "      backends:\n        - {{id: primary, provider: p, upstream_model: u, weight: 80}}\n        - {changed_backend}"
@@ -343,6 +347,93 @@ fn yaml_rejects_ambiguous_or_invalid_backend_routes() {
         assert!(
             Config::from_yaml(&yaml_with_routing(routing)).is_err(),
             "{routing}"
+        );
+    }
+}
+
+#[test]
+fn failover_fingerprint_normalizes_defaults_and_retains_opt_in_policy() {
+    let legacy = Config::from_yaml(&yaml_with_routing(
+        "      provider: p\n      upstream_model: u",
+    ))
+    .unwrap();
+    let explicit = Config::from_yaml(&yaml_with_routing(
+        "      max_attempts: 1\n      health: null\n      backends: [{id: default, provider: p, upstream_model: u, priority: 0}]",
+    )).unwrap();
+    assert_eq!(
+        legacy.fingerprint().unwrap(),
+        explicit.fingerprint().unwrap()
+    );
+    let health_defaults = Config::from_yaml(&yaml_with_routing(
+        "      provider: p\n      upstream_model: u\n      health: {}",
+    ))
+    .unwrap();
+    let health_explicit = Config::from_yaml(&yaml_with_routing(
+        "      provider: p\n      upstream_model: u\n      health: {failure_threshold: 3, cooldown_ms: 30000}",
+    )).unwrap();
+    assert_eq!(
+        health_defaults.fingerprint().unwrap(),
+        health_explicit.fingerprint().unwrap()
+    );
+    assert_ne!(
+        legacy.fingerprint().unwrap(),
+        health_defaults.fingerprint().unwrap()
+    );
+    for policy in [
+        "      max_attempts: 2",
+        "      health: {failure_threshold: 4}",
+        "      health: {cooldown_ms: 30001}",
+    ] {
+        let changed = Config::from_yaml(&yaml_with_routing(&format!(
+            "      provider: p\n      upstream_model: u\n{policy}"
+        )))
+        .unwrap();
+        assert_ne!(
+            health_defaults.fingerprint().unwrap(),
+            changed.fingerprint().unwrap()
+        );
+        if policy.contains("max_attempts") {
+            assert_ne!(
+                legacy.fingerprint().unwrap(),
+                changed.fingerprint().unwrap()
+            );
+        }
+    }
+    let mut changed_priority = explicit.clone();
+    changed_priority
+        .llm
+        .models
+        .get_mut("chat")
+        .unwrap()
+        .backends[0]
+        .priority = 1;
+    assert_ne!(
+        explicit.fingerprint().unwrap(),
+        changed_priority.fingerprint().unwrap()
+    );
+}
+
+#[test]
+fn yaml_rejects_invalid_failover_policy_values() {
+    for policy in [
+        "max_attempts: 0",
+        "max_attempts: -1",
+        "max_attempts: 4294967296",
+        "max_attempts: null",
+        "health: {failure_threshold: 0}",
+        "health: {cooldown_ms: 0}",
+        "health: {failure_threshold: -1}",
+        "health: {cooldown_ms: -1}",
+        "health: {failure_threshold: null}",
+        "health: {cooldown_ms: null}",
+        "health: {unknown: true}",
+    ] {
+        assert!(
+            Config::from_yaml(&yaml_with_routing(&format!(
+                "      provider: p\n      upstream_model: u\n      {policy}"
+            )))
+            .is_err(),
+            "{policy}"
         );
     }
 }

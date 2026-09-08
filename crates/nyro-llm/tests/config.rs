@@ -18,11 +18,14 @@ fn valid_config() -> Config {
         models: BTreeMap::from([(
             "chat".into(),
             Model {
+                max_attempts: 1,
+                health: None,
                 backends: vec![Backend {
                     id: "default".into(),
                     provider: "openai".into(),
                     upstream_model: "gpt-example".into(),
                     weight: 100,
+                    priority: 0,
                 }],
                 workloads: vec![Workload::Chat],
                 allow_anonymous: false,
@@ -286,4 +289,76 @@ fn backend_ids_are_model_scoped_and_large_weight_totals_are_valid() {
     value["models"]["another"] = model;
     let config: Config = serde_json::from_value(value).unwrap();
     assert!(config.validate().is_ok());
+}
+
+#[test]
+fn failover_policy_defaults_preserve_legacy_models() {
+    let legacy: Model = serde_json::from_value(serde_json::json!({
+        "provider": "openai", "upstream_model": "u", "workloads": ["chat"]
+    }))
+    .unwrap();
+    let canonical = serde_json::to_value(legacy).unwrap();
+    assert_eq!(canonical["max_attempts"], 1);
+    assert_eq!(canonical["backends"][0]["priority"], 0);
+    assert!(
+        canonical
+            .get("health")
+            .is_none_or(serde_json::Value::is_null)
+    );
+    let mut value = canonical;
+    value["health"] = serde_json::json!({});
+    let model: Model = serde_json::from_value(value).expect("health defaults must deserialize");
+    let health = serde_json::to_value(model).unwrap();
+    assert_eq!(health["health"]["failure_threshold"], 3);
+    assert_eq!(health["health"]["cooldown_ms"], 30000);
+}
+
+#[test]
+fn failover_policy_rejects_invalid_bounds_and_unknown_health_fields() {
+    for (field, invalid) in [
+        ("max_attempts", serde_json::json!(0)),
+        ("max_attempts", serde_json::json!(-1)),
+        ("max_attempts", serde_json::json!(4294967296u64)),
+        ("max_attempts", serde_json::Value::Null),
+        ("health", serde_json::json!({"failure_threshold": 0})),
+        ("health", serde_json::json!({"cooldown_ms": 0})),
+        ("health", serde_json::json!({"failure_threshold": -1})),
+        ("health", serde_json::json!({"cooldown_ms": -1})),
+        ("health", serde_json::json!({"failure_threshold": null})),
+        ("health", serde_json::json!({"cooldown_ms": null})),
+        ("health", serde_json::json!({"unexpected": true})),
+    ] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["models"]["chat"][field] = invalid;
+        if let Ok(config) = serde_json::from_value::<Config>(value.clone()) {
+            assert!(config.validate().is_err(), "{value}");
+        }
+    }
+    let mut value = serde_json::to_value(valid_config()).unwrap();
+    value["models"]["chat"]["max_attempts"] = serde_json::json!(4294967295u32);
+    value["models"]["chat"]["health"] =
+        serde_json::json!({"failure_threshold": 4294967295u32, "cooldown_ms": 1});
+    value["models"]["chat"]["backends"][0]["priority"] = serde_json::json!(4294967295u32);
+    let config: Config = serde_json::from_value(value).expect("valid positive bounds");
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn health_cooldown_must_fit_the_platform_timer() {
+    use std::time::{Duration, Instant};
+    let mut config = valid_config();
+    config.models.get_mut("chat").unwrap().health = Some(nyro_llm::config::HealthConfig {
+        failure_threshold: 1,
+        cooldown_ms: u64::MAX,
+    });
+    // Instant ranges differ across platforms; reject the largest duration wherever
+    // the platform cannot schedule it, while accepting it when it is representable.
+    if Instant::now()
+        .checked_add(Duration::from_millis(u64::MAX))
+        .is_none()
+    {
+        assert!(config.validate().is_err());
+    } else {
+        assert!(config.validate().is_ok());
+    }
 }
