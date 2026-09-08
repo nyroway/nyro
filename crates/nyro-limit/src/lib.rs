@@ -1,5 +1,6 @@
 //! nyro-limit.
 
+pub mod quota;
 pub mod rate;
 
 use std::sync::Arc;

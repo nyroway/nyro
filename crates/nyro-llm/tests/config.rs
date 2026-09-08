@@ -5,6 +5,49 @@ use nyro_llm::{
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
+fn quota_policy_omission_disables_it_and_explicit_bounds_roundtrip() {
+    let value = serde_json::to_value(valid_config()).unwrap();
+    assert!(value["models"]["chat"].get("quota").is_none());
+    for policy in [
+        serde_json::json!({"total_tokens": 100, "reserve_tokens": 20}),
+        serde_json::json!({"total_tokens": u64::MAX, "reserve_tokens": u64::MAX}),
+    ] {
+        let mut enabled = value.clone();
+        enabled["models"]["chat"]["quota"] = policy.clone();
+        let config: Config = serde_json::from_value(enabled).expect("quota policy must load");
+        config.validate().unwrap();
+        assert_eq!(
+            serde_json::to_value(config).unwrap()["models"]["chat"]["quota"],
+            policy
+        );
+    }
+}
+
+#[test]
+fn quota_policy_rejects_missing_null_unknown_and_invalid_values() {
+    for policy in [
+        serde_json::json!(null),
+        serde_json::json!({}),
+        serde_json::json!({"total_tokens": 100}),
+        serde_json::json!({"reserve_tokens": 20}),
+        serde_json::json!({"total_tokens": 0, "reserve_tokens": 20}),
+        serde_json::json!({"total_tokens": 100, "reserve_tokens": 0}),
+        serde_json::json!({"total_tokens": 10, "reserve_tokens": 20}),
+        serde_json::json!({"total_tokens": -1, "reserve_tokens": 20}),
+        serde_json::json!({"total_tokens": 100, "reserve_tokens": -1}),
+        serde_json::json!({"total_tokens": null, "reserve_tokens": 20}),
+        serde_json::json!({"total_tokens": 100, "reserve_tokens": null}),
+        serde_json::json!({"total_tokens": 100, "reserve_tokens": 20, "unknown": true}),
+    ] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["models"]["chat"]["quota"] = policy.clone();
+        if let Ok(config) = serde_json::from_value::<Config>(value) {
+            assert!(config.validate().is_err(), "{policy}");
+        }
+    }
+}
+
+#[test]
 fn rate_policy_defaults_to_one_burst_and_omission_disables_it() {
     let value = serde_json::to_value(valid_config()).unwrap();
     assert!(value["models"]["chat"].get("rate").is_none());
@@ -33,6 +76,7 @@ fn valid_config() -> Config {
                 max_attempts: 1,
                 health: None,
                 rate: None,
+                quota: None,
                 backends: vec![Backend {
                     id: "default".into(),
                     provider: "openai".into(),

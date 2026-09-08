@@ -44,6 +44,7 @@ Gemini 上游模型名只接受由 ASCII 字母、数字、`-_.` 构成的单段
 - `max_attempts`：正整数，默认 `1`，包含首次上游发送。每个请求最多尝试每个 backend ID 一次。
 - `health`：可选的被动熔断策略，省略时关闭。空对象启用默认值 `failure_threshold: 3` 和 `cooldown_ms: 30000`，两者必须大于零。
 - `rate`：可选的模型请求频率，省略时关闭。见下文“请求频率”。
+- `quota`：可选的模型累计 token 额度，省略时关闭。见下文“Token 额度”。
 - `workloads`：非空且不能重复；所有 backend 都使用 OpenAI Chat Completions 时可包含 `chat`、`embedding` 或两者；Responses／Anthropic／Gemini 只支持 `chat`。每个 backend（包括禁用项）都必须支持模型声明的 workload，无效组合会在启动时被拒绝。
 - `allow_anonymous`：可选，默认 `false`。
 - `subjects`：允许调用受保护模型的客户端凭据 ID；只有匿名模型可以省略。
@@ -130,6 +131,28 @@ rate:
 
 可复用原语为 `nyro_limit::rate::RateLimit`，接收数量、`Duration` 与突发容量，返回准入结果或建议等待时长，不依赖 LLM、认证、HTTP、内核或数据库类型；作用域映射与协议拒绝结果由应用决定。回归测试：`cargo test -p nyro-limit` 和 `cargo test -p nyro-llm --test rate_runtime`。
 
+## Token 额度
+
+在公开模型下添加可选的 `quota`：
+
+```yaml
+quota:
+  total_tokens: 1000000
+  reserve_tokens: 4096
+```
+
+两个字段均为必填正整数，且 `reserve_tokens` 不得超过 `total_tokens`。显式 `null` 和未知字段会被拒绝。同一别名的所有调用方、工作负载和入口 API 共享输入加输出 token 的累计额度，不同别名独立计量。当前仅为进程内记账，不提供定时补充、持久化、金额计费或副本间协调。
+
+认证、授权、并发和 rate 准入之后，Nyro 在每次可用上游尝试发出前预留 `reserve_tokens`，每次重试都需要独立预留。没有可用 backend 时不预留。准入原子检查已结算用量加在途预留；余额不足返回原生协议 `429`：OpenAI API 使用 `quota_exceeded`，Anthropic 使用 `rate_limit_error`，Gemini 使用 `RESOURCE_EXHAUSTED`。不带 `Retry-After`，不发出新的上游请求，并立即释放并发许可。此前 rate 准入已消耗的次数不退还。剩余余额小于 `reserve_tokens` 时无法再准入一次尝试。
+
+完整响应有效时，以报告的总用量替换预留，包括显式零用量和超过预留的用量。JSON 在向下游编码前结算，SSE 在校验上游协议终止信号时结算。用量快照按累计值替换，不逐帧相加，且不能递减；输入加输出必须无溢出地等于总量，Embedding 的输入必须等于总量。无效用量导致响应失败：流开始前返回 `502`，开始后终止流。启用 quota 后，即使客户端未请求输出 usage，OpenAI Chat 上游流请求也会主动请求用量；下游仍保留客户端的输出偏好。
+
+结算前遇到用量缺失、上游 HTTP 错误、无效响应、取消、超时、响应体丢弃或断流，均按预留量与已知有效用量的较大值扣减。已结算后发生的下游失败或响应体丢弃不改变扣减结果。只有实际观察到连接建立失败才全额释放预留；故障转移之前每次失败的 HTTP 尝试独立扣减。这种保守回退可能多计实际用量。另一方面，`reserve_tokens` 是运维配置值，不是可信的上游消耗上界：实际消耗可能超过配置预算，超出部分如实记账并阻止后续准入，当前不承诺真实上游 token 的硬上限。
+
+根组合层在代际、路由变更和模型移除／加回之间保留已消耗及在途账本。规则绑定仍活跃或账本已有消耗时，修改规则会使候选构建失败；无持有者且没有消耗或预留的候选账本可被回收。保留账本持续至注册表销毁，进程重启会清空余额，也是更改已建立规则的方式。文件代理仍需重启才能加载配置修改。关闭 quota 后新请求停止计量，但不会删除已有账本。
+
+`nyro_limit::quota::Quota` 提供通用原子预留、结算和快照，不依赖 LLM、HTTP、内核或存储类型；`nyro_llm::quota::QuotaRegistry` 负责模型映射与 token 语义。库调用方应在代际间复用 `runtime::SharedResources` 并通过 `Runtime::with_resources` 构建运行时；`Runtime::new` 创建全新注册表，`with_health` 仅共享健康状态。回归测试：`cargo test -p nyro-limit` 和 `cargo test -p nyro-llm --test quota_runtime`。
+
 ## 原生客户端与转换限制
 
 | 客户端 API | 端点 | 凭据 |
@@ -182,7 +205,7 @@ SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和
 - HTTP 服务运行期间，`GET /healthz` 返回 `200`。
 - 内核 Host 接受新的代际 lease 时，`GET /readyz` 返回 `200`；停止接受时返回 `503`。这个源码构建代理没有数据库或上游 backend 就绪检查。
 
-重试与被动健康检查需要按上述配置显式开启。尚未实现额度、控制面、Admin API、WebUI、`nyro serve` 或 `nyro tool`。程序不会展开环境变量，不接受旧 Standalone YAML，不监听或热更新文件，也不会远程获取配置；修改后需要重启进程。
+重试与被动健康检查需要按上述配置显式开启。尚未实现额度的持久化／跨进程共享存储、控制面、Admin API、WebUI、`nyro serve` 或 `nyro tool`。程序不会展开环境变量，不接受旧 Standalone YAML，不监听或热更新文件，也不会远程获取配置；修改后需要重启进程。
 
 贡献者可以在不连接真实 Provider 的情况下验证根进程、健康检查、认证、Chat、Embedding、SSE、脱敏和正常退出：
 

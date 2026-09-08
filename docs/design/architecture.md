@@ -4,7 +4,7 @@
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级／加权选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级／加权选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、累计 token 额度和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
 
 ## 1. 产品定位与范围
 
@@ -512,6 +512,10 @@ Chat 流使用自己的事件类型，不要求所有交互实现流接口。当
 当前 rate 实现是 `nyro-limit` 内不含业务键的可克隆令牌桶；LLM 按公开模型映射并共享状态，根程序显式持有跨代际注册表。持续频率与突发容量由模型的可选 `rate` 配置声明。一次逻辑请求在鉴权、并发准入和兼容性准备之后扣减一次，内部重试不重复计数，扣减后失败或取消不退款。超限返回原生协议 `429` 与向上取整的 `Retry-After`，立即释放并发许可。规则不变时配置重建保留余额；已有活跃规则的参数变更要求重启，避免候选构建意外重置计数。当前为进程内频率控制，不提供跨进程共享或持久化；具体语义见 [Rust proxy 指南](../standalone/rust-proxy_CN.md)。
 
 严格累计限额需要考虑并发预留与结算，单纯事前读计数、事后累加不能承诺硬上限。额度状态与并发许可的存储契约必须表达所需的原子性，不能用普通 KV 的 get/set 假定事务成立。
+
+当前 quota 实现为 `nyro-limit` 中按通用单位原子预留与结算的进程内账本，`nyro-llm` 将其映射到公开模型的累计输入加输出 token。模型可选配置 `quota.total_tokens` 与 `quota.reserve_tokens`，每次实际上游尝试前独立预留；完整 JSON／SSE 协议终止后按有效用量结算，连接建立失败全额释放，其他失败、取消、断流和用量缺失按预留与有效已知用量的较大值扣减。上游实际消耗可以超过预留，超额如实记账并阻止后续准入；配置预留不是可信的消耗上界，当前不承诺真实上游 token 硬上限，也不提供金额、持久化或多副本协调。
+
+根程序通过 `nyro_llm::runtime::SharedResources` 显式共享健康、rate 和 quota 注册表。quota 已消耗及在途账本在模型移除／加回后继续保留；有活跃绑定或已消费余额时修改规则会拒绝候选构建，避免配置变更清零。进程重启会重置进程内状态。quota 超限返回原生协议 `429`，不带 `Retry-After` 并立即释放并发许可；其之前的 rate 准入不退款。计量、协议映射和资源组合均未进入 `nyro-kernel`。
 
 观测初始化与资源装配由根程序协调。共享观测实现不认识模型数据库表；控制面的历史日志和统计读取归其业务存储。配置代际租约与限流并发许可是不同概念，不能复用一个计数器代替二者。
 

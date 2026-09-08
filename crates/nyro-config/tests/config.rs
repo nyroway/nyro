@@ -29,6 +29,7 @@ fn valid_config() -> Config {
                     max_attempts: 1,
                     health: None,
                     rate: None,
+                    quota: None,
                     backends: vec![Backend {
                         id: "default".into(),
                         provider: "openai".into(),
@@ -494,6 +495,64 @@ fn yaml_rejects_invalid_rate_policy_values() {
         assert!(
             Config::from_yaml(&yaml_with_routing(&format!(
                 "      provider: p\n      upstream_model: u\n      rate: {policy}"
+            )))
+            .is_err(),
+            "{policy}"
+        );
+    }
+}
+
+#[test]
+fn quota_fingerprint_retains_both_policy_fields_and_omission_disables_it() {
+    let parse = |quota: &str| {
+        Config::from_yaml(&yaml_with_routing(&format!(
+            "      provider: p\n      upstream_model: u\n{quota}"
+        )))
+        .unwrap()
+    };
+    let disabled = parse("");
+    let enabled = parse("      quota: {total_tokens: 100, reserve_tokens: 20}");
+    assert_ne!(
+        disabled.fingerprint().unwrap(),
+        enabled.fingerprint().unwrap()
+    );
+    let reordered = parse("      quota: {reserve_tokens: 20, total_tokens: 100}");
+    assert_eq!(
+        enabled.fingerprint().unwrap(),
+        reordered.fingerprint().unwrap()
+    );
+    for changed in [
+        "      quota: {total_tokens: 101, reserve_tokens: 20}",
+        "      quota: {total_tokens: 100, reserve_tokens: 21}",
+    ] {
+        assert_ne!(
+            enabled.fingerprint().unwrap(),
+            parse(changed).fingerprint().unwrap()
+        );
+    }
+}
+
+#[test]
+fn yaml_rejects_invalid_quota_policy_values() {
+    for policy in [
+        "null",
+        "{}",
+        "{total_tokens: 100}",
+        "{reserve_tokens: 20}",
+        "{total_tokens: 0, reserve_tokens: 20}",
+        "{total_tokens: 100, reserve_tokens: 0}",
+        "{total_tokens: 10, reserve_tokens: 20}",
+        "{total_tokens: -1, reserve_tokens: 20}",
+        "{total_tokens: 100, reserve_tokens: -1}",
+        "{total_tokens: null, reserve_tokens: 20}",
+        "{total_tokens: 100, reserve_tokens: null}",
+        "{total_tokens: 18446744073709551616, reserve_tokens: 20}",
+        "{total_tokens: 100, reserve_tokens: 18446744073709551616}",
+        "{total_tokens: 100, reserve_tokens: 20, unknown: true}",
+    ] {
+        assert!(
+            Config::from_yaml(&yaml_with_routing(&format!(
+                "      provider: p\n      upstream_model: u\n      quota: {policy}"
             )))
             .is_err(),
             "{policy}"

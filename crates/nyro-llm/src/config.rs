@@ -62,6 +62,8 @@ pub struct Model {
     pub health: Option<HealthConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate: Option<RateConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<QuotaConfig>,
     pub workloads: Vec<Workload>,
     pub allow_anonymous: bool,
     pub subjects: BTreeSet<String>,
@@ -105,6 +107,14 @@ pub struct RateConfig {
     pub burst: u32,
 }
 
+/// Process-local cumulative token budget and provision reserved per upstream attempt.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuotaConfig {
+    pub total_tokens: u64,
+    pub reserve_tokens: u64,
+}
+
 const fn default_burst() -> u32 {
     1
 }
@@ -126,6 +136,8 @@ struct RawModel {
     health: Option<HealthConfig>,
     #[serde(default, deserialize_with = "present")]
     rate: Option<RateConfig>,
+    #[serde(default, deserialize_with = "present")]
+    quota: Option<QuotaConfig>,
     #[serde(default, deserialize_with = "present")]
     backends: Option<Vec<Backend>>,
     #[serde(default, deserialize_with = "present")]
@@ -171,6 +183,7 @@ impl<'de> Deserialize<'de> for Model {
             max_attempts: raw.max_attempts,
             health: raw.health,
             rate: raw.rate,
+            quota: raw.quota,
             workloads: raw.workloads,
             allow_anonymous: raw.allow_anonymous,
             subjects: raw.subjects,
@@ -200,6 +213,10 @@ pub enum ConfigError {
     InvalidHealth { model: String },
     #[error("model `{model}` rate policy requires positive, representable bounds")]
     InvalidRate { model: String },
+    #[error(
+        "model `{model}` quota policy requires positive bounds and reserve_tokens <= total_tokens"
+    )]
+    InvalidQuota { model: String },
     #[error("model `{model}` must define at least one backend")]
     NoBackends { model: String },
     #[error("model `{model}` has an empty backend ID")]
@@ -294,6 +311,13 @@ impl Config {
                 .is_err()
             }) {
                 return Err(ConfigError::InvalidRate { model: id.clone() });
+            }
+            if model.quota.as_ref().is_some_and(|quota| {
+                quota.total_tokens == 0
+                    || quota.reserve_tokens == 0
+                    || quota.reserve_tokens > quota.total_tokens
+            }) {
+                return Err(ConfigError::InvalidQuota { model: id.clone() });
             }
             if model.backends.is_empty() {
                 return Err(ConfigError::NoBackends { model: id.clone() });
