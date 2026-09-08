@@ -23,7 +23,7 @@ curl http://127.0.0.1:19530/v1/chat/completions \
   -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. Unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. Model names are public aliases: Nyro replaces them with `upstream_model` on the upstream request and restores the public name in supported responses.
+The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. Unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. Model names are public aliases: Nyro replaces them with the selected backend's `upstream_model` on the upstream request and restores the public name in supported responses.
 
 ## Configuration
 
@@ -40,11 +40,33 @@ Gemini upstream model names accept a single ASCII letter/digit/`-_.` segment, op
 
 Each model declares:
 
-- `provider`: an ID from `llm.providers`.
-- `upstream_model`: the model name sent upstream.
-- `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both for OpenAI Chat Completions providers; Responses, Anthropic, and Gemini support only `chat`. Invalid combinations fail startup.
+- `backends`: a nonempty list of upstream backends. Each has a model-scoped, unique, nonblank `id`, a `provider` ID from `llm.providers`, an `upstream_model`, and an optional integer `weight` (default `100`).
+- `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both when every backend uses OpenAI Chat Completions; Responses, Anthropic, and Gemini support only `chat`. Every backend, including disabled entries, must support the model's declared workloads. Invalid combinations fail startup.
 - `allow_anonymous`: optional, default `false`.
 - `subjects`: client credential IDs allowed to invoke a protected model; optional only for anonymous models.
+
+Backend weights range from `0` to `4294967295`. Zero disables selection; a model with no positive weight fails startup. Backend IDs are independent of provider/model names and unique within their public model. Changing an ID changes the effective configuration identity. Backend list order does not express priority and does not change the configuration fingerprint.
+
+Legacy models using top-level `provider` and `upstream_model` remain accepted. They normalize in memory to one backend with `id: default` and `weight: 100`; an equivalent explicit backend has the same fingerprint. Mixing the legacy fields with `backends`, incomplete legacy pairs, explicit null routing fields, or unknown fields is rejected. Config serialization emits the normalized `backends` form; source files are not rewritten.
+
+```yaml
+chat-default:
+  backends:
+    - id: primary
+      provider: example
+      upstream_model: example-chat-model
+      weight: 80
+    - id: secondary
+      provider: responses-example
+      upstream_model: example-responses-model
+      weight: 20
+  workloads: [chat]
+  subjects: [local-client]
+```
+
+Authentication, authorization, and shared admission apply once to the public model. Nyro then prepares each enabled backend locally with its own protocol codec, excludes backends that cannot represent the request, and randomly selects one eligible backend in proportion to its weight. The weights apply to the eligible subset; they are not per-batch traffic guarantees. Preparation sends no network requests. If none can represent the request, the response is `400` and no upstream is called. For example, without a token limit an Anthropic backend is ineligible while a compatible OpenAI backend can still be selected. Preparation cannot determine actual provider availability or whether its eventual response is convertible.
+
+Each invocation makes exactly one upstream attempt. An upstream error, malformed response, or broken stream never triggers another backend. Request logs include the selected backend ID alongside the public model. Priority, retry/failover, and health-based selection remain subsequent work. Local routing regressions: `cargo test -p nyro-llm --test routing_runtime`.
 
 For a protected model, `subjects` must be nonempty and every value must match an `id` in `security.api_keys`. A request without a supported header credential, or with an unknown credential, receives `401`; a known subject not granted that model receives `403`. For an anonymous model, a missing credential is accepted. If a credential is supplied, it must still authenticate, but any known credential may use the anonymous model.
 
@@ -83,7 +105,7 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
   -d '{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":256}}'
 ```
 
-An alias selects the configured upstream independently of the client protocol. Requests routed to Anthropic require an explicit token limit (`max_tokens`, or a representable equivalent); Nyro does not invent one. Native clients routed to an OpenAI stream request upstream usage automatically. OpenAI Chat Completions clients receive usage only when `stream_options.include_usage` is true.
+An alias selects the configured upstream independently of the client protocol. An Anthropic backend is eligible only with an explicit token limit (`max_tokens`, or a representable equivalent); Nyro does not invent one. Native clients routed to an OpenAI stream request upstream usage automatically. OpenAI Chat Completions clients receive usage only when `stream_options.include_usage` is true.
 
 This is an experimental text/function Chat subset. New native codecs reject image/audio/video, thinking/signature blocks, unrepresentable content ordering, multiple candidates, and unsupported vendor options or diagnostics. Examples include Anthropic caching/usage details and matched stop-sequence responses; Gemini safety settings, safety ratings, grounding/citations, prompt feedback and structured-output settings; and OpenAI response fingerprint/service-tier/logprob metadata when it cannot be represented by a native output. Supported fields in one protocol are not automatically representable in another: unsupported requests fail before dispatch; unsupported upstream responses fail with `502` or a terminated SSE stream. Native Embedding APIs and full SDK/vendor feature parity remain future work.
 
@@ -113,7 +135,7 @@ References: [OpenAI Responses migration](https://developers.openai.com/api/docs/
 - `GET /healthz` returns `200` while the HTTP process is serving.
 - `GET /readyz` returns `200` while the kernel host accepts new generation leases and `503` once it does not. This source-built proxy has no database readiness check.
 
-Each request makes one attempt against its configured upstream. It does not implement retries, failover, rate limits, quotas, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
+Each request makes one attempt against its selected upstream. It does not implement retries, failover, rate limits, quotas, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
 
 Contributors can exercise the root process, probes, authentication, Chat, Embedding, SSE, redaction, and graceful termination without a real provider:
 

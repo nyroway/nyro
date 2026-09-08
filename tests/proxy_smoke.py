@@ -74,6 +74,11 @@ def main():
                 "models": {"public": {"provider": "mock", "upstream_model": "internal",
                                       "workloads": ["chat", "embedding"], "subjects": ["tester"]}}},
                 "security": {"api_keys": [{"id": "tester", "secret": "client-secret"}]}}
+            data["llm"]["models"]["public-routed"] = {
+                "backends": [
+                    {"id": "disabled", "provider": "mock", "upstream_model": "must-not-run", "weight": 0},
+                    {"id": "enabled", "provider": "mock", "upstream_model": "internal"}],
+                "workloads": ["chat"], "subjects": ["tester"]}
             config.write_text(json.dumps({**data, "unknown": "secret-marker"}))
             invalid = subprocess.run([binary, "proxy", "--config", config], capture_output=True, timeout=5)
             assert invalid.returncode != 0
@@ -126,7 +131,13 @@ def main():
                         result = json.loads(body)
                         assert result["status"] == "completed"
                         assert result["output"][0]["content"][0]["text"] == "Hello"
-                assert len(Upstream.calls) == 9
+                for streaming in (False, True):
+                    status, body = request("/v1/chat/completions", {
+                        **chat, "model": "public-routed", "stream": streaming})
+                    assert status == 200 and b"public-routed" in body
+                    if streaming:
+                        assert body.endswith(b"data: [DONE]\n\n")
+                assert len(Upstream.calls) == 11
                 assert all(key == "Bearer upstream-secret" and payload["model"] == "internal"
                            for _, key, payload in Upstream.calls)
                 process.terminate()
@@ -141,7 +152,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print("proxy smoke passed: config, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
+    print("proxy smoke passed: config, weighted routing, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
 
 
 if __name__ == "__main__":

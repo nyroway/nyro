@@ -1,7 +1,7 @@
 use nyro_config::{Config, LimitConfig, SecurityConfig, ServerConfig};
 use nyro_llm::{
     Workload,
-    config::{Config as LlmConfig, Model, Provider, ProviderKind},
+    config::{Backend, Config as LlmConfig, Model, Provider, ProviderKind},
 };
 use nyro_security::ApiKey;
 use std::{
@@ -26,8 +26,12 @@ fn valid_config() -> Config {
             models: BTreeMap::from([(
                 "chat".into(),
                 Model {
-                    provider: "openai".into(),
-                    upstream_model: "gpt-example".into(),
+                    backends: vec![Backend {
+                        id: "default".into(),
+                        provider: "openai".into(),
+                        upstream_model: "gpt-example".into(),
+                        weight: 100,
+                    }],
                     workloads: vec![Workload::Chat, Workload::Embedding],
                     allow_anonymous: false,
                     subjects: BTreeSet::from(["deploy".into()]),
@@ -274,5 +278,71 @@ fn debug_and_validation_errors_do_not_expose_secrets() {
     for secret in ["provider-secret", "client-secret", "url-secret"] {
         assert!(!debug.contains(secret));
         assert!(!error.contains(secret));
+    }
+}
+
+fn yaml_with_routing(routing: &str) -> String {
+    format!(
+        "llm:\n  providers:\n    p: {{kind: openai, base_url: https://example.test}}\n    q: {{kind: openai, base_url: https://second.example.test}}\n  models:\n    chat:\n      workloads: [chat]\n      allow_anonymous: true\n{routing}\n"
+    )
+}
+
+#[test]
+fn yaml_legacy_and_explicit_default_backend_have_the_same_fingerprint() {
+    let legacy = Config::from_yaml(&yaml_with_routing(
+        "      provider: p\n      upstream_model: u",
+    ))
+    .unwrap();
+    let canonical = Config::from_yaml(&yaml_with_routing(
+        "      backends:\n        - {id: default, provider: p, upstream_model: u}",
+    ))
+    .expect("canonical backend YAML must load");
+    assert_eq!(
+        legacy.fingerprint().unwrap(),
+        canonical.fingerprint().unwrap()
+    );
+}
+
+#[test]
+fn fingerprint_ignores_backend_order_and_retains_every_backend_setting() {
+    let first = Config::from_yaml(&yaml_with_routing(
+        "      backends:\n        - {id: primary, provider: p, upstream_model: u, weight: 80}\n        - {id: secondary, provider: q, upstream_model: v, weight: 0}"
+    )).unwrap();
+    let reordered = Config::from_yaml(&yaml_with_routing(
+        "      backends:\n        - {id: secondary, provider: q, upstream_model: v, weight: 0}\n        - {id: primary, provider: p, upstream_model: u, weight: 80}"
+    )).unwrap();
+    assert_eq!(
+        first.fingerprint().unwrap(),
+        reordered.fingerprint().unwrap()
+    );
+    for changed_backend in [
+        "{id: renamed, provider: q, upstream_model: v, weight: 0}",
+        "{id: secondary, provider: p, upstream_model: v, weight: 0}",
+        "{id: secondary, provider: q, upstream_model: different, weight: 0}",
+        "{id: secondary, provider: q, upstream_model: v, weight: 1}",
+    ] {
+        let changed = Config::from_yaml(&yaml_with_routing(&format!(
+            "      backends:\n        - {{id: primary, provider: p, upstream_model: u, weight: 80}}\n        - {changed_backend}"
+        ))).unwrap();
+        assert_ne!(first.fingerprint().unwrap(), changed.fingerprint().unwrap());
+    }
+}
+
+#[test]
+fn yaml_rejects_ambiguous_or_invalid_backend_routes() {
+    for routing in [
+        "      backends: null",
+        "      backends: []",
+        "      provider: p\n      upstream_model: u\n      backends: null",
+        "      provider: null\n      backends: [{id: b, provider: p, upstream_model: u}]",
+        "      backends: [{id: b, provider: p, upstream_model: u, weight: -1}]",
+        "      backends: [{id: b, provider: p, upstream_model: u, weight: 4294967296}]",
+        "      backends: [{id: b, provider: p, upstream_model: u, weight: 0}]",
+        "      backends: [{id: b, provider: p, upstream_model: u}, {id: b, provider: p, upstream_model: v}]",
+    ] {
+        assert!(
+            Config::from_yaml(&yaml_with_routing(routing)).is_err(),
+            "{routing}"
+        );
     }
 }

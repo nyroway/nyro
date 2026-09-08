@@ -23,7 +23,7 @@ curl http://127.0.0.1:19530/v1/chat/completions \
   -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。配置中的模型名是公开别名：Nyro 向上游发送 `upstream_model`，并在已支持的响应中恢复公开模型名。
+当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在已支持的响应中恢复公开模型名。
 
 ## 配置
 
@@ -40,11 +40,33 @@ Gemini 上游模型名只接受由 ASCII 字母、数字、`-_.` 构成的单段
 
 每个模型包含：
 
-- `provider`：`llm.providers` 中的 ID。
-- `upstream_model`：发送给上游的模型名。
-- `workloads`：非空且不能重复；OpenAI Chat Completions Provider 可包含 `chat`、`embedding` 或两者；Responses／Anthropic／Gemini 只支持 `chat`。无效组合会在启动时被拒绝。
+- `backends`：非空上游列表。每项包含模型范围内唯一且非空白的 `id`、`llm.providers` 中的 `provider` ID、`upstream_model`，以及可选整数 `weight`（默认 `100`）。
+- `workloads`：非空且不能重复；所有 backend 都使用 OpenAI Chat Completions 时可包含 `chat`、`embedding` 或两者；Responses／Anthropic／Gemini 只支持 `chat`。每个 backend（包括禁用项）都必须支持模型声明的 workload，无效组合会在启动时被拒绝。
 - `allow_anonymous`：可选，默认 `false`。
 - `subjects`：允许调用受保护模型的客户端凭据 ID；只有匿名模型可以省略。
+
+Backend 权重范围是 `0` 到 `4294967295`；`0` 表示不参与选择，模型的全部权重为零时启动失败。Backend ID 独立于 Provider 和上游模型名，在所属公开模型内唯一；更改 ID 会改变有效配置身份。列表顺序不表示优先级，也不会改变配置指纹。
+
+旧模型顶层的 `provider` 和 `upstream_model` 写法继续兼容，在内存中归一化为 `id: default`、`weight: 100` 的单个 backend，与显式声明的等价配置具有相同指纹。拒绝新旧写法混用、缺少任一旧字段、显式 null 路由字段及未知字段。配置序列化输出归一化后的 `backends` 形式，不会改写源文件。
+
+```yaml
+chat-default:
+  backends:
+    - id: primary
+      provider: example
+      upstream_model: example-chat-model
+      weight: 80
+    - id: secondary
+      provider: responses-example
+      upstream_model: example-responses-model
+      weight: 20
+  workloads: [chat]
+  subjects: [local-client]
+```
+
+认证、授权和共享准入针对公开模型执行一次。随后 Nyro 使用各 backend 对应的 codec 在本地准备请求，排除无法表达当前请求的项，并按剩余权重随机选择一个。权重作用于可用候选集合，不保证每一批请求都严格按比例分配。准备阶段不发送网络请求；没有可表达请求的 backend 时返回 `400`。例如请求未提供 token 上限时，Anthropic backend 不参与选择，而兼容的 OpenAI backend 仍可参与。准备阶段不能确定 Provider 的实际可用性，也不能保证其后续响应可转换。
+
+每次调用只向选定上游尝试一次。上游错误、响应格式错误或断流不会触发其他 backend。请求日志会同时记录公开模型与所选 backend ID。优先级、重试／故障转移及基于健康状态的选择属于后续工作。本地路由回归：`cargo test -p nyro-llm --test routing_runtime`。
 
 受保护模型的 `subjects` 不能为空，每一项都必须匹配 `security.api_keys` 中的 `id`。未提供支持的请求头凭据或凭据未知时返回 `401`；凭据已知但无权访问该模型时返回 `403`。匿名模型可以不带凭据访问；如果请求带了凭据，该凭据仍须有效，但任意已知凭据都可以访问匿名模型。
 
@@ -83,7 +105,7 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
   -d '{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":256}}'
 ```
 
-模型别名选择上游，与客户端协议独立。路由到 Anthropic 时，请求必须显式提供 token 上限（`max_tokens` 或能转换的等价字段），Nyro 不自行设置默认值。原生客户端使用 OpenAI 流式上游时会自动请求用量；OpenAI Chat Completions 客户端只有设置 `stream_options.include_usage: true` 才接收用量。
+模型别名选择上游，与客户端协议独立。Anthropic backend 只有在请求显式提供 token 上限时才参与选择（`max_tokens` 或能转换的等价字段），Nyro 不自行设置默认值。原生客户端使用 OpenAI 流式上游时会自动请求用量；OpenAI Chat Completions 客户端只有设置 `stream_options.include_usage: true` 才接收用量。
 
 这是实验性的文本／函数 Chat 子集。新原生 codec 拒绝图片、音频、视频、thinking／签名块、无法保留的内容顺序、多候选以及不支持的厂商选项或诊断字段。例如 Anthropic 缓存／用量扩展和命中 stop sequence 的响应；Gemini 安全设置、safety ratings、grounding／引用、prompt feedback 和结构化输出设置；以及无法在原生输出中表示的 OpenAI fingerprint／service-tier／logprob 元数据。某协议已支持的字段不一定能转换到另一协议：不可转换的请求在发往上游前失败；不可转换的上游响应返回 `502` 或终止 SSE 流。原生 Embedding API 和完整 SDK／厂商功能对齐属于后续工作。
 
@@ -113,7 +135,7 @@ SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和
 - HTTP 服务运行期间，`GET /healthz` 返回 `200`。
 - 内核 Host 接受新的代际 lease 时，`GET /readyz` 返回 `200`；停止接受时返回 `503`。这个源码构建代理没有数据库就绪检查。
 
-当前每个请求只向配置的上游尝试一次。尚未实现重试、故障转移、频率限制、额度、控制面、Admin API、WebUI、`nyro serve` 或 `nyro tool`。程序不会展开环境变量，不接受旧 Standalone YAML，不监听或热更新文件，也不会远程获取配置；修改后需要重启进程。
+当前每个请求只向选定上游尝试一次。尚未实现重试、故障转移、频率限制、额度、控制面、Admin API、WebUI、`nyro serve` 或 `nyro tool`。程序不会展开环境变量，不接受旧 Standalone YAML，不监听或热更新文件，也不会远程获取配置；修改后需要重启进程。
 
 贡献者可以在不连接真实 Provider 的情况下验证根进程、健康检查、认证、Chat、Embedding、SSE、脱敏和正常退出：
 

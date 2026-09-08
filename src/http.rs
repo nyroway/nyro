@@ -129,7 +129,7 @@ limit: {{concurrency: 1}}
         assert_eq!(old.status(), StatusCode::OK);
         assert_eq!(host.status().active.unwrap().leases, 1);
         let mut next = config.clone();
-        next.llm.models.get_mut("public").unwrap().upstream_model = "new-model".into();
+        next.llm.models.get_mut("public").unwrap().backends[0].upstream_model = "new-model".into();
         host.activate(
             resources.candidate(&next).unwrap(),
             Context {
