@@ -1,8 +1,8 @@
 //! Provider-owned URLs and credentials; caller headers never cross this boundary.
 use crate::{
     Request,
-    codec::{CodecError, anthropic, gemini, openai},
-    config::{Provider, ProviderKind},
+    codec::{ChatFormat, CodecError, anthropic, gemini, openai},
+    config::{OpenAiApi, Provider, ProviderKind},
     runtime::BuildError,
 };
 use reqwest::{
@@ -14,7 +14,8 @@ use serde_json::Value;
 pub(crate) struct Driver {
     client: Client,
     base: Url,
-    pub(crate) kind: ProviderKind,
+    kind: ProviderKind,
+    pub(crate) format: ChatFormat,
     credential: Option<(HeaderName, HeaderValue)>,
 }
 
@@ -44,18 +45,29 @@ impl Driver {
                 .map_err(|_| BuildError)?,
             base,
             kind: config.kind,
+            format: match config.kind {
+                ProviderKind::Openai => match config.api.unwrap_or_default() {
+                    OpenAiApi::ChatCompletions => ChatFormat::OpenAiChat,
+                    OpenAiApi::Responses => ChatFormat::OpenAiResponses,
+                },
+                ProviderKind::Anthropic => ChatFormat::Anthropic,
+                ProviderKind::Gemini => ChatFormat::Gemini,
+            },
             credential,
         })
     }
 
     pub(crate) fn encode(&self, request: &Request) -> Result<Value, CodecError> {
-        match (self.kind, request) {
-            (ProviderKind::Openai, Request::Chat(request)) => openai::encode_chat(request),
-            (ProviderKind::Openai, Request::Embedding(request)) => {
+        match (self.format, request) {
+            (ChatFormat::OpenAiChat, Request::Chat(request)) => openai::encode_chat(request),
+            (ChatFormat::OpenAiResponses, Request::Chat(request)) => {
+                openai::responses::encode_chat(request)
+            }
+            (ChatFormat::OpenAiChat, Request::Embedding(request)) => {
                 openai::encode_embedding(request)
             }
-            (ProviderKind::Anthropic, Request::Chat(request)) => anthropic::encode_chat(request),
-            (ProviderKind::Gemini, Request::Chat(request)) => gemini::encode_chat(request),
+            (ChatFormat::Anthropic, Request::Chat(request)) => anthropic::encode_chat(request),
+            (ChatFormat::Gemini, Request::Chat(request)) => gemini::encode_chat(request),
             _ => Err(CodecError("provider does not support this workload".into())),
         }
     }
@@ -67,11 +79,12 @@ impl Driver {
     ) -> Result<reqwest::Response, reqwest::Error> {
         let mut url = self.base.clone();
         // Model names are validated as a single safe segment during candidate construction.
-        let endpoint = match (self.kind, request) {
-            (ProviderKind::Openai, Request::Embedding(_)) => "embeddings".to_owned(),
-            (ProviderKind::Openai, _) => "chat/completions".to_owned(),
-            (ProviderKind::Anthropic, _) => "messages".to_owned(),
-            (ProviderKind::Gemini, _) => format!(
+        let endpoint = match (self.format, request) {
+            (ChatFormat::OpenAiChat, Request::Embedding(_)) => "embeddings".to_owned(),
+            (ChatFormat::OpenAiChat, _) => "chat/completions".to_owned(),
+            (ChatFormat::OpenAiResponses, _) => "responses".to_owned(),
+            (ChatFormat::Anthropic, _) => "messages".to_owned(),
+            (ChatFormat::Gemini, _) => format!(
                 "models/{}:{}",
                 request
                     .model()

@@ -116,7 +116,17 @@ def main():
                     assert status == 200 and b"Hello" in body and b"public" in body
                     if streaming:
                         assert b"finishReason" in body
-                assert len(Upstream.calls) == 7
+                    status, body = request("/v1/responses", {
+                        "model": "public", "input": "Hello", "stream": streaming,
+                        "max_output_tokens": 32, "store": False})
+                    assert status == 200 and b"Hello" in body and b"public" in body
+                    if streaming:
+                        assert b"event: response.completed" in body and b"[DONE]" not in body
+                    else:
+                        result = json.loads(body)
+                        assert result["status"] == "completed"
+                        assert result["output"][0]["content"][0]["text"] == "Hello"
+                assert len(Upstream.calls) == 9
                 assert all(key == "Bearer upstream-secret" and payload["model"] == "internal"
                            for _, key, payload in Upstream.calls)
                 process.terminate()
@@ -131,7 +141,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print("proxy smoke passed: config, probes, auth, OpenAI/Anthropic/Gemini Chat, Embedding, SSE, SIGTERM")
+    print("proxy smoke passed: config, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
 
 
 if __name__ == "__main__":

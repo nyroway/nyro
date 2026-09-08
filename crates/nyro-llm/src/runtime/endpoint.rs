@@ -1,7 +1,7 @@
 use super::Failure;
 use crate::{
     Request, Workload,
-    codec::{anthropic, gemini, openai},
+    codec::{ChatFormat, anthropic, gemini, openai},
     config::ProviderKind,
 };
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
@@ -9,6 +9,7 @@ use serde_json::Value;
 
 pub(super) struct Endpoint {
     pub kind: ProviderKind,
+    pub format: ChatFormat,
     pub workload: Workload,
     model: Option<String>,
     streaming: bool,
@@ -29,7 +30,9 @@ impl Endpoint {
         let path = uri.path();
         let kind = kind(path);
         let (workload, model, streaming) = match path {
-            "/v1/chat/completions" | "/v1/messages" => (Workload::Chat, None, false),
+            "/v1/chat/completions" | "/v1/responses" | "/v1/messages" => {
+                (Workload::Chat, None, false)
+            }
             "/v1/embeddings" => (Workload::Embedding, None, false),
             _ => {
                 let model_path = path
@@ -93,6 +96,12 @@ impl Endpoint {
         }
         Ok(Self {
             kind,
+            format: match kind {
+                ProviderKind::Openai if path == "/v1/responses" => ChatFormat::OpenAiResponses,
+                ProviderKind::Openai => ChatFormat::OpenAiChat,
+                ProviderKind::Anthropic => ChatFormat::Anthropic,
+                ProviderKind::Gemini => ChatFormat::Gemini,
+            },
             workload,
             model,
             streaming,
@@ -100,13 +109,18 @@ impl Endpoint {
     }
 
     pub(super) fn decode(&self, value: Value) -> Result<Request, Failure> {
-        let result = match (self.kind, self.workload) {
-            (ProviderKind::Openai, Workload::Embedding) => {
+        let result = match (self.format, self.workload) {
+            (ChatFormat::OpenAiChat, Workload::Embedding) => {
                 openai::decode_embedding(value).map(Request::Embedding)
             }
-            (ProviderKind::Openai, Workload::Chat) => openai::decode_chat(value).map(Request::Chat),
-            (ProviderKind::Anthropic, _) => anthropic::decode_chat(value).map(Request::Chat),
-            (ProviderKind::Gemini, _) => gemini::decode_chat(
+            (ChatFormat::OpenAiChat, Workload::Chat) => {
+                openai::decode_chat(value).map(Request::Chat)
+            }
+            (ChatFormat::OpenAiResponses, _) => {
+                openai::responses::decode_chat(value).map(Request::Chat)
+            }
+            (ChatFormat::Anthropic, _) => anthropic::decode_chat(value).map(Request::Chat),
+            (ChatFormat::Gemini, _) => gemini::decode_chat(
                 value,
                 self.model.as_deref().expect("Gemini path model"),
                 self.streaming,

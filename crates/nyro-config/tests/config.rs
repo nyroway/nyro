@@ -18,6 +18,7 @@ fn valid_config() -> Config {
                 "openai".into(),
                 Provider {
                     kind: ProviderKind::Openai,
+                    api: None,
                     base_url: "https://api.example.test/v1".into(),
                     api_key: Some("provider-secret".into()),
                 },
@@ -210,6 +211,8 @@ fn fingerprint_is_canonical_and_excludes_listen_address() {
     let mut equivalent = first.clone();
     equivalent.server.listen = "0.0.0.0:8080".parse::<SocketAddr>().unwrap();
     equivalent.security.api_keys.reverse();
+    equivalent.llm.providers.get_mut("openai").unwrap().api =
+        Some(nyro_llm::config::OpenAiApi::ChatCompletions);
     equivalent
         .llm
         .models

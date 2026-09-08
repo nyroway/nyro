@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Request, Workload,
-    codec::{anthropic, gemini, openai},
+    codec::{ChatFormat, anthropic, gemini, openai},
     config,
     ingress::body::{self, Outcome},
     provider::Driver,
@@ -214,9 +214,16 @@ impl Runtime {
             .providers
             .get(&model.provider)
             .ok_or_else(Failure::upstream)?;
+        // Preserve the stateless Responses contract when translating to Chat Completions.
+        if provider.format == ChatFormat::OpenAiChat
+            && endpoint.format == ChatFormat::OpenAiResponses
+            && let Request::Chat(chat) = &mut request
+        {
+            chat.openai.store = Some(false);
+        }
         if streaming
-            && provider.kind == config::ProviderKind::Openai
-            && endpoint.kind != config::ProviderKind::Openai
+            && provider.format == ChatFormat::OpenAiChat
+            && endpoint.format != ChatFormat::OpenAiChat
             && let Request::Chat(chat) = &mut request
         {
             chat.openai
@@ -265,8 +272,8 @@ impl Runtime {
             }
             let mut state = StreamState::new(
                 response,
-                provider.kind,
-                endpoint.kind,
+                provider.format,
+                endpoint.format,
                 public_model,
                 self.options.max_frame_bytes,
                 include_usage,
@@ -299,17 +306,21 @@ impl Runtime {
         let payload: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::upstream())?;
         let payload = match workload {
             Workload::Chat => {
-                let mut response = match provider.kind {
-                    config::ProviderKind::Openai => openai::decode_chat_response(payload),
-                    config::ProviderKind::Anthropic => anthropic::decode_chat_response(payload),
-                    config::ProviderKind::Gemini => gemini::decode_chat_response(payload),
+                let mut response = match provider.format {
+                    ChatFormat::OpenAiResponses => openai::responses::decode_chat_response(payload),
+                    ChatFormat::OpenAiChat => openai::decode_chat_response(payload),
+                    ChatFormat::Anthropic => anthropic::decode_chat_response(payload),
+                    ChatFormat::Gemini => gemini::decode_chat_response(payload),
                 }
                 .map_err(|_| Failure::upstream())?;
                 response.model = public_model;
-                match endpoint.kind {
-                    config::ProviderKind::Openai => openai::encode_chat_response(&response),
-                    config::ProviderKind::Anthropic => anthropic::encode_chat_response(&response),
-                    config::ProviderKind::Gemini => gemini::encode_chat_response(&response),
+                match endpoint.format {
+                    ChatFormat::OpenAiResponses => {
+                        openai::responses::encode_chat_response(&response)
+                    }
+                    ChatFormat::OpenAiChat => openai::encode_chat_response(&response),
+                    ChatFormat::Anthropic => anthropic::encode_chat_response(&response),
+                    ChatFormat::Gemini => gemini::encode_chat_response(&response),
                 }
             }
             Workload::Embedding => {

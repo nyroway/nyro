@@ -13,3 +13,12 @@ impl From<serde_json::Error> for CodecError {
 
 pub mod anthropic;
 pub mod gemini;
+
+/// Wire API selection is independent of workload and provider credentials.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChatFormat {
+    OpenAiChat,
+    OpenAiResponses,
+    Anthropic,
+    Gemini,
+}

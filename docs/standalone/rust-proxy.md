@@ -23,15 +23,16 @@ curl http://127.0.0.1:19530/v1/chat/completions \
   -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-The current ingress implements typed subsets of OpenAI Chat/Embedding, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across all three upstream kinds. It is not a promise of full vendor API compatibility. Unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unknown or unsupported upstream response fields produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. Model names are public aliases: Nyro replaces them with `upstream_model` on the upstream request and restores the public name in supported responses.
+The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. Unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. Model names are public aliases: Nyro replaces them with `upstream_model` on the upstream request and restores the public name in supported responses.
 
 ## Configuration
 
-All structures reject unknown fields. `kind` is required and accepts `openai`, `anthropic`, or `gemini`. Provider URLs must use HTTP or HTTPS, have a host, and contain no user information, query, or fragment. Nyro appends the native endpoint to the configured base path. Upstream requests use only the provider's optional `api_key`; caller credentials are not forwarded. Redirects and environment-configured HTTP proxies are disabled for upstream calls.
+All structures reject unknown fields. `kind` is required and accepts `openai`, `anthropic`, or `gemini`. OpenAI providers optionally select `api: chat_completions` (default) or `api: responses`; other kinds reject the `api` field. Provider URLs must use HTTP or HTTPS, have a host, and contain no user information, query, or fragment. Nyro appends the native endpoint to the configured base path. Upstream requests use only the provider's optional `api_key`; caller credentials are not forwarded. Redirects and environment-configured HTTP proxies are disabled for upstream calls.
 
 | Provider kind | Example base URL | Appended endpoint | Upstream credential |
 |---|---|---|---|
-| `openai` | `https://api.example.com/v1` | `chat/completions` or `embeddings` | Bearer Authorization |
+| `openai`, default API | `https://api.example.com/v1` | `chat/completions` or `embeddings` | Bearer Authorization |
+| `openai`, `api: responses` | `https://api.example.com/v1` | `responses` | Bearer Authorization |
 | `anthropic` | `https://api.anthropic.com/v1` | `messages` | `x-api-key`; fixed `anthropic-version: 2023-06-01` |
 | `gemini` | `https://generativelanguage.googleapis.com/v1beta` | `models/{upstream_model}:generateContent` or `:streamGenerateContent?alt=sse` | `x-goog-api-key` |
 
@@ -41,7 +42,7 @@ Each model declares:
 
 - `provider`: an ID from `llm.providers`.
 - `upstream_model`: the model name sent upstream.
-- `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both for OpenAI; Anthropic and Gemini currently support only `chat`. Invalid combinations fail startup.
+- `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both for OpenAI Chat Completions providers; Responses, Anthropic, and Gemini support only `chat`. Invalid combinations fail startup.
 - `allow_anonymous`: optional, default `false`.
 - `subjects`: client credential IDs allowed to invoke a protected model; optional only for anonymous models.
 
@@ -55,16 +56,16 @@ Credential IDs and secrets must be unique and nonempty; IDs cannot be blank. Cli
 | `server.request_timeout_ms` | `120000` | Whole-request deadline, including a successful response body or SSE stream |
 | `server.max_body_bytes` | `1048576` | Maximum buffered downstream request body |
 | `server.max_response_bytes` | `16777216` | Maximum buffered non-stream upstream response; it is not a cumulative SSE limit |
-| `server.max_frame_bytes` | `1048576` | Maximum upstream SSE frame, emitted conversion batch, and accumulated tool state bytes |
+| `server.max_frame_bytes` | `1048576` | Maximum upstream SSE frame, emitted conversion batch, and accumulated tool/Responses snapshot state bytes |
 | `limit.concurrency` | `64` | Shared in-flight request cap; excess requests receive `429` |
 
-All numeric limits must be greater than zero. Concurrency must also fit Tokio's supported semaphore capacity. A concurrency permit remains held until the response body completes or is dropped. SSE has a per-frame cap and the whole-request deadline, but no cumulative stream byte cap. Tool fragments may be buffered until complete; accumulation is bounded by `max_frame_bytes`. A protocol terminal must be validated before a successful terminal is emitted; malformed/truncated streams fail without retry.
+All numeric limits must be greater than zero. Concurrency must also fit Tokio's supported semaphore capacity. A concurrency permit remains held until the response body completes or is dropped. SSE has a per-frame cap and the whole-request deadline, but no cumulative wire byte cap. Responses additionally retains the full output snapshot within `max_frame_bytes`, including generated text; large Responses streams can therefore hit this limit even with small deltas. Tool fragments may be buffered until complete; accumulation is bounded by `max_frame_bytes`. A protocol terminal must be validated before a successful terminal is emitted; malformed/truncated streams fail without retry.
 
 ## Native clients and conversion limits
 
 | Client API | Endpoint | Credential |
 |---|---|---|
-| OpenAI | `POST /v1/chat/completions`, `POST /v1/embeddings` | `Authorization: Bearer …` |
+| OpenAI | `POST /v1/chat/completions`, `POST /v1/responses`, `POST /v1/embeddings` | `Authorization: Bearer …` |
 | Anthropic | `POST /v1/messages` | `x-api-key: …` or Bearer |
 | Gemini | `POST /v1beta/models/{alias}:generateContent`, `:streamGenerateContent?alt=sse` | `x-goog-api-key: …` or Bearer |
 
@@ -82,11 +83,30 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
   -d '{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":256}}'
 ```
 
-An alias selects the configured upstream independently of the client protocol. Requests routed to Anthropic require an explicit token limit (`max_tokens`, or a representable equivalent); Nyro does not invent one. Native clients routed to an OpenAI stream request upstream usage automatically. OpenAI clients receive usage only when `stream_options.include_usage` is true.
+An alias selects the configured upstream independently of the client protocol. Requests routed to Anthropic require an explicit token limit (`max_tokens`, or a representable equivalent); Nyro does not invent one. Native clients routed to an OpenAI stream request upstream usage automatically. OpenAI Chat Completions clients receive usage only when `stream_options.include_usage` is true.
 
 This is an experimental text/function Chat subset. New native codecs reject image/audio/video, thinking/signature blocks, unrepresentable content ordering, multiple candidates, and unsupported vendor options or diagnostics. Examples include Anthropic caching/usage details and matched stop-sequence responses; Gemini safety settings, safety ratings, grounding/citations, prompt feedback and structured-output settings; and OpenAI response fingerprint/service-tier/logprob metadata when it cannot be represented by a native output. Supported fields in one protocol are not automatically representable in another: unsupported requests fail before dispatch; unsupported upstream responses fail with `502` or a terminated SSE stream. Native Embedding APIs and full SDK/vendor feature parity remain future work.
 
 Protocol reference: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini generateContent](https://ai.google.dev/api/generate-content). Local matrix regression: `cargo test -p nyro-llm --test protocol_matrix`.
+
+## Responses subset
+
+`POST /v1/responses` accepts string input or typed message/function items, instructions, common generation controls, and client function tools/results. Native Responses function definitions must explicitly set `strict`: use `false` for the portable non-strict subset; `true` requires an upstream that can preserve it. It can use any configured Chat upstream. Conversely, all supported Chat ingress APIs can use a provider with `api: responses`. For example:
+
+```sh
+curl http://127.0.0.1:19530/v1/responses \
+  -H 'Authorization: Bearer replace-with-client-secret' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"responses-default","input":"Hello","max_output_tokens":256,"store":false,"stream":true}'
+```
+
+Function results currently require a string `function_call_output.output`; array results are rejected.
+
+This implementation is stateless: outbound Responses always sets `store:false`, and Responses ingress translated to Chat Completions also explicitly disables storage. Server conversation state (`conversation`, `previous_response_id`), item references, `store:true`, `background:true`, hosted tools, reasoning items, media, and response retrieval/deletion/cancellation are unsupported. Meaningful options or output items that the current Chat IR cannot preserve are rejected. Responses envelope echoes and item IDs are normalized; exact upstream IDs and request echoes are not preserved. Function `call_id`, content order, finish status, and representable usage remain part of the conversion contract.
+
+SSE uses named Responses lifecycle events, stable item IDs, ordered sequence numbers, and a full terminal snapshot, without a `[DONE]` marker. Token-limit/content-filter endings produce `response.incomplete`. Failed, contradictory, malformed, or truncated upstream streams terminate without a fabricated successful completion. Native upstream streaming disables obfuscation. This subset does not establish full Responses SDK or Codex CLI compatibility.
+
+References: [OpenAI Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses), [Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses). Local regressions: `cargo test -p nyro-llm --test responses_codec --test responses_runtime`.
 
 ## Health and current scope
 

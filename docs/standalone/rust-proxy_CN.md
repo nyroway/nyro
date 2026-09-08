@@ -23,15 +23,16 @@ curl http://127.0.0.1:19530/v1/chat/completions \
   -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-当前入口实现 OpenAI Chat/Embedding、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持三种上游之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。未知或尚未支持的请求字段会返回 `400`，不会原样转发；未知或尚未支持的上游响应字段会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。配置中的模型名是公开别名：Nyro 向上游发送 `upstream_model`，并在已支持的响应中恢复公开模型名。
+当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。配置中的模型名是公开别名：Nyro 向上游发送 `upstream_model`，并在已支持的响应中恢复公开模型名。
 
 ## 配置
 
-所有配置结构都会拒绝未知字段。`kind` 必填，支持 `openai`、`anthropic`、`gemini`。Provider URL 必须使用 HTTP 或 HTTPS、包含主机，且不能包含用户信息、查询参数或 fragment。Nyro 在基础路径后追加原生端点。上游只使用 Provider 配置的可选 `api_key`，不会转发调用方凭据；同时禁用重定向和环境变量配置的 HTTP 代理。
+所有配置结构都会拒绝未知字段。`kind` 必填，支持 `openai`、`anthropic`、`gemini`。OpenAI Provider 可选 `api: chat_completions`（默认）或 `api: responses`；其他 kind 拒绝 `api` 字段。Provider URL 必须使用 HTTP 或 HTTPS、包含主机，且不能包含用户信息、查询参数或 fragment。Nyro 在基础路径后追加原生端点。上游只使用 Provider 配置的可选 `api_key`，不会转发调用方凭据；同时禁用重定向和环境变量配置的 HTTP 代理。
 
 | Provider kind | 基础地址示例 | 追加端点 | 上游凭据 |
 |---|---|---|---|
-| `openai` | `https://api.example.com/v1` | `chat/completions` 或 `embeddings` | Bearer Authorization |
+| `openai`，默认 API | `https://api.example.com/v1` | `chat/completions` 或 `embeddings` | Bearer Authorization |
+| `openai`，`api: responses` | `https://api.example.com/v1` | `responses` | Bearer Authorization |
 | `anthropic` | `https://api.anthropic.com/v1` | `messages` | `x-api-key`；固定 `anthropic-version: 2023-06-01` |
 | `gemini` | `https://generativelanguage.googleapis.com/v1beta` | `models/{upstream_model}:generateContent` 或 `:streamGenerateContent?alt=sse` | `x-goog-api-key` |
 
@@ -41,7 +42,7 @@ Gemini 上游模型名只接受由 ASCII 字母、数字、`-_.` 构成的单段
 
 - `provider`：`llm.providers` 中的 ID。
 - `upstream_model`：发送给上游的模型名。
-- `workloads`：非空且不能重复；OpenAI 可包含 `chat`、`embedding` 或两者，Anthropic／Gemini 当前只支持 `chat`。无效组合会在启动时被拒绝。
+- `workloads`：非空且不能重复；OpenAI Chat Completions Provider 可包含 `chat`、`embedding` 或两者；Responses／Anthropic／Gemini 只支持 `chat`。无效组合会在启动时被拒绝。
 - `allow_anonymous`：可选，默认 `false`。
 - `subjects`：允许调用受保护模型的客户端凭据 ID；只有匿名模型可以省略。
 
@@ -55,16 +56,16 @@ Gemini 上游模型名只接受由 ASCII 字母、数字、`-_.` 构成的单段
 | `server.request_timeout_ms` | `120000` | 整个请求的期限，包括成功响应体或 SSE 流 |
 | `server.max_body_bytes` | `1048576` | 缓冲的下游请求体上限 |
 | `server.max_response_bytes` | `16777216` | 缓冲的非流式上游响应上限；不是 SSE 累计流量上限 |
-| `server.max_frame_bytes` | `1048576` | 上游 SSE 帧、转换输出批次、累计工具状态的字节上限 |
+| `server.max_frame_bytes` | `1048576` | 上游 SSE 帧、转换输出批次、累计工具／Responses 快照状态的字节上限 |
 | `limit.concurrency` | `64` | 共享在途请求上限，超限返回 `429` |
 
-所有数值限制都必须大于零，并发值还必须位于 Tokio 支持的 semaphore 容量内。并发许可会持有到响应体完成或被丢弃。SSE 受单帧上限和整个请求期限约束，没有累计流字节上限。工具参数片段可能缓冲到完整后输出，累计状态受 `max_frame_bytes` 约束。只有校验协议终止信号后才输出成功终止；格式错误和断流会失败，不重试。
+所有数值限制都必须大于零，并发值还必须位于 Tokio 支持的 semaphore 容量内。并发许可会持有到响应体完成或被丢弃。SSE 受单帧上限和整个请求期限约束，没有累计传输字节上限。Responses 还需在 `max_frame_bytes` 内保留完整输出快照（包括生成文本），因此即使每个 delta 很小，长 Responses 流也可能触及上限。工具参数片段可能缓冲到完整后输出，累计状态受 `max_frame_bytes` 约束。只有校验协议终止信号后才输出成功终止；格式错误和断流会失败，不重试。
 
 ## 原生客户端与转换限制
 
 | 客户端 API | 端点 | 凭据 |
 |---|---|---|
-| OpenAI | `POST /v1/chat/completions`、`POST /v1/embeddings` | `Authorization: Bearer …` |
+| OpenAI | `POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/embeddings` | `Authorization: Bearer …` |
 | Anthropic | `POST /v1/messages` | `x-api-key: …` 或 Bearer |
 | Gemini | `POST /v1beta/models/{alias}:generateContent`、`:streamGenerateContent?alt=sse` | `x-goog-api-key: …` 或 Bearer |
 
@@ -82,11 +83,30 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
   -d '{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":256}}'
 ```
 
-模型别名选择上游，与客户端协议独立。路由到 Anthropic 时，请求必须显式提供 token 上限（`max_tokens` 或能转换的等价字段），Nyro 不自行设置默认值。原生客户端使用 OpenAI 流式上游时会自动请求用量；OpenAI 客户端只有设置 `stream_options.include_usage: true` 才接收用量。
+模型别名选择上游，与客户端协议独立。路由到 Anthropic 时，请求必须显式提供 token 上限（`max_tokens` 或能转换的等价字段），Nyro 不自行设置默认值。原生客户端使用 OpenAI 流式上游时会自动请求用量；OpenAI Chat Completions 客户端只有设置 `stream_options.include_usage: true` 才接收用量。
 
 这是实验性的文本／函数 Chat 子集。新原生 codec 拒绝图片、音频、视频、thinking／签名块、无法保留的内容顺序、多候选以及不支持的厂商选项或诊断字段。例如 Anthropic 缓存／用量扩展和命中 stop sequence 的响应；Gemini 安全设置、safety ratings、grounding／引用、prompt feedback 和结构化输出设置；以及无法在原生输出中表示的 OpenAI fingerprint／service-tier／logprob 元数据。某协议已支持的字段不一定能转换到另一协议：不可转换的请求在发往上游前失败；不可转换的上游响应返回 `502` 或终止 SSE 流。原生 Embedding API 和完整 SDK／厂商功能对齐属于后续工作。
 
 协议参考：[Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)、[Gemini generateContent](https://ai.google.dev/api/generate-content)。本地矩阵回归：`cargo test -p nyro-llm --test protocol_matrix`。
+
+## Responses 子集
+
+`POST /v1/responses` 接受字符串输入或强类型 message／function items、instructions、通用生成参数及客户端函数工具／结果，可使用任意已配置的 Chat 上游。原生 Responses 函数定义必须显式设置 `strict`：跨协议非严格子集使用 `false`，`true` 需要上游能够保留该语义。反向也支持所有已实现的 Chat 入口使用 `api: responses` 上游，例如：
+
+```sh
+curl http://127.0.0.1:19530/v1/responses \
+  -H 'Authorization: Bearer replace-with-client-secret' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"responses-default","input":"Hello","max_output_tokens":256,"store":false,"stream":true}'
+```
+
+函数结果当前要求 `function_call_output.output` 为字符串，数组形式会被拒绝。
+
+本阶段仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、reasoning items、多媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段和 item ID 会归一化，不保证保留上游原始 ID 或精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
+
+SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和完整终态快照，不输出 `[DONE]`。token 上限／内容过滤结束会映射成 `response.incomplete`；上游失败、内容矛盾、格式错误或断流不会伪造成功终态。原生上游流关闭 obfuscation。此子集不代表已经完整兼容 Responses SDK 或 Codex CLI。
+
+参考：[OpenAI Responses 迁移指南](https://developers.openai.com/api/docs/guides/migrate-to-responses)、[Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses)。本地回归：`cargo test -p nyro-llm --test responses_codec --test responses_runtime`。
 
 ## 健康检查与当前范围
 

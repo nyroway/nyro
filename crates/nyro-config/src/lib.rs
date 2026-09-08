@@ -183,6 +183,11 @@ impl Config {
         for model in canonical.llm.models.values_mut() {
             model.workloads.sort();
         }
+        for provider in canonical.llm.providers.values_mut() {
+            if provider.api == Some(nyro_llm::config::OpenAiApi::ChatCompletions) {
+                provider.api = None;
+            }
+        }
         let encoded = serde_json::to_vec(&canonical).map_err(|_| ConfigError::Fingerprint)?;
         Ok(format!("{:x}", Sha256::digest(encoded)))
     }

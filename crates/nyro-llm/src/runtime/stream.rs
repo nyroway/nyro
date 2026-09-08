@@ -1,8 +1,7 @@
 use super::Failure;
 use crate::{
     ChatEvent,
-    codec::{CodecError, anthropic, gemini, openai},
-    config::ProviderKind,
+    codec::{ChatFormat, CodecError, anthropic, gemini, openai},
 };
 use bytes::Bytes;
 use futures::{StreamExt, stream::BoxStream};
@@ -11,6 +10,7 @@ use std::collections::VecDeque;
 
 enum Decode {
     Openai { done: bool },
+    Responses(openai::responses::StreamDecoder),
     Anthropic(anthropic::StreamDecoder),
     Gemini(gemini::StreamDecoder),
 }
@@ -25,6 +25,7 @@ impl Decode {
                 *done = event.is_done();
                 Ok(vec![event])
             }
+            Self::Responses(decoder) => decoder.push(event),
             Self::Anthropic(decoder) => decoder.push(event),
             Self::Gemini(decoder) => decoder.push(event),
         }
@@ -33,6 +34,7 @@ impl Decode {
         match self {
             Self::Openai { done: true } => Ok(vec![]),
             Self::Openai { done: false } => Err(CodecError("missing stream completion".into())),
+            Self::Responses(decoder) => decoder.finish(),
             Self::Anthropic(decoder) => decoder.finish(),
             Self::Gemini(decoder) => decoder.finish(),
         }
@@ -40,6 +42,7 @@ impl Decode {
 }
 enum Encode {
     Openai { model: String, include_usage: bool },
+    Responses(openai::responses::StreamEncoder),
     Anthropic(anthropic::StreamEncoder),
     Gemini(gemini::StreamEncoder),
 }
@@ -60,6 +63,7 @@ impl Encode {
                 }
                 openai::encode_chat_event(event, model)
             }
+            Self::Responses(encoder) => encoder.push(event),
             Self::Anthropic(encoder) => encoder.push(event),
             Self::Gemini(encoder) => encoder.push(event),
         }
@@ -81,28 +85,34 @@ pub(super) struct StreamState {
 impl StreamState {
     pub(super) fn new(
         response: reqwest::Response,
-        upstream: ProviderKind,
-        downstream: ProviderKind,
+        upstream: ChatFormat,
+        downstream: ChatFormat,
         model: String,
         max_bytes: usize,
         include_usage: bool,
     ) -> Self {
         let decoder = match upstream {
-            ProviderKind::Openai => Decode::Openai { done: false },
-            ProviderKind::Anthropic => {
+            ChatFormat::OpenAiChat => Decode::Openai { done: false },
+            ChatFormat::OpenAiResponses => {
+                Decode::Responses(openai::responses::StreamDecoder::with_limit(max_bytes))
+            }
+            ChatFormat::Anthropic => {
                 Decode::Anthropic(anthropic::StreamDecoder::with_limit(max_bytes))
             }
-            ProviderKind::Gemini => Decode::Gemini(gemini::StreamDecoder::with_limit(max_bytes)),
+            ChatFormat::Gemini => Decode::Gemini(gemini::StreamDecoder::with_limit(max_bytes)),
         };
         let encoder = match downstream {
-            ProviderKind::Openai => Encode::Openai {
+            ChatFormat::OpenAiResponses => Encode::Responses(
+                openai::responses::StreamEncoder::with_limit(model, max_bytes),
+            ),
+            ChatFormat::OpenAiChat => Encode::Openai {
                 model,
                 include_usage,
             },
-            ProviderKind::Anthropic => {
+            ChatFormat::Anthropic => {
                 Encode::Anthropic(anthropic::StreamEncoder::with_limit(model, max_bytes))
             }
-            ProviderKind::Gemini => {
+            ChatFormat::Gemini => {
                 Encode::Gemini(gemini::StreamEncoder::with_limit(model, max_bytes))
             }
         };
