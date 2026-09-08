@@ -60,6 +60,8 @@ pub struct Model {
     pub max_attempts: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub health: Option<HealthConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate: Option<RateConfig>,
     pub workloads: Vec<Workload>,
     pub allow_anonymous: bool,
     pub subjects: BTreeSet<String>,
@@ -93,6 +95,20 @@ impl Default for HealthConfig {
     }
 }
 
+/// Continuous request refill rate and initial/maximum token capacity.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateConfig {
+    pub requests: u32,
+    pub period_ms: u64,
+    #[serde(default = "default_burst")]
+    pub burst: u32,
+}
+
+const fn default_burst() -> u32 {
+    1
+}
+
 const fn default_max_attempts() -> u32 {
     1
 }
@@ -109,6 +125,8 @@ struct RawModel {
     #[serde(default)]
     health: Option<HealthConfig>,
     #[serde(default, deserialize_with = "present")]
+    rate: Option<RateConfig>,
+    #[serde(default, deserialize_with = "present")]
     backends: Option<Vec<Backend>>,
     #[serde(default, deserialize_with = "present")]
     provider: Option<String>,
@@ -121,7 +139,7 @@ struct RawModel {
     subjects: BTreeSet<String>,
 }
 
-// Missing routing fields are allowed here; explicitly null fields are not.
+// Missing fields are allowed here; explicitly null fields are not.
 fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -152,6 +170,7 @@ impl<'de> Deserialize<'de> for Model {
             backends,
             max_attempts: raw.max_attempts,
             health: raw.health,
+            rate: raw.rate,
             workloads: raw.workloads,
             allow_anonymous: raw.allow_anonymous,
             subjects: raw.subjects,
@@ -179,6 +198,8 @@ pub enum ConfigError {
     InvalidMaxAttempts { model: String },
     #[error("model `{model}` health policy requires positive bounds and a representable cooldown")]
     InvalidHealth { model: String },
+    #[error("model `{model}` rate policy requires positive, representable bounds")]
+    InvalidRate { model: String },
     #[error("model `{model}` must define at least one backend")]
     NoBackends { model: String },
     #[error("model `{model}` has an empty backend ID")]
@@ -263,6 +284,16 @@ impl Config {
                         .is_none()
             }) {
                 return Err(ConfigError::InvalidHealth { model: id.clone() });
+            }
+            if model.rate.as_ref().is_some_and(|rate| {
+                nyro_limit::rate::RateLimit::new(
+                    rate.requests,
+                    Duration::from_millis(rate.period_ms),
+                    rate.burst,
+                )
+                .is_err()
+            }) {
+                return Err(ConfigError::InvalidRate { model: id.clone() });
             }
             if model.backends.is_empty() {
                 return Err(ConfigError::NoBackends { model: id.clone() });

@@ -4,6 +4,18 @@ use nyro_llm::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+#[test]
+fn rate_policy_defaults_to_one_burst_and_omission_disables_it() {
+    let value = serde_json::to_value(valid_config()).unwrap();
+    assert!(value["models"]["chat"].get("rate").is_none());
+    let mut enabled = value;
+    enabled["models"]["chat"]["rate"] = serde_json::json!({"requests": 10, "period_ms": 60_000});
+    let config: Config = serde_json::from_value(enabled).expect("rate policy must load");
+    config.validate().unwrap();
+    let canonical = serde_json::to_value(config).unwrap();
+    assert_eq!(canonical["models"]["chat"]["rate"]["burst"], 1);
+}
+
 fn valid_config() -> Config {
     Config {
         providers: BTreeMap::from([(
@@ -20,6 +32,7 @@ fn valid_config() -> Config {
             Model {
                 max_attempts: 1,
                 health: None,
+                rate: None,
                 backends: vec![Backend {
                     id: "default".into(),
                     provider: "openai".into(),
@@ -360,5 +373,48 @@ fn health_cooldown_must_fit_the_platform_timer() {
         assert!(config.validate().is_err());
     } else {
         assert!(config.validate().is_ok());
+    }
+}
+
+#[test]
+fn rate_policy_rejects_missing_null_unknown_and_invalid_values() {
+    for policy in [
+        serde_json::json!(null),
+        serde_json::json!({}),
+        serde_json::json!({"requests": 1}),
+        serde_json::json!({"period_ms": 1000}),
+        serde_json::json!({"requests": 0, "period_ms": 1000}),
+        serde_json::json!({"requests": -1, "period_ms": 1000}),
+        serde_json::json!({"requests": 4294967296u64, "period_ms": 1000}),
+        serde_json::json!({"requests": null, "period_ms": 1000}),
+        serde_json::json!({"requests": 1, "period_ms": 0}),
+        serde_json::json!({"requests": 1, "period_ms": -1}),
+        serde_json::json!({"requests": 1, "period_ms": null}),
+        serde_json::json!({"requests": 1, "period_ms": 1000, "burst": 0}),
+        serde_json::json!({"requests": 1, "period_ms": 1000, "burst": -1}),
+        serde_json::json!({"requests": 1, "period_ms": 1000, "burst": 4294967296u64}),
+        serde_json::json!({"requests": 1, "period_ms": 1000, "burst": null}),
+        serde_json::json!({"requests": 1, "period_ms": 1000, "unexpected": true}),
+    ] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["models"]["chat"]["rate"] = policy.clone();
+        if let Ok(config) = serde_json::from_value::<Config>(value) {
+            assert!(config.validate().is_err(), "{policy}");
+        }
+    }
+}
+
+#[test]
+fn rate_policy_accepts_large_bounds_and_burst_independent_of_refill_count() {
+    for policy in [
+        serde_json::json!({"requests": 1, "period_ms": 1, "burst": 10}),
+        serde_json::json!({"requests": u32::MAX, "period_ms": u64::MAX, "burst": u32::MAX}),
+    ] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["models"]["chat"]["rate"] = policy;
+        serde_json::from_value::<Config>(value)
+            .unwrap()
+            .validate()
+            .unwrap();
     }
 }

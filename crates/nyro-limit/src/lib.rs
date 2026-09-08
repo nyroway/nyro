@@ -1,5 +1,7 @@
 //! nyro-limit.
 
+pub mod rate;
+
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};

@@ -41,6 +41,7 @@ llm:
       workloads: [chat]
       subjects: [local-client]
     chat-default:
+      rate: {requests: 60, period_ms: 60000, burst: 5}
       backends:
         - id: primary
           provider: example

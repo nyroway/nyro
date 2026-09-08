@@ -43,6 +43,7 @@ Each model declares:
 - `backends`: a nonempty list of upstream backends. Each has a model-scoped, unique, nonblank `id`, a `provider` ID from `llm.providers`, an `upstream_model`, and an optional integer `weight` (default `100`), and `priority` (default `0`, smaller values preferred).
 - `max_attempts`: positive integer, default `1`, including the first upstream send. Each backend ID is attempted at most once per request.
 - `health`: optional passive breaker policy, disabled when omitted. An empty object enables `failure_threshold: 3` and `cooldown_ms: 30000`; both must be positive.
+- `rate`: optional per-model request frequency; omitted means disabled. See [Request rate](#request-rate).
 - `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both when every backend uses OpenAI Chat Completions; Responses, Anthropic, and Gemini support only `chat`. Every backend, including disabled entries, must support the model's declared workloads. Invalid combinations fail startup.
 - `allow_anonymous`: optional, default `false`.
 - `subjects`: client credential IDs allowed to invoke a protected model; optional only for anonymous models.
@@ -106,6 +107,29 @@ Credential IDs and secrets must be unique and nonempty; IDs cannot be blank. Cli
 
 All numeric limits must be greater than zero. Concurrency must also fit Tokio's supported semaphore capacity. A concurrency permit remains held until the response body completes or is dropped. SSE has a per-frame cap and the whole-request deadline, but no cumulative wire byte cap. Responses additionally retains the full output snapshot within `max_frame_bytes`, including generated text; large Responses streams can therefore hit this limit even with small deltas. Tool fragments may be buffered until complete; accumulation is bounded by `max_frame_bytes`. A protocol terminal must be validated before a successful terminal is emitted; malformed/truncated streams fail without retry.
 
+## Request rate
+
+Each public model can opt into an in-memory token bucket:
+
+```yaml
+rate:
+  requests: 60
+  period_ms: 60000
+  burst: 5
+```
+
+`requests` and `period_ms` are required positive integers; `burst` defaults to `1` and must be positive. Counts and burst fit `u32`; the period must fit the platform's monotonic timer. This example starts with capacity for five immediate requests, then refills continuously at one request per second, up to five. It is a sustained average with a burst allowance, not a strict count in every rolling minute. No refill task or waiting queue is created.
+
+All callers, including anonymous callers, and all supported workloads and ingress protocols share the bucket for that public model. Different aliases have separate buckets even if they route to the same provider or upstream model. Scope is process-local; replicas do not share counters. This limits logical requests, not generated tokens or concurrent streams.
+
+Authentication, authorization, concurrency admission, compatible-backend preparation, and the initial cancellation/deadline check precede rate admission. Those earlier rejections do not consume rate capacity. Once admitted, a request consumes one unit regardless of upstream success, failure, unavailable backends, subsequent cancellation, or response-body drop. Internal retries and failover do not consume additional units, and completed or failed requests do not refund units.
+
+Excess requests receive a sanitized `429` in their native error format and an integer `Retry-After` header rounded up to seconds. Nyro sends no upstream request and immediately releases the acquired concurrency permit, even if the error body is left unread. The delay is advisory: another caller may consume the next unit first. Other `429` causes, such as concurrency rejection or upstream errors, do not acquire this rate header.
+
+The root composition shares rate state across configuration generations. An unchanged public-model rule retains its balance when routes, provider credentials, or other settings change. Changing a rule while its old binding is active rejects candidate construction; restart the process to change its parameters. Removing/disabling a rule lets existing generations finish with their binding, which is released after its last owner drops. A fresh binding or process restart starts with the configured burst capacity; no rate state is persisted. The file proxy still requires restart to load any file edits.
+
+The reusable primitive is `nyro_limit::rate::RateLimit`. It accepts counts, a `Duration`, and burst capacity, and returns either admission or a retry delay. It contains no LLM, authentication, HTTP, kernel, or database types; the application owns scope mapping and rejection formatting. Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test rate_runtime`.
+
 ## Native clients and conversion limits
 
 | Client API | Endpoint | Credential |
@@ -158,7 +182,7 @@ References: [OpenAI Responses migration](https://developers.openai.com/api/docs/
 - `GET /healthz` returns `200` while the HTTP process is serving.
 - `GET /readyz` returns `200` while the kernel host accepts new generation leases and `503` once it does not. This source-built proxy has no database or upstream-backend readiness check.
 
-Retries and passive health are opt-in as described above. It does not implement rate limits, quotas, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
+Retries and passive health are opt-in as described above. It does not implement quotas, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
 
 Contributors can exercise the root process, probes, authentication, Chat, Embedding, SSE, redaction, and graceful termination without a real provider:
 
