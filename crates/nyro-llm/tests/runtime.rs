@@ -80,6 +80,7 @@ fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Ru
             "upstream".into(),
             config::Provider {
                 kind: config::ProviderKind::Openai,
+                api: None,
                 base_url: upstream.url.clone(),
                 api_key: Some("upstream-secret".into()),
             },

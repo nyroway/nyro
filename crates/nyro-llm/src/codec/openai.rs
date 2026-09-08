@@ -1,5 +1,6 @@
 //! Explicit OpenAI wire ↔ typed workload conversion; unsupported fields are rejected.
 pub use super::CodecError;
+pub mod responses;
 use crate::ir::*;
 use nyro_protocol::openai::{chat, embedding, stream};
 use serde::{Serialize, de::DeserializeOwned};

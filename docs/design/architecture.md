@@ -4,7 +4,7 @@
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、Anthropic/Gemini Chat 与跨协议 SSE 子集、认证授权、共享并发限制和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、认证授权、共享并发限制和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
 
 ## 1. 产品定位与范围
 
@@ -133,7 +133,7 @@ nyro/
 │   │   │   ├── openai/
 │   │   │   │   ├── mod.rs
 │   │   │   │   ├── chat.rs
-│   │   │   │   ├── response.rs
+│   │   │   │   ├── responses.rs
 │   │   │   │   ├── embedding.rs
 │   │   │   │   ├── stream.rs
 │   │   │   │   └── error.rs
@@ -490,7 +490,7 @@ Chat 流使用自己的事件类型，不要求所有交互实现流接口。当
 
 ### 8.3 对外复用范围
 
-`nyro-protocol` 独立提供 OpenAI、Anthropic、Gemini 基础协议格式，社区项目解析这些协议时不需要构建 Nyro runtime、内核或数据库。IR 与跨协议转换暂留 `nyro-llm`，本次不承诺一个独立的 IR/转换 SDK。
+`nyro-protocol` 独立提供 OpenAI、Anthropic、Gemini 基础协议格式，社区项目解析这些协议时不需要构建 Nyro runtime、内核或数据库。IR 与跨协议转换暂留 `nyro-llm`，本次不承诺一个独立的 IR/转换 SDK。Responses 是 OpenAI 族内的一种 API，与 Chat Completions 共享 Chat workload；上游通过 `kind: openai` 加 `api: responses` 选择，不新增 Provider 族或 crate。现有 Chat IR 支持无状态文本、拒绝、客户端函数调用／结果及用量，不能完整承载 Responses 的服务端会话、item 引用、内置工具或 reasoning items，因此本阶段明确拒绝这些语义。具体转换与流状态边界见实验性代理指南。
 
 ## 9. 共享安全、限制与观测能力
 

@@ -10,6 +10,7 @@ fn valid_config() -> Config {
             "openai".into(),
             Provider {
                 kind: ProviderKind::Openai,
+                api: None,
                 base_url: "https://api.example.test/v1".into(),
                 api_key: Some("provider-secret".into()),
             },
@@ -130,4 +131,29 @@ fn debug_never_exposes_provider_credentials() {
     let rendered = format!("{config:?}");
     assert!(!rendered.contains("provider-secret"));
     assert!(!rendered.contains("url-secret"));
+}
+
+#[test]
+fn api_selector_is_openai_only_and_responses_is_chat_only() {
+    for api in ["chat_completions", "responses"] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["providers"]["openai"]["api"] = api.into();
+        let config: Config = serde_json::from_value(value.clone()).unwrap();
+        assert!(config.validate().is_ok());
+        for kind in ["anthropic", "gemini"] {
+            value["providers"]["openai"]["kind"] = kind.into();
+            let config: Config = serde_json::from_value(value.clone()).unwrap();
+            assert!(config.validate().is_err());
+        }
+    }
+    let mut value = serde_json::to_value(valid_config()).unwrap();
+    value["providers"]["openai"]["api"] = "responses".into();
+    value["models"]["chat"]["workloads"] = serde_json::json!(["embedding"]);
+    let config: Config = serde_json::from_value(value.clone()).unwrap();
+    assert!(config.validate().is_err());
+    value["providers"]["openai"]["api"] = "chat_completions".into();
+    let config: Config = serde_json::from_value(value.clone()).unwrap();
+    assert!(config.validate().is_ok());
+    value["providers"]["openai"]["api"] = "unknown".into();
+    assert!(serde_json::from_value::<Config>(value).is_err());
 }

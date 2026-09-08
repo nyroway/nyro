@@ -19,10 +19,21 @@ pub enum ProviderKind {
     Gemini,
 }
 
+/// Selects an API within the OpenAI protocol family.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiApi {
+    #[default]
+    ChatCompletions,
+    Responses,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Provider {
     pub kind: ProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api: Option<OpenAiApi>,
     pub base_url: String,
     #[serde(default)]
     pub api_key: Option<String>,
@@ -33,6 +44,7 @@ impl std::fmt::Debug for Provider {
         formatter
             .debug_struct("Provider")
             .field("kind", &self.kind)
+            .field("api", &self.api)
             .field("base_url", &"<configured>")
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .finish()
@@ -63,6 +75,8 @@ pub enum ConfigError {
     InvalidProviderUrl { provider: String },
     #[error("provider `{provider}` has an invalid API key")]
     InvalidProviderApiKey { provider: String },
+    #[error("provider `{provider}` declares an API selector outside the OpenAI family")]
+    InvalidProviderApi { provider: String },
     #[error("model ID must not be empty")]
     EmptyModelId,
     #[error("model `{model}` references unknown provider `{provider}`")]
@@ -91,6 +105,11 @@ impl Config {
         for (id, provider) in &self.providers {
             if id.trim().is_empty() {
                 return Err(ConfigError::EmptyProviderId);
+            }
+            if provider.kind != ProviderKind::Openai && provider.api.is_some() {
+                return Err(ConfigError::InvalidProviderApi {
+                    provider: id.clone(),
+                });
             }
             let url =
                 Url::parse(&provider.base_url).map_err(|_| ConfigError::InvalidProviderUrl {
@@ -134,8 +153,11 @@ impl Config {
             if model.upstream_model.trim().is_empty() {
                 return Err(ConfigError::EmptyUpstreamModel { model: id.clone() });
             }
-            let kind = self.providers[&model.provider].kind;
-            if kind != ProviderKind::Openai && model.workloads.contains(&Workload::Embedding) {
+            let provider = &self.providers[&model.provider];
+            let kind = provider.kind;
+            if (kind != ProviderKind::Openai || provider.api == Some(OpenAiApi::Responses))
+                && model.workloads.contains(&Workload::Embedding)
+            {
                 return Err(ConfigError::UnsupportedWorkload { model: id.clone() });
             }
             if kind == ProviderKind::Gemini {
