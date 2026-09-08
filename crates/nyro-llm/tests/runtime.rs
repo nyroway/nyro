@@ -88,8 +88,12 @@ fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Ru
         models: BTreeMap::from([(
             "public-model".into(),
             config::Model {
-                provider: "upstream".into(),
-                upstream_model: "internal-model".into(),
+                backends: vec![config::Backend {
+                    id: "default".into(),
+                    provider: "upstream".into(),
+                    upstream_model: "internal-model".into(),
+                    weight: 100,
+                }],
                 workloads: vec![Workload::Chat, Workload::Embedding],
                 allow_anonymous: false,
                 subjects: ["alice".into()].into(),

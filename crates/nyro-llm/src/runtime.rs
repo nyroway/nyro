@@ -19,6 +19,7 @@ use crate::{
     config,
     ingress::body::{self, Outcome},
     provider::Driver,
+    router,
 };
 
 mod endpoint;
@@ -118,6 +119,7 @@ impl Runtime {
         let mut exchange = Exchange {
             started,
             model: None,
+            backend: None,
             permit: None,
             status: None,
             outcome: Outcome::Cancelled,
@@ -146,6 +148,54 @@ impl Runtime {
         )
     }
 
+    /// Preparation is local and side-effect free: incompatible codecs never get a network attempt.
+    fn select_backend<'a>(
+        &'a self,
+        model: &'a config::Model,
+        request: &Request,
+        downstream: ChatFormat,
+    ) -> Result<Prepared<'a>, Failure> {
+        let mut eligible = Vec::new();
+        for backend in model.backends.iter().filter(|backend| backend.weight > 0) {
+            let provider = self
+                .providers
+                .get(&backend.provider)
+                .ok_or_else(Failure::upstream)?;
+            let mut request = request.clone();
+            request.set_model(backend.upstream_model.clone());
+            if provider.format == ChatFormat::OpenAiChat
+                && let Request::Chat(chat) = &mut request
+            {
+                if downstream == ChatFormat::OpenAiResponses {
+                    chat.openai.store = Some(false);
+                }
+                if chat.stream == Some(true) && downstream != ChatFormat::OpenAiChat {
+                    chat.openai
+                        .stream_options
+                        .get_or_insert(nyro_protocol::openai::chat::StreamOptions {
+                            include_usage: None,
+                            include_obfuscation: None,
+                        })
+                        .include_usage = Some(true);
+                }
+            }
+            if let Ok(encoded) = provider.encode(&request) {
+                eligible.push(Prepared {
+                    backend,
+                    provider,
+                    request,
+                    encoded,
+                });
+            }
+        }
+        let index = router::choose(eligible.iter().map(|candidate| candidate.backend.weight))
+            .ok_or_else(|| {
+                Failure::invalid("Request cannot be represented by any enabled backend")
+            })?;
+        // Drop every unselected request and encoded body before sending upstream.
+        Ok(eligible.swap_remove(index))
+    }
+
     async fn execute(
         &self,
         request: HttpRequest<Body>,
@@ -169,7 +219,7 @@ impl Runtime {
         }
         let value: Value =
             serde_json::from_slice(&input).map_err(|_| Failure::invalid("Invalid JSON request"))?;
-        let mut request = endpoint.decode(value)?;
+        let request = endpoint.decode(value)?;
         let public_model = request.model().to_owned();
         exchange.model = Some(public_model.clone());
         // Resolve -> Authenticate -> Authorize -> Admit are mandatory ordinary runtime steps.
@@ -209,34 +259,14 @@ impl Runtime {
         })?);
         let streaming = request.is_streaming();
         let include_usage = matches!(&request, Request::Chat(chat) if chat.openai.stream_options.as_ref().is_some_and(|options| options.include_usage == Some(true)));
-        request.set_model(model.upstream_model.clone());
-        let provider = self
-            .providers
-            .get(&model.provider)
-            .ok_or_else(Failure::upstream)?;
-        // Preserve the stateless Responses contract when translating to Chat Completions.
-        if provider.format == ChatFormat::OpenAiChat
-            && endpoint.format == ChatFormat::OpenAiResponses
-            && let Request::Chat(chat) = &mut request
-        {
-            chat.openai.store = Some(false);
-        }
-        if streaming
-            && provider.format == ChatFormat::OpenAiChat
-            && endpoint.format != ChatFormat::OpenAiChat
-            && let Request::Chat(chat) = &mut request
-        {
-            chat.openai
-                .stream_options
-                .get_or_insert(nyro_protocol::openai::chat::StreamOptions {
-                    include_usage: None,
-                    include_obfuscation: None,
-                })
-                .include_usage = Some(true);
-        }
-        let encoded = provider.encode(&request).map_err(|_| {
-            Failure::invalid("Request cannot be represented by the configured provider")
-        })?;
+        let selected = self.select_backend(model, &request, endpoint.format)?;
+        exchange.backend = Some(selected.backend.id.clone());
+        let Prepared {
+            request,
+            provider,
+            encoded,
+            ..
+        } = selected;
         let response = provider
             .send(&request, &encoded)
             .await
@@ -335,9 +365,17 @@ impl Runtime {
     }
 }
 
+struct Prepared<'a> {
+    backend: &'a config::Backend,
+    provider: &'a Driver,
+    request: Request,
+    encoded: Value,
+}
+
 struct Exchange {
     started: Instant,
     model: Option<String>,
+    backend: Option<String>,
     permit: Option<Permit>,
     status: Option<StatusCode>,
     outcome: Outcome,
@@ -351,7 +389,7 @@ impl Exchange {
 
 impl Drop for Exchange {
     fn drop(&mut self) {
-        tracing::info!(target: "nyro::request", model = self.model.as_deref().unwrap_or(""), status = self.status.map_or(0, |status| status.as_u16()),
+        tracing::info!(target: "nyro::request", model = self.model.as_deref().unwrap_or(""), backend = self.backend.as_deref().unwrap_or(""), status = self.status.map_or(0, |status| status.as_u16()),
             duration_ms = self.started.elapsed().as_millis() as u64, outcome = ?self.outcome, "LLM request finished");
         // This slice owns only synchronous finalization; the permit releases after observation.
     }

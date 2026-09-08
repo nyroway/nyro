@@ -41,8 +41,15 @@ llm:
       workloads: [chat]
       subjects: [local-client]
     chat-default:
-      provider: example
-      upstream_model: example-chat-model
+      backends:
+        - id: primary
+          provider: example
+          upstream_model: example-chat-model
+          weight: 80
+        - id: secondary
+          provider: responses-example
+          upstream_model: example-responses-model
+          weight: 20
       workloads: [chat]
       allow_anonymous: false
       subjects: [local-client]

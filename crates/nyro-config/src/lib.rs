@@ -182,6 +182,7 @@ impl Config {
             .sort_by(|left, right| (&left.id, &left.secret).cmp(&(&right.id, &right.secret)));
         for model in canonical.llm.models.values_mut() {
             model.workloads.sort();
+            model.backends.sort_by(|left, right| left.id.cmp(&right.id));
         }
         for provider in canonical.llm.providers.values_mut() {
             if provider.api == Some(nyro_llm::config::OpenAiApi::ChatCompletions) {

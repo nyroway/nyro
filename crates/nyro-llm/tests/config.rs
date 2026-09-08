@@ -1,6 +1,6 @@
 use nyro_llm::{
     Workload,
-    config::{Config, Model, Provider, ProviderKind},
+    config::{Backend, Config, Model, Provider, ProviderKind},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,8 +18,12 @@ fn valid_config() -> Config {
         models: BTreeMap::from([(
             "chat".into(),
             Model {
-                provider: "openai".into(),
-                upstream_model: "gpt-example".into(),
+                backends: vec![Backend {
+                    id: "default".into(),
+                    provider: "openai".into(),
+                    upstream_model: "gpt-example".into(),
+                    weight: 100,
+                }],
                 workloads: vec![Workload::Chat],
                 allow_anonymous: false,
                 subjects: BTreeSet::from(["deploy".into()]),
@@ -78,14 +82,11 @@ fn validation_rejects_empty_names_workloads_duplicates_and_missing_references() 
     assert!(config.validate().is_err());
 
     let mut config = valid_config();
-    config.models.get_mut("chat").unwrap().provider = "missing".into();
+    config.models.get_mut("chat").unwrap().backends[0].provider = "missing".into();
     assert!(config.validate().is_err());
 
     let mut config = valid_config();
-    config
-        .models
-        .get_mut("chat")
-        .unwrap()
+    config.models.get_mut("chat").unwrap().backends[0]
         .upstream_model
         .clear();
     assert!(config.validate().is_err());
@@ -156,4 +157,133 @@ fn api_selector_is_openai_only_and_responses_is_chat_only() {
     assert!(config.validate().is_ok());
     value["providers"]["openai"]["api"] = "unknown".into();
     assert!(serde_json::from_value::<Config>(value).is_err());
+}
+
+#[test]
+fn canonical_backends_and_legacy_models_share_one_serialized_contract() {
+    let legacy: Model = serde_json::from_value(serde_json::json!({
+        "provider": "p", "upstream_model": "upstream", "workloads": ["chat"]
+    }))
+    .unwrap();
+    let canonical: Model = serde_json::from_value(serde_json::json!({
+        "backends": [{"id": "default", "provider": "p", "upstream_model": "upstream"}],
+        "workloads": ["chat"]
+    }))
+    .expect("canonical backends must deserialize");
+    let serialized = serde_json::to_value(canonical).unwrap();
+    assert_eq!(serialized, serde_json::to_value(legacy).unwrap());
+    assert_eq!(serialized["backends"][0]["weight"], 100);
+    assert!(serialized.get("provider").is_none());
+    assert!(serialized.get("upstream_model").is_none());
+}
+
+#[test]
+fn routing_deserialization_rejects_missing_mixed_null_and_unknown_fields() {
+    let backend = serde_json::json!({"id": "b", "provider": "p", "upstream_model": "u"});
+    for routing in [
+        serde_json::json!({}),
+        serde_json::json!({"provider": "p"}),
+        serde_json::json!({"upstream_model": "u"}),
+        serde_json::json!({"provider": null, "upstream_model": "u"}),
+        serde_json::json!({"provider": "p", "upstream_model": null}),
+        serde_json::json!({"backends": null}),
+        serde_json::json!({"backends": [backend.clone()], "provider": "p"}),
+        serde_json::json!({"backends": [backend.clone()], "upstream_model": "u"}),
+        serde_json::json!({"backends": [backend.clone()], "provider": null}),
+        serde_json::json!({"backends": [backend.clone()], "upstream_model": null}),
+        serde_json::json!({"backends": null, "provider": "p", "upstream_model": "u"}),
+        serde_json::json!({"backends": [backend], "priority": 1}),
+    ] {
+        let mut value = routing;
+        value["workloads"] = serde_json::json!(["chat"]);
+        assert!(
+            serde_json::from_value::<Model>(value.clone()).is_err(),
+            "{value}"
+        );
+    }
+    for field in ["weight", "priority"] {
+        for value in [
+            serde_json::json!(-1),
+            serde_json::json!(4294967296u64),
+            serde_json::Value::Null,
+        ] {
+            let mut backend =
+                serde_json::json!({"id": "b", "provider": "p", "upstream_model": "u"});
+            backend[field] = value;
+            assert!(
+                serde_json::from_value::<Model>(serde_json::json!({
+                    "backends": [backend], "workloads": ["chat"]
+                }))
+                .is_err()
+            );
+        }
+    }
+}
+
+#[test]
+fn backend_validation_rejects_empty_duplicate_disabled_and_unknown_targets() {
+    let backend = serde_json::json!({"id": "primary", "provider": "openai", "upstream_model": "u", "weight": 100});
+    for backends in [
+        serde_json::json!([]),
+        serde_json::json!([backend.clone(), backend.clone()]),
+        serde_json::json!([{ "id": " ", "provider": "openai", "upstream_model": "u" }]),
+        serde_json::json!([{ "id": "b", "provider": "openai", "upstream_model": " " }]),
+        serde_json::json!([{ "id": "b", "provider": "missing", "upstream_model": "u" }]),
+        serde_json::json!([{ "id": "b", "provider": "openai", "upstream_model": "u", "weight": 0 }]),
+        serde_json::json!([backend.clone(), { "id": "disabled", "provider": "missing", "upstream_model": "u", "weight": 0 }]),
+        serde_json::json!([backend, { "id": "disabled", "provider": "openai", "upstream_model": " ", "weight": 0 }]),
+    ] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["models"]["chat"] = serde_json::json!({"backends": backends, "workloads": ["chat"]});
+        let config: Config = serde_json::from_value(value).expect("structurally valid model");
+        assert!(config.validate().is_err());
+    }
+}
+
+#[test]
+fn disabled_backends_must_support_every_declared_workload_and_valid_model_names() {
+    for (kind, api, workloads, upstream_model) in [
+        (
+            "anthropic",
+            None,
+            serde_json::json!(["chat", "embedding"]),
+            "u",
+        ),
+        ("gemini", None, serde_json::json!(["embedding"]), "u"),
+        (
+            "openai",
+            Some("responses"),
+            serde_json::json!(["embedding"]),
+            "u",
+        ),
+        ("gemini", None, serde_json::json!(["chat"]), "models/../bad"),
+    ] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["providers"]["disabled"] =
+            serde_json::json!({"kind": kind, "api": api, "base_url": "https://example.test"});
+        value["models"]["chat"] = serde_json::json!({
+            "backends": [
+                {"id": "primary", "provider": "openai", "upstream_model": "u"},
+                {"id": "disabled", "provider": "disabled", "upstream_model": upstream_model, "weight": 0}
+            ], "workloads": workloads
+        });
+        let config: Config = serde_json::from_value(value).unwrap();
+        assert!(config.validate().is_err(), "{kind} {api:?}");
+    }
+}
+
+#[test]
+fn backend_ids_are_model_scoped_and_large_weight_totals_are_valid() {
+    let mut value = serde_json::to_value(valid_config()).unwrap();
+    let model = serde_json::json!({
+        "backends": [
+            {"id": "primary", "provider": "openai", "upstream_model": "u", "weight": 4294967295u32},
+            {"id": "secondary", "provider": "openai", "upstream_model": "v", "weight": 4294967295u32},
+            {"id": "disabled", "provider": "openai", "upstream_model": "w", "weight": 0}
+        ], "workloads": ["chat"]
+    });
+    value["models"]["chat"] = model.clone();
+    value["models"]["another"] = model;
+    let config: Config = serde_json::from_value(value).unwrap();
+    assert!(config.validate().is_ok());
 }
