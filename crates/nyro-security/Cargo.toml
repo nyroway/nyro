@@ -1,0 +1,11 @@
+[package]
+name = "nyro-security"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true

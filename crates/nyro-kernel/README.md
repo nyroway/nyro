@@ -3,8 +3,9 @@
 [中文](README_CN.md)
 
 Workload-neutral lifecycle and generation management for statically composed Rust applications.
-This is the first, **unintegrated** stage of Nyro's microkernel refactor. Existing `nyro-core`,
-`nyro-server`, and Tauri request paths do not use this crate. The Rust API is experimental.
+The experimental, source-built root `nyro proxy` uses this crate for its typed runtime generation
+and request leases. Existing `nyro-core`, released `nyro-server`, and Tauri request paths do not use
+it. The Rust API remains experimental.
 
 ## Boundary
 
