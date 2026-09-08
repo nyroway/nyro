@@ -5,6 +5,7 @@ use nyro_kernel::{Candidate, Context, Host};
 use nyro_limit::ConcurrencyLimit;
 use nyro_llm::{
     health::HealthRegistry,
+    rate::RateRegistry,
     runtime::{Options, Runtime},
 };
 use nyro_security::ApiKeys;
@@ -15,6 +16,7 @@ pub(crate) struct Resources {
     limit: ConcurrencyLimit,
     capacity: usize,
     health: Arc<HealthRegistry>,
+    rates: Arc<RateRegistry>,
 }
 
 impl Resources {
@@ -24,6 +26,7 @@ impl Resources {
             limit: ConcurrencyLimit::new(config.limit.concurrency)?,
             capacity: config.limit.concurrency,
             health: Arc::new(HealthRegistry::default()),
+            rates: Arc::new(RateRegistry::default()),
         })
     }
 
@@ -43,12 +46,13 @@ impl Resources {
         Ok(Candidate {
             version: "standalone".into(),
             fingerprint: Some(config.fingerprint()?),
-            value: Runtime::with_health(
+            value: Runtime::with_resources(
                 config.llm.clone(),
                 keys,
                 self.limit.clone(),
                 options,
                 self.health.clone(),
+                self.rates.clone(),
             )?,
             // Reqwest clients have synchronous RAII cleanup; no background component is needed.
             components: vec![],

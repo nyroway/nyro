@@ -90,6 +90,7 @@ fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Ru
             config::Model {
                 max_attempts: 1,
                 health: None,
+                rate: None,
                 backends: vec![config::Backend {
                     id: "default".into(),
                     provider: "upstream".into(),

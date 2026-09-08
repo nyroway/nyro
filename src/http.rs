@@ -100,6 +100,78 @@ limit: {{concurrency: 1}}
     }
 
     #[tokio::test]
+    async fn root_resources_preserve_rate_and_reject_active_policy_changes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let upstream = Router::new().route(
+            "/v1/chat/completions",
+            post(move || {
+                let calls = observed.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(json!({"id":"rate","object":"chat.completion","created":1,"model":"private",
+                        "choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}]}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut config = config(&format!("http://{}/v1", listener.local_addr().unwrap()));
+        config.llm.models.get_mut("public").unwrap().rate = Some(nyro_llm::config::RateConfig {
+            requests: 1,
+            period_ms: 600_000,
+            burst: 1,
+        });
+        let task = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let resources = bootstrap::Resources::new(&config).unwrap();
+        let host = bootstrap::host(&config, &resources).await.unwrap();
+        let tracker = TaskTracker::new();
+        let router = router(host.clone(), tracker.clone());
+        let first = router.clone().oneshot(request()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        to_bytes(first.into_body(), 16384).await.unwrap();
+
+        config.llm.models.get_mut("public").unwrap().backends[0].upstream_model =
+            "replacement".into();
+        host.activate(
+            resources.candidate(&config).unwrap(),
+            Context {
+                deadline: Instant::now() + Duration::from_secs(1),
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+        .unwrap();
+
+        // A rejected candidate must leave the current generation's depleted bucket intact.
+        config
+            .llm
+            .models
+            .get_mut("public")
+            .unwrap()
+            .rate
+            .as_mut()
+            .unwrap()
+            .burst = 2;
+        assert!(resources.candidate(&config).is_err());
+        assert!(host.status().accepting);
+        let denied = router.clone().oneshot(request()).await.unwrap();
+        assert_eq!(denied.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(denied.headers().contains_key("retry-after"));
+        let body = to_bytes(denied.into_body(), 16384).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
+            "rate_limit_exceeded"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        host.shutdown().await.unwrap();
+        tracker.close();
+        tracker.wait().await;
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn root_resources_preserve_open_health_across_generation_changes() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 

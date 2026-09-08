@@ -26,7 +26,7 @@ Nyro is a Rust workspace for a local AI protocol gateway with a Tauri desktop ap
 | `crates/nyro-llm/` | New typed LLM runtime, OpenAI/Anthropic/Gemini Chat codecs/providers, and request execution. |
 | `crates/nyro-config/` | Strict standalone file configuration for the experimental root proxy. |
 | `crates/nyro-security/` | Transport-neutral credential authentication and authorization primitives. |
-| `crates/nyro-limit/` | Shared concurrency admission primitive. |
+| `crates/nyro-limit/` | Shared concurrency and token-bucket rate admission primitives. |
 | `crates/nyro-core/` | Core Rust library: gateway, proxy, protocol conversion, provider adapters, storage, admin service. |
 | `crates/nyro-tools/` | Rust CLI/tooling crate. |
 | `src-server/` | Standalone server binary exposing proxy/admin HTTP surfaces. |

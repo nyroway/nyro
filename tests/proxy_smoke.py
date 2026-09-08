@@ -90,6 +90,10 @@ def main():
                     {"id": "backup", "provider": "mock", "upstream_model": "internal", "priority": 1}],
                 "max_attempts": 2, "health": {"failure_threshold": 1, "cooldown_ms": 30000},
                 "workloads": ["chat"], "subjects": ["tester"]}
+            data["llm"]["models"]["public-rate"] = {
+                "provider": "mock", "upstream_model": "internal",
+                "rate": {"requests": 1, "period_ms": 600000},
+                "workloads": ["chat"], "subjects": ["tester"]}
             config.write_text(json.dumps({**data, "unknown": "secret-marker"}))
             invalid = subprocess.run([binary, "proxy", "--config", config], capture_output=True, timeout=5)
             assert invalid.returncode != 0
@@ -158,6 +162,11 @@ def main():
                 assert len(Upstream.calls) == 14
                 assert [payload["model"] for _, _, payload in Upstream.calls[-3:]] == [
                     "temporary-error", "internal", "internal"]
+                limited = {**chat, "model": "public-rate"}
+                assert request("/v1/chat/completions", limited)[0] == 200
+                status, body = request("/v1/chat/completions", limited)
+                assert status == 429 and json.loads(body)["error"]["code"] == "rate_limit_exceeded"
+                assert len(Upstream.calls) == 15
                 assert all(key == "Bearer upstream-secret" and payload["model"] in {"internal", "temporary-error"}
                            for _, key, payload in Upstream.calls)
                 process.terminate()
@@ -172,7 +181,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print("proxy smoke passed: config, weighted routing, failover, passive health, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
+    print("proxy smoke passed: config, weighted routing, failover, passive health, rate, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
 
 
 if __name__ == "__main__":

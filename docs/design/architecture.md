@@ -4,7 +4,7 @@
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 加权选择、认证授权、共享并发限制和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级／加权选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
 
 ## 1. 产品定位与范围
 
@@ -508,6 +508,8 @@ Chat 流使用自己的事件类型，不要求所有交互实现流接口。当
 | telemetry | 日志、指标、追踪的共享设施 | LLM 或控制面的事件含义和业务查询 |
 
 这些能力同时包含策略与执行机制，不统一归为一个 `policy` 或 `plugins` 大包。`nyro-security` 不预设 `Model`、`RouteID` 等 LLM 字段；`nyro-limit` 不要求所有计量都叫 token。不同工作负载共享实现不自动意味着共享同一额度，作用域由业务配置与映射明确。
+
+当前 rate 实现是 `nyro-limit` 内不含业务键的可克隆令牌桶；LLM 按公开模型映射并共享状态，根程序显式持有跨代际注册表。持续频率与突发容量由模型的可选 `rate` 配置声明。一次逻辑请求在鉴权、并发准入和兼容性准备之后扣减一次，内部重试不重复计数，扣减后失败或取消不退款。超限返回原生协议 `429` 与向上取整的 `Retry-After`，立即释放并发许可。规则不变时配置重建保留余额；已有活跃规则的参数变更要求重启，避免候选构建意外重置计数。当前为进程内频率控制，不提供跨进程共享或持久化；具体语义见 [Rust proxy 指南](../standalone/rust-proxy_CN.md)。
 
 严格累计限额需要考虑并发预留与结算，单纯事前读计数、事后累加不能承诺硬上限。额度状态与并发许可的存储契约必须表达所需的原子性，不能用普通 KV 的 get/set 假定事务成立。
 

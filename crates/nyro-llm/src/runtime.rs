@@ -20,6 +20,7 @@ use crate::{
     health::{BackendHealth, HealthRegistry},
     ingress::body::{self, Outcome},
     provider::Driver,
+    rate::{BoundRate, RateRegistry},
     router,
 };
 
@@ -58,6 +59,7 @@ pub struct Runtime {
     limit: ConcurrencyLimit,
     options: Options,
     health: BTreeMap<String, BTreeMap<String, Arc<BackendHealth>>>,
+    rates: BTreeMap<String, Arc<BoundRate>>,
 }
 
 impl Runtime {
@@ -83,6 +85,25 @@ impl Runtime {
         limit: ConcurrencyLimit,
         options: Options,
         health: Arc<HealthRegistry>,
+    ) -> Result<Self, BuildError> {
+        Self::with_resources(
+            config,
+            keys,
+            limit,
+            options,
+            health,
+            Arc::new(RateRegistry::default()),
+        )
+    }
+
+    /// Share registries across generations. Changing an active rate rule requires new resources.
+    pub fn with_resources(
+        config: config::Config,
+        keys: Arc<ApiKeys>,
+        limit: ConcurrencyLimit,
+        options: Options,
+        health: Arc<HealthRegistry>,
+        rates: Arc<RateRegistry>,
     ) -> Result<Self, BuildError> {
         config.validate().map_err(|_| BuildError)?;
         if options.request_timeout.is_zero()
@@ -133,7 +154,18 @@ impl Runtime {
                 })
             })
             .collect();
+        let rates = config
+            .models
+            .iter()
+            .filter_map(|(id, model)| {
+                model
+                    .rate
+                    .as_ref()
+                    .map(|policy| rates.bind(id, policy).map(|rate| (id.clone(), rate)))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Self {
+            rates,
             health,
             models: config.models,
             providers,
@@ -309,6 +341,20 @@ impl Runtime {
         })?);
         let mut eligible =
             self.prepare_backends(&public_model, model, &request, endpoint.format)?;
+        if cancellation.is_cancelled() {
+            return Err(Failure::cancelled());
+        }
+        if Instant::now() >= deadline {
+            return Err(Failure::timeout());
+        }
+        if let Some(rate) = self.rates.get(&public_model)
+            && let Err(exceeded) = rate.try_acquire()
+        {
+            // Rate admission rejects synchronously; its error body must not occupy an in-flight slot.
+            drop(exchange.permit.take());
+            return Err(Failure::rate(exceeded.retry_after));
+        }
+        // One logical admission; retries, failed upstreams and cancellation never refund it.
         let mut last_failure = None;
         while exchange.attempts < model.max_attempts {
             if cancellation.is_cancelled() {
@@ -460,6 +506,7 @@ struct Failure {
     status: StatusCode,
     code: &'static str,
     message: &'static str,
+    retry_after: Option<Duration>,
 }
 
 impl Failure {
@@ -468,6 +515,17 @@ impl Failure {
             status,
             code,
             message,
+            retry_after: None,
+        }
+    }
+    fn rate(retry_after: Duration) -> Self {
+        Self {
+            retry_after: Some(retry_after),
+            ..Self::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_exceeded",
+                "Request rate limit reached",
+            )
         }
     }
     fn invalid(message: &'static str) -> Self {
@@ -517,7 +575,17 @@ impl Failure {
                 }}})
             }
         };
-        json_response(self.status, payload)
+        let mut response = json_response(self.status, payload);
+        if let Some(retry_after) = self.retry_after {
+            let seconds = retry_after
+                .as_secs()
+                .saturating_add(u64::from(retry_after.subsec_nanos() > 0))
+                .max(1);
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, seconds.into());
+        }
+        response
     }
 }
 

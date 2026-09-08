@@ -4,6 +4,7 @@ pub mod config;
 pub mod health;
 mod ingress;
 mod provider;
+pub mod rate;
 mod router;
 pub mod runtime;
 

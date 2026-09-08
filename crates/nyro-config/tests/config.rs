@@ -28,6 +28,7 @@ fn valid_config() -> Config {
                 Model {
                     max_attempts: 1,
                     health: None,
+                    rate: None,
                     backends: vec![Backend {
                         id: "default".into(),
                         provider: "openai".into(),
@@ -431,6 +432,68 @@ fn yaml_rejects_invalid_failover_policy_values() {
         assert!(
             Config::from_yaml(&yaml_with_routing(&format!(
                 "      provider: p\n      upstream_model: u\n      {policy}"
+            )))
+            .is_err(),
+            "{policy}"
+        );
+    }
+}
+
+#[test]
+fn rate_fingerprint_normalizes_burst_default_and_retains_every_policy_field() {
+    let parse = |rate: &str| {
+        Config::from_yaml(&yaml_with_routing(&format!(
+            "      provider: p\n      upstream_model: u\n{rate}"
+        )))
+        .unwrap()
+    };
+    let disabled = parse("");
+    let default = parse("      rate: {requests: 10, period_ms: 60000}");
+    let explicit = parse("      rate: {requests: 10, period_ms: 60000, burst: 1}");
+    assert_eq!(
+        default.fingerprint().unwrap(),
+        explicit.fingerprint().unwrap()
+    );
+    assert_ne!(
+        default.fingerprint().unwrap(),
+        disabled.fingerprint().unwrap()
+    );
+    for changed in [
+        "      rate: {requests: 11, period_ms: 60000}",
+        "      rate: {requests: 10, period_ms: 60001}",
+        "      rate: {requests: 10, period_ms: 60000, burst: 2}",
+    ] {
+        assert_ne!(
+            default.fingerprint().unwrap(),
+            parse(changed).fingerprint().unwrap()
+        );
+    }
+}
+
+#[test]
+fn yaml_rejects_invalid_rate_policy_values() {
+    for policy in [
+        "null",
+        "{}",
+        "{requests: 1}",
+        "{period_ms: 1000}",
+        "{requests: 0, period_ms: 1000}",
+        "{requests: -1, period_ms: 1000}",
+        "{requests: 4294967296, period_ms: 1000}",
+        "{requests: null, period_ms: 1000}",
+        "{requests: 1, period_ms: 0}",
+        "{requests: 1, period_ms: -1}",
+        "{requests: 1, period_ms: 18446744073709551616}",
+        "{requests: 1, period_ms: null}",
+        "{requests: 1, period_ms: 1000, burst: 0}",
+        "{requests: 1, period_ms: 1000, burst: -1}",
+        "{requests: 1, period_ms: 1000, burst: 4294967296}",
+        "{requests: 1, period_ms: 1000, burst: null}",
+        "{requests: 1, period_ms: 1000, unknown: true}",
+    ] {
+        assert!(
+            Config::from_yaml(&yaml_with_routing(&format!(
+                "      provider: p\n      upstream_model: u\n      rate: {policy}"
             )))
             .is_err(),
             "{policy}"
