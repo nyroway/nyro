@@ -1,4 +1,4 @@
-//! Trusted single-attempt LLM execution. Business policy stays outside the kernel.
+//! Trusted LLM execution with bounded failover. Business policy stays outside the kernel.
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
@@ -14,17 +14,18 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    Request, Workload,
-    codec::{ChatFormat, anthropic, gemini, openai},
+    Request,
+    codec::ChatFormat,
     config,
+    health::{BackendHealth, HealthRegistry},
     ingress::body::{self, Outcome},
     provider::Driver,
     router,
 };
 
 mod endpoint;
+mod response;
 mod stream;
-use self::stream::StreamState;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Options {
@@ -56,6 +57,7 @@ pub struct Runtime {
     authorizer: Authorizer,
     limit: ConcurrencyLimit,
     options: Options,
+    health: BTreeMap<String, BTreeMap<String, Arc<BackendHealth>>>,
 }
 
 impl Runtime {
@@ -64,6 +66,23 @@ impl Runtime {
         keys: Arc<ApiKeys>,
         limit: ConcurrencyLimit,
         options: Options,
+    ) -> Result<Self, BuildError> {
+        Self::with_health(
+            config,
+            keys,
+            limit,
+            options,
+            Arc::new(HealthRegistry::default()),
+        )
+    }
+
+    /// Share this registry between generations to retain health for unchanged backends.
+    pub fn with_health(
+        config: config::Config,
+        keys: Arc<ApiKeys>,
+        limit: ConcurrencyLimit,
+        options: Options,
+        health: Arc<HealthRegistry>,
     ) -> Result<Self, BuildError> {
         config.validate().map_err(|_| BuildError)?;
         if options.request_timeout.is_zero()
@@ -92,7 +111,30 @@ impl Runtime {
                 })
             })
             .collect();
+        let health = config
+            .models
+            .iter()
+            .filter_map(|(id, model)| {
+                model.health.as_ref().map(|policy| {
+                    let backends = model
+                        .backends
+                        .iter()
+                        .map(|backend| {
+                            let state = health.backend(
+                                id,
+                                backend,
+                                &config.providers[&backend.provider],
+                                policy,
+                            );
+                            (backend.id.clone(), state)
+                        })
+                        .collect();
+                    (id.clone(), backends)
+                })
+            })
+            .collect();
         Ok(Self {
+            health,
             models: config.models,
             providers,
             keys,
@@ -120,6 +162,7 @@ impl Runtime {
             started,
             model: None,
             backend: None,
+            attempts: 0,
             permit: None,
             status: None,
             outcome: Outcome::Cancelled,
@@ -128,7 +171,7 @@ impl Runtime {
             biased;
             _ = cancellation.cancelled() => Err(Failure::cancelled()),
             _ = tokio::time::sleep_until(deadline) => Err(Failure::timeout()),
-            result = self.execute(request, &mut exchange) => result,
+            result = self.execute(request, &mut exchange, &cancellation, deadline) => result,
         };
         let (response, body_deadline) = match result {
             Ok(response) => (response, deadline),
@@ -149,12 +192,13 @@ impl Runtime {
     }
 
     /// Preparation is local and side-effect free: incompatible codecs never get a network attempt.
-    fn select_backend<'a>(
+    fn prepare_backends<'a>(
         &'a self,
+        model_id: &str,
         model: &'a config::Model,
         request: &Request,
         downstream: ChatFormat,
-    ) -> Result<Prepared<'a>, Failure> {
+    ) -> Result<Vec<Prepared<'a>>, Failure> {
         let mut eligible = Vec::new();
         for backend in model.backends.iter().filter(|backend| backend.weight > 0) {
             let provider = self
@@ -185,21 +229,27 @@ impl Runtime {
                     provider,
                     request,
                     encoded,
+                    health: self
+                        .health
+                        .get(model_id)
+                        .and_then(|states| states.get(&backend.id)),
                 });
             }
         }
-        let index = router::choose(eligible.iter().map(|candidate| candidate.backend.weight))
-            .ok_or_else(|| {
-                Failure::invalid("Request cannot be represented by any enabled backend")
-            })?;
-        // Drop every unselected request and encoded body before sending upstream.
-        Ok(eligible.swap_remove(index))
+        if eligible.is_empty() {
+            return Err(Failure::invalid(
+                "Request cannot be represented by any enabled backend",
+            ));
+        }
+        Ok(eligible)
     }
 
     async fn execute(
         &self,
         request: HttpRequest<Body>,
         exchange: &mut Exchange,
+        cancellation: &CancellationToken,
+        deadline: Instant,
     ) -> Result<HttpResponse<Body>, Failure> {
         let endpoint = endpoint::Endpoint::parse(request.uri(), request.method())?;
         let workload = endpoint.workload;
@@ -257,111 +307,118 @@ impl Runtime {
                 "Concurrency limit reached",
             )
         })?);
-        let streaming = request.is_streaming();
-        let include_usage = matches!(&request, Request::Chat(chat) if chat.openai.stream_options.as_ref().is_some_and(|options| options.include_usage == Some(true)));
-        let selected = self.select_backend(model, &request, endpoint.format)?;
-        exchange.backend = Some(selected.backend.id.clone());
-        let Prepared {
-            request,
-            provider,
-            encoded,
-            ..
-        } = selected;
-        let response = provider
-            .send(&request, &encoded)
-            .await
-            .map_err(|_| Failure::upstream())?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let status = if status.is_redirection()
-                || status == StatusCode::UNAUTHORIZED
-                || status == StatusCode::FORBIDDEN
-            {
-                StatusCode::BAD_GATEWAY
-            } else {
-                status
+        let mut eligible =
+            self.prepare_backends(&public_model, model, &request, endpoint.format)?;
+        let mut last_failure = None;
+        while exchange.attempts < model.max_attempts {
+            if cancellation.is_cancelled() {
+                return Err(Failure::cancelled());
+            }
+            if Instant::now() >= deadline {
+                return Err(Failure::timeout());
+            }
+            let available: Vec<_> = eligible
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate)| candidate.health.is_none_or(|state| state.available()))
+                .collect();
+            let Some(priority) = available
+                .iter()
+                .map(|(_, candidate)| candidate.backend.priority)
+                .min()
+            else {
+                break;
             };
-            return Err(Failure::new(
-                status,
-                "upstream_error",
-                "Upstream rejected the request",
-            ));
-        }
-        if streaming {
-            let is_sse = response
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .is_some_and(|v| {
-                    v.split(';')
-                        .next()
-                        .is_some_and(|v| v.trim().eq_ignore_ascii_case("text/event-stream"))
-                });
-            if !is_sse {
-                return Err(Failure::upstream());
-            }
-            let mut state = StreamState::new(
-                response,
-                provider.format,
-                endpoint.format,
-                public_model,
-                self.options.max_frame_bytes,
-                include_usage,
-            );
-            // Validate one complete frame before handing the response to HTTP. This is not a flush acknowledgement.
-            let first = state.next_frame().await?.ok_or_else(Failure::upstream)?;
-            let output = futures::stream::once(async { Ok::<_, Failure>(first) }).chain(
-                futures::stream::try_unfold(state, |mut state| async move {
-                    state
-                        .next_frame()
-                        .await
-                        .map(|frame| frame.map(|frame| (frame, state)))
-                }),
-            );
-            return Ok(HttpResponse::builder()
-                .header("content-type", "text/event-stream")
-                .header("cache-control", "no-cache")
-                .body(Body::from_stream(output))
-                .expect("static response headers"));
-        }
-        let mut input = response.bytes_stream();
-        let mut bytes = Vec::new();
-        while let Some(chunk) = input.next().await {
-            let chunk = chunk.map_err(|_| Failure::upstream())?;
-            if chunk.len() > self.options.max_response_bytes.saturating_sub(bytes.len()) {
-                return Err(Failure::upstream());
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        let payload: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::upstream())?;
-        let payload = match workload {
-            Workload::Chat => {
-                let mut response = match provider.format {
-                    ChatFormat::OpenAiResponses => openai::responses::decode_chat_response(payload),
-                    ChatFormat::OpenAiChat => openai::decode_chat_response(payload),
-                    ChatFormat::Anthropic => anthropic::decode_chat_response(payload),
-                    ChatFormat::Gemini => gemini::decode_chat_response(payload),
+            let choice = router::choose(available.iter().map(|(_, candidate)| {
+                if candidate.backend.priority == priority {
+                    candidate.backend.weight
+                } else {
+                    0
                 }
-                .map_err(|_| Failure::upstream())?;
-                response.model = public_model;
-                match endpoint.format {
-                    ChatFormat::OpenAiResponses => {
-                        openai::responses::encode_chat_response(&response)
+            }))
+            .expect("available candidates have positive weights");
+            let index = available[choice].0;
+            // Another request may have claimed the recovery probe after our availability check.
+            let selected = eligible.swap_remove(index);
+            let mut health = match selected.health {
+                Some(state) => match state.try_acquire() {
+                    Some(attempt) => Some(attempt),
+                    None => continue,
+                },
+                None => None,
+            };
+            exchange.backend = Some(selected.backend.id.clone());
+            exchange.attempts += 1;
+            let response = match selected
+                .provider
+                .send(&selected.request, &selected.encoded)
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    if let Some(health) = health.take() {
+                        health.failure();
                     }
-                    ChatFormat::OpenAiChat => openai::encode_chat_response(&response),
-                    ChatFormat::Anthropic => anthropic::encode_chat_response(&response),
-                    ChatFormat::Gemini => gemini::encode_chat_response(&response),
+                    // Only connection establishment is known to precede sending the request.
+                    if !error.is_connect() {
+                        return Err(Failure::upstream());
+                    }
+                    last_failure = Some(Failure::upstream());
+                    continue;
+                }
+            };
+            if !response.status().is_success() {
+                let status = response.status();
+                let retryable = matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504 | 529);
+                let safe_status = if status.is_redirection()
+                    || matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+                {
+                    StatusCode::BAD_GATEWAY
+                } else {
+                    status
+                };
+                let failure = Failure::new(
+                    safe_status,
+                    "upstream_error",
+                    "Upstream rejected the request",
+                );
+                // Discard failed headers/body and release the connection before another send.
+                drop(response);
+                if !retryable {
+                    return Err(failure);
+                }
+                if let Some(health) = health.take() {
+                    health.failure();
+                }
+                last_failure = Some(failure);
+                continue;
+            }
+            // An upstream 2xx commits the attempt, including malformed or interrupted bodies.
+            let result = self
+                .decode_response(
+                    response,
+                    selected.provider,
+                    &endpoint,
+                    &request,
+                    &mut health,
+                )
+                .await;
+            if let Some(health) = health {
+                if result.is_ok() {
+                    health.success();
+                } else {
+                    health.failure();
                 }
             }
-            Workload::Embedding => {
-                let mut response =
-                    openai::decode_embedding_response(payload).map_err(|_| Failure::upstream())?;
-                response.model = public_model;
-                openai::encode_embedding_response(&response)
-            }
+            return result;
         }
-        .map_err(|_| Failure::upstream())?;
-        Ok(json_response(StatusCode::OK, payload))
+        Err(last_failure.unwrap_or_else(|| {
+            Failure::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "backends_unavailable",
+                "No backend is currently available",
+            )
+        }))
     }
 }
 
@@ -370,12 +427,14 @@ struct Prepared<'a> {
     provider: &'a Driver,
     request: Request,
     encoded: Value,
+    health: Option<&'a Arc<BackendHealth>>,
 }
 
 struct Exchange {
     started: Instant,
     model: Option<String>,
     backend: Option<String>,
+    attempts: u32,
     permit: Option<Permit>,
     status: Option<StatusCode>,
     outcome: Outcome,
@@ -390,7 +449,7 @@ impl Exchange {
 impl Drop for Exchange {
     fn drop(&mut self) {
         tracing::info!(target: "nyro::request", model = self.model.as_deref().unwrap_or(""), backend = self.backend.as_deref().unwrap_or(""), status = self.status.map_or(0, |status| status.as_u16()),
-            duration_ms = self.started.elapsed().as_millis() as u64, outcome = ?self.outcome, "LLM request finished");
+            attempts = self.attempts, duration_ms = self.started.elapsed().as_millis() as u64, outcome = ?self.outcome, "LLM request finished");
         // This slice owns only synchronous finalization; the permit releases after observation.
     }
 }

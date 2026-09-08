@@ -1,7 +1,10 @@
 use crate::Workload;
 use reqwest::{Url, header::HeaderValue};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -11,7 +14,7 @@ pub struct Config {
     pub models: BTreeMap<String, Model>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Openai,
@@ -20,7 +23,7 @@ pub enum ProviderKind {
 }
 
 /// Selects an API within the OpenAI protocol family.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenAiApi {
     #[default]
@@ -54,6 +57,9 @@ impl std::fmt::Debug for Provider {
 #[derive(Clone, Debug, Serialize)]
 pub struct Model {
     pub backends: Vec<Backend>,
+    pub max_attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<HealthConfig>,
     pub workloads: Vec<Workload>,
     pub allow_anonymous: bool,
     pub subjects: BTreeSet<String>,
@@ -67,6 +73,28 @@ pub struct Backend {
     pub upstream_model: String,
     #[serde(default = "default_weight")]
     pub weight: u32,
+    #[serde(default)]
+    pub priority: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HealthConfig {
+    pub failure_threshold: u32,
+    pub cooldown_ms: u64,
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: 3,
+            cooldown_ms: 30_000,
+        }
+    }
+}
+
+const fn default_max_attempts() -> u32 {
+    1
 }
 
 const fn default_weight() -> u32 {
@@ -76,6 +104,10 @@ const fn default_weight() -> u32 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawModel {
+    #[serde(default = "default_max_attempts")]
+    max_attempts: u32,
+    #[serde(default)]
+    health: Option<HealthConfig>,
     #[serde(default, deserialize_with = "present")]
     backends: Option<Vec<Backend>>,
     #[serde(default, deserialize_with = "present")]
@@ -108,6 +140,7 @@ impl<'de> Deserialize<'de> for Model {
                 provider,
                 upstream_model,
                 weight: default_weight(),
+                priority: 0,
             }],
             _ => {
                 return Err(serde::de::Error::custom(
@@ -117,6 +150,8 @@ impl<'de> Deserialize<'de> for Model {
         };
         Ok(Self {
             backends,
+            max_attempts: raw.max_attempts,
+            health: raw.health,
             workloads: raw.workloads,
             allow_anonymous: raw.allow_anonymous,
             subjects: raw.subjects,
@@ -140,6 +175,10 @@ pub enum ConfigError {
     InvalidProviderApi { provider: String },
     #[error("model ID must not be empty")]
     EmptyModelId,
+    #[error("model `{model}` max_attempts must be greater than zero")]
+    InvalidMaxAttempts { model: String },
+    #[error("model `{model}` health policy requires positive bounds and a representable cooldown")]
+    InvalidHealth { model: String },
     #[error("model `{model}` must define at least one backend")]
     NoBackends { model: String },
     #[error("model `{model}` has an empty backend ID")]
@@ -212,6 +251,18 @@ impl Config {
         for (id, model) in &self.models {
             if id.trim().is_empty() {
                 return Err(ConfigError::EmptyModelId);
+            }
+            if model.max_attempts == 0 {
+                return Err(ConfigError::InvalidMaxAttempts { model: id.clone() });
+            }
+            if model.health.as_ref().is_some_and(|health| {
+                health.failure_threshold == 0
+                    || health.cooldown_ms == 0
+                    || Instant::now()
+                        .checked_add(Duration::from_millis(health.cooldown_ms))
+                        .is_none()
+            }) {
+                return Err(ConfigError::InvalidHealth { model: id.clone() });
             }
             if model.backends.is_empty() {
                 return Err(ConfigError::NoBackends { model: id.clone() });

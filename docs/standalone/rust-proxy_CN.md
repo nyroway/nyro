@@ -27,7 +27,7 @@ curl http://127.0.0.1:19530/v1/chat/completions \
 
 ## 配置
 
-所有配置结构都会拒绝未知字段。`kind` 必填，支持 `openai`、`anthropic`、`gemini`。OpenAI Provider 可选 `api: chat_completions`（默认）或 `api: responses`；其他 kind 拒绝 `api` 字段。Provider URL 必须使用 HTTP 或 HTTPS、包含主机，且不能包含用户信息、查询参数或 fragment。Nyro 在基础路径后追加原生端点。上游只使用 Provider 配置的可选 `api_key`，不会转发调用方凭据；同时禁用重定向和环境变量配置的 HTTP 代理。
+所有配置结构都会拒绝未知字段。`kind` 必填，支持 `openai`、`anthropic`、`gemini`。OpenAI Provider 可选 `api: chat_completions`（默认）或 `api: responses`；其他 kind 拒绝 `api` 字段。Provider URL 必须使用 HTTP 或 HTTPS、包含主机，且不能包含用户信息、查询参数或 fragment。Nyro 在基础路径后追加原生端点。上游只使用 Provider 配置的可选 `api_key`，不会转发调用方凭据；同时禁用重定向、环境变量配置的 HTTP 代理和 Reqwest 自动协议重试，由 LLM runtime 统一管理重试预算。
 
 | Provider kind | 基础地址示例 | 追加端点 | 上游凭据 |
 |---|---|---|---|
@@ -40,7 +40,9 @@ Gemini 上游模型名只接受由 ASCII 字母、数字、`-_.` 构成的单段
 
 每个模型包含：
 
-- `backends`：非空上游列表。每项包含模型范围内唯一且非空白的 `id`、`llm.providers` 中的 `provider` ID、`upstream_model`，以及可选整数 `weight`（默认 `100`）。
+- `backends`：非空上游列表。每项包含模型范围内唯一且非空白的 `id`、`llm.providers` 中的 `provider` ID、`upstream_model`，以及可选整数 `weight`（默认 `100`）和 `priority`（默认 `0`，数值越小越优先）。
+- `max_attempts`：正整数，默认 `1`，包含首次上游发送。每个请求最多尝试每个 backend ID 一次。
+- `health`：可选的被动熔断策略，省略时关闭。空对象启用默认值 `failure_threshold: 3` 和 `cooldown_ms: 30000`，两者必须大于零。
 - `workloads`：非空且不能重复；所有 backend 都使用 OpenAI Chat Completions 时可包含 `chat`、`embedding` 或两者；Responses／Anthropic／Gemini 只支持 `chat`。每个 backend（包括禁用项）都必须支持模型声明的 workload，无效组合会在启动时被拒绝。
 - `allow_anonymous`：可选，默认 `false`。
 - `subjects`：允许调用受保护模型的客户端凭据 ID；只有匿名模型可以省略。
@@ -64,9 +66,30 @@ chat-default:
   subjects: [local-client]
 ```
 
-认证、授权和共享准入针对公开模型执行一次。随后 Nyro 使用各 backend 对应的 codec 在本地准备请求，排除无法表达当前请求的项，并按剩余权重随机选择一个。权重作用于可用候选集合，不保证每一批请求都严格按比例分配。准备阶段不发送网络请求；没有可表达请求的 backend 时返回 `400`。例如请求未提供 token 上限时，Anthropic backend 不参与选择，而兼容的 OpenAI backend 仍可参与。准备阶段不能确定 Provider 的实际可用性，也不能保证其后续响应可转换。
+认证、授权和共享准入针对公开模型执行一次。随后 Nyro 使用各 backend 对应的 codec 在本地准备请求，排除无法表达当前请求的项，从当前可用的最小 `priority` 中按权重随机选择一个。权重作用于可用候选集合，不保证每一批请求都严格按比例分配。准备阶段不发送网络请求；没有可表达请求的 backend 时返回 `400`。例如请求未提供 token 上限时，Anthropic backend 不参与选择，而兼容的 OpenAI backend 仍可参与。准备阶段不能确定 Provider 的实际可用性，也不能保证其后续响应可转换。
 
-每次调用只向选定上游尝试一次。上游错误、响应格式错误或断流不会触发其他 backend。请求日志会同时记录公开模型与所选 backend ID。优先级、重试／故障转移及基于健康状态的选择属于后续工作。本地路由回归：`cargo test -p nyro-llm --test routing_runtime`。
+默认每次调用只尝试一个上游。将 `max_attempts` 设置为大于 `1` 后，连接建立失败或上游返回 HTTP `429`、`500`、`502`、`503`、`504`、`529` 时，可以切换到其他候选。先尝试同一优先级的剩余 backend，再考虑更大的优先级。跳过不兼容、禁用或不健康的 backend 不消耗预算。当前没有退避和独立的单次尝试超时；所有尝试共享整个请求期限与同一个并发许可。单个慢请求可能耗尽期限而无法故障转移。取消或丢弃请求／响应体会停止其持有的工作。
+
+其他 HTTP 状态，以及无法确认发生在请求发送前的传输错误，不触发切换。上游一旦返回 `2xx`，便固定使用该 backend：JSON 格式错误、Content-Type 不匹配、首个 SSE 帧错误或后续断流均直接失败。失败尝试的响应头和响应体会被丢弃。开启重试仍可能在多个上游产生实际工作，不保证 Provider 恰好执行一次。请求日志记录公开模型、最后选择的 backend ID 与尝试次数。
+
+例如，以下模型优先使用 `primary`，允许故障转移至 `secondary`：
+
+```yaml
+chat-failover:
+  backends:
+    - {id: primary, provider: example, upstream_model: example-chat-model, priority: 0}
+    - {id: secondary, provider: responses-example, upstream_model: example-responses-model, priority: 1}
+  max_attempts: 2
+  health: {failure_threshold: 3, cooldown_ms: 30000}
+  workloads: [chat]
+  subjects: [local-client]
+```
+
+开启 `health` 后，实际观察到的网络错误、上述临时错误状态和无效上游响应会计入失败阈值。完整校验成功的响应清零计数；SSE 必须完成协议终止校验，响应头和首帧不足以证明恢复。其他状态、客户端取消、响应体丢弃和整个请求期限耗尽均不改变成功／失败计数。达到阈值后跳过该 backend，冷却结束后的首个合格请求独占一次恢复探测；并发请求使用其他可用 backend，否则返回 `503`。探测成功恢复，失败则重新冷却；取消或丢弃探测只释放探测资格，不认定恢复。首次尝试前全部兼容 backend 都被阻止时返回 `503`；已发生尝试失败时返回最后一个脱敏上游错误。
+
+健康状态以公开模型和 backend 身份为作用域。根组合层在代际之间共享状态：Provider URL/API/凭证、上游模型与健康策略不变时复用，调整权重或优先级不会清零；这些绑定发生变化则使用新状态。旧代际及请求释放后，旧绑定可回收。没有后台探测，也不跨进程重启持久化。
+
+本地路由回归：`cargo test -p nyro-llm --test routing_runtime --test failover_runtime`。
 
 受保护模型的 `subjects` 不能为空，每一项都必须匹配 `security.api_keys` 中的 `id`。未提供支持的请求头凭据或凭据未知时返回 `401`；凭据已知但无权访问该模型时返回 `403`。匿名模型可以不带凭据访问；如果请求带了凭据，该凭据仍须有效，但任意已知凭据都可以访问匿名模型。
 
@@ -133,9 +156,9 @@ SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和
 ## 健康检查与当前范围
 
 - HTTP 服务运行期间，`GET /healthz` 返回 `200`。
-- 内核 Host 接受新的代际 lease 时，`GET /readyz` 返回 `200`；停止接受时返回 `503`。这个源码构建代理没有数据库就绪检查。
+- 内核 Host 接受新的代际 lease 时，`GET /readyz` 返回 `200`；停止接受时返回 `503`。这个源码构建代理没有数据库或上游 backend 就绪检查。
 
-当前每个请求只向选定上游尝试一次。尚未实现重试、故障转移、频率限制、额度、控制面、Admin API、WebUI、`nyro serve` 或 `nyro tool`。程序不会展开环境变量，不接受旧 Standalone YAML，不监听或热更新文件，也不会远程获取配置；修改后需要重启进程。
+重试与被动健康检查需要按上述配置显式开启。尚未实现频率限制、额度、控制面、Admin API、WebUI、`nyro serve` 或 `nyro tool`。程序不会展开环境变量，不接受旧 Standalone YAML，不监听或热更新文件，也不会远程获取配置；修改后需要重启进程。
 
 贡献者可以在不连接真实 Provider 的情况下验证根进程、健康检查、认证、Chat、Embedding、SSE、脱敏和正常退出：
 

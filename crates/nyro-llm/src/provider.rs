@@ -41,6 +41,8 @@ impl Driver {
             client: Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
+                // Runtime owns the attempt budget, including protocol-level failures.
+                .retry(reqwest::retry::never())
                 .build()
                 .map_err(|_| BuildError)?,
             base,
