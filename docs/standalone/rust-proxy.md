@@ -44,6 +44,7 @@ Each model declares:
 - `max_attempts`: positive integer, default `1`, including the first upstream send. Each backend ID is attempted at most once per request.
 - `health`: optional passive breaker policy, disabled when omitted. An empty object enables `failure_threshold: 3` and `cooldown_ms: 30000`; both must be positive.
 - `rate`: optional per-model request frequency; omitted means disabled. See [Request rate](#request-rate).
+- `quota`: optional cumulative model token budget; omitted means disabled. See [Token quota](#token-quota).
 - `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both when every backend uses OpenAI Chat Completions; Responses, Anthropic, and Gemini support only `chat`. Every backend, including disabled entries, must support the model's declared workloads. Invalid combinations fail startup.
 - `allow_anonymous`: optional, default `false`.
 - `subjects`: client credential IDs allowed to invoke a protected model; optional only for anonymous models.
@@ -130,6 +131,28 @@ The root composition shares rate state across configuration generations. An unch
 
 The reusable primitive is `nyro_limit::rate::RateLimit`. It accepts counts, a `Duration`, and burst capacity, and returns either admission or a retry delay. It contains no LLM, authentication, HTTP, kernel, or database types; the application owns scope mapping and rejection formatting. Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test rate_runtime`.
 
+## Token quota
+
+Add an optional `quota` to a public model:
+
+```yaml
+quota:
+  total_tokens: 1000000
+  reserve_tokens: 4096
+```
+
+Both fields are required positive integers; `reserve_tokens` must not exceed `total_tokens`. Explicit `null` and unknown fields are rejected. All callers, workloads and ingress APIs for that alias share one cumulative budget of input plus output tokens. Different aliases have independent budgets. This is process-local accounting with no periodic refill, persistence, pricing or replica coordination.
+
+After authentication, authorization, concurrency and rate admission, Nyro reserves `reserve_tokens` immediately before each available upstream attempt. Retries each need their own reservation. No available backend means no reservation. Admission atomically checks settled usage plus pending reservations. Insufficient credit returns a native `429`: OpenAI APIs use `quota_exceeded`, Anthropic uses `rate_limit_error`, and Gemini uses `RESOURCE_EXHAUSTED`. There is no `Retry-After` or new upstream call, and the concurrency permit is released immediately. A prior rate admission remains charged even when quota rejects the request. A remaining balance below `reserve_tokens` cannot admit another attempt.
+
+On a valid complete response, Nyro replaces the reservation with reported total usage, including explicit zero and usage above the reservation. For JSON this happens before downstream encoding; for SSE it happens at the validated upstream protocol terminal. Usage snapshots are cumulative, not additive, and must not decrease. Input plus output must equal total without overflow; embeddings require input to equal total. Invalid usage fails the response (`502` before streaming, otherwise stream termination). When quota is enabled, OpenAI Chat upstream requests ask for stream usage even when the client has not requested usage output; the client's output preference is preserved.
+
+Before settlement, missing usage, upstream HTTP errors, malformed responses, cancellation, deadlines and dropped/truncated streams charge the greater of the reservation and any valid observed usage. Once settled, later downstream failure or body drop does not change the charge. Only an observed connection-establishment failure releases the entire reservation. Each failed HTTP attempt is charged separately before failover. These conservative fallback charges may overcount actual usage. Conversely, `reserve_tokens` is an operator-selected amount, not a trusted upper bound on provider consumption: actual usage can exceed the configured budget, and the resulting debt blocks later admissions. This is not a hard cap on actual upstream tokens.
+
+The root composition retains consumed and pending ledgers across generations, routing changes, and model removal/re-addition. Changing a rule while its binding is live or its ledger has consumed credit rejects candidate construction. Unused, unowned candidate ledgers can be discarded. Retained ledgers last for the registry's lifetime; process restart resets all balances and is required to change an established rule. The file proxy still requires restart to load configuration edits. Disabling quota stops accounting for new requests; it does not erase an existing ledger.
+
+`nyro_limit::quota::Quota` provides generic atomic reservation, settlement and snapshots without LLM, HTTP, kernel or storage types. `nyro_llm::quota::QuotaRegistry` owns the model mapping and token semantics. Library hosts should reuse `runtime::SharedResources` with `Runtime::with_resources` across generations; `Runtime::new` creates fresh registries and `with_health` shares health only. Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test quota_runtime`.
+
 ## Native clients and conversion limits
 
 | Client API | Endpoint | Credential |
@@ -182,7 +205,7 @@ References: [OpenAI Responses migration](https://developers.openai.com/api/docs/
 - `GET /healthz` returns `200` while the HTTP process is serving.
 - `GET /readyz` returns `200` while the kernel host accepts new generation leases and `503` once it does not. This source-built proxy has no database or upstream-backend readiness check.
 
-Retries and passive health are opt-in as described above. It does not implement quotas, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
+Retries and passive health are opt-in as described above. It does not implement persistent/shared quota storage, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
 
 Contributors can exercise the root process, probes, authentication, Chat, Embedding, SSE, redaction, and graceful termination without a real provider:
 

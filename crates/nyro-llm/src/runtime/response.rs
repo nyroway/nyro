@@ -5,6 +5,7 @@ use crate::{
     codec::{ChatFormat, anthropic, gemini, openai},
     health::Attempt,
     provider::Driver,
+    quota::AttemptQuota,
 };
 use axum::{
     body::Body,
@@ -21,6 +22,7 @@ impl Runtime {
         endpoint: &Endpoint,
         request: &Request,
         health: &mut Option<Attempt>,
+        quota: &mut Option<AttemptQuota>,
     ) -> Result<HttpResponse<Body>, Failure> {
         let streaming = request.is_streaming();
         let public_model = request.model().to_owned();
@@ -46,6 +48,7 @@ impl Runtime {
                 public_model,
                 self.options.max_frame_bytes,
                 include_usage,
+                quota.take(),
             );
             // Validate one complete frame before handing the response to HTTP. This is not a flush acknowledgement.
             let first = state.next_frame().await?.ok_or_else(Failure::upstream)?;
@@ -94,6 +97,14 @@ impl Runtime {
                     ChatFormat::Gemini => gemini::decode_chat_response(payload),
                 }
                 .map_err(|_| Failure::upstream())?;
+                if let Some(quota) = quota.as_mut()
+                    && let Some(usage) = response.usage.as_ref()
+                {
+                    quota.observe(usage).map_err(|_| Failure::upstream())?;
+                }
+                if let Some(quota) = quota.take() {
+                    quota.complete();
+                }
                 response.model = public_model;
                 match endpoint.format {
                     ChatFormat::OpenAiResponses => {
@@ -107,6 +118,14 @@ impl Runtime {
             Workload::Embedding => {
                 let mut response =
                     openai::decode_embedding_response(payload).map_err(|_| Failure::upstream())?;
+                if let Some(quota) = quota.as_mut() {
+                    quota
+                        .observe_embedding(&response.usage)
+                        .map_err(|_| Failure::upstream())?;
+                }
+                if let Some(quota) = quota.take() {
+                    quota.complete();
+                }
                 response.model = public_model;
                 openai::encode_embedding_response(&response)
             }

@@ -20,6 +20,7 @@ use crate::{
     health::{BackendHealth, HealthRegistry},
     ingress::body::{self, Outcome},
     provider::Driver,
+    quota::{BoundQuota, QuotaRegistry},
     rate::{BoundRate, RateRegistry},
     router,
 };
@@ -27,6 +28,14 @@ use crate::{
 mod endpoint;
 mod response;
 mod stream;
+
+/// Application-owned state shared by immutable runtime generations.
+#[derive(Clone, Default)]
+pub struct SharedResources {
+    pub health: Arc<HealthRegistry>,
+    pub rates: Arc<RateRegistry>,
+    pub quotas: Arc<QuotaRegistry>,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Options {
@@ -60,6 +69,7 @@ pub struct Runtime {
     options: Options,
     health: BTreeMap<String, BTreeMap<String, Arc<BackendHealth>>>,
     rates: BTreeMap<String, Arc<BoundRate>>,
+    quotas: BTreeMap<String, Arc<BoundQuota>>,
 }
 
 impl Runtime {
@@ -69,13 +79,7 @@ impl Runtime {
         limit: ConcurrencyLimit,
         options: Options,
     ) -> Result<Self, BuildError> {
-        Self::with_health(
-            config,
-            keys,
-            limit,
-            options,
-            Arc::new(HealthRegistry::default()),
-        )
+        Self::with_resources(config, keys, limit, options, SharedResources::default())
     }
 
     /// Share this registry between generations to retain health for unchanged backends.
@@ -91,20 +95,26 @@ impl Runtime {
             keys,
             limit,
             options,
-            health,
-            Arc::new(RateRegistry::default()),
+            SharedResources {
+                health,
+                ..SharedResources::default()
+            },
         )
     }
 
-    /// Share registries across generations. Changing an active rate rule requires new resources.
+    /// Reuse registries across generations; changing retained limit rules requires new resources.
     pub fn with_resources(
         config: config::Config,
         keys: Arc<ApiKeys>,
         limit: ConcurrencyLimit,
         options: Options,
-        health: Arc<HealthRegistry>,
-        rates: Arc<RateRegistry>,
+        resources: SharedResources,
     ) -> Result<Self, BuildError> {
+        let SharedResources {
+            health,
+            rates,
+            quotas,
+        } = resources;
         config.validate().map_err(|_| BuildError)?;
         if options.request_timeout.is_zero()
             || Instant::now()
@@ -164,7 +174,18 @@ impl Runtime {
                     .map(|policy| rates.bind(id, policy).map(|rate| (id.clone(), rate)))
             })
             .collect::<Result<_, _>>()?;
+        let quotas = config
+            .models
+            .iter()
+            .filter_map(|(id, model)| {
+                model
+                    .quota
+                    .as_ref()
+                    .map(|policy| quotas.bind(id, policy).map(|quota| (id.clone(), quota)))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Self {
+            quotas,
             rates,
             health,
             models: config.models,
@@ -245,7 +266,9 @@ impl Runtime {
                 if downstream == ChatFormat::OpenAiResponses {
                     chat.openai.store = Some(false);
                 }
-                if chat.stream == Some(true) && downstream != ChatFormat::OpenAiChat {
+                if chat.stream == Some(true)
+                    && (downstream != ChatFormat::OpenAiChat || model.quota.is_some())
+                {
                     chat.openai
                         .stream_options
                         .get_or_insert(nyro_protocol::openai::chat::StreamOptions {
@@ -393,6 +416,20 @@ impl Runtime {
                 },
                 None => None,
             };
+            let mut quota = match self.quotas.get(&public_model) {
+                Some(bound) => match bound.reserve(&selected.backend.id) {
+                    Ok(reservation) => Some(reservation),
+                    Err(_) => {
+                        drop(exchange.permit.take());
+                        return Err(Failure::new(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "quota_exceeded",
+                            "Token quota cannot admit another attempt",
+                        ));
+                    }
+                },
+                None => None,
+            };
             exchange.backend = Some(selected.backend.id.clone());
             exchange.attempts += 1;
             let response = match selected
@@ -408,6 +445,9 @@ impl Runtime {
                     // Only connection establishment is known to precede sending the request.
                     if !error.is_connect() {
                         return Err(Failure::upstream());
+                    }
+                    if let Some(quota) = quota.take() {
+                        quota.release();
                     }
                     last_failure = Some(Failure::upstream());
                     continue;
@@ -447,6 +487,7 @@ impl Runtime {
                     &endpoint,
                     &request,
                     &mut health,
+                    &mut quota,
                 )
                 .await;
             if let Some(health) = health {

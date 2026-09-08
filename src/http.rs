@@ -100,6 +100,89 @@ limit: {{concurrency: 1}}
     }
 
     #[tokio::test]
+    async fn quota_balance_survives_generation_changes_and_model_removal() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let upstream = Router::new().route("/v1/chat/completions", post(move || {
+            let calls = observed.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                axum::Json(json!({"id":"quota","object":"chat.completion","created":1,"model":"private",
+                    "choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}],
+                    "usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}))
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut config = config(&format!("http://{}/v1", listener.local_addr().unwrap()));
+        config.llm.models.get_mut("public").unwrap().quota = Some(nyro_llm::config::QuotaConfig {
+            total_tokens: 8,
+            reserve_tokens: 5,
+        });
+        let task = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let resources = bootstrap::Resources::new(&config).unwrap();
+        let host = bootstrap::host(&config, &resources).await.unwrap();
+        let tracker = TaskTracker::new();
+        let router = router(host.clone(), tracker.clone());
+        for step in 0..2 {
+            if step == 1 {
+                config.llm.models.get_mut("public").unwrap().backends[0].upstream_model =
+                    "replacement".into();
+                host.activate(
+                    resources.candidate(&config).unwrap(),
+                    Context {
+                        deadline: Instant::now() + Duration::from_secs(1),
+                        cancellation: CancellationToken::new(),
+                    },
+                )
+                .await
+                .unwrap();
+            }
+            let response = router.clone().oneshot(request()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            to_bytes(response.into_body(), 16384).await.unwrap();
+        }
+        let mut removed = config.clone();
+        let mut other = removed.llm.models.remove("public").unwrap();
+        other.quota = None;
+        removed.llm.models.insert("other".into(), other);
+        for next in [&removed, &config] {
+            host.activate(
+                resources.candidate(next).unwrap(),
+                Context {
+                    deadline: Instant::now() + Duration::from_secs(1),
+                    cancellation: CancellationToken::new(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let denied = router.clone().oneshot(request()).await.unwrap();
+        assert_eq!(denied.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(!denied.headers().contains_key("retry-after"));
+        let body = to_bytes(denied.into_body(), 16384).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
+            "quota_exceeded"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        config
+            .llm
+            .models
+            .get_mut("public")
+            .unwrap()
+            .quota
+            .as_mut()
+            .unwrap()
+            .total_tokens = 100;
+        assert!(resources.candidate(&config).is_err());
+        host.shutdown().await.unwrap();
+        tracker.close();
+        tracker.wait().await;
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn root_resources_preserve_rate_and_reject_active_policy_changes() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 

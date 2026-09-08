@@ -2,6 +2,7 @@ use super::Failure;
 use crate::{
     ChatEvent,
     codec::{ChatFormat, CodecError, anthropic, gemini, openai},
+    quota::AttemptQuota,
 };
 use bytes::Bytes;
 use futures::{StreamExt, stream::BoxStream};
@@ -81,6 +82,7 @@ pub(super) struct StreamState {
     done: bool,
     eof: bool,
     max_bytes: usize,
+    quota: Option<AttemptQuota>,
 }
 impl StreamState {
     pub(super) fn new(
@@ -90,6 +92,7 @@ impl StreamState {
         model: String,
         max_bytes: usize,
         include_usage: bool,
+        quota: Option<AttemptQuota>,
     ) -> Self {
         let decoder = match upstream {
             ChatFormat::OpenAiChat => Decode::Openai { done: false },
@@ -127,12 +130,24 @@ impl StreamState {
             done: false,
             eof: false,
             max_bytes,
+            quota,
         }
     }
     pub(super) async fn next_frame(&mut self) -> Result<Option<String>, Failure> {
         loop {
             if let Some(event) = self.canonical.pop_front() {
+                if let Some(quota) = self.quota.as_mut()
+                    && let ChatEvent::Chunk(chunk) = &event
+                    && let Some(usage) = chunk.usage.as_ref()
+                {
+                    quota.observe(usage).map_err(|_| Failure::upstream())?;
+                }
                 self.done = event.is_done();
+                if self.done
+                    && let Some(quota) = self.quota.take()
+                {
+                    quota.complete();
+                }
                 let output = self.encoder.push(&event).map_err(|_| Failure::upstream())?;
                 if output.len() > self.max_bytes {
                     return Err(Failure::upstream());

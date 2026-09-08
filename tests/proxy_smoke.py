@@ -94,6 +94,10 @@ def main():
                 "provider": "mock", "upstream_model": "internal",
                 "rate": {"requests": 1, "period_ms": 600000},
                 "workloads": ["chat"], "subjects": ["tester"]}
+            data["llm"]["models"]["public-quota"] = {
+                "provider": "mock", "upstream_model": "internal",
+                "quota": {"total_tokens": 7, "reserve_tokens": 4},
+                "workloads": ["chat", "embedding"], "subjects": ["tester"]}
             config.write_text(json.dumps({**data, "unknown": "secret-marker"}))
             invalid = subprocess.run([binary, "proxy", "--config", config], capture_output=True, timeout=5)
             assert invalid.returncode != 0
@@ -167,6 +171,17 @@ def main():
                 status, body = request("/v1/chat/completions", limited)
                 assert status == 429 and json.loads(body)["error"]["code"] == "rate_limit_exceeded"
                 assert len(Upstream.calls) == 15
+                # Actual usage refunds unused reserve, including SSE usage hidden from the client.
+                for streaming in (False, True):
+                    status, body = request("/v1/chat/completions", {
+                        **chat, "model": "public-quota", "stream": streaming})
+                    assert status == 200
+                    if streaming:
+                        assert body.endswith(b"data: [DONE]\n\n") and b'"usage"' not in body
+                        assert Upstream.calls[-1][2]["stream_options"]["include_usage"] is True
+                status, body = request("/v1/embeddings", {"model": "public-quota", "input": "Hello"})
+                assert status == 429 and json.loads(body)["error"]["code"] == "quota_exceeded"
+                assert len(Upstream.calls) == 17
                 assert all(key == "Bearer upstream-secret" and payload["model"] in {"internal", "temporary-error"}
                            for _, key, payload in Upstream.calls)
                 process.terminate()
@@ -181,7 +196,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print("proxy smoke passed: config, weighted routing, failover, passive health, rate, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
+    print("proxy smoke passed: config, weighted routing, failover, passive health, rate, quota, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
 
 
 if __name__ == "__main__":
