@@ -1,37 +1,39 @@
-//! Provider-owned URL and credentials, separate from codec and ingress policy.
+//! Provider-owned URLs and credentials; caller headers never cross this boundary.
 use crate::{
-    Workload,
+    Request,
+    codec::{CodecError, anthropic, gemini, openai},
     config::{Provider, ProviderKind},
     runtime::BuildError,
 };
 use reqwest::{
     Client, Url,
-    header::{AUTHORIZATION, HeaderValue},
+    header::{HeaderName, HeaderValue},
 };
 use serde_json::Value;
 
-pub(crate) struct OpenAi {
+pub(crate) struct Driver {
     client: Client,
-    chat_url: Url,
-    embedding_url: Url,
-    authorization: Option<HeaderValue>,
+    base: Url,
+    pub(crate) kind: ProviderKind,
+    credential: Option<(HeaderName, HeaderValue)>,
 }
 
-impl OpenAi {
+impl Driver {
     pub(crate) fn new(config: &Provider) -> Result<Self, BuildError> {
-        match config.kind {
-            ProviderKind::Openai => {}
-        }
         let mut base = Url::parse(&config.base_url).map_err(|_| BuildError)?;
         base.set_path(&format!("{}/", base.path().trim_end_matches('/')));
-        let authorization = config
+        let credential = config
             .api_key
             .as_ref()
             .map(|secret| {
-                let mut value =
-                    HeaderValue::from_str(&format!("Bearer {secret}")).map_err(|_| BuildError)?;
+                let (name, value) = match config.kind {
+                    ProviderKind::Openai => ("authorization", format!("Bearer {secret}")),
+                    ProviderKind::Anthropic => ("x-api-key", secret.clone()),
+                    ProviderKind::Gemini => ("x-goog-api-key", secret.clone()),
+                };
+                let mut value = HeaderValue::from_str(&value).map_err(|_| BuildError)?;
                 value.set_sensitive(true);
-                Ok::<_, BuildError>(value)
+                Ok::<_, BuildError>((HeaderName::from_static(name), value))
             })
             .transpose()?;
         Ok(Self {
@@ -40,25 +42,59 @@ impl OpenAi {
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|_| BuildError)?,
-            chat_url: base.join("chat/completions").map_err(|_| BuildError)?,
-            embedding_url: base.join("embeddings").map_err(|_| BuildError)?,
-            authorization,
+            base,
+            kind: config.kind,
+            credential,
         })
+    }
+
+    pub(crate) fn encode(&self, request: &Request) -> Result<Value, CodecError> {
+        match (self.kind, request) {
+            (ProviderKind::Openai, Request::Chat(request)) => openai::encode_chat(request),
+            (ProviderKind::Openai, Request::Embedding(request)) => {
+                openai::encode_embedding(request)
+            }
+            (ProviderKind::Anthropic, Request::Chat(request)) => anthropic::encode_chat(request),
+            (ProviderKind::Gemini, Request::Chat(request)) => gemini::encode_chat(request),
+            _ => Err(CodecError("provider does not support this workload".into())),
+        }
     }
 
     pub(crate) async fn send(
         &self,
-        workload: Workload,
+        request: &Request,
         body: &Value,
     ) -> Result<reqwest::Response, reqwest::Error> {
-        let url = match workload {
-            Workload::Chat => &self.chat_url,
-            Workload::Embedding => &self.embedding_url,
+        let mut url = self.base.clone();
+        // Model names are validated as a single safe segment during candidate construction.
+        let endpoint = match (self.kind, request) {
+            (ProviderKind::Openai, Request::Embedding(_)) => "embeddings".to_owned(),
+            (ProviderKind::Openai, _) => "chat/completions".to_owned(),
+            (ProviderKind::Anthropic, _) => "messages".to_owned(),
+            (ProviderKind::Gemini, _) => format!(
+                "models/{}:{}",
+                request
+                    .model()
+                    .strip_prefix("models/")
+                    .unwrap_or(request.model()),
+                if request.is_streaming() {
+                    "streamGenerateContent"
+                } else {
+                    "generateContent"
+                }
+            ),
         };
-        let mut request = self.client.post(url.clone()).json(body);
-        if let Some(value) = &self.authorization {
-            request = request.header(AUTHORIZATION, value.clone());
+        url.set_path(&format!("{}{endpoint}", self.base.path()));
+        if self.kind == ProviderKind::Gemini && request.is_streaming() {
+            url.query_pairs_mut().append_pair("alt", "sse");
         }
-        request.send().await
+        let mut builder = self.client.post(url).json(body);
+        if let Some((name, value)) = &self.credential {
+            builder = builder.header(name, value);
+        }
+        if self.kind == ProviderKind::Anthropic {
+            builder = builder.header("anthropic-version", "2023-06-01");
+        }
+        builder.send().await
     }
 }

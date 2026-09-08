@@ -15,6 +15,8 @@ pub struct Config {
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Openai,
+    Anthropic,
+    Gemini,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -71,6 +73,10 @@ pub enum ConfigError {
     NoWorkloads { model: String },
     #[error("model `{model}` contains duplicate workloads")]
     DuplicateWorkload { model: String },
+    #[error("model `{model}` declares a workload unsupported by its provider")]
+    UnsupportedWorkload { model: String },
+    #[error("model `{model}` has an invalid Gemini upstream model name")]
+    InvalidGeminiModel { model: String },
 }
 
 impl Config {
@@ -127,6 +133,25 @@ impl Config {
             }
             if model.upstream_model.trim().is_empty() {
                 return Err(ConfigError::EmptyUpstreamModel { model: id.clone() });
+            }
+            let kind = self.providers[&model.provider].kind;
+            if kind != ProviderKind::Openai && model.workloads.contains(&Workload::Embedding) {
+                return Err(ConfigError::UnsupportedWorkload { model: id.clone() });
+            }
+            if kind == ProviderKind::Gemini {
+                let name = model
+                    .upstream_model
+                    .strip_prefix("models/")
+                    .unwrap_or(&model.upstream_model);
+                if name.is_empty()
+                    || name == "."
+                    || name == ".."
+                    || !name
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+                {
+                    return Err(ConfigError::InvalidGeminiModel { model: id.clone() });
+                }
             }
             if model.workloads.is_empty() {
                 return Err(ConfigError::NoWorkloads { model: id.clone() });

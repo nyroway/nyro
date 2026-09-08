@@ -43,7 +43,7 @@ Claude Code · Codex CLI · Gemini CLI · OpenCode
 
 Nyro 同时提供 **桌面应用**（macOS / Windows / Linux）和 **独立服务端二进制**，适用于无头部署与自托管场景。
 
-源码中另有实验性的新 Rust `nyro proxy` 数据面，使用独立的严格文件格式，目前支持 OpenAI 兼容的 Chat/Embedding 子集；详见 [Rust 文件配置代理指南](docs/standalone/rust-proxy_CN.md)。已发布 `nyro-server` 的命令和配置保持不变。
+源码中另有实验性的新 Rust `nyro proxy` 数据面，使用独立的严格文件格式，目前支持 OpenAI Chat/Embedding 及 Anthropic/Gemini Chat 子集；详见 [Rust 文件配置代理指南](docs/standalone/rust-proxy_CN.md)。已发布 `nyro-server` 的命令和配置保持不变。
 
 ---
 

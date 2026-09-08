@@ -1,10 +1,10 @@
 # Nyro Rust 目标架构
 
-> 状态：设计定稿，分阶段实施中；独立内核与首个实验性 standalone LLM 数据面已实现。更新日期：2026-09-07。
+> 状态：设计定稿，分阶段实施中；独立内核与首个实验性 standalone LLM 数据面已实现。更新日期：2026-09-08。
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI 兼容 Chat/Embedding 与 SSE、认证授权、共享并发限制和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、Anthropic/Gemini Chat 与跨协议 SSE 子集、认证授权、共享并发限制和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
 
 ## 1. 产品定位与范围
 

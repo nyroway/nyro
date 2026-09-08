@@ -23,21 +23,29 @@ curl http://127.0.0.1:19530/v1/chat/completions \
   -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-The current ingress implements a typed subset of `POST /v1/chat/completions`, including OpenAI-compatible SSE when `stream: true`, and `POST /v1/embeddings`. It is not a promise of full vendor API compatibility. Unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unknown or unsupported upstream response fields produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. Model names are public aliases: Nyro replaces them with `upstream_model` on the upstream request and restores the public name in supported responses.
+The current ingress implements typed subsets of OpenAI Chat/Embedding, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across all three upstream kinds. It is not a promise of full vendor API compatibility. Unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unknown or unsupported upstream response fields produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. Model names are public aliases: Nyro replaces them with `upstream_model` on the upstream request and restores the public name in supported responses.
 
 ## Configuration
 
-All structures reject unknown fields. `kind` is required and currently accepts only `openai`. Provider URLs must use HTTP or HTTPS, have a host, and contain no user information, query, or fragment. Nyro appends `chat/completions` or `embeddings` to the configured base path. Upstream requests use only the provider's optional `api_key`; caller authorization headers are not forwarded. Redirects and environment-configured HTTP proxies are disabled for upstream calls.
+All structures reject unknown fields. `kind` is required and accepts `openai`, `anthropic`, or `gemini`. Provider URLs must use HTTP or HTTPS, have a host, and contain no user information, query, or fragment. Nyro appends the native endpoint to the configured base path. Upstream requests use only the provider's optional `api_key`; caller credentials are not forwarded. Redirects and environment-configured HTTP proxies are disabled for upstream calls.
+
+| Provider kind | Example base URL | Appended endpoint | Upstream credential |
+|---|---|---|---|
+| `openai` | `https://api.example.com/v1` | `chat/completions` or `embeddings` | Bearer Authorization |
+| `anthropic` | `https://api.anthropic.com/v1` | `messages` | `x-api-key`; fixed `anthropic-version: 2023-06-01` |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta` | `models/{upstream_model}:generateContent` or `:streamGenerateContent?alt=sse` | `x-goog-api-key` |
+
+Gemini upstream model names accept a single ASCII letter/digit/`-_.` segment, optionally prefixed with `models/`; `.` and `..` path segments are rejected.
 
 Each model declares:
 
 - `provider`: an ID from `llm.providers`.
 - `upstream_model`: the model name sent upstream.
-- `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both.
+- `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both for OpenAI; Anthropic and Gemini currently support only `chat`. Invalid combinations fail startup.
 - `allow_anonymous`: optional, default `false`.
 - `subjects`: client credential IDs allowed to invoke a protected model; optional only for anonymous models.
 
-For a protected model, `subjects` must be nonempty and every value must match an `id` in `security.api_keys`. A request without a Bearer credential, or with an unknown credential, receives `401`; a known subject not granted that model receives `403`. For an anonymous model, a missing credential is accepted. If a credential is supplied, it must still authenticate, but any known credential may use the anonymous model.
+For a protected model, `subjects` must be nonempty and every value must match an `id` in `security.api_keys`. A request without a supported header credential, or with an unknown credential, receives `401`; a known subject not granted that model receives `403`. For an anonymous model, a missing credential is accepted. If a credential is supplied, it must still authenticate, but any known credential may use the anonymous model.
 
 Credential IDs and secrets must be unique and nonempty; IDs cannot be blank. Client secrets must contain only visible ASCII without whitespace so they can be presented as HTTP Bearer credentials. Configuration errors and debug output redact secrets.
 
@@ -47,17 +55,45 @@ Credential IDs and secrets must be unique and nonempty; IDs cannot be blank. Cli
 | `server.request_timeout_ms` | `120000` | Whole-request deadline, including a successful response body or SSE stream |
 | `server.max_body_bytes` | `1048576` | Maximum buffered downstream request body |
 | `server.max_response_bytes` | `16777216` | Maximum buffered non-stream upstream response; it is not a cumulative SSE limit |
-| `server.max_frame_bytes` | `1048576` | Maximum upstream SSE frame bytes, including framing |
+| `server.max_frame_bytes` | `1048576` | Maximum upstream SSE frame, emitted conversion batch, and accumulated tool state bytes |
 | `limit.concurrency` | `64` | Shared in-flight request cap; excess requests receive `429` |
 
-All numeric limits must be greater than zero. Concurrency must also fit Tokio's supported semaphore capacity. A concurrency permit remains held until the response body completes or is dropped. SSE has a per-frame cap and the whole-request deadline, but no cumulative stream byte cap.
+All numeric limits must be greater than zero. Concurrency must also fit Tokio's supported semaphore capacity. A concurrency permit remains held until the response body completes or is dropped. SSE has a per-frame cap and the whole-request deadline, but no cumulative stream byte cap. Tool fragments may be buffered until complete; accumulation is bounded by `max_frame_bytes`. A protocol terminal must be validated before a successful terminal is emitted; malformed/truncated streams fail without retry.
+
+## Native clients and conversion limits
+
+| Client API | Endpoint | Credential |
+|---|---|---|
+| OpenAI | `POST /v1/chat/completions`, `POST /v1/embeddings` | `Authorization: Bearer …` |
+| Anthropic | `POST /v1/messages` | `x-api-key: …` or Bearer |
+| Gemini | `POST /v1beta/models/{alias}:generateContent`, `:streamGenerateContent?alt=sse` | `x-goog-api-key: …` or Bearer |
+
+Gemini also accepts `/v1/models/…`. Only one credential header may be supplied; duplicate or conflicting sources return `401`. Query-string credentials are rejected, and the only supported query option is `alt=sse` on Gemini streaming requests. Gemini aliases must use a single ASCII letter/digit/`-_.` segment.
+
+```sh
+curl http://127.0.0.1:19530/v1/messages \
+  -H 'x-api-key: replace-with-client-secret' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"claude-default","max_tokens":256,"messages":[{"role":"user","content":"Hello"}]}'
+
+curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
+  -H 'x-goog-api-key: replace-with-client-secret' \
+  -H 'Content-Type: application/json' \
+  -d '{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":256}}'
+```
+
+An alias selects the configured upstream independently of the client protocol. Requests routed to Anthropic require an explicit token limit (`max_tokens`, or a representable equivalent); Nyro does not invent one. Native clients routed to an OpenAI stream request upstream usage automatically. OpenAI clients receive usage only when `stream_options.include_usage` is true.
+
+This is an experimental text/function Chat subset. New native codecs reject image/audio/video, thinking/signature blocks, unrepresentable content ordering, multiple candidates, and unsupported vendor options or diagnostics. Examples include Anthropic caching/usage details and matched stop-sequence responses; Gemini safety settings, safety ratings, grounding/citations, prompt feedback and structured-output settings; and OpenAI response fingerprint/service-tier/logprob metadata when it cannot be represented by a native output. Supported fields in one protocol are not automatically representable in another: unsupported requests fail before dispatch; unsupported upstream responses fail with `502` or a terminated SSE stream. Native Embedding APIs and full SDK/vendor feature parity remain future work.
+
+Protocol reference: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini generateContent](https://ai.google.dev/api/generate-content). Local matrix regression: `cargo test -p nyro-llm --test protocol_matrix`.
 
 ## Health and current scope
 
 - `GET /healthz` returns `200` while the HTTP process is serving.
 - `GET /readyz` returns `200` while the kernel host accepts new generation leases and `503` once it does not. This source-built proxy has no database readiness check.
 
-This slice has one OpenAI-compatible upstream attempt. It does not implement retries, failover, rate limits, quotas, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
+Each request makes one attempt against its configured upstream. It does not implement retries, failover, rate limits, quotas, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
 
 Contributors can exercise the root process, probes, authentication, Chat, Embedding, SSE, redaction, and graceful termination without a real provider:
 
