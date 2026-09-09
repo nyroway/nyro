@@ -28,7 +28,7 @@ impl Runtime {
         let public_model = request.model().to_owned();
         let workload = endpoint.workload;
         let include_usage = request.include_usage();
-        let native = matches!(request, super::Input::Native(_)) && provider.native_chat;
+        let native = request.native_for(provider.format) && provider.native_chat;
         if streaming {
             let is_sse = response
                 .headers()
@@ -52,7 +52,11 @@ impl Runtime {
                 attempt.take(),
             );
             if native {
-                state = state.with_native(public_model, include_usage);
+                state = state.with_native(super::native::Stream::new(
+                    endpoint.format,
+                    public_model,
+                    include_usage,
+                )?);
             }
             // Validate one complete frame before handing the response to HTTP. This is not a flush acknowledgement.
             let first = state.next_frame().await?.ok_or_else(Failure::upstream)?;
@@ -98,7 +102,8 @@ impl Runtime {
         }
         let payload: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::upstream())?;
         if native {
-            let (payload, usage) = super::native::response(payload, &public_model, false)?;
+            let (payload, usage) =
+                super::native::response(payload, &public_model, endpoint.format)?;
             if let Some(attempt) = attempt.as_mut()
                 && let Some(usage) = usage.as_ref()
             {

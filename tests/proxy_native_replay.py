@@ -1,7 +1,7 @@
 """Recorded process replay: cargo build -p nyro && python3 tests/proxy_native_replay.py.
 
-Uses only local HTTP and the stdlib. Compare JSON/SSE data, not wire whitespace
-or arbitrary response headers. Strict-mode failures are classified, not hidden.
+Uses only local HTTP and the stdlib. Compare JSON/SSE data and Anthropic event
+names, not wire whitespace or arbitrary headers. Strict failures are classified.
 """
 
 import base64
@@ -22,14 +22,17 @@ import time
 FIXTURES = Path(__file__).resolve().parent / "e2e" / "fixtures"
 
 
-def sse_data(body):
+def sse_data(body, include_names=False):
     events = []
     for frame in body.decode().replace("\r\n", "\n").split("\n\n"):
         lines = [line[5:].removeprefix(" ") for line in frame.splitlines()
                  if line.startswith("data:")]
         if lines:
             data = "\n".join(lines)
-            events.append(data if data == "[DONE]" else json.loads(data))
+            value = data if data == "[DONE]" else json.loads(data)
+            name = next((line[6:].removeprefix(" ") for line in frame.splitlines()
+                         if line.startswith("event:")), "message")
+            events.append((name, value) if include_names else value)
     return events
 
 
@@ -143,11 +146,12 @@ def replay(port, alias, record):
     before = len(Upstream.calls)
     status, body, transport = request(port, path, payload)
     calls = Upstream.calls[before:]
-    parsed = sse_data(body) if status == 200 and payload.get("stream") else (json.loads(body) if body else {})
+    parsed = sse_data(body, include_names=not openai) if status == 200 and payload.get("stream") else (json.loads(body) if body else {})
     if isinstance(parsed, list):
-        complete = bool(parsed) and (parsed[-1] == "[DONE]" if openai
-                                    else parsed[-1].get("type") == "message_stop")
-        error = next((event.get("error", {}) for event in parsed
+        values = parsed if openai else [value for _, value in parsed]
+        complete = bool(values) and (values[-1] == "[DONE]" if openai
+                                    else values[-1].get("type") == "message_stop")
+        error = next((event.get("error", {}) for event in values
                       if isinstance(event, dict) and "error" in event), {})
     else:
         error = parsed.get("error", {})
@@ -167,9 +171,8 @@ def main():
             assert alias not in records, f"duplicate fixture: {alias}"
             records[alias] = record
     assert len(records) == 16, f"expected 16 recorded fixtures, found {len(records)}"
-    native_records = {alias: r for alias, r in records.items() if r["protocol"] == "openai-chat"}
-    assert len(native_records) == 8
     assert {r["protocol"] for r in records.values()} == {"openai-chat", "anthropic-messages"}
+    assert sum(r["protocol"] == "openai-chat" for r in records.values()) == 8
     Upstream.records = records
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
@@ -183,21 +186,30 @@ def main():
                 print(f"strict {alias}: HTTP {status}; complete={complete}; "
                       f"data={events}; upstream={calls}; error={code}; transport={transport}", flush=True)
         assert all(not result[1] for result in baseline.values()), baseline
-        assert all(baseline[alias][0] == 502 for alias in native_records), baseline
-        # This launch is intentionally RED on binaries predating native_chat.
-        with proxy(binary, native_records, upstream.server_port, True) as port:
-            for alias, record in native_records.items():
+        assert all(baseline[alias][0] == 502 for alias, record in records.items()
+                   if record["protocol"] == "openai-chat"), baseline
+        # This launch is intentionally RED on binaries predating Anthropic native_chat.
+        with proxy(binary, records, upstream.server_port, True) as port:
+            for alias, record in records.items():
                 summary, payload, actual, calls = replay(port, alias, record)
                 assert summary[:3] == (200, True, None), (alias, summary, actual)
+                openai = record["protocol"] == "openai-chat"
                 expected_request = copy.deepcopy(payload)
                 expected_request["model"] = record["request"]["body_json"]["model"]
-                assert calls == [(alias, f"/{alias}/v1/chat/completions", expected_request)], alias
+                path = "chat/completions" if openai else "messages"
+                assert calls == [(alias, f"/{alias}/v1/{path}", expected_request)], alias
                 body = base64.b64decode(record["response"]["body_base64"])
-                expected = sse_data(body) if payload.get("stream") else json.loads(body)
-                for value in expected if isinstance(expected, list) else [expected]:
+                expected = sse_data(body, include_names=not openai) if payload.get("stream") else json.loads(body)
+                values = expected if isinstance(expected, list) else [expected]
+                for value in values:
+                    if not openai and payload.get("stream"):
+                        _, value = value
+                        if value.get("type") != "message_start":
+                            continue
+                        value = value["message"]
                     if isinstance(value, dict) and "model" in value:
                         value["model"] = alias
-                assert actual == expected, f"native JSON/SSE data mismatch: {alias}"
+                assert actual == expected, f"native JSON/SSE mismatch: {alias}"
                 print(f"native {alias}: PASS ({summary[4]} data values)", flush=True)
         with proxy(binary, records, upstream.server_port, False) as port:
             for alias, record in records.items():
@@ -206,7 +218,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print("native replay passed: 16 strict classifications; 8 exact native replays; "
+    print("native replay passed: 16 strict classifications; 16 exact native replays; "
           "native_chat=false matches omitted")
 
 

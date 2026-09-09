@@ -77,7 +77,7 @@ pub(super) struct StreamState {
     framing: Decoder,
     events: VecDeque<Event>,
     canonical: VecDeque<ChatEvent>,
-    native: Option<(String, bool)>,
+    native: Option<super::native::Stream>,
     decoder: Decode,
     encoder: Encode,
     done: bool,
@@ -135,8 +135,8 @@ impl StreamState {
             attempt,
         }
     }
-    pub(super) fn with_native(mut self, model: String, include_usage: bool) -> Self {
-        self.native = Some((model, include_usage));
+    pub(super) fn with_native(mut self, stream: super::native::Stream) -> Self {
+        self.native = Some(stream);
         self
     }
     pub(super) async fn next_frame(&mut self) -> Result<Option<String>, Failure> {
@@ -177,8 +177,8 @@ impl StreamState {
                 return Ok(None);
             }
             if let Some(event) = self.events.pop_front() {
-                if let Some((model, include_usage)) = &self.native {
-                    let frame = super::native::frame(event, model, *include_usage)?;
+                if let Some(native) = &mut self.native {
+                    let frame = native.push(event)?;
                     if frame.output.len() > self.max_bytes {
                         return Err(Failure::upstream());
                     }

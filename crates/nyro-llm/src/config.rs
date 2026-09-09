@@ -35,7 +35,7 @@ pub enum OpenAiApi {
 #[serde(deny_unknown_fields)]
 pub struct Provider {
     pub kind: ProviderKind,
-    /// Preserve native OpenAI Chat JSON when both endpoints use Chat Completions.
+    /// Preserve native JSON for matching OpenAI Chat or Anthropic Messages endpoints.
     #[serde(default)]
     pub native_chat: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,7 +209,9 @@ pub enum ConfigError {
     InvalidProviderApiKey { provider: String },
     #[error("provider `{provider}` declares an API selector outside the OpenAI family")]
     InvalidProviderApi { provider: String },
-    #[error("provider `{provider}` native_chat requires OpenAI Chat Completions")]
+    #[error(
+        "provider `{provider}` native_chat requires OpenAI Chat Completions or Anthropic Messages"
+    )]
     InvalidNativeChat { provider: String },
     #[error("model ID must not be empty")]
     EmptyModelId,
@@ -256,7 +258,7 @@ impl Config {
 
         for (id, provider) in &self.providers {
             if provider.native_chat
-                && (provider.kind != ProviderKind::Openai
+                && (provider.kind == ProviderKind::Gemini
                     || provider.api == Some(OpenAiApi::Responses))
             {
                 return Err(ConfigError::InvalidNativeChat {
