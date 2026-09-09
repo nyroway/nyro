@@ -3,7 +3,7 @@ use super::CodecError;
 use crate::ir::*;
 use nyro_protocol::{gemini as w, openai::chat as o};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 fn bad(s: &str) -> CodecError {
     CodecError(s.into())
 }
@@ -13,6 +13,7 @@ fn message(role: Role) -> Message {
         content: None,
         tool_calls: None,
         tool_call_id: None,
+        tool_error: false,
         name: None,
         refusal: None,
         audio: None,
@@ -67,6 +68,13 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
     let mut messages = vec![];
     let mut pending: Vec<(String, String)> = vec![];
     let mut seq = 0;
+    // Reserve explicit identities across the history before assigning omitted IDs.
+    let mut used_ids: BTreeSet<String> = wire
+        .contents
+        .iter()
+        .flat_map(|c| &c.parts)
+        .filter_map(|p| p.function_call.as_ref()?.id.clone())
+        .collect();
     if let Some(s) = wire.system_instruction {
         let mut m = message(Role::System);
         let mut parts = vec![];
@@ -82,11 +90,6 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
         messages.push(m);
     }
     for c in wire.contents {
-        if c.parts.iter().any(|p| p.function_response.is_some())
-            && c.parts.iter().any(|p| p.function_response.is_none())
-        {
-            return Err(bad("mixed function response and content unsupported"));
-        }
         let role = match c.role.as_deref().unwrap_or("user") {
             "user" => Role::User,
             "model" => Role::Assistant,
@@ -108,8 +111,15 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                 if role != Role::Assistant {
                     return Err(bad("function calls require model role"));
                 }
-                let id = c.id.clone().unwrap_or_else(|| format!("gemini_call_{seq}"));
-                seq += 1;
+                let id = c.id.clone().unwrap_or_else(|| {
+                    loop {
+                        let id = format!("gemini_call_{seq}");
+                        seq += 1;
+                        if used_ids.insert(id.clone()) {
+                            break id;
+                        }
+                    }
+                });
                 if pending.iter().any(|(i, _)| i == &id) {
                     return Err(bad("duplicate tool call id"));
                 }
@@ -134,8 +144,10 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                 let mut t = message(Role::Tool);
                 t.tool_call_id = Some(id);
                 t.content = Some(Content::Text(serde_json::to_string(&r.response)?));
-                if !parts.is_empty() || !calls.is_empty() {
-                    return Err(bad("mixed function response and content unsupported"));
+                if !parts.is_empty() {
+                    let mut text = message(Role::User);
+                    text.content = Some(Content::Parts(std::mem::take(&mut parts)));
+                    messages.push(text);
                 }
                 messages.push(t);
             }
@@ -296,7 +308,14 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
     }
     let mut wire = w::Request::default();
     let mut pending = BTreeMap::new();
+    let mut results = vec![];
+    let mut after_results = false;
     for m in &r.messages {
+        if m.role != Role::Tool && !pending.is_empty() {
+            return Err(bad(
+                "tool results must immediately follow all calls in a batch",
+            ));
+        }
         if m.refusal.is_some()
             || m.audio.is_some()
             || m.name.is_some()
@@ -306,6 +325,11 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         }
         let mut parts = texts(&m.content)?;
         if m.role == Role::Tool {
+            if parts.len() > 1 {
+                return Err(bad(
+                    "multiple tool result text parts cannot be represented in Gemini",
+                ));
+            }
             let id = m
                 .tool_call_id
                 .as_ref()
@@ -313,22 +337,28 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             let name = pending
                 .remove(id)
                 .ok_or_else(|| bad("unknown tool response id"))?;
-            let text = parts
-                .iter()
-                .filter_map(|p| p.text.as_deref())
-                .collect::<String>();
-            let response = match serde_json::from_str::<Value>(&text) {
+            // An empty or single text part maps to one object without joining blocks.
+            let text = parts.first().and_then(|p| p.text.as_deref()).unwrap_or("");
+            let response = match serde_json::from_str::<Value>(text) {
                 Ok(v) if v.is_object() => v,
                 _ => serde_json::json!({"result":text}),
             };
-            parts = vec![w::Part {
+            results.push(w::Part {
                 function_response: Some(w::FunctionResponse {
                     id: Some(id.clone()),
                     name,
                     response,
                 }),
                 ..Default::default()
-            }];
+            });
+            if pending.is_empty() {
+                wire.contents.push(w::Content {
+                    role: Some("user".into()),
+                    parts: std::mem::take(&mut results),
+                });
+                after_results = true;
+            }
+            continue;
         }
         if let Some(calls) = &m.tool_calls {
             for ToolCall::Function { id, function } in calls {
@@ -361,18 +391,28 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
                     .extend(parts);
             }
             Role::Developer => return Err(bad("developer role is not representable in Gemini")),
-            _ => wire.contents.push(w::Content {
-                role: Some(
-                    if m.role == Role::Assistant {
-                        "model"
-                    } else {
-                        "user"
-                    }
-                    .into(),
-                ),
-                parts,
-            }),
+            _ => {
+                if m.role == Role::User && after_results {
+                    wire.contents.last_mut().unwrap().parts.extend(parts);
+                } else {
+                    wire.contents.push(w::Content {
+                        role: Some(
+                            if m.role == Role::Assistant {
+                                "model"
+                            } else {
+                                "user"
+                            }
+                            .into(),
+                        ),
+                        parts,
+                    });
+                }
+                after_results = false;
+            }
         }
+    }
+    if !pending.is_empty() {
+        return Err(bad("missing tool results"));
     }
     if wire.contents.is_empty() {
         return Err(bad("conversation must be nonempty"));

@@ -44,6 +44,99 @@ fn request_text_history_functions_and_options() {
     assert_eq!(decode_chat(wire).unwrap(), request);
 }
 #[test]
+fn function_result_preserves_strings_and_text_part_boundaries() {
+    for (output, expected) in [
+        (json!(""), Content::Text(String::new())),
+        (json!("sunny"), Content::Text("sunny".into())),
+        (json!([]), Content::Parts(vec![])),
+        (
+            json!([{"type":"input_text","text":"first"},{"type":"input_text","text":""},{"type":"input_text","text":"second"}]),
+            Content::Parts(vec![
+                ContentPart::Text {
+                    text: "first".into(),
+                },
+                ContentPart::Text {
+                    text: String::new(),
+                },
+                ContentPart::Text {
+                    text: "second".into(),
+                },
+            ]),
+        ),
+    ] {
+        let request = decode_chat(json!({"model":"m","input":[
+            {"type":"function_call","call_id":"call1","name":"weather","arguments":"{}"},
+            {"type":"function_call_output","call_id":"call1","output":output}
+        ]}))
+        .unwrap();
+        assert_eq!(request.messages[1].content.as_ref(), Some(&expected));
+        let encoded = encode_chat(&request).unwrap();
+        assert_eq!(encoded["input"][1]["output"], output);
+        assert_eq!(decode_chat(encoded).unwrap(), request);
+    }
+}
+
+#[test]
+fn function_result_error_status_cannot_be_dropped() {
+    let mut request = decode_chat(json!({"model":"m","input":[
+        {"type":"function_call_output","call_id":"call1","output":"failed"}
+    ]}))
+    .unwrap();
+    assert!(!request.messages[0].tool_error);
+    request.messages[0].tool_error = true;
+    assert!(encode_chat(&request).is_err());
+}
+
+#[test]
+fn function_result_encode_preserves_ir_text_parts() {
+    let request = openai::decode_chat(json!({"model":"m","messages":[
+        {"role":"tool","tool_call_id":"call1","content":[
+            {"type":"text","text":"first"},{"type":"text","text":"second"}
+        ]}
+    ]}))
+    .unwrap();
+    assert_eq!(
+        encode_chat(&request).unwrap()["input"][0]["output"],
+        json!([{"type":"input_text","text":"first"},{"type":"input_text","text":"second"}])
+    );
+}
+
+#[test]
+fn function_result_rejects_non_input_text_parts_and_invalid_shapes() {
+    for output in [
+        json!([{"type":"input_image","image_url":"https://example.com/image.png"}]),
+        json!([{"type":"input_audio","input_audio":{"data":"YQ==","format":"wav"}}]),
+        json!([{"type":"input_file","file_id":"file1"}]),
+        json!([{"type":"output_text","text":"lost"}]),
+        json!([{"type":"refusal","refusal":"lost"}]),
+        json!([{"type":"input_text","text":"ok","extra":"lost"}]),
+        json!([{"type":"input_text"}]),
+        json!(["text"]),
+        json!({"type":"input_text","text":"not an array"}),
+        Value::Null,
+    ] {
+        assert!(
+            decode_chat(json!({"model":"m","input":[
+                {"type":"function_call_output","call_id":"call1","output":output}
+            ]}))
+            .is_err(),
+            "{output}"
+        );
+    }
+    for part in [
+        json!({"type":"image_url","image_url":{"url":"https://example.com/image.png"}}),
+        json!({"type":"input_audio","input_audio":{"data":"YQ==","format":"wav"}}),
+        json!({"type":"refusal","refusal":"lost"}),
+    ] {
+        let request = openai::decode_chat(json!({"model":"m","messages":[
+            {"role":"tool","tool_call_id":"call1","content":[part]}
+        ]}))
+        .unwrap();
+        assert!(encode_chat(&request).is_err());
+    }
+}
+
+#[test]
 fn request_rejects_unrepresentable_semantics() {
     for (key, value) in [
         ("previous_response_id", json!("r")),

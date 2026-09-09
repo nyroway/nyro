@@ -56,6 +56,9 @@ pub struct FunctionCall {
 pub enum ToolCall {
     Function { id: String, function: FunctionCall },
 }
+fn is_false(value: &bool) -> bool {
+    !value
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Message {
@@ -66,6 +69,9 @@ pub struct Message {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Explicit tool execution failure. Only meaningful for tool-result messages.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tool_error: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

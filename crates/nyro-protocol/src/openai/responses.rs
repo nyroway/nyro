@@ -85,9 +85,20 @@ pub enum HistoryItem {
     FunctionCallOutput {
         id: Option<String>,
         call_id: String,
-        output: String,
+        output: FunctionOutput,
         status: Option<String>,
     },
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum FunctionOutput {
+    Text(String),
+    Parts(Vec<FunctionOutputPart>),
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FunctionOutputPart {
+    InputText { text: String },
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
