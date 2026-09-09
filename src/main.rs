@@ -1,5 +1,6 @@
 mod bootstrap;
 mod http;
+mod reload;
 
 use std::{path::PathBuf, time::Duration};
 
@@ -18,6 +19,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run the standalone LLM data plane from a YAML configuration file.
+    /// On Unix, send SIGHUP to reload the file while in-flight requests finish.
     Proxy {
         #[arg(short, long)]
         config: PathBuf,
@@ -34,11 +36,13 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     match cli.command {
-        Command::Proxy { config } => run(Config::load(config)?).await,
+        Command::Proxy { config } => run(config).await,
     }
 }
 
-async fn run(config: Config) -> anyhow::Result<()> {
+async fn run(path: PathBuf) -> anyhow::Result<()> {
+    let reload_trigger = reload::Trigger::new().context("Could not register reload signal")?;
+    let config = Config::load(&path)?;
     let resources = bootstrap::Resources::new(&config)?;
     let host = bootstrap::host(&config, &resources).await?;
     let listener = match tokio::net::TcpListener::bind(config.server.listen).await {
@@ -60,8 +64,11 @@ async fn run(config: Config) -> anyhow::Result<()> {
             .await
     });
     let (exit, finished) = tokio::select! {
+        biased;
         result = &mut server => (result.context("Proxy task failed").and_then(|result| result.context("Proxy server failed")), true),
         result = shutdown_signal() => (result.context("Could not receive shutdown signal"), false),
+        result = reload::run(reload_trigger, &path, &resources, &host, stop.clone()) =>
+            (result.context("Configuration reload listener failed"), false),
     };
     stop.cancel();
     let cleanup = host.shutdown().await;

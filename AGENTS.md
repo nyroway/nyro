@@ -20,7 +20,7 @@ Nyro is a Rust workspace for a local AI protocol gateway with a Tauri desktop ap
 
 | Directory | Purpose |
 |-----------|---------|
-| `src/` | Experimental source-built root `nyro proxy` entrypoint and bootstrap; separate from released legacy entries. |
+| `src/` | Experimental source-built root `nyro proxy` entrypoint, bootstrap, and Unix SIGHUP configuration reload; separate from released legacy entries. |
 | `crates/nyro-kernel/` | Workload-neutral lifecycle/generation library used by the experimental root proxy. |
 | `crates/nyro-protocol/` | Protocol wire types and bounded stream framing for the new data plane. |
 | `crates/nyro-llm/` | New typed LLM runtime, OpenAI/Anthropic/Gemini Chat codecs/providers, request execution, and correlated usage observations. |

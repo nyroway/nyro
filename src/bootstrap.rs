@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use nyro_config::Config;
 use nyro_kernel::{Candidate, Context, Host};
@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct Resources {
     limit: ConcurrencyLimit,
     capacity: usize,
+    listen: SocketAddr,
     shared: SharedResources,
 }
 
@@ -20,16 +21,26 @@ impl Resources {
         Ok(Self {
             limit: ConcurrencyLimit::new(config.limit.concurrency)?,
             capacity: config.limit.concurrency,
+            listen: config.server.listen,
             shared: SharedResources::default(),
         })
     }
 
-    pub(crate) fn candidate(&self, config: &Config) -> anyhow::Result<Candidate<Runtime>> {
-        config.validate()?;
+    pub(crate) fn check_settings(&self, config: &Config) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            config.server.listen == self.listen,
+            "Changing the listen address requires a process restart"
+        );
         anyhow::ensure!(
             config.limit.concurrency == self.capacity,
             "Changing concurrency capacity requires a process restart"
         );
+        Ok(())
+    }
+
+    pub(crate) fn candidate(&self, config: &Config) -> anyhow::Result<Candidate<Runtime>> {
+        config.validate()?;
+        self.check_settings(config)?;
         let options = Options {
             request_timeout: Duration::from_millis(config.server.request_timeout_ms),
             max_body_bytes: config.server.max_body_bytes,

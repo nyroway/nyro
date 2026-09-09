@@ -12,7 +12,7 @@ Copy [rust-proxy.yaml](rust-proxy.yaml), replace the example provider URL, model
 cargo run -p nyro -- proxy --config docs/standalone/rust-proxy.yaml
 ```
 
-The file is read and validated once before the listener binds. The default address is `127.0.0.1:19530`.
+The file is read and validated before the listener binds. The default address is `127.0.0.1:19530`. On Unix, `SIGHUP` reloads the same file as described below.
 
 Send a protected Chat Completions request with the client credential configured under `security.api_keys`:
 
@@ -24,6 +24,35 @@ curl http://127.0.0.1:19530/v1/chat/completions \
 ```
 
 The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. Unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. Model names are public aliases: Nyro replaces them with the selected backend's `upstream_model` on the upstream request and restores the public name in supported responses.
+
+## Reload the file
+
+On Unix, send `SIGHUP` to the running **nyro process** after saving a complete configuration. For example, with a source-built binary:
+
+```sh
+target/debug/nyro proxy --config docs/standalone/rust-proxy.yaml &
+nyro_pid=$!
+# Save the updated configuration, preferably by atomically replacing the file.
+kill -HUP "$nyro_pid"
+```
+
+The signal handler is registered before readiness. Each reload reads the original `--config` path again, including files replaced by rename. Reload accepts regular files (including symlinks to regular files); directories and special files such as FIFOs are rejected. Reloads are serial; signals may coalesce, so they are not a queue of configuration versions. Nyro does not watch files automatically. On Windows, restart to load edits.
+
+A reload validates the whole file, checks settings that require restart, then compares the effective configuration fingerprint. Equivalent configurations skip candidate construction and keep the same generation. Valid changes build a candidate and publish it atomically: new requests use the new generation, while in-flight requests retain their original routing, credentials, response limits and deadline through body cleanup. Removing a model or rotating a key does not revoke already admitted work. Failed reads, validation, candidate construction or activation leave the current generation serving traffic. Shutdown cancels pending reload activation before kernel cleanup; reload publication uses a ten-second deadline.
+
+`server.listen` and `limit.concurrency` require restart. Other supported request settings, routes, providers and credentials can reload. Unchanged rate/quota policies retain their counters; changing active rate policies or live/consumed quota policies still rejects the candidate as documented below. Health state is reused only for unchanged backend identities. Reload does not clear process-local budgets or force old streams to finish.
+
+`nyro::reload` events report `outcome=applied` or `unchanged` with a numeric generation ID. Rejection events use `outcome=rejected` and a safe reason:
+
+| Reason | Action |
+|---|---|
+| `read_failed` | Restore a readable configuration file |
+| `invalid_config` | Correct YAML, unknown fields, references or invalid values |
+| `restart_required` | Restore the listener/concurrency settings, or restart to change them |
+| `candidate_rejected` | Check active rate/quota policy changes and runtime construction constraints |
+| `activation_failed` / `interrupted` | Check shutdown/deadline conditions before retrying |
+
+Reload logs exclude configuration contents, file paths, fingerprints and detailed error chains. A rejected file is not rewritten; correct it and send another signal. Regression: `cargo test -p nyro reload::tests` and `python3 tests/proxy_reload_smoke.py` after building the root binary.
 
 ## Configuration
 
@@ -127,7 +156,7 @@ Authentication, authorization, concurrency admission, compatible-backend prepara
 
 Excess requests receive a sanitized `429` in their native error format and an integer `Retry-After` header rounded up to seconds. Nyro sends no upstream request and immediately releases the acquired concurrency permit, even if the error body is left unread. The delay is advisory: another caller may consume the next unit first. Other `429` causes, such as concurrency rejection or upstream errors, do not acquire this rate header.
 
-The root composition shares rate state across configuration generations. An unchanged public-model rule retains its balance when routes, provider credentials, or other settings change. Changing a rule while its old binding is active rejects candidate construction; restart the process to change its parameters. Removing/disabling a rule lets existing generations finish with their binding, which is released after its last owner drops. A fresh binding or process restart starts with the configured burst capacity; no rate state is persisted. The file proxy still requires restart to load any file edits.
+The root composition shares rate state across configuration generations. An unchanged public-model rule retains its balance when routes, provider credentials, or other settings change. Changing a rule while its old binding is active rejects candidate construction; restart the process to change its parameters. Removing/disabling a rule lets existing generations finish with their binding, which is released after its last owner drops. A fresh binding or process restart starts with the configured burst capacity; no rate state is persisted. Use SIGHUP on Unix to reload other supported file changes.
 
 The reusable primitive is `nyro_limit::rate::RateLimit`. It accepts counts, a `Duration`, and burst capacity, and returns either admission or a retry delay. It contains no LLM, authentication, HTTP, kernel, or database types; the application owns scope mapping and rejection formatting. Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test rate_runtime`.
 
@@ -149,7 +178,7 @@ On a valid complete response, Nyro replaces the reservation with reported total 
 
 Before settlement, missing usage, upstream HTTP errors, malformed responses, cancellation, deadlines and dropped/truncated streams charge the greater of the reservation and any valid observed usage. Once settled, later downstream failure or body drop does not change the charge. Only an observed connection-establishment failure releases the entire reservation. Each failed HTTP attempt is charged separately before failover. These conservative fallback charges may overcount actual usage. Conversely, `reserve_tokens` is an operator-selected amount, not a trusted upper bound on provider consumption: actual usage can exceed the configured budget, and the resulting debt blocks later admissions. This is not a hard cap on actual upstream tokens.
 
-The root composition retains consumed and pending ledgers across generations, routing changes, and model removal/re-addition. Changing a rule while its binding is live or its ledger has consumed credit rejects candidate construction. Unused, unowned candidate ledgers can be discarded. Retained ledgers last for the registry's lifetime; process restart resets all balances and is required to change an established rule. The file proxy still requires restart to load configuration edits. Disabling quota stops accounting for new requests; it does not erase an existing ledger.
+The root composition retains consumed and pending ledgers across generations, routing changes, and model removal/re-addition. Changing a rule while its binding is live or its ledger has consumed credit rejects candidate construction. Unused, unowned candidate ledgers can be discarded. Retained ledgers last for the registry's lifetime; process restart resets all balances and is required to change an established rule. Other supported file edits can reload with SIGHUP on Unix. Disabling quota stops accounting for new requests; it does not erase an existing ledger.
 
 `nyro_limit::quota::Quota` provides generic atomic reservation, settlement and snapshots without LLM, HTTP, kernel or storage types. `nyro_llm::quota::QuotaRegistry` owns the model mapping and token semantics. Library hosts should reuse `runtime::SharedResources` with `Runtime::with_resources` across generations; `Runtime::new` creates fresh registries and `with_health` shares health only. Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test quota_runtime`.
 
@@ -223,7 +252,7 @@ Events contain no credentials, provider URLs, request paths, client-supplied IDs
 - `GET /healthz` returns `200` while the HTTP process is serving.
 - `GET /readyz` returns `200` while the kernel host accepts new generation leases and `503` once it does not. This source-built proxy has no database or upstream-backend readiness check.
 
-Retries and passive health are opt-in as described above. It does not implement persistent/shared quota storage, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch or hot-reload the file, or fetch configuration remotely. Restart the process to apply edits.
+Retries and passive health are opt-in as described above. It does not implement persistent/shared quota storage, a control plane, Admin API, WebUI, `nyro serve`, or `nyro tool`. It does not expand environment variables, accept the legacy standalone YAML format, watch the file automatically, or fetch configuration remotely. Unix supports explicit SIGHUP reload; unsupported setting changes require restart.
 
 Contributors can exercise the root process, probes, authentication, Chat, Embedding, SSE, redaction, and graceful termination without a real provider:
 
