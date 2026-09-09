@@ -79,9 +79,11 @@ def main():
     def connect(path, payload=None, key="client-secret-old"):
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         try:
+            headers = {"Content-Type": "application/json"}
+            if key is not None:
+                headers["Authorization"] = f"Bearer {key}"
             connection.request("POST" if payload is not None else "GET", path,
-                               json.dumps(payload) if payload is not None else None,
-                               {"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+                               json.dumps(payload) if payload is not None else None, headers)
             return connection, connection.getresponse()
         except Exception:
             connection.close()
@@ -98,6 +100,15 @@ def main():
         return request("/v1/chat/completions", {
             "model": model, "messages": [{"role": "user", "content": "Hello"}]}, key)
 
+    def models(expected, key="client-secret-old"):
+        calls_before = len(Upstream.calls)
+        status, body = request("/v1/models", key=key)
+        assert status == 200, body
+        assert json.loads(body) == {"object": "list", "data": [
+            {"id": name, "object": "model", "created": 0, "owned_by": "Nyro"}
+            for name in expected]}
+        assert len(Upstream.calls) == calls_before, "model discovery dispatched upstream"
+
     try:
         with tempfile.TemporaryDirectory(prefix="nyro-reload-private-path-") as directory:
             config = Path(directory) / "config.yaml"
@@ -111,6 +122,7 @@ def main():
                      "workloads": ["chat"], "subjects": ["tester"]}
             data["llm"]["models"] = {
                 "public": copy.deepcopy(model),
+                "public-retired": copy.deepcopy(model),
                 "public-rate": {**model, "rate": {"requests": 1, "period_ms": 600000}},
                 "public-quota": {**model, "quota": {"total_tokens": 3, "reserve_tokens": 2}},
                 "public-failover": {"backends": [
@@ -174,6 +186,8 @@ def main():
                 generation = reload_config(data, "unchanged")
                 # Semantic equality must skip activation despite whitespace and key ordering changes.
                 assert reload_config(json.dumps(data, indent=2, sort_keys=True), "unchanged") == generation
+                original_models = ["public", "public-failover", "public-quota", "public-rate", "public-retired"]
+                models(original_models)
                 assert chat()[0] == 200
                 for name, code in [("public-rate", "rate_limit_exceeded"), ("public-quota", "quota_exceeded")]:
                     assert chat(name)[0] == 200
@@ -186,6 +200,7 @@ def main():
                 # Rejections leave the listener, auth, routes, and depleted counters intact.
                 invalid = copy.deepcopy(data)
                 invalid["llm"]["models"]["public"]["provider"] = "private-invalid-provider-marker"
+                invalid["llm"]["models"]["never-published"] = copy.deepcopy(model)
                 moved = copy.deepcopy(data)
                 moved["server"]["listen"] = "127.0.0.1:0"
                 resized = copy.deepcopy(data)
@@ -200,6 +215,7 @@ def main():
                     (resized, "restart_required"), (rate_changed, "candidate_rejected"),
                     (quota_changed, "candidate_rejected")]:
                     reload_config(value, "rejected", reason)
+                    models(original_models)
                     assert chat()[0] == 200
                     assert Upstream.calls[-1][0] == "Bearer upstream-secret-old"
                     assert Upstream.calls[-1][1]["model"] == "internal-old"
@@ -222,9 +238,14 @@ def main():
                 updated["llm"]["models"]["public"]["upstream_model"] = "internal-new"
                 updated["llm"]["providers"]["mock"]["api_key"] = "upstream-secret-new"
                 updated["security"]["api_keys"][0]["secret"] = "client-secret-new"
+                updated["llm"]["models"]["public-added"] = updated["llm"]["models"].pop("public-retired")
                 new_generation = reload_config(updated, "applied")
                 assert new_generation > generation
                 assert chat()[0] == 401
+                assert request("/v1/models")[0] == 401
+                updated_models = ["public", "public-added", "public-failover", "public-quota", "public-rate"]
+                models(updated_models, "client-secret-new")
+                models([], None)
                 status, body = chat(key="client-secret-new")
                 assert status == 200 and b"internal-new" in body
                 assert Upstream.calls[-1][0] == "Bearer upstream-secret-new"
@@ -240,11 +261,17 @@ def main():
                 stream_connection.close()
                 stream_connection = None
 
-                # A further route-only edit preserves passive health for unchanged backends.
+                # Route/access edits preserve health while updating discovery grants and anonymous access.
                 assert chat("public-failover", "client-secret-new")[0] == 200
                 failures_before = sum(payload["model"] == "temporary-error" for _, payload in Upstream.calls)
                 updated["llm"]["models"]["public"]["upstream_model"] = "internal-newer"
+                updated["llm"]["models"]["public"]["allow_anonymous"] = True
+                updated["security"]["api_keys"].append({"id": "limited", "secret": "limited-secret"})
+                updated["llm"]["models"]["public-added"]["subjects"] = ["limited"]
                 assert reload_config(updated, "applied") > new_generation
+                models(["public", "public-failover", "public-quota", "public-rate"], "client-secret-new")
+                models(["public"], None)
+                models(["public", "public-added"], "limited-secret")
                 assert chat("public-failover", "client-secret-new")[0] == 200
                 assert sum(payload["model"] == "temporary-error" for _, payload in Upstream.calls) == failures_before
                 # A special file must not leave a blocking open alive during shutdown.
@@ -264,6 +291,12 @@ def main():
                 process.terminate()
                 process.communicate(timeout=5)
                 assert process.returncode == 0, logs()
+                discovery_logs = [line for line in logs().splitlines()
+                                  if 'protocol="openai_models"' in line]
+                assert len(discovery_logs) >= 10
+                for line in discovery_logs:
+                    assert 'workload="none"' in line and "attempts=0" in line, line
+                    assert 'usage_state="not_attempted"' in line and "quota_charged_tokens=0" in line, line
                 reload_logs = "\n".join(reload_events())
                 for secret in ["client-secret-old", "client-secret-new", "upstream-secret-old",
                                "upstream-secret-new", "private-invalid-provider-marker",
@@ -281,7 +314,7 @@ def main():
         upstream.shutdown()
         upstream.server_close()
     print("proxy reload smoke passed: SIGHUP, atomic replacement, deduplication, rejection, "
-          "auth/routes, SSE retention, rate/quota/health reuse, redacted logs, FIFO rejection, SIGTERM")
+          "auth/routes, model discovery, SSE retention, rate/quota/health reuse, redacted logs, FIFO rejection, SIGTERM")
 
 
 if __name__ == "__main__":

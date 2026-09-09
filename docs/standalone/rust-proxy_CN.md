@@ -25,6 +25,21 @@ curl http://127.0.0.1:19530/v1/chat/completions \
 
 当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在已支持的响应中恢复公开模型名。
 
+## 查询可见模型
+
+`GET /v1/models` 按别名升序返回调用方可见的已配置公开模型别名：
+
+```sh
+curl http://127.0.0.1:19530/v1/models \
+  -H 'Authorization: Bearer replace-with-client-secret'
+```
+
+响应采用 OpenAI 列表格式：`{"object":"list","data":[{"id":"public-alias","object":"model","created":0,"owned_by":"Nyro"}]}`。`created: 0` 为固定占位值，不是 Provider 时间戳。不提供凭证时，仅列出 `allow_anonymous: true` 的模型；有效 Bearer 密钥还可看到授权给其主体的模型。没有可见模型时返回 `200` 和空 `data` 数组。无效、重复或冲突凭证返回 `401`，即使存在公开模型也不会回退。该 OpenAI 格式端点仅接受 Bearer 凭证，不接受 `x-api-key` 或 `x-goog-api-key`。拒绝 query 凭证，不支持分页或其他 query 参数；仅支持 `GET`。
+
+列表取自同一活动运行时代际，不包含上游模型名、Provider 地址或密钥。成功重载后列表与凭证更新，失败重载保持原列表。查询不访问 Provider，不消耗推理并发、rate 或 quota；推理预算耗尽或 backend 不健康时，模型仍可被发现，可见性表示授权范围，不保证实际可用。响应设置 `Cache-Control: no-store`，仍使用常规请求 ID、期限和响应体清理。模型发现的请求观测使用 `protocol=openai_models`、`workload=none`、零尝试和 `usage_state=not_attempted`。
+
+回归：`cargo test -p nyro-llm --test models_runtime`；构建根二进制后执行 `python3 tests/proxy_reload_smoke.py`。
+
 ## 文件重载
 
 Unix 上保存完整配置后，向正在运行的 **nyro 进程**发送 `SIGHUP`。例如使用源码构建的二进制：
