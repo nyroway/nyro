@@ -3,6 +3,7 @@ use super::{CodecError, openai};
 use crate::ir::*;
 use nyro_protocol::{anthropic as wire, framing::Event};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 fn bad(s: &str) -> CodecError {
     CodecError(s.into())
 }
@@ -221,9 +222,17 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
     if g.temperature.is_some_and(|v| !(0.0..=1.0).contains(&v)) {
         return Err(bad("Anthropic temperature out of range"));
     }
-    let mut messages = vec![];
+    let mut messages: Vec<Value> = vec![];
     let mut system = vec![];
+    let mut pending = BTreeSet::new();
+    let mut results = vec![];
+    let mut after_results = false;
     for m in &r.messages {
+        if m.role != Role::Tool && !pending.is_empty() {
+            return Err(bad(
+                "tool results must immediately follow all calls in a batch",
+            ));
+        }
         if m.name.is_some() || m.refusal.is_some() || m.audio.is_some() {
             return Err(bad("unsupported message option"));
         }
@@ -241,15 +250,39 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
                     .tool_call_id
                     .as_ref()
                     .ok_or_else(|| bad("tool result needs id"))?;
-                messages.push(json!({"role":"user","content":[{"type":"tool_result","tool_use_id":id,"content":content}]}));
+                if !pending.remove(id.as_str()) {
+                    return Err(bad("unknown or duplicate tool result id"));
+                }
+                results.push(json!({"type":"tool_result","tool_use_id":id,"content":content}));
+                if pending.is_empty() {
+                    messages.push(json!({"role":"user","content":std::mem::take(&mut results)}));
+                    after_results = true;
+                }
             }
             Role::User | Role::Assistant => {
                 if m.tool_call_id.is_some() {
                     return Err(bad("unexpected tool_call_id"));
                 }
-                messages.push(json!({"role":if m.role==Role::User{"user"}else{"assistant"},"content":content}));
+                for ToolCall::Function { id, .. } in m.tool_calls.iter().flatten() {
+                    if !pending.insert(id.as_str()) {
+                        return Err(bad("duplicate tool call id in a batch"));
+                    }
+                }
+                // Keep accompanying user text after the complete result batch.
+                if m.role == Role::User && after_results {
+                    messages.last_mut().unwrap()["content"]
+                        .as_array_mut()
+                        .unwrap()
+                        .extend(content);
+                } else {
+                    messages.push(json!({"role":if m.role==Role::User{"user"}else{"assistant"},"content":content}));
+                }
+                after_results = false;
             }
         }
+    }
+    if !pending.is_empty() {
+        return Err(bad("missing tool results"));
     }
     if messages.is_empty() {
         return Err(bad("conversation is empty"));

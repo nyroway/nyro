@@ -613,3 +613,153 @@ async fn openai_clients_can_request_usage_from_every_upstream() {
         );
     }
 }
+
+fn parallel_history_request(format: &str, streaming: bool, incomplete: bool) -> Request<Body> {
+    let (path, mut body) = match format {
+        "openai" => (
+            "/v1/chat/completions",
+            json!({"model":"public","max_tokens":32,"messages":[
+            {"role":"user","content":"Compare"},
+            {"role":"assistant","content":"Checking","tool_calls":[
+                {"type":"function","id":"a","function":{"name":"lookup","arguments":"{\"city\":\"Paris\"}"}},
+                {"type":"function","id":"b","function":{"name":"lookup","arguments":"{\"city\":\"Tokyo\"}"}}]},
+            {"role":"tool","tool_call_id":"b","content":"Tokyo"},
+            {"role":"tool","tool_call_id":"a","content":"Paris"},
+            {"role":"user","content":"Summarize"}]}),
+        ),
+        "responses" => (
+            "/v1/responses",
+            json!({"model":"public","max_output_tokens":32,"input":[
+            {"role":"user","content":"Compare"},
+            {"role":"assistant","content":"Checking"},
+            {"type":"function_call","call_id":"a","name":"lookup","arguments":"{\"city\":\"Paris\"}"},
+            {"type":"function_call","call_id":"b","name":"lookup","arguments":"{\"city\":\"Tokyo\"}"},
+            {"type":"function_call_output","call_id":"b","output":"Tokyo"},
+            {"type":"function_call_output","call_id":"a","output":"Paris"},
+            {"role":"user","content":"Summarize"}]}),
+        ),
+        "anthropic" => (
+            "/v1/messages",
+            json!({"model":"public","max_tokens":32,"messages":[
+            {"role":"user","content":"Compare"},
+            {"role":"assistant","content":[{"type":"text","text":"Checking"},
+                {"type":"tool_use","id":"a","name":"lookup","input":{"city":"Paris"}},
+                {"type":"tool_use","id":"b","name":"lookup","input":{"city":"Tokyo"}}]},
+            {"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":"Tokyo"},
+                {"type":"tool_result","tool_use_id":"a","content":"Paris"},{"type":"text","text":"Summarize"}]}]}),
+        ),
+        _ => (
+            if streaming {
+                "/v1beta/models/public:streamGenerateContent"
+            } else {
+                "/v1beta/models/public:generateContent"
+            },
+            json!({"generationConfig":{"maxOutputTokens":32},"contents":[
+            {"role":"user","parts":[{"text":"Compare"}]},
+            {"role":"model","parts":[{"text":"Checking"},
+                {"functionCall":{"id":"a","name":"lookup","args":{"city":"Paris"}}},
+                {"functionCall":{"id":"b","name":"lookup","args":{"city":"Tokyo"}}}]},
+            {"role":"user","parts":[{"functionResponse":{"id":"b","name":"lookup","response":{"city":"Tokyo"}}},
+                {"functionResponse":{"id":"a","name":"lookup","response":{"city":"Paris"}}}]},
+            {"role":"user","parts":[{"text":"Summarize"}]}]}),
+        ),
+    };
+    if format != "gemini" {
+        body["stream"] = json!(streaming);
+    }
+    if incomplete {
+        match format {
+            "openai" => {
+                body["messages"].as_array_mut().unwrap().remove(3);
+            }
+            "responses" => {
+                body["input"].as_array_mut().unwrap().remove(5);
+            }
+            "anthropic" => {
+                body["messages"][2]["content"]
+                    .as_array_mut()
+                    .unwrap()
+                    .remove(1);
+            }
+            _ => {
+                body["contents"][2]["parts"]
+                    .as_array_mut()
+                    .unwrap()
+                    .remove(1);
+            }
+        }
+    }
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("authorization", "Bearer client-secret")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn four_ingress_formats_preserve_parallel_history_as_one_anthropic_result_turn() {
+    let fixture = upstream("anthropic", "normal").await;
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let gateway = runtime(&fixture, "anthropic", limit.clone(), Options::default());
+    for format in ["openai", "responses", "anthropic", "gemini"] {
+        for streaming in [false, true] {
+            let response = gateway
+                .handle(
+                    parallel_history_request(format, streaming, false),
+                    CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::OK, "{format} {streaming}");
+            let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+            assert!(String::from_utf8_lossy(&bytes).contains("Hello"));
+            assert_eq!(limit.available(), 1);
+            let calls = fixture.calls.lock().unwrap();
+            let last = calls.last().unwrap();
+            assert_eq!(last["path"], "/v1/messages");
+            assert_eq!(last["headers"]["x-api-key"], "upstream-secret");
+            assert!(last["headers"]["authorization"].is_null());
+            assert_eq!(last["body"]["model"], "internal");
+            let text = |city: &str| {
+                if format == "gemini" {
+                    json!({"city":city}).to_string()
+                } else {
+                    city.to_owned()
+                }
+            };
+            assert_eq!(
+                last["body"]["messages"],
+                json!([
+                {"role":"user","content":[{"type":"text","text":"Compare"}]},
+                {"role":"assistant","content":[{"type":"text","text":"Checking"},
+                    {"type":"tool_use","id":"a","name":"lookup","input":{"city":"Paris"}},
+                    {"type":"tool_use","id":"b","name":"lookup","input":{"city":"Tokyo"}}]},
+                {"role":"user","content":[
+                    {"type":"tool_result","tool_use_id":"b","content":[{"type":"text","text":text("Tokyo")}]},
+                    {"type":"tool_result","tool_use_id":"a","content":[{"type":"text","text":text("Paris")}]},
+                    {"type":"text","text":"Summarize"}]}])
+            );
+        }
+    }
+    assert_eq!(fixture.calls.lock().unwrap().len(), 8);
+}
+
+#[tokio::test]
+async fn incomplete_parallel_results_are_rejected_before_anthropic_dispatch() {
+    let fixture = upstream("anthropic", "normal").await;
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let gateway = runtime(&fixture, "anthropic", limit.clone(), Options::default());
+    for format in ["openai", "responses", "anthropic", "gemini"] {
+        let response = gateway
+            .handle(
+                parallel_history_request(format, false, true),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{format}");
+        to_bytes(response.into_body(), 65536).await.unwrap();
+        assert_eq!(limit.available(), 1);
+    }
+    assert!(fixture.calls.lock().unwrap().is_empty());
+}

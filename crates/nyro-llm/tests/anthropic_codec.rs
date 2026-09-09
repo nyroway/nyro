@@ -211,3 +211,99 @@ fn rejects_unrepresentable_matched_stop_sequence() {
         assert!(decoder.push(&event(json!({"type":"message_delta","delta":{"stop_reason":reason,"stop_sequence":sequence},"usage":{"output_tokens":1}}))).is_err());
     }
 }
+
+fn parallel_history() -> Value {
+    json!({"model":"m","max_tokens":64,"messages":[
+        {"role":"user","content":"Compare cities"},
+        {"role":"assistant","content":"Checking both","tool_calls":[
+            {"type":"function","id":"a","function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}},
+            {"type":"function","id":"b","function":{"name":"weather","arguments":"{\"city\":\"Tokyo\"}"}}]},
+        {"role":"tool","tool_call_id":"b","content":"Tokyo: sunny"},
+        {"role":"tool","tool_call_id":"a","content":"Paris: cloudy"},
+        {"role":"user","content":"Compare the results"}]})
+}
+
+#[test]
+fn parallel_tool_results_share_one_user_turn_without_reordering_text_or_ids() {
+    let source = parallel_history();
+    let request = nyro_llm::codec::openai::decode_chat(source).unwrap();
+    let wire = encode_chat(&request).unwrap();
+    assert_eq!(
+        wire["messages"],
+        json!([
+        {"role":"user","content":[{"type":"text","text":"Compare cities"}]},
+        {"role":"assistant","content":[{"type":"text","text":"Checking both"},
+            {"type":"tool_use","id":"a","name":"weather","input":{"city":"Paris"}},
+            {"type":"tool_use","id":"b","name":"weather","input":{"city":"Tokyo"}}]},
+        {"role":"user","content":[
+            {"type":"tool_result","tool_use_id":"b","content":[{"type":"text","text":"Tokyo: sunny"}]},
+            {"type":"tool_result","tool_use_id":"a","content":[{"type":"text","text":"Paris: cloudy"}]},
+            {"type":"text","text":"Compare the results"}]}])
+    );
+    // Decoding and encoding again must preserve the same valid Anthropic turns.
+    assert_eq!(
+        encode_chat(&decode_chat(wire.clone()).unwrap()).unwrap(),
+        wire
+    );
+}
+
+#[test]
+fn anthropic_tool_batches_reject_missing_or_ambiguous_results_and_interleaved_messages() {
+    let source = parallel_history();
+    let mut cases = vec![];
+    let mut bad = source.clone();
+    bad["messages"][3]["tool_call_id"] = json!("b");
+    cases.push(bad);
+    let mut bad = source.clone();
+    bad["messages"][3]["tool_call_id"] = json!("unknown");
+    cases.push(bad);
+    let mut bad = source.clone();
+    bad["messages"][1]["tool_calls"][1]["id"] = json!("a");
+    cases.push(bad);
+    let mut bad = source.clone();
+    bad["messages"].as_array_mut().unwrap().remove(3);
+    cases.push(bad);
+    let mut bad = source.clone();
+    bad["messages"].as_array_mut().unwrap().truncate(3);
+    cases.push(bad);
+    let mut bad = source.clone();
+    bad["messages"].as_array_mut().unwrap().remove(1);
+    cases.push(bad);
+    for role in ["user", "assistant"] {
+        let mut bad = source.clone();
+        bad["messages"]
+            .as_array_mut()
+            .unwrap()
+            .insert(3, json!({"role":role,"content":"interleaved"}));
+        cases.push(bad);
+    }
+    for bad in cases {
+        let request = nyro_llm::codec::openai::decode_chat(bad.clone()).unwrap();
+        assert!(encode_chat(&request).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn completed_tool_batches_keep_separate_turns_and_reset_pending_ids() {
+    let mut source = parallel_history();
+    source["messages"].as_array_mut().unwrap().extend([
+        json!({"role":"assistant","tool_calls":[{"type":"function","id":"c","function":{"name":"lookup","arguments":"{}"}}]}),
+        json!({"role":"tool","tool_call_id":"c","content":"Second batch"}),
+    ]);
+    let request = nyro_llm::codec::openai::decode_chat(source).unwrap();
+    let wire = encode_chat(&request).unwrap();
+    assert_eq!(wire["messages"].as_array().unwrap().len(), 5);
+    assert_eq!(wire["messages"][2]["content"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        wire["messages"][3]["content"],
+        json!([{"type":"tool_use","id":"c","name":"lookup","input":{}}])
+    );
+    assert_eq!(
+        wire["messages"][4],
+        json!({"role":"user","content":[{"type":"tool_result","tool_use_id":"c","content":[{"type":"text","text":"Second batch"}]}]})
+    );
+    assert_eq!(
+        encode_chat(&decode_chat(wire.clone()).unwrap()).unwrap(),
+        wire
+    );
+}

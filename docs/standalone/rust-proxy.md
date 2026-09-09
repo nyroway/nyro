@@ -225,6 +225,14 @@ The strict conversion path is an experimental text/function Chat subset. Its cod
 
 Protocol reference: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini generateContent](https://ai.google.dev/api/generate-content). Local matrix regression: `cargo test -p nyro-llm --test protocol_matrix`.
 
+## Tool history converted to Anthropic
+
+When strict conversion selects an Anthropic upstream, all results for one assistant tool-call batch are placed in the immediately following single `user` message. Results keep their original order and `tool_call_id`/`tool_use_id` association, even when they return in a different order from the calls. User text immediately following the completed batch is appended after the result blocks. Tool names, parsed object arguments and result text are preserved; Gemini object results retain the existing JSON-as-text conversion.
+
+Every call in the batch must have exactly one adjacent result. Duplicate call IDs within a batch, missing/unknown/duplicate results, and user or assistant messages inserted before the batch is complete make that Anthropic backend ineligible before dispatch. Nyro does not fabricate calls, drop intermediate text or rearrange history to repair it. If no backend can represent the original request, the runtime returns `400`. These are destination-specific checks in the strict Anthropic encoder; opt-in matching native forwarding keeps its existing contract.
+
+This covers OpenAI Chat, stateless Responses, Anthropic Messages and Gemini generateContent ingress, with JSON or SSE responses. It does not add cross-protocol thinking/signature mapping, error-flag/media tool results, arbitrary interleaving or Schema rewriting. Reference: [Anthropic parallel tool-result formatting](https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use). Local regression: `cargo test -p nyro-llm --test anthropic_codec --test protocol_matrix`.
+
 ## Opt-in OpenAI Chat native compatibility
 
 Set `native_chat: true` on an OpenAI Chat provider to preserve vendor JSON fields between `POST /v1/chat/completions` and an OpenAI Chat upstream:
