@@ -10,6 +10,7 @@ use crate::{
 mod anthropic;
 mod gemini;
 mod openai;
+mod responses;
 use nyro_protocol::framing::Event;
 use serde_json::{Value, json};
 
@@ -54,7 +55,10 @@ impl Input {
                     &request.model,
                     request.streaming,
                 ),
-                _ => openai_codec::decode_chat(request.value.clone()),
+                ChatFormat::OpenAiResponses => {
+                    openai_codec::responses::decode_chat(request.value.clone())
+                }
+                ChatFormat::OpenAiChat => openai_codec::decode_chat(request.value.clone()),
             }
             .ok()
             .map(Request::Chat),
@@ -92,6 +96,17 @@ impl NativeRequest {
             .filter(|model| !model.is_empty())
             .ok_or_else(invalid)?
             .to_owned();
+        let streaming = optional_bool(&value["stream"]).ok_or_else(invalid)?;
+        if format == ChatFormat::OpenAiResponses {
+            responses::validate_request(&value, streaming)?;
+            return Ok(Self {
+                format,
+                value,
+                model,
+                streaming,
+                include_usage: false,
+            });
+        }
         let messages = value
             .get("messages")
             .and_then(Value::as_array)
@@ -134,6 +149,9 @@ impl NativeRequest {
         if self.format != ChatFormat::Gemini {
             value["model"] = json!(model);
         }
+        if self.format == ChatFormat::OpenAiResponses {
+            value["store"] = json!(false);
+        }
         if self.streaming && self.format == ChatFormat::OpenAiChat {
             if value["stream_options"].is_null() {
                 value["stream_options"] = json!({});
@@ -168,12 +186,16 @@ pub(super) fn response(
             anthropic::response(value, model).map(|(value, usage)| (value, Some(usage)))
         }
         ChatFormat::Gemini => gemini::response(value),
-        _ => Err(Failure::upstream()),
+        ChatFormat::OpenAiResponses => responses::response(value, model),
     }
 }
 
 pub(super) enum Stream {
     Gemini(gemini::StreamDecoder),
+    Responses {
+        model: String,
+        decoder: responses::StreamDecoder,
+    },
     Openai {
         model: String,
         include_usage: bool,
@@ -199,18 +221,23 @@ impl Stream {
                 model,
                 decoder: anthropic::StreamDecoder::default(),
             }),
-            _ => Err(Failure::upstream()),
+            ChatFormat::OpenAiResponses => Ok(Self::Responses {
+                model,
+                decoder: responses::StreamDecoder::default(),
+            }),
         }
     }
     pub(super) fn finish(&self) -> Result<(), Failure> {
         match self {
             Self::Gemini(decoder) => decoder.finish(),
+            Self::Responses { decoder, .. } => decoder.finish(),
             _ => Err(Failure::upstream()),
         }
     }
     pub(super) fn push(&mut self, event: Event) -> Result<Frame, Failure> {
         match self {
             Self::Gemini(decoder) => decoder.push(event),
+            Self::Responses { model, decoder } => decoder.push(event, model),
             Self::Openai {
                 model,
                 include_usage,

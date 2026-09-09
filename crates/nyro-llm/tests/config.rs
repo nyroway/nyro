@@ -10,7 +10,7 @@ fn native_chat_requires_supported_matching_protocol_capability() {
     for (kind, api, valid) in [
         ("openai", None, true),
         ("openai", Some("chat_completions"), true),
-        ("openai", Some("responses"), false),
+        ("openai", Some("responses"), true),
         ("anthropic", None, true),
         ("gemini", None, true),
         ("anthropic", Some("chat_completions"), false),
