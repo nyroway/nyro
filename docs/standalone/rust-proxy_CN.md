@@ -145,7 +145,7 @@ quota:
 
 认证、授权、并发和 rate 准入之后，Nyro 在每次可用上游尝试发出前预留 `reserve_tokens`，每次重试都需要独立预留。没有可用 backend 时不预留。准入原子检查已结算用量加在途预留；余额不足返回原生协议 `429`：OpenAI API 使用 `quota_exceeded`，Anthropic 使用 `rate_limit_error`，Gemini 使用 `RESOURCE_EXHAUSTED`。不带 `Retry-After`，不发出新的上游请求，并立即释放并发许可。此前 rate 准入已消耗的次数不退还。剩余余额小于 `reserve_tokens` 时无法再准入一次尝试。
 
-完整响应有效时，以报告的总用量替换预留，包括显式零用量和超过预留的用量。JSON 在向下游编码前结算，SSE 在校验上游协议终止信号时结算。用量快照按累计值替换，不逐帧相加，且不能递减；输入加输出必须无溢出地等于总量，Embedding 的输入必须等于总量。无效用量导致响应失败：流开始前返回 `502`，开始后终止流。启用 quota 后，即使客户端未请求输出 usage，OpenAI Chat 上游流请求也会主动请求用量；下游仍保留客户端的输出偏好。
+完整响应有效时，以报告的总用量替换预留，包括显式零用量和超过预留的用量。JSON 在向下游编码前结算，SSE 在校验上游协议终止信号时结算。用量快照按累计值替换，不逐帧相加，且不能递减；输入加输出必须无溢出地等于总量，Embedding 的输入必须等于总量。无效用量导致响应失败：流开始前返回 `502`，开始后终止流。为收集用量，即使客户端未请求输出 usage，OpenAI Chat 上游流请求也会主动请求用量；下游仍保留客户端的输出偏好。
 
 结算前遇到用量缺失、上游 HTTP 错误、无效响应、取消、超时、响应体丢弃或断流，均按预留量与已知有效用量的较大值扣减。已结算后发生的下游失败或响应体丢弃不改变扣减结果。只有实际观察到连接建立失败才全额释放预留；故障转移之前每次失败的 HTTP 尝试独立扣减。这种保守回退可能多计实际用量。另一方面，`reserve_tokens` 是运维配置值，不是可信的上游消耗上界：实际消耗可能超过配置预算，超出部分如实记账并阻止后续准入，当前不承诺真实上游 token 的硬上限。
 
@@ -199,6 +199,24 @@ curl http://127.0.0.1:19530/v1/responses \
 SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和完整终态快照，不输出 `[DONE]`。token 上限／内容过滤结束会映射成 `response.incomplete`；上游失败、内容矛盾、格式错误或断流不会伪造成功终态。原生上游流关闭 obfuscation。此子集不代表已经完整兼容 Responses SDK 或 Codex CLI。
 
 参考：[OpenAI Responses 迁移指南](https://developers.openai.com/api/docs/guides/migrate-to-responses)、[Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses)。本地回归：`cargo test -p nyro-llm --test responses_codec --test responses_runtime`。
+
+## 请求与用量观测
+
+LLM 运行时以 `INFO` 级别输出结构化 `tracing` 事件：每次已发出的上游尝试记录一次 `nyro::attempt`，每个请求结束时记录一次 `nyro::request`。根程序默认过滤规则 `nyro=info` 包含两者，可用 `RUST_LOG` 调整。每个运行时请求生成随机 128 位 `request_id`，通过 `x-request-id` 响应头返回 32 位十六进制字符串；不采用或转发客户端提供的 ID。健康探针与获取运行代际之前被拒绝的请求不在此范围内。
+
+| 记录 | 字段及含义 |
+|---|---|
+| 两者共有 | `request_id`、已配置的公开 `model`、`backend`、API `protocol` 与 `duration_ms` |
+| 请求 | `workload`、`streaming`、`attempts`、HTTP `status`（产生响应前为 `0`）、`outcome`、`delivery_outcome`、安全的 `error_code`、用量汇总与 quota 扣减 |
+| 上游尝试 | 从 `1` 开始的 `attempt`、配置中的 `provider` ID、`upstream_status`（响应头前为 `0`）、`outcome`、用量与额度结算 |
+
+请求 `outcome` 为 `complete`、`error`、`cancelled` 或 `timeout`；`delivery_outcome` 独立描述响应体交付，处理 future 在交付前被丢弃时为 `none`。错误响应体正常读到 EOF 不会把请求标记成功。已解码的 JSON 响应被丢弃时，可以同时出现请求取消、上游尝试完成。尝试结果区分 `complete`、`http_error`、`connect_error`、`transport_error`、`protocol_error`、`cancelled` 和 `timeout`。尝试完成表示 JSON 校验完成或收到 SSE 协议终止，不证明客户端收到了全部字节。耗时覆盖各自持有资源的生命周期，不表示网络刷新时间或首 token 延迟。`error_code` 记录交付前的执行错误，之后的响应体失败通过 outcome 字段表达。
+
+关闭 quota 时仍收集用量。流式 OpenAI Chat 上游请求始终要求报告 usage，下游是否输出 usage 仍遵循客户端偏好。每次尝试记录最后一个有效累计快照的 `input_tokens`、`output_tokens`、`total_tokens`；字段缺失表示未知，显式零仍是已知用量。`usage_state` 分为 `complete`、`partial`、`missing`、`invalid`。总量不一致或递减时标记无效，不更新观测值；未启用 quota 时不会因此新增协议拒绝，既有 codec 校验仍适用。启用 quota 后保持原有严格记账校验。
+
+请求用量汇总各次尝试的有效观测，不累加重复流快照。任一尝试缺失用量或未完成时，不会报告完整用量；此时总数仅包含已观测单位，使用前应检查 `usage_state`。没有上游尝试时为 `not_attempted`。未启用 quota 时，尝试的 `quota_charged_tokens` 字段缺失；`quota_outcome` 区分 `actual`、`fallback`、`released`、`disabled`。请求的 `quota_charged_tokens` 汇总真实账本扣减，包括保守回退值，不能与上游报告的 token 用量混用。
+
+事件不包含凭证、Provider URL、请求路径、客户端提供的 ID、提示词或响应正文，也不记录客户端提交的未知模型名。当前输出由宿主 tracing subscriber 接收，尚无持久化事件库、统计查询 API、指标导出或分布式追踪传播。崩溃、强制退出、过滤规则和输出端故障可能导致记录丢失；quota 结算不依赖日志消费者。回归测试：`cargo test -p nyro-llm --test observation_runtime`。
 
 ## 健康检查与当前范围
 

@@ -58,6 +58,8 @@ def main():
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
 
+    request_ids = []
+
     def request(path, payload=None, key="client-secret", credential_header="Authorization"):
         connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
         try:
@@ -65,6 +67,11 @@ def main():
                                json.dumps(payload) if payload is not None else None,
                                {credential_header: f"Bearer {key}" if credential_header == "Authorization" else key, "Content-Type": "application/json"})
             response = connection.getresponse()
+            if payload is not None:
+                request_id = response.getheader("x-request-id")
+                assert request_id and len(request_id) == 32
+                assert all(c in "0123456789abcdef" for c in request_id)
+                request_ids.append(request_id)
             return response.status, response.read()
         finally:
             connection.close()
@@ -103,7 +110,10 @@ def main():
             assert invalid.returncode != 0
             assert b"secret-marker" not in invalid.stderr
             config.write_text(json.dumps(data))
-            process = subprocess.Popen([binary, "proxy", "--config", config], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # Logs are intentionally verbose enough to exceed a pipe buffer; collect without blocking the proxy.
+            output_path, error_path = Path(directory) / "stdout.log", Path(directory) / "stderr.log"
+            with output_path.open("wb") as output_log, error_path.open("wb") as error_log:
+                process = subprocess.Popen([binary, "proxy", "--config", config], stdout=output_log, stderr=error_log)
             try:
                 deadline = time.monotonic() + 5
                 while True:
@@ -185,8 +195,19 @@ def main():
                 assert all(key == "Bearer upstream-secret" and payload["model"] in {"internal", "temporary-error"}
                            for _, key, payload in Upstream.calls)
                 process.terminate()
-                output, errors = process.communicate(timeout=5)
+                process.communicate(timeout=5)
+                output, errors = output_path.read_bytes(), error_path.read_bytes()
                 assert process.returncode == 0, errors.decode()
+                logs = (output + errors).decode()
+                assert len(set(request_ids)) == len(request_ids)
+                requests = [line for line in logs.splitlines() if "LLM request finished" in line]
+                attempts = [line for line in logs.splitlines() if "LLM upstream attempt finished" in line]
+                assert len(requests) == len(request_ids)
+                assert len(attempts) == len(Upstream.calls)
+                for request_id in request_ids:
+                    assert sum(request_id in line for line in requests) == 1
+                assert all(any(request_id in line for request_id in request_ids) for line in attempts)
+                assert "quota_charged_tokens=" in logs and "usage_state=" in logs
                 assert b"client-secret" not in output + errors
                 assert b"upstream-secret" not in output + errors
             finally:
@@ -196,7 +217,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print("proxy smoke passed: config, weighted routing, failover, passive health, rate, quota, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
+    print("proxy smoke passed: config, weighted routing, failover, passive health, rate, quota, correlated observations, probes, auth, OpenAI/Anthropic/Gemini Chat/Responses, Embedding, SSE, SIGTERM")
 
 
 if __name__ == "__main__":

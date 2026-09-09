@@ -47,7 +47,6 @@ impl QuotaRegistry {
             };
         }
         let bound = Arc::new(BoundQuota {
-            model: model.into(),
             policy: policy.clone(),
             quota: Quota::new(policy.total_tokens).map_err(|_| BuildError)?,
         });
@@ -57,16 +56,13 @@ impl QuotaRegistry {
 }
 
 pub(crate) struct BoundQuota {
-    model: String,
     policy: QuotaConfig,
     quota: Quota,
 }
 impl BoundQuota {
-    pub(crate) fn reserve(&self, backend: &str) -> Result<AttemptQuota, QuotaError> {
+    pub(crate) fn reserve(&self) -> Result<AttemptQuota, QuotaError> {
         Ok(AttemptQuota {
             reservation: Some(self.quota.reserve(self.policy.reserve_tokens)?),
-            model: self.model.clone(),
-            backend: backend.into(),
             observed: None,
         })
     }
@@ -74,8 +70,6 @@ impl BoundQuota {
 
 pub(crate) struct AttemptQuota {
     reservation: Option<Reservation>,
-    model: String,
-    backend: String,
     observed: Option<u64>,
 }
 impl AttemptQuota {
@@ -101,13 +95,21 @@ impl AttemptQuota {
         Ok(())
     }
 
-    pub(crate) fn complete(mut self) {
+    pub(crate) fn complete(mut self) -> u64 {
         let actual = self.observed.unwrap_or_else(|| self.fallback());
-        self.settle(actual, "complete");
+        self.settle(actual);
+        actual
     }
 
-    pub(crate) fn release(mut self) {
-        self.settle(0, "released");
+    pub(crate) fn release(mut self) -> u64 {
+        self.settle(0);
+        0
+    }
+
+    pub(crate) fn abandon(mut self) -> u64 {
+        let charged = self.fallback();
+        self.settle(charged);
+        charged
     }
 
     fn fallback(&self) -> u64 {
@@ -117,24 +119,16 @@ impl AttemptQuota {
             .max(self.observed.unwrap_or(0))
     }
 
-    fn settle(&mut self, charged_units: u64, outcome: &'static str) {
+    fn settle(&mut self, charged_units: u64) {
         if let Some(reservation) = self.reservation.take() {
             reservation.settle(charged_units);
-            tracing::debug!(
-                model = %self.model,
-                backend = %self.backend,
-                charged_units,
-                known_usage = self.observed.is_some(),
-                outcome,
-                "upstream attempt quota settled"
-            );
         }
     }
 }
 
 impl Drop for AttemptQuota {
     fn drop(&mut self) {
-        self.settle(self.fallback(), "fallback");
+        self.settle(self.fallback());
     }
 }
 
@@ -164,7 +158,7 @@ mod tests {
         let registry = QuotaRegistry::default();
         let bound = registry.bind("chat", &policy()).unwrap();
         for (actual, expected) in [(8, 8), (0, 8), (30, 38)] {
-            let mut attempt = bound.reserve("primary").unwrap();
+            let mut attempt = bound.reserve().unwrap();
             assert_eq!(registry.snapshot("chat").unwrap().reserved, 20);
             attempt.observe(&usage(actual, 0, actual)).unwrap();
             attempt.complete();
@@ -183,13 +177,13 @@ mod tests {
     fn missing_usage_and_abandoned_partial_usage_charge_conservative_fallback() {
         let registry = QuotaRegistry::default();
         let bound = registry.bind("chat", &policy()).unwrap();
-        bound.reserve("primary").unwrap().complete();
+        bound.reserve().unwrap().complete();
         assert_eq!(registry.snapshot("chat").unwrap().used, 20);
-        let mut partial = bound.reserve("primary").unwrap();
+        let mut partial = bound.reserve().unwrap();
         partial.observe(&usage(3, 2, 5)).unwrap();
         drop(partial);
         assert_eq!(registry.snapshot("chat").unwrap().used, 40);
-        let mut overage = bound.reserve("fallback").unwrap();
+        let mut overage = bound.reserve().unwrap();
         overage.observe(&usage(10, 70, 80)).unwrap();
         drop(overage);
         assert_eq!(
@@ -200,17 +194,14 @@ mod tests {
                 reserved: 0
             }
         );
-        assert!(matches!(
-            bound.reserve("primary"),
-            Err(QuotaError::Exceeded)
-        ));
+        assert!(matches!(bound.reserve(), Err(QuotaError::Exceeded)));
     }
 
     #[test]
     fn known_connect_failure_releases_all_reserved_credit() {
         let registry = QuotaRegistry::default();
         let bound = registry.bind("chat", &policy()).unwrap();
-        bound.reserve("primary").unwrap().release();
+        bound.reserve().unwrap().release();
         assert_eq!(registry.snapshot("chat").unwrap().used, 0);
         assert_eq!(registry.snapshot("chat").unwrap().reserved, 0);
     }
@@ -219,7 +210,7 @@ mod tests {
     fn cumulative_snapshots_replace_prior_totals_and_reject_invalid_updates() {
         let registry = QuotaRegistry::default();
         let bound = registry.bind("chat", &policy()).unwrap();
-        let mut attempt = bound.reserve("primary").unwrap();
+        let mut attempt = bound.reserve().unwrap();
         for snapshot in [usage(3, 2, 5), usage(3, 2, 5), usage(3, 7, 10)] {
             attempt.observe(&snapshot).unwrap();
         }
@@ -234,7 +225,7 @@ mod tests {
     fn invalid_first_usage_does_not_turn_unknown_outcome_into_free_usage() {
         let registry = QuotaRegistry::default();
         let bound = registry.bind("chat", &policy()).unwrap();
-        let mut attempt = bound.reserve("primary").unwrap();
+        let mut attempt = bound.reserve().unwrap();
         assert!(attempt.observe(&usage(1, 1, 0)).is_err());
         drop(attempt);
         assert_eq!(registry.snapshot("chat").unwrap().used, 20);
@@ -244,7 +235,7 @@ mod tests {
     fn embeddings_validate_prompt_total_and_settle_actual() {
         let registry = QuotaRegistry::default();
         let bound = registry.bind("embedding", &policy()).unwrap();
-        let mut attempt = bound.reserve("primary").unwrap();
+        let mut attempt = bound.reserve().unwrap();
         assert!(
             attempt
                 .observe_embedding(&EmbeddingUsage {
@@ -267,7 +258,7 @@ mod tests {
     fn consumed_ledger_survives_removal_and_failed_candidate_drop() {
         let registry = QuotaRegistry::default();
         let original = registry.bind("chat", &policy()).unwrap();
-        drop(original.reserve("primary").unwrap());
+        drop(original.reserve().unwrap());
         let candidate = registry.bind("chat", &policy()).unwrap();
         assert!(Arc::ptr_eq(&original, &candidate));
         drop(candidate);
@@ -275,7 +266,7 @@ mod tests {
         let other = registry.bind("alias", &policy()).unwrap();
         assert_eq!(registry.snapshot("chat").unwrap().used, 20);
         let readded = registry.bind("chat", &policy()).unwrap();
-        drop(readded.reserve("new-backend").unwrap());
+        drop(readded.reserve().unwrap());
         assert_eq!(registry.snapshot("chat").unwrap().used, 40);
         assert_eq!(registry.snapshot("alias").unwrap().used, 0);
         drop(other);
@@ -285,7 +276,7 @@ mod tests {
     fn pending_attempt_retains_ledger_without_runtime_owner() {
         let registry = QuotaRegistry::default();
         let original = registry.bind("chat", &policy()).unwrap();
-        let attempt = original.reserve("primary").unwrap();
+        let attempt = original.reserve().unwrap();
         drop(original);
         let changed = QuotaConfig {
             total_tokens: 200,
@@ -314,7 +305,7 @@ mod tests {
         ] {
             assert!(registry.bind("chat", &changed).is_err());
         }
-        drop(live.reserve("primary").unwrap());
+        drop(live.reserve().unwrap());
         drop(live);
         assert!(
             registry
