@@ -77,6 +77,7 @@ pub(super) struct StreamState {
     framing: Decoder,
     events: VecDeque<Event>,
     canonical: VecDeque<ChatEvent>,
+    native: Option<(String, bool)>,
     decoder: Decode,
     encoder: Encode,
     done: bool,
@@ -125,6 +126,7 @@ impl StreamState {
             framing: Decoder::new(max_bytes),
             events: VecDeque::new(),
             canonical: VecDeque::new(),
+            native: None,
             decoder,
             encoder,
             done: false,
@@ -132,6 +134,10 @@ impl StreamState {
             max_bytes,
             attempt,
         }
+    }
+    pub(super) fn with_native(mut self, model: String, include_usage: bool) -> Self {
+        self.native = Some((model, include_usage));
+        self
     }
     pub(super) async fn next_frame(&mut self) -> Result<Option<String>, Failure> {
         let result = self.next_frame_inner().await;
@@ -171,11 +177,35 @@ impl StreamState {
                 return Ok(None);
             }
             if let Some(event) = self.events.pop_front() {
+                if let Some((model, include_usage)) = &self.native {
+                    let frame = super::native::frame(event, model, *include_usage)?;
+                    if frame.output.len() > self.max_bytes {
+                        return Err(Failure::upstream());
+                    }
+                    if let Some(attempt) = self.attempt.as_mut()
+                        && let Some(usage) = &frame.usage
+                    {
+                        attempt.observe(usage).map_err(|_| Failure::upstream())?;
+                    }
+                    self.done = frame.done;
+                    if self.done
+                        && let Some(mut attempt) = self.attempt.take()
+                    {
+                        attempt.complete();
+                    }
+                    if !frame.output.is_empty() {
+                        return Ok(Some(frame.output));
+                    }
+                    continue;
+                }
                 self.canonical
                     .extend(self.decoder.push(&event).map_err(|_| Failure::upstream())?);
                 continue;
             }
             if self.eof {
+                if self.native.is_some() {
+                    return Err(Failure::upstream());
+                }
                 self.canonical
                     .extend(self.decoder.finish().map_err(|_| Failure::upstream())?);
                 if self.canonical.is_empty() {

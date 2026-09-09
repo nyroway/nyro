@@ -1,6 +1,6 @@
 //! Provider-owned URLs and credentials; caller headers never cross this boundary.
 use crate::{
-    Request,
+    Request, Workload,
     codec::{ChatFormat, CodecError, anthropic, gemini, openai},
     config::{OpenAiApi, Provider, ProviderKind},
     runtime::BuildError,
@@ -16,6 +16,7 @@ pub(crate) struct Driver {
     base: Url,
     kind: ProviderKind,
     pub(crate) format: ChatFormat,
+    pub(crate) native_chat: bool,
     credential: Option<(HeaderName, HeaderValue)>,
 }
 
@@ -47,6 +48,7 @@ impl Driver {
                 .map_err(|_| BuildError)?,
             base,
             kind: config.kind,
+            native_chat: config.native_chat,
             format: match config.kind {
                 ProviderKind::Openai => match config.api.unwrap_or_default() {
                     OpenAiApi::ChatCompletions => ChatFormat::OpenAiChat,
@@ -76,23 +78,22 @@ impl Driver {
 
     pub(crate) async fn send(
         &self,
-        request: &Request,
+        workload: Workload,
+        model: &str,
+        streaming: bool,
         body: &Value,
     ) -> Result<reqwest::Response, reqwest::Error> {
         let mut url = self.base.clone();
         // Model names are validated as a single safe segment during candidate construction.
-        let endpoint = match (self.format, request) {
-            (ChatFormat::OpenAiChat, Request::Embedding(_)) => "embeddings".to_owned(),
+        let endpoint = match (self.format, workload) {
+            (ChatFormat::OpenAiChat, Workload::Embedding) => "embeddings".to_owned(),
             (ChatFormat::OpenAiChat, _) => "chat/completions".to_owned(),
             (ChatFormat::OpenAiResponses, _) => "responses".to_owned(),
             (ChatFormat::Anthropic, _) => "messages".to_owned(),
             (ChatFormat::Gemini, _) => format!(
                 "models/{}:{}",
-                request
-                    .model()
-                    .strip_prefix("models/")
-                    .unwrap_or(request.model()),
-                if request.is_streaming() {
+                model.strip_prefix("models/").unwrap_or(model),
+                if streaming {
                     "streamGenerateContent"
                 } else {
                     "generateContent"
@@ -100,7 +101,7 @@ impl Driver {
             ),
         };
         url.set_path(&format!("{}{endpoint}", self.base.path()));
-        if self.kind == ProviderKind::Gemini && request.is_streaming() {
+        if self.kind == ProviderKind::Gemini && streaming {
             url.query_pairs_mut().append_pair("alt", "sse");
         }
         let mut builder = self.client.post(url).json(body);

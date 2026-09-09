@@ -35,6 +35,9 @@ pub enum OpenAiApi {
 #[serde(deny_unknown_fields)]
 pub struct Provider {
     pub kind: ProviderKind,
+    /// Preserve native OpenAI Chat JSON when both endpoints use Chat Completions.
+    #[serde(default)]
+    pub native_chat: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api: Option<OpenAiApi>,
     pub base_url: String,
@@ -47,6 +50,7 @@ impl std::fmt::Debug for Provider {
         formatter
             .debug_struct("Provider")
             .field("kind", &self.kind)
+            .field("native_chat", &self.native_chat)
             .field("api", &self.api)
             .field("base_url", &"<configured>")
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
@@ -205,6 +209,8 @@ pub enum ConfigError {
     InvalidProviderApiKey { provider: String },
     #[error("provider `{provider}` declares an API selector outside the OpenAI family")]
     InvalidProviderApi { provider: String },
+    #[error("provider `{provider}` native_chat requires OpenAI Chat Completions")]
+    InvalidNativeChat { provider: String },
     #[error("model ID must not be empty")]
     EmptyModelId,
     #[error("model `{model}` max_attempts must be greater than zero")]
@@ -249,6 +255,14 @@ impl Config {
         }
 
         for (id, provider) in &self.providers {
+            if provider.native_chat
+                && (provider.kind != ProviderKind::Openai
+                    || provider.api == Some(OpenAiApi::Responses))
+            {
+                return Err(ConfigError::InvalidNativeChat {
+                    provider: id.clone(),
+                });
+            }
             if id.trim().is_empty() {
                 return Err(ConfigError::EmptyProviderId);
             }

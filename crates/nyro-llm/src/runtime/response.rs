@@ -1,7 +1,7 @@
 //! Response conversion owns an accepted upstream; it never dispatches another attempt.
 use super::{Failure, Runtime, endpoint::Endpoint, json_response, stream::StreamState};
 use crate::{
-    Request, Workload,
+    Workload,
     codec::{ChatFormat, anthropic, gemini, openai},
     health::Attempt,
     observation::AttemptObservation,
@@ -20,14 +20,15 @@ impl Runtime {
         response: reqwest::Response,
         provider: &Driver,
         endpoint: &Endpoint,
-        request: &Request,
+        request: &super::Input,
         health: &mut Option<Attempt>,
         attempt: &mut Option<AttemptObservation>,
     ) -> Result<HttpResponse<Body>, Failure> {
         let streaming = request.is_streaming();
         let public_model = request.model().to_owned();
         let workload = endpoint.workload;
-        let include_usage = matches!(request, Request::Chat(chat) if chat.openai.stream_options.as_ref().is_some_and(|options| options.include_usage == Some(true)));
+        let include_usage = request.include_usage();
+        let native = matches!(request, super::Input::Native(_)) && provider.native_chat;
         if streaming {
             let is_sse = response
                 .headers()
@@ -45,11 +46,14 @@ impl Runtime {
                 response,
                 provider.format,
                 endpoint.format,
-                public_model,
+                public_model.clone(),
                 self.options.max_frame_bytes,
                 include_usage,
                 attempt.take(),
             );
+            if native {
+                state = state.with_native(public_model, include_usage);
+            }
             // Validate one complete frame before handing the response to HTTP. This is not a flush acknowledgement.
             let first = state.next_frame().await?.ok_or_else(Failure::upstream)?;
             let health = health.take();
@@ -93,6 +97,18 @@ impl Runtime {
             bytes.extend_from_slice(&chunk);
         }
         let payload: Value = serde_json::from_slice(&bytes).map_err(|_| Failure::upstream())?;
+        if native {
+            let (payload, usage) = super::native::response(payload, &public_model, false)?;
+            if let Some(attempt) = attempt.as_mut()
+                && let Some(usage) = usage.as_ref()
+            {
+                attempt.observe(usage).map_err(|_| Failure::upstream())?;
+            }
+            if let Some(mut attempt) = attempt.take() {
+                attempt.complete();
+            }
+            return Ok(json_response(StatusCode::OK, payload));
+        }
         let payload = match workload {
             Workload::Chat => {
                 let mut response = match provider.format {

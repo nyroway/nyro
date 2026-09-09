@@ -23,7 +23,7 @@ curl http://127.0.0.1:19530/v1/chat/completions \
   -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. Unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. Model names are public aliases: Nyro replaces them with the selected backend's `upstream_model` on the upstream request and restores the public name in supported responses.
+The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. By default, unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. The opt-in OpenAI Chat native mode below preserves vendor JSON fields on matching endpoints. Model names are public aliases: Nyro replaces them with the selected backend's `upstream_model` on the upstream request and restores the public name in supported responses.
 
 ## List available models
 
@@ -71,7 +71,7 @@ Reload logs exclude configuration contents, file paths, fingerprints and detaile
 
 ## Configuration
 
-All structures reject unknown fields. `kind` is required and accepts `openai`, `anthropic`, or `gemini`. OpenAI providers optionally select `api: chat_completions` (default) or `api: responses`; other kinds reject the `api` field. Provider URLs must use HTTP or HTTPS, have a host, and contain no user information, query, or fragment. Nyro appends the native endpoint to the configured base path. Upstream requests use only the provider's optional `api_key`; caller credentials are not forwarded. Redirects, environment-configured HTTP proxies, and Reqwest automatic protocol retries are disabled for upstream calls; the LLM runtime owns the retry budget.
+All configuration structures reject unknown fields. `kind` is required and accepts `openai`, `anthropic`, or `gemini`. OpenAI providers optionally select `api: chat_completions` (default) or `api: responses`; other kinds reject the `api` field. Provider URLs must use HTTP or HTTPS, have a host, and contain no user information, query, or fragment. Nyro appends the native endpoint to the configured base path. Upstream requests use only the provider's optional `api_key`; caller credentials are not forwarded. Redirects, environment-configured HTTP proxies, and Reqwest automatic protocol retries are disabled for upstream calls; the LLM runtime owns the retry budget.
 
 | Provider kind | Example base URL | Appended endpoint | Upstream credential |
 |---|---|---|---|
@@ -112,7 +112,7 @@ chat-default:
   subjects: [local-client]
 ```
 
-Authentication, authorization, and shared admission apply once to the public model. Nyro then prepares each enabled backend locally with its own protocol codec, excludes backends that cannot represent the request, and selects from the lowest available `priority`, randomly in proportion to weight within that priority. The weights apply to the eligible subset; they are not per-batch traffic guarantees. Preparation sends no network requests. If none can represent the request, the response is `400` and no upstream is called. For example, without a token limit an Anthropic backend is ineligible while a compatible OpenAI backend can still be selected. Preparation cannot determine actual provider availability or whether its eventual response is convertible.
+Authentication, authorization, and shared admission apply once to the public model. Nyro then prepares each enabled backend locally using its strict codec or the native mode below, excludes backends that cannot represent the request, and selects from the lowest available `priority`, randomly in proportion to weight within that priority. The weights apply to the eligible subset; they are not per-batch traffic guarantees. Preparation sends no network requests. If none can represent the request, the response is `400` and no upstream is called. For example, without a token limit an Anthropic backend is ineligible while a compatible OpenAI backend can still be selected. Preparation cannot determine actual provider availability or whether its eventual response is convertible.
 
 By default, each invocation makes one upstream attempt. Setting `max_attempts` above `1` enables failover to another eligible backend after a connection-establishment failure or an upstream HTTP `429`, `500`, `502`, `503`, `504`, or `529`. Remaining backends at the same priority are tried before larger priorities. Skipped incompatible, disabled, or unhealthy backends do not consume the budget. There is no backoff or separate attempt timeout: all attempts share one whole-request deadline and concurrency permit. A slow attempt can exhaust that deadline before failover is possible. Cancellation or dropping the request/body stops owned work.
 
@@ -133,7 +133,7 @@ chat-failover:
 
 With `health` enabled, observed network errors, the transient statuses above, and invalid upstream responses count toward the failure threshold. A fully validated response resets the counter; for SSE this requires protocol completion, not headers or the first frame. Other statuses, client cancellation, body drop, and the overall deadline are neutral. After the threshold is reached, the backend is skipped for the cooldown. The first eligible request afterward claims a single recovery probe; concurrent requests use other available backends or receive `503`. A successful probe restores service; a failed probe starts another cooldown. A cancelled/dropped probe releases its claim without declaring recovery. If all compatible backends are blocked before an attempt, the response is `503`; after an attempted failure, the last sanitized upstream error is returned.
 
-Health is scoped to a public model and backend identity. The root composition shares it across generations for unchanged provider URL/API/credentials, upstream model, and health policy; weight or priority changes retain it. A changed binding gets fresh health state. Retired bindings are released after their generations and requests drop. There is no background probe or persistence across process restarts.
+Health is scoped to a public model and backend identity. The root composition shares it across generations for unchanged provider URL/API/credentials/native mode, upstream model, and health policy; weight or priority changes retain it. A changed binding gets fresh health state. Retired bindings are released after their generations and requests drop. There is no background probe or persistence across process restarts.
 
 Local routing regressions: `cargo test -p nyro-llm --test routing_runtime --test failover_runtime`.
 
@@ -221,9 +221,34 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 
 An alias selects the configured upstream independently of the client protocol. An Anthropic backend is eligible only with an explicit token limit (`max_tokens`, or a representable equivalent); Nyro does not invent one. Native clients routed to an OpenAI stream request upstream usage automatically. OpenAI Chat Completions clients receive usage only when `stream_options.include_usage` is true.
 
-This is an experimental text/function Chat subset. New native codecs reject image/audio/video, thinking/signature blocks, unrepresentable content ordering, multiple candidates, and unsupported vendor options or diagnostics. Examples include Anthropic caching/usage details and matched stop-sequence responses; Gemini safety settings, safety ratings, grounding/citations, prompt feedback and structured-output settings; and OpenAI response fingerprint/service-tier/logprob metadata when it cannot be represented by a native output. Supported fields in one protocol are not automatically representable in another: unsupported requests fail before dispatch; unsupported upstream responses fail with `502` or a terminated SSE stream. Native Embedding APIs and full SDK/vendor feature parity remain future work.
+The strict conversion path is an experimental text/function Chat subset. Its codecs reject image/audio/video, thinking/signature blocks, unrepresentable content ordering, multiple candidates, and unsupported vendor options or diagnostics. Examples include Anthropic caching/usage details and matched stop-sequence responses; Gemini safety settings, safety ratings, grounding/citations, prompt feedback and structured-output settings; and OpenAI response fingerprint/service-tier/logprob metadata when it cannot be represented by a native output. Supported fields in one protocol are not automatically representable in another: unsupported requests fail before dispatch; unsupported upstream responses fail with `502` or a terminated SSE stream. Native Embedding APIs and full SDK/vendor feature parity remain future work.
 
 Protocol reference: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini generateContent](https://ai.google.dev/api/generate-content). Local matrix regression: `cargo test -p nyro-llm --test protocol_matrix`.
+
+## Opt-in OpenAI Chat native compatibility
+
+Set `native_chat: true` on an OpenAI Chat provider to preserve vendor JSON fields between `POST /v1/chat/completions` and an OpenAI Chat upstream:
+
+```yaml
+llm:
+  providers:
+    example:
+      kind: openai
+      api: chat_completions
+      native_chat: true
+      base_url: https://api.example.com/v1
+      api_key: replace-with-provider-secret
+```
+
+This provider fragment extends your existing configuration. The default is `false`; `true` is rejected for Anthropic, Gemini or `api: responses`. Other ingress APIs and Embedding continue through strict codecs even when using this provider.
+
+Nyro preserves request JSON, non-streaming response JSON and SSE data JSON, including nested reasoning/tool history, vendor options and usage details. It rewrites the top-level model to the upstream model on requests and the public alias on responses/chunks. For streams it forces upstream `stream_options.include_usage: true`, preserving other options; downstream usage is included only when requested. When usage is hidden, usage-only chunks are omitted and accounting still observes them.
+
+Native mode validates the routing/control envelope (model, message roles, stream controls), response/chunk envelope, numeric usage counters and bounded SSE framing with an explicit `[DONE]`. It delegates vendor field semantics to the selected upstream. It is JSON field preservation, not byte-for-byte forwarding: serialization and SSE framing may change, comments/IDs/retry fields are discarded, event names must be absent, empty or `message`, and arbitrary headers are not forwarded. Existing authentication, authorization, admission, quota settlement, retry limits, deadlines and cleanup remain mandatory. Failed upstream responses remain sanitized. Changing native mode changes the configuration fingerprint and resets the affected health binding.
+
+For mixed backend pools, a native request can use a strict or different-protocol backend only if the **original** request passes the strict OpenAI codec and the destination can represent it. Nyro never strips extension fields to make failover eligible. Native mode does not promise cross-protocol reasoning/media conversion, complete SDK sessions, or Anthropic/Gemini/Responses native fidelity.
+
+Local recorded regression: `python3 tests/proxy_native_replay.py` after `cargo build -p nyro`. It compares complete parsed request/response sequences for eight OpenAI Chat recordings from DeepSeek and Zhipu AI, and classifies all sixteen OpenAI/Anthropic recordings under the default strict mode. These historical fixtures are not live vendor certification.
 
 ## Responses subset
 

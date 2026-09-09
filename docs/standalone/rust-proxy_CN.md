@@ -23,7 +23,7 @@ curl http://127.0.0.1:19530/v1/chat/completions \
   -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在已支持的响应中恢复公开模型名。
+当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。默认情况下，未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。下文的 OpenAI Chat 原生模式可显式开启，在匹配的端点之间保留厂商 JSON 字段。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在已支持的响应中恢复公开模型名。
 
 ## 查询可见模型
 
@@ -112,7 +112,7 @@ chat-default:
   subjects: [local-client]
 ```
 
-认证、授权和共享准入针对公开模型执行一次。随后 Nyro 使用各 backend 对应的 codec 在本地准备请求，排除无法表达当前请求的项，从当前可用的最小 `priority` 中按权重随机选择一个。权重作用于可用候选集合，不保证每一批请求都严格按比例分配。准备阶段不发送网络请求；没有可表达请求的 backend 时返回 `400`。例如请求未提供 token 上限时，Anthropic backend 不参与选择，而兼容的 OpenAI backend 仍可参与。准备阶段不能确定 Provider 的实际可用性，也不能保证其后续响应可转换。
+认证、授权和共享准入针对公开模型执行一次。随后 Nyro 使用各 backend 对应的严格 codec 或下文的原生模式在本地准备请求，排除无法表达当前请求的项，从当前可用的最小 `priority` 中按权重随机选择一个。权重作用于可用候选集合，不保证每一批请求都严格按比例分配。准备阶段不发送网络请求；没有可表达请求的 backend 时返回 `400`。例如请求未提供 token 上限时，Anthropic backend 不参与选择，而兼容的 OpenAI backend 仍可参与。准备阶段不能确定 Provider 的实际可用性，也不能保证其后续响应可转换。
 
 默认每次调用只尝试一个上游。将 `max_attempts` 设置为大于 `1` 后，连接建立失败或上游返回 HTTP `429`、`500`、`502`、`503`、`504`、`529` 时，可以切换到其他候选。先尝试同一优先级的剩余 backend，再考虑更大的优先级。跳过不兼容、禁用或不健康的 backend 不消耗预算。当前没有退避和独立的单次尝试超时；所有尝试共享整个请求期限与同一个并发许可。单个慢请求可能耗尽期限而无法故障转移。取消或丢弃请求／响应体会停止其持有的工作。
 
@@ -133,7 +133,7 @@ chat-failover:
 
 开启 `health` 后，实际观察到的网络错误、上述临时错误状态和无效上游响应会计入失败阈值。完整校验成功的响应清零计数；SSE 必须完成协议终止校验，响应头和首帧不足以证明恢复。其他状态、客户端取消、响应体丢弃和整个请求期限耗尽均不改变成功／失败计数。达到阈值后跳过该 backend，冷却结束后的首个合格请求独占一次恢复探测；并发请求使用其他可用 backend，否则返回 `503`。探测成功恢复，失败则重新冷却；取消或丢弃探测只释放探测资格，不认定恢复。首次尝试前全部兼容 backend 都被阻止时返回 `503`；已发生尝试失败时返回最后一个脱敏上游错误。
 
-健康状态以公开模型和 backend 身份为作用域。根组合层在代际之间共享状态：Provider URL/API/凭证、上游模型与健康策略不变时复用，调整权重或优先级不会清零；这些绑定发生变化则使用新状态。旧代际及请求释放后，旧绑定可回收。没有后台探测，也不跨进程重启持久化。
+健康状态以公开模型和 backend 身份为作用域。根组合层在代际之间共享状态：Provider URL/API/凭证/原生模式、上游模型与健康策略不变时复用，调整权重或优先级不会清零；这些绑定发生变化则使用新状态。旧代际及请求释放后，旧绑定可回收。没有后台探测，也不跨进程重启持久化。
 
 本地路由回归：`cargo test -p nyro-llm --test routing_runtime --test failover_runtime`。
 
@@ -221,9 +221,34 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 
 模型别名选择上游，与客户端协议独立。Anthropic backend 只有在请求显式提供 token 上限时才参与选择（`max_tokens` 或能转换的等价字段），Nyro 不自行设置默认值。原生客户端使用 OpenAI 流式上游时会自动请求用量；OpenAI Chat Completions 客户端只有设置 `stream_options.include_usage: true` 才接收用量。
 
-这是实验性的文本／函数 Chat 子集。新原生 codec 拒绝图片、音频、视频、thinking／签名块、无法保留的内容顺序、多候选以及不支持的厂商选项或诊断字段。例如 Anthropic 缓存／用量扩展和命中 stop sequence 的响应；Gemini 安全设置、safety ratings、grounding／引用、prompt feedback 和结构化输出设置；以及无法在原生输出中表示的 OpenAI fingerprint／service-tier／logprob 元数据。某协议已支持的字段不一定能转换到另一协议：不可转换的请求在发往上游前失败；不可转换的上游响应返回 `502` 或终止 SSE 流。原生 Embedding API 和完整 SDK／厂商功能对齐属于后续工作。
+严格转换路径是实验性的文本／函数 Chat 子集，其 codec 拒绝图片、音频、视频、thinking／签名块、无法保留的内容顺序、多候选以及不支持的厂商选项或诊断字段。例如 Anthropic 缓存／用量扩展和命中 stop sequence 的响应；Gemini 安全设置、safety ratings、grounding／引用、prompt feedback 和结构化输出设置；以及无法在原生输出中表示的 OpenAI fingerprint／service-tier／logprob 元数据。某协议已支持的字段不一定能转换到另一协议：不可转换的请求在发往上游前失败；不可转换的上游响应返回 `502` 或终止 SSE 流。原生 Embedding API 和完整 SDK／厂商功能对齐属于后续工作。
 
 协议参考：[Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)、[Gemini generateContent](https://ai.google.dev/api/generate-content)。本地矩阵回归：`cargo test -p nyro-llm --test protocol_matrix`。
+
+## 显式开启 OpenAI Chat 原生兼容
+
+为 OpenAI Chat Provider 设置 `native_chat: true`，可以在 `POST /v1/chat/completions` 与 OpenAI Chat 上游之间保留厂商 JSON 字段：
+
+```yaml
+llm:
+  providers:
+    example:
+      kind: openai
+      api: chat_completions
+      native_chat: true
+      base_url: https://api.example.com/v1
+      api_key: replace-with-provider-secret
+```
+
+这段 Provider 配置应合入现有配置。默认值为 `false`；Anthropic、Gemini 和 `api: responses` 拒绝设置为 `true`。其他入口 API 和 Embedding 即使使用此 Provider，也继续经过严格 codec。
+
+Nyro 保留请求 JSON、非流式响应 JSON 和 SSE data JSON，包括嵌套的推理／工具历史、厂商选项和 usage 详情。请求顶层 model 替换为上游模型，响应／chunk 则恢复公开别名。流式请求强制上游 `stream_options.include_usage: true`，其他选项保持；下游只在客户端要求时输出 usage。隐藏 usage 时省略纯 usage chunk，计量仍然执行。
+
+原生模式校验路由／控制结构（model、消息 role、流式选项）、响应／chunk 结构、数字用量以及有界 SSE 帧，并要求显式 `[DONE]` 终止；厂商字段的语义由所选上游处理。保真粒度是 JSON 字段：序列化和 SSE 帧格式可能变化，注释／ID／retry 字段会丢弃，event 名只接受省略、空值或 `message`，也不会任意转发 Header。认证、授权、准入、quota 结算、重试上限、期限及清理仍强制执行，上游失败响应继续脱敏。切换原生模式会改变配置指纹，并重置受影响的健康状态绑定。
+
+混合 backend 池中，原生请求只有在**原始请求**通过严格 OpenAI codec 且目标能够表达时，才允许使用严格模式或其他协议 backend。不会通过删除扩展字段让故障转移变得可用。本能力不承诺跨协议推理／媒体转换、完整 SDK 会话，也不包含 Anthropic／Gemini／Responses 原生保真。
+
+本地录制回归：构建 `cargo build -p nyro` 后运行 `python3 tests/proxy_native_replay.py`。它完整比较 DeepSeek、Zhipu AI 的 8 份 OpenAI Chat 录制请求／响应序列，并分类默认严格模式下全部 16 份 OpenAI／Anthropic 录制数据。这些历史样本不等于真实厂商在线认证。
 
 ## Responses 子集
 

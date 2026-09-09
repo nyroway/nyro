@@ -2,7 +2,28 @@ use nyro_llm::{
     Workload,
     config::{Backend, Config, Model, Provider, ProviderKind},
 };
+use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+
+#[test]
+fn native_chat_requires_explicit_openai_chat_capability() {
+    for (kind, api, valid) in [
+        ("openai", None, true),
+        ("openai", Some("chat_completions"), true),
+        ("openai", Some("responses"), false),
+        ("anthropic", None, false),
+        ("gemini", None, false),
+    ] {
+        let mut value = json!({"providers":{"p":{"kind":kind,"base_url":"http://localhost/v1","native_chat":true}},
+            "models":{"m":{"provider":"p","upstream_model":"upstream","workloads":["chat"],"allow_anonymous":true}}});
+        if let Some(api) = api {
+            value["providers"]["p"]["api"] = json!(api);
+        }
+        let config: Config =
+            serde_json::from_value(value).expect("native_chat is a supported field");
+        assert_eq!(config.validate().is_ok(), valid, "{kind} {api:?}");
+    }
+}
 
 #[test]
 fn quota_policy_omission_disables_it_and_explicit_bounds_roundtrip() {
@@ -64,6 +85,7 @@ fn valid_config() -> Config {
         providers: BTreeMap::from([(
             "openai".into(),
             Provider {
+                native_chat: false,
                 kind: ProviderKind::Openai,
                 api: None,
                 base_url: "https://api.example.test/v1".into(),
