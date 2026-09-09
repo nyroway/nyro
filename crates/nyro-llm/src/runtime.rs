@@ -270,6 +270,7 @@ impl Runtime {
             let encoded = (|| {
                 if let Input::Native(request) = request
                     && provider.native_chat
+                    && request.format == provider.format
                 {
                     return Some(request.encode(&backend.upstream_model));
                 }
@@ -393,18 +394,23 @@ impl Runtime {
         let value: Value =
             serde_json::from_slice(&input).map_err(|_| Failure::invalid("Invalid JSON request"))?;
         let native = workload == Workload::Chat
-            && endpoint.format == ChatFormat::OpenAiChat
+            && matches!(
+                endpoint.format,
+                ChatFormat::OpenAiChat | ChatFormat::Anthropic
+            )
             && value
                 .get("model")
                 .and_then(Value::as_str)
                 .and_then(|id| self.models.get(id))
                 .is_some_and(|model| {
                     model.backends.iter().any(|backend| {
-                        backend.weight > 0 && self.providers[&backend.provider].native_chat
+                        backend.weight > 0
+                            && self.providers[&backend.provider].native_chat
+                            && self.providers[&backend.provider].format == endpoint.format
                     })
                 });
         let request = if native {
-            Input::Native(native::NativeRequest::parse(value)?)
+            Input::Native(native::NativeRequest::parse(value, endpoint.format)?)
         } else {
             Input::Typed(endpoint.decode(value)?)
         };

@@ -6,13 +6,14 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
-fn native_chat_requires_explicit_openai_chat_capability() {
+fn native_chat_requires_supported_matching_protocol_capability() {
     for (kind, api, valid) in [
         ("openai", None, true),
         ("openai", Some("chat_completions"), true),
         ("openai", Some("responses"), false),
-        ("anthropic", None, false),
+        ("anthropic", None, true),
         ("gemini", None, false),
+        ("anthropic", Some("chat_completions"), false),
     ] {
         let mut value = json!({"providers":{"p":{"kind":kind,"base_url":"http://localhost/v1","native_chat":true}},
             "models":{"m":{"provider":"p","upstream_model":"upstream","workloads":["chat"],"allow_anonymous":true}}});
