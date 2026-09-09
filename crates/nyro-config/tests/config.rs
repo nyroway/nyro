@@ -17,6 +17,7 @@ fn valid_config() -> Config {
             providers: BTreeMap::from([(
                 "openai".into(),
                 Provider {
+                    native_chat: false,
                     kind: ProviderKind::Openai,
                     api: None,
                     base_url: "https://api.example.test/v1".into(),
@@ -240,6 +241,24 @@ fn fingerprint_is_canonical_and_excludes_listen_address() {
         first.fingerprint().unwrap(),
         equivalent.fingerprint().unwrap()
     );
+}
+
+#[test]
+fn native_chat_changes_fingerprint_but_explicit_false_does_not() {
+    let config = valid_config();
+    let mut value = serde_json::to_value(&config).unwrap();
+    value["llm"]["providers"]["openai"]
+        .as_object_mut()
+        .unwrap()
+        .remove("native_chat");
+    let omitted = serde_json::from_value::<Config>(value).unwrap();
+    assert_eq!(
+        config.fingerprint().unwrap(),
+        omitted.fingerprint().unwrap()
+    );
+    let mut native = config.clone();
+    native.llm.providers.get_mut("openai").unwrap().native_chat = true;
+    assert_ne!(config.fingerprint().unwrap(), native.fingerprint().unwrap());
 }
 
 #[test]

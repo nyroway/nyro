@@ -27,6 +27,8 @@ use crate::{
 };
 
 mod endpoint;
+mod native;
+use native::Input;
 mod response;
 mod stream;
 
@@ -256,7 +258,7 @@ impl Runtime {
         &'a self,
         model_id: &str,
         model: &'a config::Model,
-        request: &Request,
+        request: &Input,
         downstream: ChatFormat,
     ) -> Result<Vec<Prepared<'a>>, Failure> {
         let mut eligible = Vec::new();
@@ -265,29 +267,36 @@ impl Runtime {
                 .providers
                 .get(&backend.provider)
                 .ok_or_else(Failure::upstream)?;
-            let mut request = request.clone();
-            request.set_model(backend.upstream_model.clone());
-            if provider.format == ChatFormat::OpenAiChat
-                && let Request::Chat(chat) = &mut request
-            {
-                if downstream == ChatFormat::OpenAiResponses {
-                    chat.openai.store = Some(false);
+            let encoded = (|| {
+                if let Input::Native(request) = request
+                    && provider.native_chat
+                {
+                    return Some(request.encode(&backend.upstream_model));
                 }
-                if chat.stream == Some(true) {
-                    chat.openai
-                        .stream_options
-                        .get_or_insert(nyro_protocol::openai::chat::StreamOptions {
-                            include_usage: None,
-                            include_obfuscation: None,
-                        })
-                        .include_usage = Some(true);
+                let mut request = request.typed()?;
+                request.set_model(backend.upstream_model.clone());
+                if provider.format == ChatFormat::OpenAiChat
+                    && let Request::Chat(chat) = &mut request
+                {
+                    if downstream == ChatFormat::OpenAiResponses {
+                        chat.openai.store = Some(false);
+                    }
+                    if chat.stream == Some(true) {
+                        chat.openai
+                            .stream_options
+                            .get_or_insert(nyro_protocol::openai::chat::StreamOptions {
+                                include_usage: None,
+                                include_obfuscation: None,
+                            })
+                            .include_usage = Some(true);
+                    }
                 }
-            }
-            if let Ok(encoded) = provider.encode(&request) {
+                provider.encode(&request).ok()
+            })();
+            if let Some(encoded) = encoded {
                 eligible.push(Prepared {
                     backend,
                     provider,
-                    request,
                     encoded,
                     health: self
                         .health
@@ -383,7 +392,22 @@ impl Runtime {
         }
         let value: Value =
             serde_json::from_slice(&input).map_err(|_| Failure::invalid("Invalid JSON request"))?;
-        let request = endpoint.decode(value)?;
+        let native = workload == Workload::Chat
+            && endpoint.format == ChatFormat::OpenAiChat
+            && value
+                .get("model")
+                .and_then(Value::as_str)
+                .and_then(|id| self.models.get(id))
+                .is_some_and(|model| {
+                    model.backends.iter().any(|backend| {
+                        backend.weight > 0 && self.providers[&backend.provider].native_chat
+                    })
+                });
+        let request = if native {
+            Input::Native(native::NativeRequest::parse(value)?)
+        } else {
+            Input::Typed(endpoint.decode(value)?)
+        };
         let public_model = request.model().to_owned();
         exchange.observation.streaming = request.is_streaming();
         // Resolve -> Authenticate -> Authorize -> Admit are mandatory ordinary runtime steps.
@@ -494,7 +518,12 @@ impl Runtime {
             ));
             let response = match selected
                 .provider
-                .send(&selected.request, &selected.encoded)
+                .send(
+                    workload,
+                    &selected.backend.upstream_model,
+                    request.is_streaming(),
+                    &selected.encoded,
+                )
                 .await
             {
                 Ok(response) => response,
@@ -582,7 +611,6 @@ impl Runtime {
 struct Prepared<'a> {
     backend: &'a config::Backend,
     provider: &'a Driver,
-    request: Request,
     encoded: Value,
     health: Option<&'a Arc<BackendHealth>>,
 }

@@ -21,6 +21,7 @@ struct HealthKey {
     provider: String,
     kind: ProviderKind,
     api: OpenAiApi,
+    native_chat: bool,
     base_url: String,
     api_key: Option<String>,
     upstream_model: String,
@@ -44,6 +45,7 @@ impl HealthRegistry {
             provider: backend.provider.clone(),
             kind: provider.kind,
             api: provider.api.unwrap_or_default(),
+            native_chat: provider.native_chat,
             base_url: base.into(),
             api_key: provider.api_key.clone(),
             upstream_model: backend.upstream_model.clone(),
@@ -174,6 +176,7 @@ mod tests {
                 priority: 0,
             },
             Provider {
+                native_chat: false,
                 kind: ProviderKind::Openai,
                 api: None,
                 base_url: "https://example.test/v1".into(),
@@ -309,7 +312,7 @@ mod tests {
         let reused = registry.backend("chat", &weighted, &equivalent, &policy);
         assert!(Arc::ptr_eq(&first, &reused));
         assert!(!reused.available_at(now));
-        for change in 0..9 {
+        for change in 0..10 {
             let mut backend = backend.clone();
             let mut provider = provider.clone();
             let mut policy = policy.clone();
@@ -324,6 +327,7 @@ mod tests {
                 6 => provider.base_url = "https://other.test/v1".into(),
                 7 => provider.api_key = Some("changed-secret".into()),
                 8 => policy.failure_threshold = 1,
+                9 => provider.native_chat = true,
                 _ => unreachable!(),
             }
             let changed = registry.backend(model, &backend, &provider, &policy);
