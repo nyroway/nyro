@@ -4,7 +4,7 @@
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级／加权选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、累计 token 额度、请求／尝试关联用量观测和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级／加权选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、累计 token 额度、请求／尝试关联用量观测、Unix SIGHUP 文件配置重载和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
 
 ## 1. 产品定位与范围
 
@@ -381,9 +381,11 @@ SQLite / Postgres → 控制面业务读取 → publish 构建、校验 ──�
                            进程内交付或控制面配置分发 → 数据面协调器
 ```
 
-standalone 默认启动时读取一次，变更文件后重启生效；本次不引入文件自动监听。控制面通过配置分发路径驱动在线更新。`serve` 内置的数据面也消费同样的不可变快照，不在每个模型请求中直接读取管理数据库。
+standalone 在启动时读取文件，Unix 上变更后可显式发送 `SIGHUP` 重载，其他平台需重启；不引入文件自动监听。目标控制面通过配置分发路径驱动在线更新。`serve` 内置的数据面也将消费同样的不可变快照，不在每个模型请求中直接读取管理数据库。
 
 快照保存生效配置，不保存正在变化的许可、计数器、连接和请求状态。有效配置的确定性指纹用于跳过重复更新，不承诺某个序列化格式、hash 算法或 PATCH API。
+
+当前根代理通过 Unix `SIGHUP` 显式读取原文件路径，串行校验并比较有效指纹。监听地址和共享并发容量的不可变性检查先于去重，等价配置不构建候选；有效变更复用根程序持有的共享资源，再交由内核激活。旧请求保持原代际直至响应体清理；文件读取、候选构建或激活失败不替换当前代际。重载等待者持有独立取消 guard，退出或等待被丢弃时显式取消内核拥有的激活工作，避免只丢弃 Future 而遗留配置发布。该入口不提供自动文件监听、Windows 重载或管理 API，rate/quota 规则变更的既有重启约束继续适用。
 
 ### 6.2 候选构建与发布
 
