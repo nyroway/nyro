@@ -74,26 +74,7 @@ impl Endpoint {
                 "POST is required",
             ));
         }
-        // Parse percent-encoded query keys too; credentials are accepted only in headers.
-        if let Some(query) = uri.query() {
-            let url = reqwest::Url::parse(&format!("http://localhost/?{query}"))
-                .map_err(|_| Failure::invalid("Invalid query"))?;
-            let mut alt = false;
-            for (key, value) in url.query_pairs() {
-                if key == "key" || key == "api_key" || key == "access_token" {
-                    return Err(Failure::unauthorized());
-                }
-                if kind != ProviderKind::Gemini
-                    || !streaming
-                    || key != "alt"
-                    || value != "sse"
-                    || alt
-                {
-                    return Err(Failure::invalid("Unsupported query parameter"));
-                }
-                alt = true;
-            }
-        }
+        validate_query(uri, kind, streaming)?;
         Ok(Self {
             kind,
             format: match kind {
@@ -129,37 +110,57 @@ impl Endpoint {
         };
         result.map_err(|_| Failure::invalid("Invalid or unsupported request"))
     }
+}
 
-    pub(super) fn credential<'a>(
-        &self,
-        headers: &'a HeaderMap,
-    ) -> Result<Option<&'a str>, Failure> {
-        let names = ["authorization", "x-api-key", "x-goog-api-key"];
-        let mut supplied = names
-            .into_iter()
-            .flat_map(|name| headers.get_all(name).iter().map(move |value| (name, value)));
-        let Some((name, value)) = supplied.next() else {
-            return Ok(None);
-        };
-        if supplied.next().is_some() {
-            return Err(Failure::unauthorized());
-        }
-        let value = value.to_str().map_err(|_| Failure::unauthorized())?;
-        let value = match name {
-            "authorization" => {
-                let (scheme, secret) = value.split_once(' ').ok_or_else(Failure::unauthorized)?;
-                if !scheme.eq_ignore_ascii_case("bearer") {
-                    return Err(Failure::unauthorized());
-                }
-                secret
-            }
-            "x-api-key" if self.kind == ProviderKind::Anthropic => value,
-            "x-goog-api-key" if self.kind == ProviderKind::Gemini => value,
-            _ => return Err(Failure::unauthorized()),
-        };
-        if value.is_empty() || !value.bytes().all(|b| b.is_ascii_graphic()) {
-            return Err(Failure::unauthorized());
-        }
-        Ok(Some(value))
+pub(super) fn credential(kind: ProviderKind, headers: &HeaderMap) -> Result<Option<&str>, Failure> {
+    let names = ["authorization", "x-api-key", "x-goog-api-key"];
+    let mut supplied = names
+        .into_iter()
+        .flat_map(|name| headers.get_all(name).iter().map(move |value| (name, value)));
+    let Some((name, value)) = supplied.next() else {
+        return Ok(None);
+    };
+    if supplied.next().is_some() {
+        return Err(Failure::unauthorized());
     }
+    let value = value.to_str().map_err(|_| Failure::unauthorized())?;
+    let value = match name {
+        "authorization" => {
+            let (scheme, secret) = value.split_once(' ').ok_or_else(Failure::unauthorized)?;
+            if !scheme.eq_ignore_ascii_case("bearer") {
+                return Err(Failure::unauthorized());
+            }
+            secret
+        }
+        "x-api-key" if kind == ProviderKind::Anthropic => value,
+        "x-goog-api-key" if kind == ProviderKind::Gemini => value,
+        _ => return Err(Failure::unauthorized()),
+    };
+    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(Failure::unauthorized());
+    }
+    Ok(Some(value))
+}
+
+pub(super) fn validate_query(
+    uri: &Uri,
+    kind: ProviderKind,
+    streaming: bool,
+) -> Result<(), Failure> {
+    // Parse percent-encoded query keys too; credentials are accepted only in headers.
+    if let Some(query) = uri.query() {
+        let url = reqwest::Url::parse(&format!("http://localhost/?{query}"))
+            .map_err(|_| Failure::invalid("Invalid query"))?;
+        let mut alt = false;
+        for (key, value) in url.query_pairs() {
+            if key == "key" || key == "api_key" || key == "access_token" {
+                return Err(Failure::unauthorized());
+            }
+            if kind != ProviderKind::Gemini || !streaming || key != "alt" || value != "sse" || alt {
+                return Err(Failure::invalid("Unsupported query parameter"));
+            }
+            alt = true;
+        }
+    }
+    Ok(())
 }

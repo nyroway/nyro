@@ -4,11 +4,11 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
-    http::{Request as HttpRequest, Response as HttpResponse, StatusCode},
+    http::{HeaderMap, Method, Request as HttpRequest, Response as HttpResponse, StatusCode},
 };
 use futures::StreamExt;
 use nyro_limit::{ConcurrencyLimit, Permit};
-use nyro_security::{ApiKeys, Authorizer, Grant};
+use nyro_security::{ApiKeys, Authorizer, Grant, Identity};
 use serde_json::{Value, json};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -304,6 +304,50 @@ impl Runtime {
         Ok(eligible)
     }
 
+    fn authenticate(
+        &self,
+        kind: config::ProviderKind,
+        headers: &HeaderMap,
+    ) -> Result<Option<Identity>, Failure> {
+        endpoint::credential(kind, headers)?
+            .map(|secret| {
+                self.keys
+                    .authenticate(secret)
+                    .map_err(|_| Failure::unauthorized())
+            })
+            .transpose()
+    }
+
+    fn list_models(&self, request: &HttpRequest<Body>) -> Result<HttpResponse<Body>, Failure> {
+        if request.method() != Method::GET {
+            return Err(Failure::new(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "method_not_allowed",
+                "GET is required",
+            ));
+        }
+        endpoint::validate_query(request.uri(), config::ProviderKind::Openai, false)?;
+        let identity = self.authenticate(config::ProviderKind::Openai, request.headers())?;
+        // The generation's ordered model map is the catalog; no upstream discovery or admission.
+        let data: Vec<_> = self
+            .models
+            .iter()
+            .filter(|(id, model)| {
+                model.allow_anonymous
+                    || identity.as_ref().is_some_and(|identity| {
+                        self.authorizer.authorize(identity, "invoke", id).is_ok()
+                    })
+            })
+            .map(|(id, _)| json!({"id": id, "object": "model", "created": 0, "owned_by": "Nyro"}))
+            .collect();
+        let mut response = json_response(StatusCode::OK, json!({"object": "list", "data": data}));
+        // This response depends on credentials and must not survive configuration changes in caches.
+        response
+            .headers_mut()
+            .insert("cache-control", "no-store".parse().expect("static header"));
+        Ok(response)
+    }
+
     async fn execute(
         &self,
         request: HttpRequest<Body>,
@@ -311,6 +355,11 @@ impl Runtime {
         cancellation: &CancellationToken,
         deadline: Instant,
     ) -> Result<HttpResponse<Body>, Failure> {
+        if request.uri().path() == "/v1/models" {
+            exchange.observation.protocol = "openai_models";
+            exchange.observation.workload = "none";
+            return self.list_models(&request);
+        }
         let endpoint = endpoint::Endpoint::parse(request.uri(), request.method())?;
         let workload = endpoint.workload;
         exchange.observation.protocol = observation::protocol(endpoint.format, workload);
@@ -345,12 +394,8 @@ impl Runtime {
         if !model.workloads.contains(&workload) {
             return Err(Failure::invalid("Model does not support this workload"));
         }
-        match endpoint.credential(&parts.headers)? {
-            Some(secret) => {
-                let identity = self
-                    .keys
-                    .authenticate(secret)
-                    .map_err(|_| Failure::unauthorized())?;
+        match self.authenticate(endpoint.kind, &parts.headers)? {
+            Some(identity) => {
                 if !model.allow_anonymous {
                     self.authorizer
                         .authorize(&identity, "invoke", &public_model)

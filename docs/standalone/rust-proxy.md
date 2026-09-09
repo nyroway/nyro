@@ -25,6 +25,21 @@ curl http://127.0.0.1:19530/v1/chat/completions \
 
 The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. Unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. Model names are public aliases: Nyro replaces them with the selected backend's `upstream_model` on the upstream request and restores the public name in supported responses.
 
+## List available models
+
+`GET /v1/models` lists the configured public model aliases visible to the caller, in ascending alias order:
+
+```sh
+curl http://127.0.0.1:19530/v1/models \
+  -H 'Authorization: Bearer replace-with-client-secret'
+```
+
+The response has the OpenAI list shape: `{"object":"list","data":[{"id":"public-alias","object":"model","created":0,"owned_by":"Nyro"}]}`. `created: 0` is a fixed placeholder, not a provider timestamp. Without credentials, only models with `allow_anonymous: true` are listed. A valid Bearer key also sees models granting its subject access; a caller with no visible models receives `200` with an empty `data` array. Invalid, duplicate or conflicting credentials return `401`, even when public models exist. This OpenAI-format endpoint accepts Bearer credentials only, not `x-api-key` or `x-goog-api-key`. Query credentials are rejected; pagination and other query parameters are unsupported. Only `GET` is supported.
+
+The catalog comes from one active runtime generation and contains no upstream model names, provider addresses or secrets. Successful reloads update the list and credentials; failed reloads retain the old catalog. Listing does not contact providers or consume inference concurrency, rate or quota. Models remain discoverable when their inference budgets are exhausted or their backends are unhealthy: visibility is an authorization decision, not an availability promise. Responses use `Cache-Control: no-store`; normal request IDs, deadlines and response-body cleanup still apply. Model discovery emits a request observation with `protocol=openai_models`, `workload=none`, zero attempts and `usage_state=not_attempted`.
+
+Regression: `cargo test -p nyro-llm --test models_runtime` and, after building the root binary, `python3 tests/proxy_reload_smoke.py`.
+
 ## Reload the file
 
 On Unix, send `SIGHUP` to the running **nyro process** after saving a complete configuration. For example, with a source-built binary:
