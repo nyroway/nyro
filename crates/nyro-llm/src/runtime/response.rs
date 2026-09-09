@@ -4,8 +4,8 @@ use crate::{
     Request, Workload,
     codec::{ChatFormat, anthropic, gemini, openai},
     health::Attempt,
+    observation::AttemptObservation,
     provider::Driver,
-    quota::AttemptQuota,
 };
 use axum::{
     body::Body,
@@ -22,7 +22,7 @@ impl Runtime {
         endpoint: &Endpoint,
         request: &Request,
         health: &mut Option<Attempt>,
-        quota: &mut Option<AttemptQuota>,
+        attempt: &mut Option<AttemptObservation>,
     ) -> Result<HttpResponse<Body>, Failure> {
         let streaming = request.is_streaming();
         let public_model = request.model().to_owned();
@@ -48,7 +48,7 @@ impl Runtime {
                 public_model,
                 self.options.max_frame_bytes,
                 include_usage,
-                quota.take(),
+                attempt.take(),
             );
             // Validate one complete frame before handing the response to HTTP. This is not a flush acknowledgement.
             let first = state.next_frame().await?.ok_or_else(Failure::upstream)?;
@@ -81,7 +81,12 @@ impl Runtime {
         let mut input = response.bytes_stream();
         let mut bytes = Vec::new();
         while let Some(chunk) = input.next().await {
-            let chunk = chunk.map_err(|_| Failure::upstream())?;
+            let chunk = chunk.map_err(|_| {
+                if let Some(attempt) = attempt.as_mut() {
+                    attempt.fail("transport_error");
+                }
+                Failure::upstream()
+            })?;
             if chunk.len() > self.options.max_response_bytes.saturating_sub(bytes.len()) {
                 return Err(Failure::upstream());
             }
@@ -97,13 +102,13 @@ impl Runtime {
                     ChatFormat::Gemini => gemini::decode_chat_response(payload),
                 }
                 .map_err(|_| Failure::upstream())?;
-                if let Some(quota) = quota.as_mut()
+                if let Some(attempt) = attempt.as_mut()
                     && let Some(usage) = response.usage.as_ref()
                 {
-                    quota.observe(usage).map_err(|_| Failure::upstream())?;
+                    attempt.observe(usage).map_err(|_| Failure::upstream())?;
                 }
-                if let Some(quota) = quota.take() {
-                    quota.complete();
+                if let Some(mut attempt) = attempt.take() {
+                    attempt.complete();
                 }
                 response.model = public_model;
                 match endpoint.format {
@@ -118,13 +123,13 @@ impl Runtime {
             Workload::Embedding => {
                 let mut response =
                     openai::decode_embedding_response(payload).map_err(|_| Failure::upstream())?;
-                if let Some(quota) = quota.as_mut() {
-                    quota
+                if let Some(attempt) = attempt.as_mut() {
+                    attempt
                         .observe_embedding(&response.usage)
                         .map_err(|_| Failure::upstream())?;
                 }
-                if let Some(quota) = quota.take() {
-                    quota.complete();
+                if let Some(mut attempt) = attempt.take() {
+                    attempt.complete();
                 }
                 response.model = public_model;
                 openai::encode_embedding_response(&response)

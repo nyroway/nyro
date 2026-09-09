@@ -4,7 +4,7 @@
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级／加权选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、累计 token 额度和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级／加权选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、累计 token 额度、请求／尝试关联用量观测和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
 
 ## 1. 产品定位与范围
 
@@ -518,6 +518,8 @@ Chat 流使用自己的事件类型，不要求所有交互实现流接口。当
 根程序通过 `nyro_llm::runtime::SharedResources` 显式共享健康、rate 和 quota 注册表。quota 已消耗及在途账本在模型移除／加回后继续保留；有活跃绑定或已消费余额时修改规则会拒绝候选构建，避免配置变更清零。进程重启会重置进程内状态。quota 超限返回原生协议 `429`，不带 `Retry-After` 并立即释放并发许可；其之前的 rate 准入不退款。计量、协议映射和资源组合均未进入 `nyro-kernel`。
 
 观测初始化与资源装配由根程序协调。共享观测实现不认识模型数据库表；控制面的历史日志和统计读取归其业务存储。配置代际租约与限流并发许可是不同概念，不能复用一个计数器代替二者。
+
+当前 LLM 观测语义集中在 `nyro-llm/observation`，复用现有 `tracing`，尚未建立独立 `nyro-telemetry` crate。每个运行时请求生成内部 ID，通过响应头与每次上游尝试的序号关联。上游协议完成或尝试终止时输出一次尝试记录，请求在响应体完成、丢弃或处理 future 取消时输出一次汇总；请求结果与响应体交付结果分开记录，HTTP 错误不会因错误体读完而被视为成功。有效累计用量与 quota 实际扣减分开记录，关闭 quota 也收集用量，缺失／部分／无效用量不冒充完整用量。汇总仅保留固定数量计数器，不累积逐帧事件或响应正文。当前为结构化日志，不提供持久化事件库、查询 API、指标导出或分布式追踪；后续共享设施和控制面可以消费这些语义，内核不参与业务观测。
 
 ## 10. 存储与数据库访问
 

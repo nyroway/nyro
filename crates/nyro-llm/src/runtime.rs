@@ -14,11 +14,12 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    Request,
+    Request, Workload,
     codec::ChatFormat,
     config,
     health::{BackendHealth, HealthRegistry},
     ingress::body::{self, Outcome},
+    observation::{self, RequestObservation},
     provider::Driver,
     quota::{BoundQuota, QuotaRegistry},
     rate::{BoundRate, RateRegistry},
@@ -212,13 +213,8 @@ impl Runtime {
         let started = Instant::now();
         let deadline = started + self.options.request_timeout;
         let mut exchange = Exchange {
-            started,
-            model: None,
-            backend: None,
-            attempts: 0,
+            observation: RequestObservation::new(started, deadline, cancellation.clone()),
             permit: None,
-            status: None,
-            outcome: Outcome::Cancelled,
         };
         let result = tokio::select! {
             biased;
@@ -226,15 +222,26 @@ impl Runtime {
             _ = tokio::time::sleep_until(deadline) => Err(Failure::timeout()),
             result = self.execute(request, &mut exchange, &cancellation, deadline) => result,
         };
-        let (response, body_deadline) = match result {
+        let (mut response, body_deadline) = match result {
             Ok(response) => (response, deadline),
             // Error delivery is a separate, bounded terminal action, so a 504 body can be read.
-            Err(failure) => (
-                failure.response(format),
-                Instant::now() + Duration::from_secs(5),
-            ),
+            Err(failure) => {
+                exchange.observation.error_code = failure.code;
+                (
+                    failure.response(format),
+                    Instant::now() + Duration::from_secs(5),
+                )
+            }
         };
-        exchange.status = Some(response.status());
+        exchange.observation.status = response.status().as_u16();
+        response.headers_mut().insert(
+            "x-request-id",
+            exchange
+                .observation
+                .id
+                .parse()
+                .expect("generated request ID"),
+        );
         let (parts, response_body) = response.into_parts();
         HttpResponse::from_parts(
             parts,
@@ -266,9 +273,7 @@ impl Runtime {
                 if downstream == ChatFormat::OpenAiResponses {
                     chat.openai.store = Some(false);
                 }
-                if chat.stream == Some(true)
-                    && (downstream != ChatFormat::OpenAiChat || model.quota.is_some())
-                {
+                if chat.stream == Some(true) {
                     chat.openai
                         .stream_options
                         .get_or_insert(nyro_protocol::openai::chat::StreamOptions {
@@ -308,6 +313,11 @@ impl Runtime {
     ) -> Result<HttpResponse<Body>, Failure> {
         let endpoint = endpoint::Endpoint::parse(request.uri(), request.method())?;
         let workload = endpoint.workload;
+        exchange.observation.protocol = observation::protocol(endpoint.format, workload);
+        exchange.observation.workload = match workload {
+            Workload::Chat => "chat",
+            Workload::Embedding => "embedding",
+        };
         let (parts, body) = request.into_parts();
         let mut input = Vec::new();
         let mut data = body.into_data_stream();
@@ -326,11 +336,12 @@ impl Runtime {
             serde_json::from_slice(&input).map_err(|_| Failure::invalid("Invalid JSON request"))?;
         let request = endpoint.decode(value)?;
         let public_model = request.model().to_owned();
-        exchange.model = Some(public_model.clone());
+        exchange.observation.streaming = request.is_streaming();
         // Resolve -> Authenticate -> Authorize -> Admit are mandatory ordinary runtime steps.
         let model = self.models.get(&public_model).ok_or_else(|| {
             Failure::new(StatusCode::NOT_FOUND, "model_not_found", "Unknown model")
         })?;
+        exchange.observation.model = public_model.clone();
         if !model.workloads.contains(&workload) {
             return Err(Failure::invalid("Model does not support this workload"));
         }
@@ -379,7 +390,7 @@ impl Runtime {
         }
         // One logical admission; retries, failed upstreams and cancellation never refund it.
         let mut last_failure = None;
-        while exchange.attempts < model.max_attempts {
+        while exchange.observation.attempts < model.max_attempts {
             if cancellation.is_cancelled() {
                 return Err(Failure::cancelled());
             }
@@ -416,8 +427,8 @@ impl Runtime {
                 },
                 None => None,
             };
-            let mut quota = match self.quotas.get(&public_model) {
-                Some(bound) => match bound.reserve(&selected.backend.id) {
+            let quota = match self.quotas.get(&public_model) {
+                Some(bound) => match bound.reserve() {
                     Ok(reservation) => Some(reservation),
                     Err(_) => {
                         drop(exchange.permit.take());
@@ -430,8 +441,12 @@ impl Runtime {
                 },
                 None => None,
             };
-            exchange.backend = Some(selected.backend.id.clone());
-            exchange.attempts += 1;
+            let mut attempt = Some(exchange.observation.attempt(
+                &selected.backend.id,
+                &selected.backend.provider,
+                observation::protocol(selected.provider.format, workload),
+                quota,
+            ));
             let response = match selected
                 .provider
                 .send(&selected.request, &selected.encoded)
@@ -443,17 +458,22 @@ impl Runtime {
                         health.failure();
                     }
                     // Only connection establishment is known to precede sending the request.
-                    if !error.is_connect() {
+                    let connect = error.is_connect();
+                    attempt.as_mut().unwrap().fail(if connect {
+                        "connect_error"
+                    } else {
+                        "transport_error"
+                    });
+                    if !connect {
                         return Err(Failure::upstream());
-                    }
-                    if let Some(quota) = quota.take() {
-                        quota.release();
                     }
                     last_failure = Some(Failure::upstream());
                     continue;
                 }
             };
+            attempt.as_mut().unwrap().status = response.status().as_u16();
             if !response.status().is_success() {
+                attempt.as_mut().unwrap().fail("http_error");
                 let status = response.status();
                 let retryable = matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504 | 529);
                 let safe_status = if status.is_redirection()
@@ -487,9 +507,14 @@ impl Runtime {
                     &endpoint,
                     &request,
                     &mut health,
-                    &mut quota,
+                    &mut attempt,
                 )
                 .await;
+            if result.is_err()
+                && let Some(attempt) = attempt.as_mut()
+            {
+                attempt.fail("protocol_error");
+            }
             if let Some(health) = health {
                 if result.is_ok() {
                     health.success();
@@ -518,26 +543,13 @@ struct Prepared<'a> {
 }
 
 struct Exchange {
-    started: Instant,
-    model: Option<String>,
-    backend: Option<String>,
-    attempts: u32,
+    observation: RequestObservation,
     permit: Option<Permit>,
-    status: Option<StatusCode>,
-    outcome: Outcome,
 }
 
 impl Exchange {
     fn finish(mut self, outcome: Outcome) {
-        self.outcome = outcome;
-    }
-}
-
-impl Drop for Exchange {
-    fn drop(&mut self) {
-        tracing::info!(target: "nyro::request", model = self.model.as_deref().unwrap_or(""), backend = self.backend.as_deref().unwrap_or(""), status = self.status.map_or(0, |status| status.as_u16()),
-            attempts = self.attempts, duration_ms = self.started.elapsed().as_millis() as u64, outcome = ?self.outcome, "LLM request finished");
-        // This slice owns only synchronous finalization; the permit releases after observation.
+        self.observation.delivery = Some(outcome);
     }
 }
 

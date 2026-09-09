@@ -2,7 +2,7 @@ use super::Failure;
 use crate::{
     ChatEvent,
     codec::{ChatFormat, CodecError, anthropic, gemini, openai},
-    quota::AttemptQuota,
+    observation::AttemptObservation,
 };
 use bytes::Bytes;
 use futures::{StreamExt, stream::BoxStream};
@@ -82,7 +82,7 @@ pub(super) struct StreamState {
     done: bool,
     eof: bool,
     max_bytes: usize,
-    quota: Option<AttemptQuota>,
+    attempt: Option<AttemptObservation>,
 }
 impl StreamState {
     pub(super) fn new(
@@ -92,7 +92,7 @@ impl StreamState {
         model: String,
         max_bytes: usize,
         include_usage: bool,
-        quota: Option<AttemptQuota>,
+        attempt: Option<AttemptObservation>,
     ) -> Self {
         let decoder = match upstream {
             ChatFormat::OpenAiChat => Decode::Openai { done: false },
@@ -130,23 +130,33 @@ impl StreamState {
             done: false,
             eof: false,
             max_bytes,
-            quota,
+            attempt,
         }
     }
     pub(super) async fn next_frame(&mut self) -> Result<Option<String>, Failure> {
+        let result = self.next_frame_inner().await;
+        if result.is_err()
+            && let Some(attempt) = self.attempt.as_mut()
+        {
+            attempt.fail("protocol_error");
+        }
+        result
+    }
+
+    async fn next_frame_inner(&mut self) -> Result<Option<String>, Failure> {
         loop {
             if let Some(event) = self.canonical.pop_front() {
-                if let Some(quota) = self.quota.as_mut()
+                if let Some(attempt) = self.attempt.as_mut()
                     && let ChatEvent::Chunk(chunk) = &event
                     && let Some(usage) = chunk.usage.as_ref()
                 {
-                    quota.observe(usage).map_err(|_| Failure::upstream())?;
+                    attempt.observe(usage).map_err(|_| Failure::upstream())?;
                 }
                 self.done = event.is_done();
                 if self.done
-                    && let Some(quota) = self.quota.take()
+                    && let Some(mut attempt) = self.attempt.take()
                 {
-                    quota.complete();
+                    attempt.complete();
                 }
                 let output = self.encoder.push(&event).map_err(|_| Failure::upstream())?;
                 if output.len() > self.max_bytes {
@@ -181,7 +191,12 @@ impl StreamState {
             }
             match self.input.next().await {
                 Some(Ok(bytes)) => self.pending = bytes,
-                Some(Err(_)) => return Err(Failure::upstream()),
+                Some(Err(_)) => {
+                    if let Some(attempt) = self.attempt.as_mut() {
+                        attempt.fail("transport_error");
+                    }
+                    return Err(Failure::upstream());
+                }
                 None => {
                     self.eof = true;
                     self.events

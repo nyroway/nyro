@@ -176,7 +176,8 @@ async fn cancellation_before_headers_releases_admission_and_records_a_terminal_e
     assert_eq!(limit.available(), 1);
     let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
     assert_eq!(output.matches("LLM request finished").count(), 1);
-    assert!(output.contains("Cancelled"));
+    assert!(output.contains("outcome=\"cancelled\""));
+    assert_eq!(output.matches("LLM upstream attempt finished").count(), 1);
     assert!(!output.contains("client-secret"));
     assert!(!output.contains("upstream-secret"));
 }
