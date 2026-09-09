@@ -394,10 +394,6 @@ impl Runtime {
         let value: Value =
             serde_json::from_slice(&input).map_err(|_| Failure::invalid("Invalid JSON request"))?;
         let native = workload == Workload::Chat
-            && matches!(
-                endpoint.format,
-                ChatFormat::OpenAiChat | ChatFormat::Anthropic | ChatFormat::Gemini
-            )
             && endpoint
                 .model
                 .as_deref()

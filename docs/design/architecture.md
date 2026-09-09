@@ -496,7 +496,7 @@ Chat 流使用自己的事件类型，不要求所有交互实现流接口。当
 
 ### 8.3 对外复用范围
 
-`nyro-protocol` 独立提供 OpenAI、Anthropic、Gemini 基础协议格式，社区项目解析这些协议时不需要构建 Nyro runtime、内核或数据库。IR 与跨协议转换暂留 `nyro-llm`，本次不承诺一个独立的 IR/转换 SDK。Responses 是 OpenAI 族内的一种 API，与 Chat Completions 共享 Chat workload；上游通过 `kind: openai` 加 `api: responses` 选择，不新增 Provider 族或 crate。现有 Chat IR 支持无状态文本、拒绝、客户端函数调用／结果及用量，不能完整承载 Responses 的服务端会话、item 引用、内置工具或 reasoning items，因此本阶段明确拒绝这些语义。具体转换与流状态边界见实验性代理指南。
+`nyro-protocol` 独立提供 OpenAI、Anthropic、Gemini 基础协议格式，社区项目解析这些协议时不需要构建 Nyro runtime、内核或数据库。IR 与跨协议转换暂留 `nyro-llm`，本次不承诺一个独立的 IR/转换 SDK。Responses 是 OpenAI 族内的一种 API，与 Chat Completions 共享 Chat workload；上游通过 `kind: openai` 加 `api: responses` 选择，不新增 Provider 族或 crate。现有 Chat IR 支持无状态文本、拒绝、客户端函数调用／结果及用量，不能完整承载 Responses 的服务端会话、item 引用、内置工具或 reasoning items，因此严格转换路径明确拒绝这些语义。匹配的 Responses 原生模式可保留 reasoning 历史和媒体等 JSON 扩展，但仍不支持托管会话、item 引用或内置工具；这些字段不进入公共 IR。具体转换与流状态边界见实验性代理指南。
 
 ## 9. 共享安全、限制与观测能力
 
@@ -558,7 +558,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 | 阶段 | 当前进度 | 差异跟踪 |
 |---|---|---|
 | 内核、代际、文件配置 | 基础机制已落地；SIGHUP 重载已有回归 | 后续能力必须保持生命周期与清理约束 |
-| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；整体兼容对齐未完成 | G02–G09 |
+| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；整体兼容对齐未完成 | G02–G09 |
 | 控制面、存储、管理与持久化观测 | 尚未接入新架构 | G10–G12 |
 | 工具、部署和旧入口切换 | 尚未完成切换验收 | G11、G13 |
 

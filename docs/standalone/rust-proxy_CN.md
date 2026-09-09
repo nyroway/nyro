@@ -23,7 +23,7 @@ curl http://127.0.0.1:19530/v1/chat/completions \
   -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。默认情况下，未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。下文的 OpenAI Chat、Anthropic Messages 和 Gemini generateContent 原生模式可显式开启，在匹配的端点之间保留厂商 JSON 字段。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在类型化响应及 OpenAI／Anthropic 原生响应中恢复公开模型名；Gemini 原生响应保留 `modelVersion` 作为上游版本信息。
+当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。默认情况下，未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。下文的 OpenAI Chat/Responses、Anthropic Messages 和 Gemini generateContent 原生模式可显式开启，在匹配的端点之间保留厂商 JSON 字段。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在类型化响应及 OpenAI／Anthropic 原生响应中恢复公开模型名；Gemini 原生响应保留 `modelVersion` 作为上游版本信息。
 
 ## 查询可见模型
 
@@ -240,13 +240,13 @@ llm:
       api_key: replace-with-provider-secret
 ```
 
-这段 Provider 配置应合入现有配置。默认值为 `false`；OpenAI Chat、Anthropic Messages 和 Gemini Provider 支持开启，`api: responses` 拒绝设置为 `true`。OpenAI Provider 只对匹配的 OpenAI Chat 入口启用此模式，其他入口 API 和 Embedding 继续经过严格 codec。
+这段 Provider 配置应合入现有配置。默认值为 `false`；OpenAI Chat/Responses、Anthropic Messages 和 Gemini Provider 支持开启。OpenAI Chat Provider 只对匹配的 OpenAI Chat 入口启用此模式，其他入口 API 和 Embedding 继续经过严格 codec。
 
 Nyro 保留请求 JSON、非流式响应 JSON 和 SSE data JSON，包括嵌套的推理／工具历史、厂商选项和 usage 详情。请求顶层 model 替换为上游模型，响应／chunk 则恢复公开别名。流式请求强制上游 `stream_options.include_usage: true`，其他选项保持；下游只在客户端要求时输出 usage。隐藏 usage 时省略纯 usage chunk，计量仍然执行。
 
 原生模式校验路由／控制结构（model、消息 role、流式选项）、响应／chunk 结构、数字用量以及有界 SSE 帧，并要求显式 `[DONE]` 终止；厂商字段的语义由所选上游处理。保真粒度是 JSON 字段：序列化和 SSE 帧格式可能变化，注释／ID／retry 字段会丢弃，event 名只接受省略、空值或 `message`，也不会任意转发 Header。认证、授权、准入、quota 结算、重试上限、期限及清理仍强制执行，上游失败响应继续脱敏。切换原生模式会改变配置指纹，并重置受影响的健康状态绑定。
 
-混合 backend 池中，原生请求只有在**原始请求**通过严格 OpenAI codec 且目标能够表达时，才允许使用严格模式或其他协议 backend。不会通过删除扩展字段让故障转移变得可用。本能力不承诺跨协议推理／媒体转换、完整 SDK 会话，也不包含 Responses 原生保真。
+混合 backend 池中，原生请求只有在**原始请求**通过严格 OpenAI codec 且目标能够表达时，才允许使用严格模式或其他协议 backend。不会通过删除扩展字段让故障转移变得可用。本能力不承诺跨协议推理／媒体转换、完整 SDK 会话，也不包含不同 OpenAI API 之间的原生保真。
 
 本地录制回归：构建 `cargo build -p nyro` 后运行 `python3 tests/proxy_native_replay.py`。它完整比较 DeepSeek、Zhipu AI 的 8 份 OpenAI Chat 录制请求／响应序列，同时回放 8 份 Anthropic Messages 样本，并分类默认严格模式下全部 16 份录制数据。这些历史样本不等于真实厂商在线认证。
 
@@ -278,9 +278,23 @@ Gemini SSE 使用 JSON data 帧，不合成 `[DONE]`。非空且非未指定的�
 
 构建 `nyro` 后运行 `python3 tests/proxy_gemini_native_smoke.py`。该测试是本地 mock 契约回归，不是录制样本或真实 SDK／厂商认证；现有 16 份 OpenAI／Anthropic 录制数据仍单独回放。多候选、独立工具提示词计量、Gemini Interactions 及跨协议思考／媒体转换不属于本轮交付。
 
-## Responses 子集
+## 显式开启 Responses 原生兼容
 
-`POST /v1/responses` 接受字符串输入或强类型 message／function items、instructions、通用生成参数及客户端函数工具／结果，可使用任意已配置的 Chat 上游。原生 Responses 函数定义必须显式设置 `strict`：跨协议非严格子集使用 `false`，`true` 需要上游能够保留该语义。反向也支持所有已实现的 Chat 入口使用 `api: responses` 上游，例如：
+为 Provider 设置 `kind: openai`、`api: responses` 和 `native_chat: true`，可在 `POST /v1/responses` 与匹配的 Responses 上游之间保留 JSON 字段。跨格式 fallback 仍要求**原始请求**通过来源严格 codec。开关默认关闭；OpenAI Chat Completions 和 Responses 即使属于同一 Provider 族，也视为不同格式。
+
+原生路径接受无状态字符串输入，以及 message、reasoning、function-call 和 function-result 历史；`instructions` 提供字符串提示词时也接受空 input 数组。保留加密推理、assistant `phase`、媒体内容块、函数 Schema、结构化输出选项、metadata、响应 ID、output items、annotations、logprobs 和厂商扩展。函数结果数组和流式 obfuscation 也会保留。Item 载荷保持不透明：Nyro 校验路由和生命周期结构，不重建或认证每一种厂商 item／delta 语义。
+
+仅改写请求 model、响应顶层 model，以及生命周期事件 `response` 快照中的 model；上游请求还会将省略／null 的 `store` 归一化为 `false`。`store:true`、`background:true`、非 null 的 `conversation`／`previous_response_id`、item 引用及非 function 工具定义／选择在发往上游前拒绝。响应查询／删除／取消、内置工具、后台任务、OAuth／账号通道及跨协议推理／媒体转换仍不属于此模式。调用方 Header 不会透传，上游使用配置的静态 API Key。
+
+非流式响应必须为 `completed`，或带非空原因的 `incomplete`；失败／非终态结构和上游错误正文仍脱敏。存在 usage 时，`input_tokens`、`output_tokens`、`total_tokens` 必须为非负整数，并通过防溢出的输入加输出等于总量校验。缓存输入和推理输出详情必须分别位于输入／输出总量内，不重复相加。usage 缺失／null 使用既有未知用量与预留回退语义。
+
+SSE 必须从 `response.created` 开始，生命周期快照保持响应 ID／上游模型／创建时间一致，`sequence_number` 从零连续递增；显式 SSE event 名必须匹配 JSON `type`，仅 data 的事件保持原有形式。中间的 `response.*` 扩展事件会保留，但只有 `response.completed` 或 `response.incomplete` 建立有效协议终态。仅终态 usage 参与结算，早期快照不能冒充最终用量。之后必须正常 EOF；终态后出现额外事件、failed／error 事件、身份／序号不符或截断会失败，已接受的上游响应不会重试。不补造 `[DONE]`。SSE 注释／ID／retry 字段和序列化空白不保留。
+
+参考：[OpenAI 无状态会话历史](https://developers.openai.com/api/docs/guides/conversation-state)、[Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses)。本地验证：`cargo test -p nyro-llm --test native_responses_runtime`，以及构建根二进制后运行 `python3 tests/proxy_responses_native_smoke.py`。这些是本地 mock 检查，不是 Responses 录制流量或完整 SDK／Codex CLI 认证。
+
+## Responses 严格转换子集
+
+`POST /v1/responses` 接受字符串输入或强类型 message／function items、instructions、通用生成参数及客户端函数工具／结果，可使用任意已配置的 Chat 上游。此严格转换路径的 Responses 函数定义必须显式设置 `strict`：跨协议非严格子集使用 `false`，`true` 需要上游能够保留该语义。反向也支持所有已实现的 Chat 入口使用 `api: responses` 上游，例如：
 
 ```sh
 curl http://127.0.0.1:19530/v1/responses \
@@ -291,9 +305,9 @@ curl http://127.0.0.1:19530/v1/responses \
 
 函数结果当前要求 `function_call_output.output` 为字符串，数组形式会被拒绝。
 
-本阶段仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、reasoning items、多媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段和 item ID 会归一化，不保证保留上游原始 ID 或精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
+此严格转换路径仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、reasoning items、多媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段和 item ID 会归一化，不保证保留上游原始 ID 或精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
 
-SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和完整终态快照，不输出 `[DONE]`。token 上限／内容过滤结束会映射成 `response.incomplete`；上游失败、内容矛盾、格式错误或断流不会伪造成功终态。原生上游流关闭 obfuscation。此子集不代表已经完整兼容 Responses SDK 或 Codex CLI。
+SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和完整终态快照，不输出 `[DONE]`。token 上限／内容过滤结束会映射成 `response.incomplete`；上游失败、内容矛盾、格式错误或断流不会伪造成功终态。严格 Responses 上游流关闭 obfuscation。此子集不代表已经完整兼容 Responses SDK 或 Codex CLI。
 
 参考：[OpenAI Responses 迁移指南](https://developers.openai.com/api/docs/guides/migrate-to-responses)、[Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses)。本地回归：`cargo test -p nyro-llm --test responses_codec --test responses_runtime`。
 
