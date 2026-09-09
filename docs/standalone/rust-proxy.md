@@ -225,13 +225,25 @@ The strict conversion path is an experimental text/function Chat subset. Its cod
 
 Protocol reference: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini generateContent](https://ai.google.dev/api/generate-content). Local matrix regression: `cargo test -p nyro-llm --test protocol_matrix`.
 
-## Tool history converted to Anthropic
+## Strict tool history and results
 
-When strict conversion selects an Anthropic upstream, all results for one assistant tool-call batch are placed in the immediately following single `user` message. Results keep their original order and `tool_call_id`/`tool_use_id` association, even when they return in a different order from the calls. User text immediately following the completed batch is appended after the result blocks. Tool names, parsed object arguments and result text are preserved; Gemini object results retain the existing JSON-as-text conversion.
+When strict conversion selects an Anthropic or Gemini upstream, all results for one assistant tool-call batch are placed in the immediately following single `user` message. Results keep their original order and `tool_call_id`/`tool_use_id` association, even when they return in a different order from the calls. User text immediately following the completed batch is appended after the result blocks. Tool names, parsed object arguments and result text are preserved; Gemini object results retain the existing JSON-as-text conversion.
 
-Every call in the batch must have exactly one adjacent result. Duplicate call IDs within a batch, missing/unknown/duplicate results, and user or assistant messages inserted before the batch is complete make that Anthropic backend ineligible before dispatch. Nyro does not fabricate calls, drop intermediate text or rearrange history to repair it. If no backend can represent the original request, the runtime returns `400`. These are destination-specific checks in the strict Anthropic encoder; opt-in matching native forwarding keeps its existing contract.
+Every call in the batch must have exactly one adjacent result. Duplicate call IDs within a batch, missing/unknown/duplicate results, and user or assistant messages inserted before the batch is complete make that backend ineligible before dispatch. Nyro does not fabricate calls, drop intermediate text or rearrange history to repair it. If no backend can represent the original request, the runtime returns `400`. These are destination-specific checks in the strict Anthropic and Gemini encoders; opt-in matching native forwarding keeps its existing contract.
 
-This covers OpenAI Chat, stateless Responses, Anthropic Messages and Gemini generateContent ingress, with JSON or SSE responses. It does not add cross-protocol thinking/signature mapping, error-flag/media tool results, arbitrary interleaving or Schema rewriting. Reference: [Anthropic parallel tool-result formatting](https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use). Local regression: `cargo test -p nyro-llm --test anthropic_codec --test protocol_matrix`.
+This covers OpenAI Chat, stateless Responses, Anthropic Messages and Gemini generateContent ingress, with JSON or SSE responses. The strict result boundaries are:
+
+| Result/history form | Supported conversion |
+|---|---|
+| Text result blocks, including an empty array | OpenAI Chat, Responses and Anthropic preserve block boundaries. Gemini accepts at most one text block; multiple blocks make that backend ineligible. |
+| Anthropic omitted result content | Decodes as an empty result, without inventing text. |
+| Anthropic `is_error:true` | Preserved by the typed IR and Anthropic output. OpenAI Chat, Responses and Gemini backends are ineligible because an explicit execution-error flag has no supported lossless mapping. |
+| Responses result string or `input_text` array | Preserves the string or ordered blocks. Media, `output_text` and refusal result blocks remain unsupported. |
+| Gemini result object | Preserved as an object for Gemini, or serialized as JSON text for other targets. An `error` key remains business data and does not create an execution-error flag. |
+| Gemini missing result ID | Resolved only when the pending function name identifies exactly one call. Explicit IDs must also match the function name; generated missing call IDs avoid explicit IDs anywhere in the history. |
+| Gemini text mixed with function results | Decoded in order into separate IR messages. Anthropic/Gemini targets reject text interrupting an unfinished result batch; compatible OpenAI Chat/Responses targets retain the order. |
+
+No calls are synthesized or content discarded to repair a history. Cross-protocol thinking/signature mapping, media tool results and Schema rewriting remain outside this increment. References: [Anthropic tool results](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls), [Gemini FunctionResponse](https://ai.google.dev/api/generate-content). Local regressions: `cargo test -p nyro-llm --test anthropic_codec --test gemini_codec --test responses_codec --test responses_runtime --test protocol_matrix`.
 
 ## Opt-in OpenAI Chat native compatibility
 
@@ -311,7 +323,7 @@ curl http://127.0.0.1:19530/v1/responses \
   -d '{"model":"responses-default","input":"Hello","max_output_tokens":256,"store":false,"stream":true}'
 ```
 
-Function results currently require a string `function_call_output.output`; array results are rejected.
+Function results accept a string `function_call_output.output` or an array containing only `input_text` blocks, including an empty array. Conversion preserves block boundaries rather than concatenating them. Multiple result blocks are incompatible with a strict Gemini destination; media and other result block types are rejected.
 
 This strict conversion path is stateless: outbound Responses always sets `store:false`, and Responses ingress translated to Chat Completions also explicitly disables storage. Server conversation state (`conversation`, `previous_response_id`), item references, `store:true`, `background:true`, hosted tools, reasoning items, media, and response retrieval/deletion/cancellation are unsupported. Meaningful options or output items that the current Chat IR cannot preserve are rejected. Responses envelope echoes and item IDs are normalized; exact upstream IDs and request echoes are not preserved. Function `call_id`, content order, finish status, and representable usage remain part of the conversion contract.
 

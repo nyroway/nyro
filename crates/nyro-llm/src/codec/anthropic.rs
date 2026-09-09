@@ -76,13 +76,28 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                     content,
                     is_error,
                 } => {
-                    if m.role != "user" || is_error == Some(true) {
-                        return Err(bad("unsupported tool result role or error flag"));
+                    if m.role != "user" {
+                        return Err(bad("unsupported tool result role"));
                     }
                     flush(&mut out, &mut parts, &mut calls);
-                    out.push(
-                        json!({"role":"tool","tool_call_id":tool_use_id,"content":text(content)?}),
-                    );
+                    let content = match content {
+                        None => json!([]),
+                        Some(wire::Content::Text(text)) => json!(text),
+                        Some(wire::Content::Blocks(blocks)) => json!(
+                            blocks
+                                .into_iter()
+                                .map(|block| {
+                                    match block {
+                                        wire::Block::Text { text } => {
+                                            Ok(json!({"type":"text","text":text}))
+                                        }
+                                        _ => Err(bad("unsupported tool result content")),
+                                    }
+                                })
+                                .collect::<Result<Vec<_>, _>>()?
+                        ),
+                    };
+                    out.push(json!({"role":"tool","tool_call_id":tool_use_id,"content":content,"tool_error":is_error.unwrap_or(false)}));
                 }
             }
         }
@@ -110,6 +125,18 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         messages.push(json!({"role":"system","content":text(s)?}));
     }
     messages.extend(decode_messages(r.messages)?);
+    // Wire decoding still goes through the established OpenAI-shaped leaves;
+    // carry the typed error status separately from that protocol's wire fields.
+    let errors: Vec<_> = messages
+        .iter_mut()
+        .map(|m| {
+            m.as_object_mut()
+                .unwrap()
+                .remove("tool_error")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
+        .collect();
     let mut v = json!({"model":r.model,"messages":messages,"max_tokens":r.max_tokens});
     if let Some(x) = r.stream {
         v["stream"] = json!(x)
@@ -149,7 +176,11 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
             v["parallel_tool_calls"] = json!(!disable)
         }
     }
-    openai::decode_chat(v)
+    let mut request = openai::decode_chat(v)?;
+    for (message, error) in request.messages.iter_mut().zip(errors) {
+        message.tool_error = error;
+    }
+    Ok(request)
 }
 fn content_parts(c: &Option<Content>) -> Result<Vec<Value>, CodecError> {
     match c {
@@ -179,7 +210,14 @@ fn call_blocks(calls: &Option<Vec<ToolCall>>) -> Result<Vec<Value>, CodecError> 
         .collect()
 }
 pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
-    let source = openai::encode_chat(r)?;
+    let mut portable = r.clone();
+    for message in &mut portable.messages {
+        if message.tool_error && message.role != Role::Tool {
+            return Err(bad("tool_error requires a tool result"));
+        }
+        message.tool_error = false;
+    }
+    let source = openai::encode_chat(&portable)?;
     if r.openai
         .stream_options
         .as_ref()
@@ -253,7 +291,11 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
                 if !pending.remove(id.as_str()) {
                     return Err(bad("unknown or duplicate tool result id"));
                 }
-                results.push(json!({"type":"tool_result","tool_use_id":id,"content":content}));
+                let mut result = json!({"type":"tool_result","tool_use_id":id,"content":content});
+                if m.tool_error {
+                    result["is_error"] = json!(true);
+                }
+                results.push(result);
                 if pending.is_empty() {
                     messages.push(json!({"role":"user","content":std::mem::take(&mut results)}));
                     after_results = true;

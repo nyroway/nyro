@@ -225,13 +225,25 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 
 协议参考：[Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)、[Gemini generateContent](https://ai.google.dev/api/generate-content)。本地矩阵回归：`cargo test -p nyro-llm --test protocol_matrix`。
 
-## 转换到 Anthropic 的工具历史
+## 严格转换的工具历史与结果
 
-严格转换选择 Anthropic 上游时，同一 assistant 工具调用批次的全部结果放入紧随其后的一条 `user` 消息。结果保持原始顺序以及 `tool_call_id`／`tool_use_id` 对应关系，即使返回顺序与调用顺序不同。完整结果批次之后紧邻的用户文本追加在结果块后。工具名称、解析后的对象参数和结果文本保留；Gemini 对象结果沿用既有 JSON 转文本的转换方式。
+严格转换选择 Anthropic 或 Gemini 上游时，同一 assistant 工具调用批次的全部结果放入紧随其后的一条 `user` 消息。结果保持原始顺序以及 `tool_call_id`／`tool_use_id` 对应关系，即使返回顺序与调用顺序不同。完整结果批次之后紧邻的用户文本追加在结果块后。工具名称、解析后的对象参数和结果文本保留；Gemini 对象结果沿用既有 JSON 转文本的转换方式。
 
-批次中每个调用必须恰好对应一个相邻结果。批次内重复调用 ID、缺失／未知／重复结果，以及结果收齐前插入 user 或 assistant 消息，都会在发往上游前使该 Anthropic backend 不再符合条件。Nyro 不合成调用、不删除中间文本，也不重排历史进行修复；没有 backend 能表达原始请求时返回 `400`。这些是严格 Anthropic encoder 的目标协议检查，匹配的显式原生模式保持已有契约。
+批次中每个调用必须恰好对应一个相邻结果。批次内重复调用 ID、缺失／未知／重复结果，以及结果收齐前插入 user 或 assistant 消息，都会在发往上游前使该 backend 不再符合条件。Nyro 不合成调用、不删除中间文本，也不重排历史进行修复；没有 backend 能表达原始请求时返回 `400`。这些是严格 Anthropic 和 Gemini encoder 的目标协议检查，匹配的显式原生模式保持已有契约。
 
-本轮覆盖 OpenAI Chat、无状态 Responses、Anthropic Messages 和 Gemini generateContent 入口，以及 JSON／SSE 响应。不新增跨协议 thinking／签名映射、带错误标记／媒体的工具结果、任意交错历史或 Schema 改写。参考：[Anthropic 并行工具结果格式](https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use)。本地回归：`cargo test -p nyro-llm --test anthropic_codec --test protocol_matrix`。
+覆盖 OpenAI Chat、无状态 Responses、Anthropic Messages 和 Gemini generateContent 入口，以及 JSON／SSE 响应。严格路径的结果边界如下：
+
+| 结果／历史形式 | 转换支持范围 |
+|---|---|
+| 文本结果块，包括空数组 | OpenAI Chat、Responses 和 Anthropic 保留块边界。Gemini 最多接受一个文本块；多个块使该 backend 不再符合条件。 |
+| Anthropic 省略结果 content | 解码为空结果，不虚构文本。 |
+| Anthropic `is_error:true` | 类型化 IR 和 Anthropic 输出保留该标记。OpenAI Chat、Responses 和 Gemini 无已支持的无损执行错误标记映射，因此不再作为候选 backend。 |
+| Responses 结果字符串或 `input_text` 数组 | 保留字符串或有序块；媒体、`output_text` 和 refusal 结果块仍不支持。 |
+| Gemini 结果对象 | Gemini 目标保留对象，其他目标使用 JSON 文本；`error` 键仍是业务数据，不据此产生执行错误标志。 |
+| Gemini 结果缺少 ID | 只有 pending 函数名唯一对应一个调用时才解析；显式 ID 还必须匹配函数名。为缺少 ID 的调用生成的 ID 避开整段历史中已有的显式 ID。 |
+| Gemini 文本与函数结果混排 | 按原顺序解码成独立 IR 消息。Anthropic／Gemini 目标拒绝文本打断尚未完成的结果批次；可表达该历史的 OpenAI Chat／Responses 目标保留顺序。 |
+
+不通过合成调用或丢弃内容修复历史。跨协议 thinking／签名映射、媒体工具结果和 Schema 改写不属于本轮范围。参考：[Anthropic 工具结果](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)、[Gemini FunctionResponse](https://ai.google.dev/api/generate-content)。本地回归：`cargo test -p nyro-llm --test anthropic_codec --test gemini_codec --test responses_codec --test responses_runtime --test protocol_matrix`。
 
 ## 显式开启 OpenAI Chat 原生兼容
 
@@ -311,7 +323,7 @@ curl http://127.0.0.1:19530/v1/responses \
   -d '{"model":"responses-default","input":"Hello","max_output_tokens":256,"store":false,"stream":true}'
 ```
 
-函数结果当前要求 `function_call_output.output` 为字符串，数组形式会被拒绝。
+函数结果 `function_call_output.output` 接受字符串或仅包含 `input_text` 块的数组，包括空数组。转换保留块边界，不拼接文本。多个结果块无法严格转换到 Gemini 目标；媒体及其他结果块类型被拒绝。
 
 此严格转换路径仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、reasoning items、多媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段和 item ID 会归一化，不保证保留上游原始 ID 或精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
 

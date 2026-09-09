@@ -504,9 +504,21 @@ fn snapshot(format: &str, value: &Value) -> Value {
                 assert_eq!(call["type"], "function");
                 json!({"id":call["id"],"name":call["function"]["name"],"arguments":call["function"]["arguments"]})
             }).collect();
+            let text = match &choice["message"]["content"] {
+                Value::String(text) => text.clone(),
+                Value::Array(parts) => parts
+                    .iter()
+                    .map(|part| {
+                        assert_eq!(part["type"], "text");
+                        part["text"].as_str().unwrap()
+                    })
+                    .collect(),
+                Value::Null => String::new(),
+                other => panic!("unexpected message content: {other}"),
+            };
             (
                 value["model"].clone(),
-                choice["message"]["content"].as_str().unwrap_or("").into(),
+                text,
                 calls,
                 choice["finish_reason"].clone(),
                 json!([
@@ -1219,5 +1231,175 @@ async fn responses_and_chat_preserve_refusals_and_content_filter_terminals() {
                 }
             }
         }
+    }
+}
+
+async fn result_request(
+    format: &str,
+    streaming: bool,
+    result: Value,
+    error: bool,
+) -> Request<Body> {
+    let (parts, body) = tool_request(format, streaming).await.into_parts();
+    let mut value: Value = serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+    match format {
+        "openai" => value["messages"][2]["content"] = result,
+        "responses" => value["input"][2]["output"] = result,
+        "anthropic" => {
+            value["messages"][2]["content"][0]["content"] = result;
+            if error {
+                value["messages"][2]["content"][0]["is_error"] = json!(true);
+            }
+        }
+        _ => value["contents"][2]["parts"][0]["functionResponse"]["response"] = result,
+    }
+    Request::from_parts(parts, Body::from(value.to_string()))
+}
+
+#[tokio::test]
+async fn tool_result_arrays_preserve_blocks_or_reject_incompatible_destinations() {
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for source in ["openai", "anthropic", "responses"] {
+            for empty in [false, true] {
+                let texts = if empty {
+                    vec![]
+                } else {
+                    vec!["first", "second"]
+                };
+                let parts:Vec<_> = texts.iter().map(|text|json!({"type":if source=="responses" {"input_text"}else{"text"},"text":text})).collect();
+                for streaming in [false, true] {
+                    let before = fixture.calls.lock().unwrap().len();
+                    let response = gateway
+                        .handle(
+                            result_request(source, streaming, json!(parts), false).await,
+                            CancellationToken::new(),
+                        )
+                        .await;
+                    if target == "gemini" && !empty {
+                        assert_eq!(
+                            response.status(),
+                            StatusCode::BAD_REQUEST,
+                            "{source} -> {target}"
+                        );
+                        to_bytes(response.into_body(), 65536).await.unwrap();
+                        assert_eq!(fixture.calls.lock().unwrap().len(), before);
+                        assert_eq!(limit.available(), 1);
+                        continue;
+                    }
+                    assert_eq!(
+                        response.status(),
+                        StatusCode::OK,
+                        "{source} -> {target}, empty={empty}"
+                    );
+                    let body = to_bytes(response.into_body(), 65536).await.unwrap();
+                    let result = if streaming {
+                        stream_snapshot(source, &body)
+                    } else {
+                        snapshot(source, &serde_json::from_slice(&body).unwrap())
+                    };
+                    assert_eq!(
+                        result["text"], "Hello",
+                        "{source} -> {target}, empty={empty}, streaming={streaming}"
+                    );
+                    assert_eq!(limit.available(), 1);
+                    let calls = fixture.calls.lock().unwrap();
+                    let body = &calls.last().unwrap()["body"];
+                    let blocks:Vec<_> = texts.iter().map(|text|json!({"type":if target=="responses" {"input_text"}else{"text"},"text":text})).collect();
+                    match target {
+                        "openai" => assert_eq!(body["messages"][2]["content"], json!(blocks)),
+                        "responses" => assert_eq!(body["input"][2]["output"], json!(blocks)),
+                        "anthropic" => {
+                            assert_eq!(body["messages"][2]["content"][0]["content"], json!(blocks))
+                        }
+                        _ => assert_eq!(
+                            body["contents"][2]["parts"][0]["functionResponse"]["response"],
+                            json!({"result":""})
+                        ),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn explicit_tool_errors_are_preserved_only_by_capable_backends() {
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for streaming in [false, true] {
+            let response = gateway
+                .handle(
+                    result_request(
+                        "anthropic",
+                        streaming,
+                        json!([{"type":"text","text":"Tool failed"}]),
+                        true,
+                    )
+                    .await,
+                    CancellationToken::new(),
+                )
+                .await;
+            if target == "anthropic" {
+                assert_eq!(response.status(), StatusCode::OK);
+                let body = to_bytes(response.into_body(), 65536).await.unwrap();
+                assert!(String::from_utf8_lossy(&body).contains("Hello"));
+                let calls = fixture.calls.lock().unwrap();
+                let result = &calls.last().unwrap()["body"]["messages"][2]["content"][0];
+                assert_eq!(result["is_error"], true);
+                assert_eq!(
+                    result["content"],
+                    json!([{"type":"text","text":"Tool failed"}])
+                );
+            } else {
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{target}");
+                to_bytes(response.into_body(), 65536).await.unwrap();
+                assert!(fixture.calls.lock().unwrap().is_empty());
+            }
+            assert_eq!(limit.available(), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn gemini_result_objects_keep_business_data_without_inventing_error_status() {
+    let object =
+        json!({"error":{"code":0,"description":"a business field"},"nested":[true,3,null]});
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        let response = gateway
+            .handle(
+                result_request("gemini", false, object.clone(), false).await,
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK, "{target}");
+        to_bytes(response.into_body(), 65536).await.unwrap();
+        let calls = fixture.calls.lock().unwrap();
+        let body = &calls[0]["body"];
+        let text = match target {
+            "openai" => body["messages"][2]["content"].as_str().unwrap(),
+            "responses" => body["input"][2]["output"].as_str().unwrap(),
+            "anthropic" => {
+                assert!(body["messages"][2]["content"][0].get("is_error").is_none());
+                body["messages"][2]["content"][0]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+            }
+            _ => {
+                assert_eq!(
+                    body["contents"][2]["parts"][0]["functionResponse"]["response"],
+                    object
+                );
+                continue;
+            }
+        };
+        assert_eq!(serde_json::from_str::<Value>(text).unwrap(), object);
     }
 }

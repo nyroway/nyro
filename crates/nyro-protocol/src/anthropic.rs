@@ -20,7 +20,8 @@ pub enum Block {
     },
     ToolResult {
         tool_use_id: String,
-        content: Content,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<Content>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
     },

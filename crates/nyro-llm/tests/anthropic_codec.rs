@@ -307,3 +307,50 @@ fn completed_tool_batches_keep_separate_turns_and_reset_pending_ids() {
         wire
     );
 }
+
+#[test]
+fn tool_error_and_text_blocks_survive_strict_anthropic_round_trip() {
+    let source = json!({"model":"m","max_tokens":32,"messages":[
+        {"role":"assistant","content":[{"type":"tool_use","id":"t","name":"f","input":{}}]},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"t","is_error":true,"content":[{"type":"text","text":"First"},{"type":"text","text":"Second"}]}]}]});
+    let request = decode_chat(source.clone()).unwrap();
+    let encoded = encode_chat(&request).unwrap();
+    assert_eq!(encoded, source);
+    assert!(nyro_llm::codec::openai::encode_chat(&request).is_err());
+    assert!(nyro_llm::codec::openai::responses::encode_chat(&request).is_err());
+    assert!(nyro_llm::codec::gemini::encode_chat(&request).is_err());
+}
+
+#[test]
+fn empty_tool_results_are_supported_without_inventing_text() {
+    for content in [None, Some(json!([])), Some(json!(""))] {
+        let mut result = json!({"type":"tool_result","tool_use_id":"t"});
+        if let Some(content) = content {
+            result["content"] = content;
+        }
+        let input = json!({"model":"m","max_tokens":32,"messages":[
+            {"role":"assistant","content":[{"type":"tool_use","id":"t","name":"f","input":{}}]},
+            {"role":"user","content":[result]}]});
+        let request = decode_chat(input).unwrap();
+        let encoded = encode_chat(&request).unwrap();
+        let content = &encoded["messages"][1]["content"][0]["content"];
+        assert!(content == &json!([]) || content == &json!([{"type":"text","text":""}]));
+        assert!(nyro_llm::codec::openai::encode_chat(&request).is_ok());
+    }
+}
+
+#[test]
+fn successful_tool_result_blocks_keep_boundaries_and_media_stays_rejected() {
+    let mut input = json!({"model":"m","max_tokens":32,"messages":[
+        {"role":"assistant","content":[{"type":"tool_use","id":"t","name":"f","input":{}}]},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"one"},{"type":"text","text":"two"}]}]}]});
+    let request = decode_chat(input.clone()).unwrap();
+    assert_eq!(encode_chat(&request).unwrap(), input);
+    let openai = nyro_llm::codec::openai::encode_chat(&request).unwrap();
+    assert_eq!(
+        openai["messages"][1]["content"],
+        json!([{"type":"text","text":"one"},{"type":"text","text":"two"}])
+    );
+    input["messages"][1]["content"][0]["content"] = json!([{"type":"image","source":{"type":"base64","media_type":"image/png","data":"opaque"}}]);
+    assert!(decode_chat(input).is_err());
+}

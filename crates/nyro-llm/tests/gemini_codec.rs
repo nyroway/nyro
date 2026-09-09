@@ -189,6 +189,222 @@ fn ambiguous_missing_tool_identity_is_rejected() {
         .is_err()
     );
 }
+
+#[test]
+fn mixed_user_function_responses_preserve_part_order() {
+    let r = decode_chat(
+        json!({"contents":[
+            {"role":"model","parts":[
+                {"functionCall":{"id":"a","name":"first","args":{}}},
+                {"functionCall":{"id":"b","name":"second","args":{}}}
+            ]},
+            {"role":"user","parts":[
+                {"text":"before"},
+                {"functionResponse":{"name":"second","response":{"value":2}}},
+                {"text":"between"},
+                {"functionResponse":{"id":"a","name":"first","response":{"value":1}}},
+                {"text":"after"}
+            ]}
+        ]}),
+        "m",
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        r.messages
+            .iter()
+            .map(|m| m.role.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            Role::Assistant,
+            Role::User,
+            Role::Tool,
+            Role::User,
+            Role::Tool,
+            Role::User
+        ]
+    );
+    assert_eq!(
+        r.messages[1].content,
+        Some(Content::Parts(vec![ContentPart::Text {
+            text: "before".into()
+        }]))
+    );
+    assert_eq!(r.messages[2].tool_call_id.as_deref(), Some("b"));
+    assert_eq!(
+        r.messages[2].content,
+        Some(Content::Text(r#"{"value":2}"#.into()))
+    );
+    assert_eq!(
+        r.messages[3].content,
+        Some(Content::Parts(vec![ContentPart::Text {
+            text: "between".into()
+        }]))
+    );
+    assert_eq!(r.messages[4].tool_call_id.as_deref(), Some("a"));
+    assert_eq!(
+        r.messages[5].content,
+        Some(Content::Parts(vec![ContentPart::Text {
+            text: "after".into()
+        }]))
+    );
+    assert!(
+        encode_chat(&r).is_err(),
+        "interrupted result batches cannot be encoded"
+    );
+}
+
+#[test]
+fn generated_history_call_ids_avoid_all_explicit_ids() {
+    let r = decode_chat(
+        json!({"contents":[
+            {"role":"model","parts":[
+                {"functionCall":{"name":"generated","args":{}}},
+                {"functionCall":{"id":"gemini_call_0","name":"explicit","args":{}}}
+            ]},
+            {"role":"user","parts":[
+                {"functionResponse":{"name":"generated","response":{}}},
+                {"functionResponse":{"id":"gemini_call_0","name":"explicit","response":{}}}
+            ]}
+        ]}),
+        "m",
+        false,
+    )
+    .unwrap();
+    let calls = r.messages[0].tool_calls.as_ref().unwrap();
+    let ToolCall::Function { id: generated, .. } = &calls[0];
+    let ToolCall::Function { id: explicit, .. } = &calls[1];
+    assert_ne!(generated, explicit);
+    assert_eq!(explicit, "gemini_call_0");
+    assert_eq!(r.messages[1].tool_call_id.as_ref(), Some(generated));
+    assert_eq!(r.messages[2].tool_call_id.as_ref(), Some(explicit));
+}
+
+fn result_history() -> ChatRequest {
+    nyro_llm::codec::openai::decode_chat(json!({"model":"m","messages":[
+        {"role":"assistant","tool_calls":[
+            {"type":"function","id":"a","function":{"name":"first","arguments":"{}"}},
+            {"type":"function","id":"b","function":{"name":"second","arguments":"{}"}}
+        ]},
+        {"role":"tool","tool_call_id":"b","content":"{\"error\":\"ordinary data\"}"},
+        {"role":"tool","tool_call_id":"a","content":"plain result"},
+        {"role":"user","content":[{"type":"text","text":"continue"},{"type":"text","text":"please"}]}
+    ]})).unwrap()
+}
+
+#[test]
+fn encodes_complete_result_batch_and_following_text_in_one_content() {
+    let v = encode_chat(&result_history()).unwrap();
+    assert_eq!(v["contents"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        v["contents"][1],
+        json!({"role":"user","parts":[
+            {"functionResponse":{"id":"b","name":"second","response":{"error":"ordinary data"}}},
+            {"functionResponse":{"id":"a","name":"first","response":{"result":"plain result"}}},
+            {"text":"continue"}, {"text":"please"}
+        ]})
+    );
+    let decoded = decode_chat(v.clone(), "m", false).unwrap();
+    assert_eq!(encode_chat(&decoded).unwrap(), v);
+}
+
+#[test]
+fn semantic_tool_error_cannot_be_downgraded_to_gemini_text() {
+    let mut r = result_history();
+    assert!(
+        encode_chat(&r).is_ok(),
+        "an error object key alone is ordinary data"
+    );
+    r.messages[1].tool_error = true;
+    assert!(encode_chat(&r).is_err());
+}
+
+#[test]
+fn encoder_rejects_incomplete_interrupted_or_invalid_result_batches() {
+    let base = result_history();
+    let mut missing = base.clone();
+    missing.messages.truncate(2);
+    assert!(encode_chat(&missing).is_err(), "missing result");
+    let mut interrupted = base.clone();
+    interrupted.messages.swap(2, 3);
+    assert!(
+        encode_chat(&interrupted).is_err(),
+        "user interrupts pending results"
+    );
+    let mut orphan = base.clone();
+    orphan.messages.remove(0);
+    assert!(encode_chat(&orphan).is_err(), "orphan result");
+    let mut duplicate = base.clone();
+    duplicate.messages[2].tool_call_id = Some("b".into());
+    assert!(encode_chat(&duplicate).is_err(), "duplicate result");
+    let mut missing_id = base;
+    missing_id.messages[1].tool_call_id = None;
+    assert!(encode_chat(&missing_id).is_err(), "missing result id");
+}
+
+#[test]
+fn result_text_blocks_are_not_silently_concatenated() {
+    let mut r = result_history();
+    r.messages[1].content = Some(Content::Parts(vec![
+        ContentPart::Text { text: "one".into() },
+        ContentPart::Text { text: "two".into() },
+    ]));
+    assert!(encode_chat(&r).is_err());
+    for (parts, expected) in [
+        (vec![], json!({"result":""})),
+        (
+            vec![ContentPart::Text { text: "one".into() }],
+            json!({"result":"one"}),
+        ),
+    ] {
+        r.messages[1].content = Some(Content::Parts(parts));
+        assert_eq!(
+            encode_chat(&r).unwrap()["contents"][1]["parts"][0]["functionResponse"]["response"],
+            expected
+        );
+    }
+}
+
+#[test]
+fn decoder_rejects_unmatched_identity_and_assistant_reordering() {
+    for response in [
+        json!({"id":"a","name":"wrong","response":{}}),
+        json!({"id":"unknown","name":"first","response":{}}),
+        json!({"name":"unknown","response":{}}),
+    ] {
+        assert!(
+            decode_chat(
+                json!({"contents":[
+                    {"role":"model","parts":[{"functionCall":{"id":"a","name":"first","args":{}}}]},
+                    {"role":"user","parts":[{"functionResponse":response}]}
+                ]}),
+                "m",
+                false
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        decode_chat(
+            json!({"contents":[{"role":"user","parts":[
+                {"functionResponse":{"name":"first","response":{}}}
+            ]}]}),
+            "m",
+            false
+        )
+        .is_err()
+    );
+    assert!(
+        decode_chat(
+            json!({"contents":[{"role":"model","parts":[
+                {"functionCall":{"name":"first","args":{}}}, {"text":"after"}
+            ]}]}),
+            "m",
+            false
+        )
+        .is_err()
+    );
+}
 #[test]
 fn streamed_tool_then_text_is_rejected_without_reordering() {
     let tool = json!({"functionCall":{"name":"f","args":{}}});

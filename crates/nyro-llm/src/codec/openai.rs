@@ -64,6 +64,9 @@ fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
         return Err(invalid("messages must be nonempty"));
     }
     for message in &request.messages {
+        if message.tool_error && message.role != Role::Tool {
+            return Err(invalid("tool_error requires a tool result"));
+        }
         if message.role == Role::Tool && message.tool_call_id.as_deref().is_none_or(str::is_empty) {
             return Err(invalid("tool messages require tool_call_id"));
         }
@@ -102,6 +105,11 @@ fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
 }
 pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
     validate_chat(request)?;
+    if request.messages.iter().any(|m| m.tool_error) {
+        return Err(invalid(
+            "OpenAI Chat cannot preserve explicit tool error status",
+        ));
+    }
     let wire = chat::Request {
         model: request.model.clone(),
         messages: convert(&request.messages)?,

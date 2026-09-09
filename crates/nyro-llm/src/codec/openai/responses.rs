@@ -13,6 +13,7 @@ fn message(role: Role, content: Option<Content>) -> Message {
         content,
         tool_calls: None,
         tool_call_id: None,
+        tool_error: false,
         name: None,
         refusal: None,
         audio: None,
@@ -141,7 +142,18 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                     }) => {
                         nonempty(&call_id)?;
                         history_status(status.as_deref())?;
-                        let mut m = message(Role::Tool, Some(Content::Text(output)));
+                        let content = match output {
+                            wire::FunctionOutput::Text(text) => Content::Text(text),
+                            wire::FunctionOutput::Parts(parts) => Content::Parts(
+                                parts
+                                    .into_iter()
+                                    .map(|wire::FunctionOutputPart::InputText { text }| {
+                                        ContentPart::Text { text }
+                                    })
+                                    .collect(),
+                            ),
+                        };
+                        let mut m = message(Role::Tool, Some(content));
                         m.tool_call_id = Some(call_id);
                         messages.push(m);
                     }
@@ -257,6 +269,9 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
     }
     let mut input = Vec::new();
     for m in &r.messages {
+        if m.tool_error {
+            return Err(bad("Responses cannot represent tool result error status"));
+        }
         if m.name.is_some()
             || m.audio.is_some()
             || (m.role != Role::Tool && m.tool_call_id.is_some())
@@ -264,22 +279,16 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             return Err(bad("unsupported Responses message metadata"));
         }
         if m.role == Role::Tool {
-            let text = match &m.content {
-                Some(Content::Text(s)) => s.clone(),
-                Some(Content::Parts(parts)) => parts
-                    .iter()
-                    .map(|p| match p {
-                        ContentPart::Text { text } => Ok(text.as_str()),
-                        _ => Err(bad("function result must be text")),
-                    })
-                    .collect::<Result<String, _>>()?,
+            let output = match &m.content {
+                Some(Content::Text(s)) => json!(s),
+                Some(content @ Content::Parts(_)) => json!(content_parts(content, false)?),
                 None => return Err(bad("function result requires text")),
             };
             if m.refusal.is_some() {
                 return Err(bad("function result cannot contain refusal"));
             }
             input.push(
-                json!({"type":"function_call_output","call_id":m.tool_call_id,"output":text}),
+                json!({"type":"function_call_output","call_id":m.tool_call_id,"output":output}),
             );
             continue;
         }
