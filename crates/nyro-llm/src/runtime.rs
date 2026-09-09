@@ -396,11 +396,12 @@ impl Runtime {
         let native = workload == Workload::Chat
             && matches!(
                 endpoint.format,
-                ChatFormat::OpenAiChat | ChatFormat::Anthropic
+                ChatFormat::OpenAiChat | ChatFormat::Anthropic | ChatFormat::Gemini
             )
-            && value
-                .get("model")
-                .and_then(Value::as_str)
+            && endpoint
+                .model
+                .as_deref()
+                .or_else(|| value.get("model").and_then(Value::as_str))
                 .and_then(|id| self.models.get(id))
                 .is_some_and(|model| {
                     model.backends.iter().any(|backend| {
@@ -410,7 +411,7 @@ impl Runtime {
                     })
                 });
         let request = if native {
-            Input::Native(native::NativeRequest::parse(value, endpoint.format)?)
+            Input::Native(native::NativeRequest::parse(value, &endpoint)?)
         } else {
             Input::Typed(endpoint.decode(value)?)
         };

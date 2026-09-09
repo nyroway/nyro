@@ -12,8 +12,9 @@ fn native_chat_requires_supported_matching_protocol_capability() {
         ("openai", Some("chat_completions"), true),
         ("openai", Some("responses"), false),
         ("anthropic", None, true),
-        ("gemini", None, false),
+        ("gemini", None, true),
         ("anthropic", Some("chat_completions"), false),
+        ("gemini", Some("chat_completions"), false),
     ] {
         let mut value = json!({"providers":{"p":{"kind":kind,"base_url":"http://localhost/v1","native_chat":true}},
             "models":{"m":{"provider":"p","upstream_model":"upstream","workloads":["chat"],"allow_anonymous":true}}});

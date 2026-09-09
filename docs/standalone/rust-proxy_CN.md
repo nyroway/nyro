@@ -23,7 +23,7 @@ curl http://127.0.0.1:19530/v1/chat/completions \
   -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。默认情况下，未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。下文的 OpenAI Chat 和 Anthropic Messages 原生模式可显式开启，在匹配的端点之间保留厂商 JSON 字段。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在已支持的响应中恢复公开模型名。
+当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。默认情况下，未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。下文的 OpenAI Chat、Anthropic Messages 和 Gemini generateContent 原生模式可显式开启，在匹配的端点之间保留厂商 JSON 字段。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在类型化响应及 OpenAI／Anthropic 原生响应中恢复公开模型名；Gemini 原生响应保留 `modelVersion` 作为上游版本信息。
 
 ## 查询可见模型
 
@@ -240,13 +240,13 @@ llm:
       api_key: replace-with-provider-secret
 ```
 
-这段 Provider 配置应合入现有配置。默认值为 `false`；OpenAI Chat 和 Anthropic Messages Provider 支持开启，Gemini 和 `api: responses` 拒绝设置为 `true`。OpenAI Provider 只对匹配的 OpenAI Chat 入口启用此模式，其他入口 API 和 Embedding 继续经过严格 codec。
+这段 Provider 配置应合入现有配置。默认值为 `false`；OpenAI Chat、Anthropic Messages 和 Gemini Provider 支持开启，`api: responses` 拒绝设置为 `true`。OpenAI Provider 只对匹配的 OpenAI Chat 入口启用此模式，其他入口 API 和 Embedding 继续经过严格 codec。
 
 Nyro 保留请求 JSON、非流式响应 JSON 和 SSE data JSON，包括嵌套的推理／工具历史、厂商选项和 usage 详情。请求顶层 model 替换为上游模型，响应／chunk 则恢复公开别名。流式请求强制上游 `stream_options.include_usage: true`，其他选项保持；下游只在客户端要求时输出 usage。隐藏 usage 时省略纯 usage chunk，计量仍然执行。
 
 原生模式校验路由／控制结构（model、消息 role、流式选项）、响应／chunk 结构、数字用量以及有界 SSE 帧，并要求显式 `[DONE]` 终止；厂商字段的语义由所选上游处理。保真粒度是 JSON 字段：序列化和 SSE 帧格式可能变化，注释／ID／retry 字段会丢弃，event 名只接受省略、空值或 `message`，也不会任意转发 Header。认证、授权、准入、quota 结算、重试上限、期限及清理仍强制执行，上游失败响应继续脱敏。切换原生模式会改变配置指纹，并重置受影响的健康状态绑定。
 
-混合 backend 池中，原生请求只有在**原始请求**通过严格 OpenAI codec 且目标能够表达时，才允许使用严格模式或其他协议 backend。不会通过删除扩展字段让故障转移变得可用。本能力不承诺跨协议推理／媒体转换、完整 SDK 会话，也不包含 Gemini／Responses 原生保真。
+混合 backend 池中，原生请求只有在**原始请求**通过严格 OpenAI codec 且目标能够表达时，才允许使用严格模式或其他协议 backend。不会通过删除扩展字段让故障转移变得可用。本能力不承诺跨协议推理／媒体转换、完整 SDK 会话，也不包含 Responses 原生保真。
 
 本地录制回归：构建 `cargo build -p nyro` 后运行 `python3 tests/proxy_native_replay.py`。它完整比较 DeepSeek、Zhipu AI 的 8 份 OpenAI Chat 录制请求／响应序列，同时回放 8 份 Anthropic Messages 样本，并分类默认严格模式下全部 16 份录制数据。这些历史样本不等于真实厂商在线认证。
 
@@ -261,6 +261,22 @@ Anthropic Provider 同样可以设置 `native_chat: true`，只对 `POST /v1/mes
 quota 和观测中的总输入为 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`，缺省缓存计数从零开始。`message_delta` 使用累计快照，每个 message delta 必须报告 `output_tokens`，省略的输入／缓存计数沿用已有值，重复快照不会重复累加。无效数字、计数递减或溢出会使响应失败。总输入与输出相加得到总 token；嵌套缓存时长明细、service tier 和服务端工具计数会保留，但不额外计入 token。到 `message_stop` 才成功结算，此前失败／丢弃仍使用既有保守扣费规则。参见 [Anthropic 缓存计量](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#tracking-cache-performance)及[流事件约定](https://platform.claude.com/docs/en/build-with-claude/streaming)。
 
 认证、授权、rate／并发准入、健康状态、期限和代际所有权沿用现有路径。上游仍使用配置中的 `x-api-key` 和 `anthropic-version: 2023-06-01`，不转发调用方凭证、任意 Header 或 `anthropic-beta`。本轮不新增 OAuth／账号通道及 beta Header 配置。
+
+## 显式开启 Gemini generateContent 原生兼容
+
+为 `kind: gemini` Provider 设置 `native_chat: true`，不设置 `api`。它只对匹配的 Gemini 入口／上游生效，跨协议 fallback 仍须通过来源严格 codec。支持 `/v1beta/models/{alias}:generateContent` 与 `/v1/models/{alias}:generateContent`，以及对应的 `:streamGenerateContent` 动作。流式查询参数只允许 `alt=sse`，凭证必须放在 Header 中。
+
+公开模型和流式模式由 URL 决定。Nyro 将上游 URL 中的模型替换为配置中的 `upstream_model`，不会向 JSON 注入 `model` 或 `stream`；客户端正文包含这两个字段时拒绝，即使值为 null。响应的 `modelVersion` 保留为上游版本信息，不改为别名。上游只使用 Provider 配置的 `x-goog-api-key`，不转发调用方密钥或任意 Header。
+
+原生请求／响应保留 JSON 字段，包括思考签名、函数历史、内联／文件媒体数据、缓存、安全配置／评级、grounding／引用及结构化输出选项。这些内容留在 runtime 私有路径中。Nyro 校验 contents／parts、路由结构及已知字段的基本类型；厂商语义与签名验证由上游负责。可选的非计量字段按 ProtoJSON 将 null 视为未设置，并在 JSON 中保留；这不会放宽必填计量数字或禁止的正文路由字段。本轮延续单候选范围：`candidateCount` 只能未设置或为 `1`，响应候选 index 只能为 `0` 或未设置，多个候选会被拒绝。被拦截的提示词可以不返回候选，但 `promptFeedback.blockReason` 必须为非空且非未指定值；反馈 JSON 原样保留，HTTP 为 `200`。
+
+Gemini SSE 使用 JSON data 帧，不合成 `[DONE]`。非空且非未指定的候选结束原因或提示词拦截原因建立终态，但仅在正常 EOF 后成功结算；尾部纯 usage 帧仍然输出并参与计量。终态之后再出现候选、帧格式错误、上游 error 正文、传输失败或缺少终态的 EOF 都会失败，收到 `2xx` 后不再重试。未知非空结束／拦截枚举值予以保留，以兼容未来扩展；event 名只允许省略、空值或 `message`。
+
+提供 `usageMetadata` 时，`promptTokenCount` 和 `totalTokenCount` 必须为非负整数；省略的 candidate／thought 计数视为零，并须与报告总量一致。输入为 prompt token（已经包含缓存），输出为 candidate 加 thought token，总量采用有溢出检查的求和。缓存计数不得大于 prompt，不再重复相加。输入、输出和总量快照不得递减；candidate／thought 内部分配或缓存子集变化，只要满足这些聚合约束就会保留。本轮尚未实现独立工具提示词计量，因此拒绝非零 `toolUsePromptTokenCount`。详情数组及其他元数据保留，但不重复计费。参见 [Gemini 响应及用量约定](https://ai.google.dev/api/generate-content#UsageMetadata)。
+
+全程缺失 usage 时保留“用量未知”的 fallback 计量；若前段报告过 usage，则终态帧或之后必须再次报告完整快照，否则 EOF 失败并使用保守扣费。不能仅因连接结束，就把早期零输出快照当成最终用量。期限、取消、rate／并发、健康与代际清理继续走共享路径。
+
+构建 `nyro` 后运行 `python3 tests/proxy_gemini_native_smoke.py`。该测试是本地 mock 契约回归，不是录制样本或真实 SDK／厂商认证；现有 16 份 OpenAI／Anthropic 录制数据仍单独回放。多候选、独立工具提示词计量、Gemini Interactions 及跨协议思考／媒体转换不属于本轮交付。
 
 ## Responses 子集
 

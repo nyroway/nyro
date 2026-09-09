@@ -203,8 +203,13 @@ impl StreamState {
                 continue;
             }
             if self.eof {
-                if self.native.is_some() {
-                    return Err(Failure::upstream());
+                if let Some(native) = &self.native {
+                    native.finish()?;
+                    self.done = true;
+                    if let Some(mut attempt) = self.attempt.take() {
+                        attempt.complete();
+                    }
+                    return Ok(None);
                 }
                 self.canonical
                     .extend(self.decoder.finish().map_err(|_| Failure::upstream())?);

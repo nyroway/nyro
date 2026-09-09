@@ -11,8 +11,8 @@ pub(super) struct Endpoint {
     pub kind: ProviderKind,
     pub format: ChatFormat,
     pub workload: Workload,
-    model: Option<String>,
-    streaming: bool,
+    pub(super) model: Option<String>,
+    pub(super) streaming: bool,
 }
 
 pub(super) fn kind(path: &str) -> ProviderKind {
