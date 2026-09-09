@@ -225,6 +225,14 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 
 协议参考：[Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)、[Gemini generateContent](https://ai.google.dev/api/generate-content)。本地矩阵回归：`cargo test -p nyro-llm --test protocol_matrix`。
 
+## 转换到 Anthropic 的工具历史
+
+严格转换选择 Anthropic 上游时，同一 assistant 工具调用批次的全部结果放入紧随其后的一条 `user` 消息。结果保持原始顺序以及 `tool_call_id`／`tool_use_id` 对应关系，即使返回顺序与调用顺序不同。完整结果批次之后紧邻的用户文本追加在结果块后。工具名称、解析后的对象参数和结果文本保留；Gemini 对象结果沿用既有 JSON 转文本的转换方式。
+
+批次中每个调用必须恰好对应一个相邻结果。批次内重复调用 ID、缺失／未知／重复结果，以及结果收齐前插入 user 或 assistant 消息，都会在发往上游前使该 Anthropic backend 不再符合条件。Nyro 不合成调用、不删除中间文本，也不重排历史进行修复；没有 backend 能表达原始请求时返回 `400`。这些是严格 Anthropic encoder 的目标协议检查，匹配的显式原生模式保持已有契约。
+
+本轮覆盖 OpenAI Chat、无状态 Responses、Anthropic Messages 和 Gemini generateContent 入口，以及 JSON／SSE 响应。不新增跨协议 thinking／签名映射、带错误标记／媒体的工具结果、任意交错历史或 Schema 改写。参考：[Anthropic 并行工具结果格式](https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use)。本地回归：`cargo test -p nyro-llm --test anthropic_codec --test protocol_matrix`。
+
 ## 显式开启 OpenAI Chat 原生兼容
 
 为 OpenAI Chat Provider 设置 `native_chat: true`，可以在 `POST /v1/chat/completions` 与 OpenAI Chat 上游之间保留厂商 JSON 字段：

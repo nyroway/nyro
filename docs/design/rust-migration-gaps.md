@@ -1,6 +1,6 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini 原生增量已由 PR #325／#326／#327 合并，本轮在 `17d5db93` 上推进无状态 Responses 原生兼容，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，本轮在 `c81023a1` 上推进 G04 的 Anthropic 并行工具结果历史转换，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
 
 **新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
@@ -29,7 +29,7 @@
 | G01 模型发现 | 已落地 | [旧模型列表](../../crates/nyro-core/src/proxy/handler.rs)的发现能力已由[新运行时](../../crates/nyro-llm/src/runtime.rs)承接；[模型列表测试](../../crates/nyro-llm/tests/models_runtime.rs)与[重载进程测试](../../tests/proxy_reload_smoke.py)覆盖过滤及代际变化。 | 按授权返回稳定排序的公开别名；匿名／绑定／无效／歧义凭证、空列表、成功／失败重载、密钥轮换和预算隔离已覆盖。无效密钥明确拒绝，不沿用旧公开列表回退；密钥到期仍由 G06 跟踪。 |
 | G02 同协议保真 | 部分 | [旧调度器](../../crates/nyro-core/src/proxy/dispatcher/mod.rs)按条件选择 Native 模式；[请求构建](../../crates/nyro-core/src/provider/common/pipeline.rs)和[非流式响应](../../crates/nyro-core/src/proxy/dispatcher/non_stream.rs)可跳过 IR 往返。[新运行时](../../crates/nyro-llm/src/runtime/native.rs)通过 Provider `native_chat: true` 保留匹配的 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 请求、JSON 响应及 SSE 扩展；默认仍严格转换。 | OpenAI Chat／无状态 Responses／Anthropic Messages 和单候选 Gemini 的别名路由、usage、凭证隔离、重试兼容筛选、有界解析及流终态已覆盖；多候选／独立工具提示词计量和完整客户端仍待验收；Responses 已补无状态原生 mock 验证。Gemini 原生保留上游 modelVersion。只保留 JSON 字段，不承诺字节或任意 Header 透传；跨协议原始请求仍须通过来源严格 codec。 |
 | G03 推理、缓存与媒体语义 | 部分 | [旧转换测试](../../crates/nyro-core/tests/protocol_conversion.rs)覆盖 thinking／签名回放、`reasoning_content`、think-tag 归一化和 Gemini `fileData`。[新版限制](../standalone/rust-proxy_CN.md)的严格转换路径仍拒绝未支持的 Chat 内容块、缓存扩展和 Responses reasoning items；OpenAI Chat／Responses／Anthropic Messages／Gemini 原生模式只保留这些 JSON 字段，不新增跨协议语义映射。 | 为保留客户端建立字段／场景矩阵，保留可表达语义，明确拒绝不可表达的跨协议转换。OpenAI Chat 已有图片／音频类型字段，不能笼统说所有多模态都缺失；新增独立 Image/Audio/Video 操作另算范围。 |
-| G04 工具历史与 Schema 处理 | 部分／待取舍 | 旧转换测试包含合成调用、重复 ID 修复、丢弃中间文本／孤立调用、Gemini Schema 裁剪。新 [Anthropic](../../crates/nyro-llm/tests/anthropic_codec.rs)、[Gemini](../../crates/nyro-llm/tests/gemini_codec.rs)、[Responses](../../crates/nyro-llm/tests/responses_codec.rs)测试会拒绝部分顺序或身份场景。 | 回放并行调用、交错文本、工具结果和 Schema，保留合法客户端历史；不自动迁移虚构调用或丢内容的处理。区分有意拒绝和兼容回退。 |
+| G04 工具历史与 Schema 处理 | 部分／待取舍 | 旧转换测试包含合成调用、重复 ID 修复、丢弃中间文本／孤立调用、Gemini Schema 裁剪。新 [Anthropic](../../crates/nyro-llm/tests/anthropic_codec.rs) encoder 已将完整的并行结果批次放入单一 user 消息，保留 ID／结果顺序及后续文本，并明确拒绝不完整或交错批次；[Gemini](../../crates/nyro-llm/tests/gemini_codec.rs)、[Responses](../../crates/nyro-llm/tests/responses_codec.rs)及其余工具语义仍需核对。 | 回放并行调用、交错文本、工具结果和 Schema，保留合法客户端历史；不自动迁移虚构调用或丢内容的处理。区分有意拒绝和兼容回退。 |
 | G05 Provider 通道与凭证 | 部分 | 旧版有[厂商适配](../../crates/nyro-core/src/provider/mod.rs)、[账号认证 driver](../../crates/nyro-core/src/auth/drivers/mod.rs)和 Vertex 服务账号支持。新 Provider 配置只有协议 kind、可选 OpenAI API、URL 和可选静态 API Key。 | 迁移必要端点、Header 和凭证行为，不向 driver 传递 Gateway 或数据库实体。账号授权、刷新、持久化归控制面；driver 消费已解析凭证。详见下方清单。 |
 | G06 API Key 生命周期 | 部分 | [旧授权](../../crates/nyro-core/src/proxy/dispatcher/auth.rs)检查启用状态、过期时间和模型绑定。新 `ApiKey` 只有 `id`、`secret`；可以重载移除密钥，但没有到期自动失效。 | 对新准入执行到期检查；发布配置保留绑定及禁用语义，验证时间边界和重载；明确已准入请求保持原代际。模型发现与调用授权保持一致。 |
 | G07 限制作用域与持久化 | 部分 | 旧授权按 API Key 查询 Minute/Day 窗口的请求／token 数（`rpm/rpd/tpm/tpd`）。新 rate 是模型级 token bucket；quota 是模型级、累计、进程内 token 额度。 | 明确主体／模型作用域、窗口／重置、尝试与完成的计量、重启行为；测试同一密钥跨模型、多密钥共享模型。显式迁移策略含义，不静默将 RPM 转成不同桶规则或将 TPM 转成累计额度；也不复制旧日志查询准入的竞争问题。 |
@@ -76,7 +76,7 @@
 | 4 | G10–G12：最小 `nyro serve`，先 SQLite 和一条管理到发布路径，再补 Postgres 等价与其余管理能力。 | 持久化 → 校验 → 发布 → 新请求使用快照；失败保留活动代际；重启／数据兼容；WebUI/API 与观测一致。可与兼容工作并行推进，单独完成不代表可发布替换。 |
 | 5 | G11/G13：部署、工具、发布切换。 | 文件／控制面等价，保留 CLI、录制客户端矩阵、支持平台构建、迁移／恢复说明全部过关后移除旧入口。 |
 
-步骤 1 已完成；步骤 2 已完成 16 份录制样本分类、OpenAI Chat／Anthropic Messages 原生增量及单候选 Gemini mock 验证，本轮补充无状态 Responses 原生 mock 验证；接下来按保留客户端核对剩余跨协议／工具历史语义及真实会话。原生保真和密钥限制语义仍是发布阻塞项；后续每一步可能需要多份聚焦 PR。
+步骤 1 已完成；步骤 2 已完成 16 份录制样本分类、OpenAI Chat／Anthropic Messages 原生增量及单候选 Gemini mock 验证，无状态 Responses 原生 mock 验证也已完成；本轮补充四种入口到 Anthropic 的完整并行工具结果历史转换，接下来按保留客户端核对剩余跨协议／工具历史语义及真实会话。原生保真和密钥限制语义仍是发布阻塞项；后续每一步可能需要多份聚焦 PR。
 
 复用[现有录制 fixture](../../tests/e2e/fixtures)和[旧回放矩阵](../../tests/e2e/proxy/test_protocol_matrix.py)作为输入，不能把它们当作新代理已通过的证据。旧 harness 依赖旧配置／工具流程，部分断言仅检查文本锚点／字段名；新断言必须核对有效内容顺序、工具 ID／参数、用量、凭证隔离和终态。端到端认证需记录客户端版本，本地 mock 不代表当前 SDK／厂商兼容。
 
@@ -211,4 +211,31 @@ python3 tests/proxy_reload_smoke.py
 
 261 项 Rust 测试（含 11 项 Responses 专项）、Clippy、非桌面 workspace 检查、构建和五组进程回归通过。原有 16 份录制样本全部通过原生精确回放，默认严格／显式 false 分类保持一致；格式和文档链接检查通过。
 
-G02 仍为部分完成：Gemini 多候选／独立工具提示词计量、真实客户端会话和其余保留语义尚需后续验收。Responses 托管状态、item 引用、后台任务、内置工具和账号通道未随原生字段保留自动实现；下一轮继续按 G02–G04 的保留客户端场景核对跨协议推理／工具历史差异。
+G02 仍为部分完成：Gemini 多候选／独立工具提示词计量、真实客户端会话和其余保留语义尚需后续验收。Responses 托管状态、item 引用、后台任务、内置工具和账号通道未随原生字段保留自动实现；在 Responses 增量结束时，后续方向为按 G02–G04 的保留客户端场景核对跨协议推理／工具历史差异。
+
+## 12. G04 Anthropic 并行工具结果历史增量验证
+
+核对现有四份 tool-use 录制样本后确认：它们的请求均只有一条 user 消息，验证的是首轮工具调用输出，不能作为完整多轮工具历史的验收证据。旧[转换测试](../../crates/nyro-core/tests/protocol_conversion.rs)包含并行调用和工具结果历史，但其中合成调用、丢弃中间文本及重排交错历史的做法不自动成为迁移目标。
+
+本轮修复严格 [Anthropic encoder](../../crates/nyro-llm/src/codec/anthropic.rs)将并行结果拆成多条 user 消息的问题：一个 assistant 调用批次的全部结果合并到紧随其后的一条 user 消息，结果原始顺序、ID 对应、工具名称／对象参数和后续用户文本保留。结果可以按与调用不同的顺序返回。批次内重复调用 ID、缺失／未知／重复结果或批次未完成时插入其他消息，使该目标 backend 在网络尝试前不再符合条件；没有可表达的候选时返回 `400`。不合成调用、不删除文本、不重排历史。匹配的原生路径保持既有契约，不新增全局工具历史规范化或 IR／内核能力。
+
+新增 5 项回归：[codec 测试](../../crates/nyro-llm/tests/anthropic_codec.rs)先复现错误分组和漏校验，再验证精确输出、反向解码再编码及连续两个工具批次；[HTTP 矩阵](../../crates/nyro-llm/tests/protocol_matrix.rs)覆盖 OpenAI Chat／Responses／Anthropic／Gemini 四种入口到 Anthropic 的 8 组 JSON／SSE 成功路径，并核对完整上游历史、模型别名和凭证隔离，以及四种入口不完整结果在访问上游前被拒绝、并发许可释放。独立审查未发现阻塞问题。
+
+实际执行：
+
+```sh
+cargo test -p nyro-llm --test anthropic_codec --test protocol_matrix --offline
+cargo test -p nyro-llm -p nyro-config -p nyro --offline
+cargo clippy -p nyro-llm -p nyro-config -p nyro --all-targets --offline -- -D warnings
+cargo check --workspace --exclude nyro-desktop --offline
+cargo build -p nyro --offline
+python3 tests/proxy_native_replay.py
+python3 tests/proxy_gemini_native_smoke.py
+python3 tests/proxy_responses_native_smoke.py
+python3 tests/proxy_smoke.py
+python3 tests/proxy_reload_smoke.py
+```
+
+266 项 Rust 测试（本轮新增 5 项）、Clippy、非桌面 workspace 检查、构建和五组进程回归通过。16 份历史样本的原生回放全部通过，默认严格／显式 false 分类保持一致；格式及 88 个文档相对链接检查通过。
+
+G04 仍为部分完成：本轮只处理严格转换到 Anthropic 的完整相邻结果批次，不补齐任意交错工具历史、工具错误标记、媒体结果或 Schema 处理。G03 的跨协议推理／签名映射和 G02 的真实厂商／客户端会话验收仍待后续增量；本轮没有使用真实厂商密钥。
