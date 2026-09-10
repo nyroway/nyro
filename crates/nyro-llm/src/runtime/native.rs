@@ -14,6 +14,21 @@ mod responses;
 use nyro_protocol::framing::Event;
 use serde_json::{Value, json};
 
+// Preserve native detail extensions, but validate the known disjoint cache
+// subsets when the upstream reports a write count.
+fn validate_cache_write(details: &Value, input: u64) -> Result<(), Failure> {
+    if let Some(written) = details.get("cache_write_tokens") {
+        let written = written.as_u64().ok_or_else(Failure::upstream)?;
+        let read = details
+            .get("cached_tokens")
+            .map_or(Ok(0), |v| v.as_u64().ok_or_else(Failure::upstream))?;
+        if read.checked_add(written).is_none_or(|n| n > input) {
+            return Err(Failure::upstream());
+        }
+    }
+    Ok(())
+}
+
 pub(super) enum Input {
     Typed(Request),
     Native(NativeRequest),

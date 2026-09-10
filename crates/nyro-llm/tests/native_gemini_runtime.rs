@@ -688,3 +688,57 @@ async fn optional_null_response_fields_remain_compatible_with_strict_codec() {
         payload
     );
 }
+
+#[tokio::test]
+async fn cached_resource_reference_survives_native_retry_without_cross_protocol_fallback() {
+    for streaming in [false, true] {
+        let first = upstream(503, "unavailable".into(), false).await;
+        let incompatible = upstream(200, answer().to_string(), false).await;
+        let backup = upstream(
+            200,
+            if streaming {
+                sse(&frames())
+            } else {
+                answer().to_string()
+            },
+            streaming,
+        )
+        .await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let mut body = input(false);
+        body["cachedContent"] = json!("cachedContents/existing-cache");
+        let gateway = runtime(
+            config(&[
+                (&first, "gemini", true),
+                (&incompatible, "gemini", false),
+                (&incompatible, "openai", true),
+                (&backup, "gemini", true),
+            ]),
+            &limit,
+            Options::default(),
+        );
+        let response = invoke(&gateway, body.clone(), streaming).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        consume(response).await;
+        assert_eq!(limit.available(), 1);
+        assert!(incompatible.calls.lock().unwrap().is_empty());
+        for up in [&first, &backup] {
+            let calls = up.calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0]["body"], body);
+        }
+        for kind in ["gemini", "openai", "anthropic"] {
+            let strict = runtime(
+                config(&[(&incompatible, kind, kind != "gemini")]),
+                &limit,
+                Options::default(),
+            );
+            assert_eq!(
+                invoke(&strict, body.clone(), streaming).await.status(),
+                StatusCode::BAD_REQUEST
+            );
+            assert!(incompatible.calls.lock().unwrap().is_empty());
+            assert_eq!(limit.available(), 1);
+        }
+    }
+}

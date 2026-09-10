@@ -103,6 +103,7 @@ fn usage(value: &Value) -> Result<Option<Usage>, Failure> {
     if input.checked_add(output) != Some(total) {
         return Err(Failure::upstream());
     }
+    super::validate_cache_write(&value["input_tokens_details"], input)?;
     for (details, field, bound) in [
         ("input_tokens_details", "cached_tokens", input),
         ("output_tokens_details", "reasoning_tokens", output),

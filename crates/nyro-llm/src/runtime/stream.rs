@@ -55,14 +55,9 @@ impl Encode {
                 include_usage,
             } => {
                 if let ChatEvent::Chunk(chunk) = event
-                    && chunk
-                        .usage
-                        .as_ref()
-                        .is_some_and(|u| u.cache_creation.is_some())
+                    && let Some(usage) = &chunk.usage
                 {
-                    return Err(CodecError(
-                        "OpenAI Chat cannot represent cache creation usage".into(),
-                    ));
+                    openai::cache::validate(usage)?;
                 }
                 if !*include_usage && let ChatEvent::Chunk(chunk) = event {
                     if chunk.choices.is_empty() {

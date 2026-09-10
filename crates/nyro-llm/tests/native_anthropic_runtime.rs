@@ -851,3 +851,96 @@ async fn invalid_cache_updates_terminate_strict_and_native_streams_with_conserva
         }
     }
 }
+
+// Isolate caching from thinking/vendor extensions so rejection cannot pass for
+// an unrelated unsupported field. Each request has at most four breakpoints.
+fn cache_inputs(streaming: bool) -> Vec<Value> {
+    let mut automatic = input(false, streaming);
+    automatic["cache_control"] = json!({"type":"ephemeral","ttl":"1h"});
+    let mut placed = input(false, streaming);
+    placed["tools"] = json!([{"name":"weather","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral","ttl":"1h"}}]);
+    placed["system"] = json!([
+        {"type":"text","text":"Stable instructions","cache_control":{"type":"ephemeral","ttl":"1h"}},
+        {"type":"text","text":"Uncached suffix"}
+    ]);
+    placed["messages"] = json!([
+        {"role":"user","content":[
+            {"type":"text","text":"Stable prefix"},
+            {"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGVsbG8="},"cache_control":{"type":"ephemeral","ttl":"5m"}},
+            {"type":"text","text":"Uncached question"}]},
+        {"role":"assistant","content":[{"type":"tool_use","id":"call-1","name":"weather","input":{}}]},
+        {"role":"user","content":[
+            {"type":"tool_result","tool_use_id":"call-1","content":[{"type":"text","text":"Sunny"}],"cache_control":{"type":"ephemeral"}},
+            {"type":"text","text":"Continue"}]}
+    ]);
+    // A cache marker on otherwise ordinary text must independently be rejected
+    // by strict conversion, without depending on image or tool support.
+    let mut text = input(false, streaming);
+    text["messages"][0]["content"] = json!([
+        {"type":"text","text":"Stable prefix","cache_control":{"type":"ephemeral","ttl":"1h"}},
+        {"type":"text","text":"Uncached suffix"}
+    ]);
+    vec![automatic, placed, text]
+}
+
+#[tokio::test]
+async fn cache_controls_keep_ttl_and_placement_across_native_retry_only() {
+    for streaming in [false, true] {
+        let first = upstream(503, "unavailable".into(), false).await;
+        let incompatible = upstream(200, answer().to_string(), false).await;
+        let backup = upstream(
+            200,
+            if streaming {
+                sse(&frames())
+            } else {
+                answer().to_string()
+            },
+            streaming,
+        )
+        .await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        for body in cache_inputs(streaming) {
+            let gateway = runtime(
+                config(&[
+                    (&first, "anthropic", true),
+                    (&incompatible, "anthropic", false),
+                    (&incompatible, "openai", true),
+                    (&backup, "anthropic", true),
+                ]),
+                &limit,
+                Options::default(),
+            );
+            let before = backup.calls.lock().unwrap().len();
+            let response = invoke(&gateway, body.clone()).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let output = consume(response).await;
+            assert!(output.contains(if streaming { "message_stop" } else { "晴天" }));
+            assert_eq!(limit.available(), 1);
+            assert!(incompatible.calls.lock().unwrap().is_empty());
+            let mut expected = body.clone();
+            expected["model"] = json!("private-model");
+            assert_eq!(
+                first.calls.lock().unwrap().last().unwrap()["body"],
+                expected
+            );
+            assert_eq!(backup.calls.lock().unwrap().len(), before + 1);
+            assert_eq!(
+                backup.calls.lock().unwrap().last().unwrap()["body"],
+                expected
+            );
+            for kind in ["anthropic", "openai", "gemini"] {
+                let strict = runtime(
+                    config(&[(&incompatible, kind, kind != "anthropic")]),
+                    &limit,
+                    Options::default(),
+                );
+                assert_eq!(
+                    invoke(&strict, body.clone()).await.status(),
+                    StatusCode::BAD_REQUEST
+                );
+                assert!(incompatible.calls.lock().unwrap().is_empty());
+                assert_eq!(limit.available(), 1);
+            }
+        }
+    }
+}

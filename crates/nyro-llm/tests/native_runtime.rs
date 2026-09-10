@@ -127,17 +127,17 @@ fn input() -> Value {
 }
 fn extended_input() -> Value {
     json!({"model":"public","messages":[
-        {"role":"user","content":"Weather?"},
+        {"role":"user","content":[{"type":"text","text":"Weather?","prompt_cache_breakpoint":{"mode":"explicit"}}]},
         {"role":"assistant","content":null,"reasoning_content":"Check weather",
          "tool_calls":[{"id":"call-1","type":"function","function":{"name":"weather","arguments":"{}"}}]},
         {"role":"tool","tool_call_id":"call-1","content":"Sunny"}
-    ],"max_tokens":16,"thinking":{"type":"enabled"},"vendor_option":{"nested":[true,7,null]}})
+    ],"max_tokens":16,"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"thinking":{"type":"enabled"},"vendor_option":{"nested":[true,7,null]}})
 }
 fn answer() -> Value {
     json!({"id":"answer","object":"chat.completion","created":1,"model":"private-model",
         "request_id":"vendor-request","vendor_field":{"ok":true},
         "choices":[{"index":0,"message":{"role":"assistant","content":"晴天","reasoning_content":"Consider weather"},"finish_reason":"stop"}],
-        "usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"vendor_billable_tokens":9}})
+        "usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":{"cached_tokens":1,"cache_write_tokens":2},"vendor_billable_tokens":9}})
 }
 fn frames() -> Vec<Value> {
     vec![
@@ -145,7 +145,7 @@ fn frames() -> Vec<Value> {
             "choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"想一想","content":"晴天"},"finish_reason":null}]}),
         json!({"id":"answer","object":"chat.completion.chunk","created":1,"model":"private-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
         json!({"id":"answer","object":"chat.completion.chunk","created":1,"model":"private-model","choices":[],"request_id":"usage-request",
-            "usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"vendor_billable_tokens":9}}),
+            "usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,"prompt_tokens_details":{"cached_tokens":1,"cache_write_tokens":2},"vendor_billable_tokens":9}}),
     ]
 }
 fn sse(done: bool) -> String {
@@ -521,5 +521,45 @@ async fn native_stream_accepts_whitespace_around_done_but_rejects_invalid_delta_
             assert!(output.ends_with("data: [DONE]\n\n"));
         }
         assert_eq!(limit.available(), 1);
+    }
+}
+
+#[tokio::test]
+async fn native_cache_write_counts_reject_invalid_subsets_even_when_stream_usage_is_hidden() {
+    for written in [json!(-1), Value::Null, json!(3), json!(u64::MAX)] {
+        for streaming in [false, true] {
+            let mut response = answer();
+            response["usage"]["prompt_tokens_details"]["cache_write_tokens"] = written.clone();
+            let text = if streaming {
+                let mut frames = frames();
+                frames[2]["usage"] = response["usage"].clone();
+                let mut s: String = frames.iter().map(|v| format!("data: {v}\n\n")).collect();
+                s.push_str("data: [DONE]\n\n");
+                s
+            } else {
+                response.to_string()
+            };
+            let up = upstream(200, text, streaming).await;
+            let backup = upstream(200, answer().to_string(), false).await;
+            let limit = ConcurrencyLimit::new(1).unwrap();
+            let gateway = runtime(
+                config(&[(&up, "openai", true), (&backup, "openai", true)]),
+                &limit,
+                Options::default(),
+            );
+            let mut body = input();
+            body["stream"] = json!(streaming);
+            let result = invoke(&gateway, body).await;
+            if streaming {
+                assert_eq!(result.status(), StatusCode::OK);
+                assert!(to_bytes(result.into_body(), 65536).await.is_err());
+            } else {
+                assert_eq!(result.status(), StatusCode::BAD_GATEWAY);
+                consume(result).await;
+            }
+            assert_eq!(up.calls.lock().unwrap().len(), 1);
+            assert!(backup.calls.lock().unwrap().is_empty());
+            assert_eq!(limit.available(), 1);
+        }
     }
 }

@@ -225,15 +225,36 @@ The strict conversion path is an experimental Chat subset for text, user image i
 
 Protocol reference: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini generateContent](https://ai.google.dev/api/generate-content). Local matrix regression: `cargo test -p nyro-llm --test protocol_matrix`.
 
+## Request cache controls
+
+Cache controls follow the official API definitions; legacy adapters are migration evidence, not a source of defaults or equivalent mappings. The current strict subset is:
+
+| Control | Strict conversion | Matching native forwarding |
+|---|---|---|
+| OpenAI `prompt_cache_options` | Chat Completions ↔ Responses; optional `mode: implicit/explicit` and `ttl: 30m`. | Preserved. |
+| OpenAI `prompt_cache_key` | Preserved between Chat and Responses; Nyro does not generate a key. | Preserved. |
+| OpenAI `prompt_cache_retention` | Compatibility field: `in_memory` or `24h`, preserved between Chat and Responses. | Preserved. |
+| OpenAI per-block `prompt_cache_breakpoint` and Responses cache comparison/diagnostic controls | Not implemented; rejected before dispatch. | Preserved within the existing stateless native contract. |
+| Anthropic automatic or per-block `cache_control` | Not implemented; rejected before dispatch. | Preserves position, content order, explicit `5m`/`1h` TTL and omitted TTL. |
+| Gemini `cachedContent` | Not implemented; rejected before dispatch. | Preserves the existing cache resource reference. |
+
+For example, an OpenAI Chat or Responses request can include `"prompt_cache_options":{"mode":"implicit","ttl":"30m"}`. Omitted fields are not filled in by Nyro; an empty options object stays empty, and a null top-level options/retention value normalizes to absence in strict conversion. Nested mode/TTL values must match the supported enum and cannot be null. Model support and defaults remain the upstream's responsibility. In `explicit` mode without explicit breakpoints, OpenAI disables implicit caching; strict mode does not insert breakpoints, so use matching native forwarding when sending them.
+
+The current OpenAI API distinguishes the minimum lifetime in `prompt_cache_options.ttl` from the deprecated maximum retention policy in `prompt_cache_retention`; both fields may be supplied and are preserved independently. Nyro does not replace one with the other, translate them into Anthropic TTLs, or manufacture Gemini cache resources. OpenAI controls make Anthropic/Gemini targets ineligible before dispatch. Native-only controls also exclude strict or incompatible retry candidates. Matching protocol alone does not establish that a referenced cache exists for another upstream credential/model.
+
+Responses cache-option envelope echoes are validated and normalized with other request echoes; exact echoes require native forwarding. Cache storage, resource creation/deletion, automatic breakpoint placement and model-specific cache availability are not implemented by Nyro. The corresponding OpenAI `cache_write_tokens` counters are supported by the [usage conversion subset](#cache-usage-accounting); other unimplemented usage extensions still fail strict conversion.
+
+Sources: [OpenAI cache controls](https://developers.openai.com/api/docs/guides/prompt-caching), [Chat API fields](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Responses API fields](https://developers.openai.com/api/reference/cli/resources/responses/methods/create), [Anthropic cache placement](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), [Gemini cached content](https://ai.google.dev/api/generate-content). Tests use local HTTP fixtures and assert sent fields, JSON/SSE completion, rejection before dispatch, retry eligibility and admission release; they do not certify vendor cache hits or billing.
+
 ## Cache usage accounting
 
 Strict conversion accepts Anthropic JSON/SSE cache-read and cache-creation token counts. Total input is `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`; output is added once. The optional `cache_creation` five-minute and one-hour counters must sum to cache creation and are not added again. Counts must be nonnegative integers without overflow; supplied nulls and inconsistent breakdowns fail validation. Stream snapshots are cumulative: omitted input/cache fields retain their previous values, and individual counters cannot decrease.
 
-Cache reads map to OpenAI Chat cached prompt tokens, Responses cached input tokens, and Gemini cached content tokens. Positive cache writes and their optional TTL breakdown survive strict Anthropic output, but the other three output formats cannot represent them and reject the response (`502` or a terminated SSE stream). This also applies when OpenAI stream usage output is disabled; disabling usage does not authorize discarding incompatible metadata. Zero cache creation and a valid zero breakdown normalize away.
+Cache reads map to OpenAI Chat cached prompt tokens, Responses cached input tokens, and Gemini cached content tokens. OpenAI Chat `prompt_tokens_details.cache_write_tokens` and Responses `input_tokens_details.cache_write_tokens` are part of their inclusive input count, not additional tokens. Read plus write counts must fit within input. Writes without TTL details can convert between OpenAI Chat, Responses and Anthropic; Nyro does not infer TTL from request options. Anthropic's optional TTL breakdown is preserved only by Anthropic output, and Gemini output still rejects positive writes. Unsupported output details fail with `502` or a terminated SSE stream, even if OpenAI stream usage output is disabled. Zero writes and valid zero TTL breakdowns normalize away.
 
 Quota and observations use inclusive token totals, without cache pricing discounts or TTL multipliers. Valid usage already received remains chargeable if output conversion fails; failure settlement uses the existing maximum of reserved and known usage. Request `cache_control`, cache placement and cross-protocol cache policy remain unsupported in strict conversion. Matching native forwarding preserves these fields and validates known cache counters and TTL sums without adding the breakdown twice.
 
-Reference: [Anthropic prompt cache accounting](https://platform.claude.com/docs/en/build-with-claude/prompt-caching). Local regressions: `cargo test -p nyro-llm --test cache_usage_codec --test native_anthropic_runtime`. These use synthetic local upstreams, not vendor billing certification.
+References: [OpenAI cache read/write accounting](https://developers.openai.com/api/docs/guides/prompt-caching), [Anthropic prompt cache accounting](https://platform.claude.com/docs/en/build-with-claude/prompt-caching). Local regressions: `cargo test -p nyro-llm --test cache_usage_codec --test native_anthropic_runtime`. These use synthetic local upstreams, not vendor billing certification.
 
 ## User image inputs
 

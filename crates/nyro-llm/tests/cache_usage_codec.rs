@@ -139,3 +139,59 @@ fn streamed_cache_components_cannot_regress_even_if_total_grows() {
         assert!(d.push(&event(json!({"type":"message_stop"}))).is_err());
     }
 }
+
+#[test]
+fn openai_cache_writes_round_trip_as_input_subsets_without_ttl_inference() {
+    for written in [0, 4] {
+        let chat = json!({"id":"r","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":2,"total_tokens":14,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":written}}});
+        let r = openai::decode_chat_response(chat).unwrap();
+        assert_eq!(r.usage.as_ref().unwrap().total_tokens, 14);
+        for (value, details) in [
+            (
+                openai::encode_chat_response(&r).unwrap(),
+                "prompt_tokens_details",
+            ),
+            (
+                openai::responses::encode_chat_response(&r).unwrap(),
+                "input_tokens_details",
+            ),
+        ] {
+            assert_eq!(
+                value["usage"][details]["cache_write_tokens"]
+                    .as_u64()
+                    .unwrap_or(0),
+                written
+            );
+            assert_eq!(value["usage"][details]["cached_tokens"], 5);
+        }
+        let responses = openai::responses::encode_chat_response(&r).unwrap();
+        let back = openai::responses::decode_chat_response(responses).unwrap();
+        assert_eq!(back.usage.as_ref().unwrap().total_tokens, 14);
+        let anthropic = anthropic::encode_chat_response(&r).unwrap();
+        assert_eq!(anthropic["usage"]["input_tokens"], 7 - written);
+        assert_eq!(
+            anthropic["usage"]["cache_creation_input_tokens"]
+                .as_u64()
+                .unwrap_or(0),
+            written
+        );
+        assert!(anthropic["usage"].get("cache_creation").is_none());
+        assert_eq!(gemini::encode_chat_response(&r).is_ok(), written == 0);
+    }
+}
+
+#[test]
+fn invalid_openai_cache_write_subsets_are_rejected() {
+    for written in [
+        json!(-1),
+        json!(1.5),
+        Value::Null,
+        json!(8),
+        json!(u64::MAX),
+    ] {
+        let chat = json!({"id":"r","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":2,"total_tokens":14,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":written}}});
+        assert!(openai::decode_chat_response(chat).is_err());
+        let responses = json!({"id":"r","object":"response","created_at":1,"model":"m","status":"completed","output":[{"type":"message","id":"msg","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}],"usage":{"input_tokens":12,"output_tokens":2,"total_tokens":14,"input_tokens_details":{"cached_tokens":5,"cache_write_tokens":written}}});
+        assert!(openai::responses::decode_chat_response(responses).is_err());
+    }
+}

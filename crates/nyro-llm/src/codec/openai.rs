@@ -1,5 +1,6 @@
 //! Explicit OpenAI wire ↔ typed workload conversion; unsupported fields are rejected.
 pub use super::CodecError;
+pub(crate) mod cache;
 pub mod responses;
 use crate::ir::*;
 use nyro_protocol::openai::{chat, embedding, stream};
@@ -53,6 +54,8 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
             metadata: wire.metadata,
             safety_identifier: wire.safety_identifier,
             prompt_cache_key: wire.prompt_cache_key,
+            prompt_cache_retention: wire.prompt_cache_retention,
+            prompt_cache_options: wire.prompt_cache_options,
         }),
     };
     validate_chat(&request)?;
@@ -157,6 +160,8 @@ pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
         metadata: request.openai.metadata.clone(),
         safety_identifier: request.openai.safety_identifier.clone(),
         prompt_cache_key: request.openai.prompt_cache_key.clone(),
+        prompt_cache_retention: request.openai.prompt_cache_retention,
+        prompt_cache_options: request.openai.prompt_cache_options.clone(),
     };
     Ok(serde_json::to_value(wire)?)
 }
@@ -185,7 +190,7 @@ pub fn encode_embedding(request: &EmbeddingRequest) -> Result<Value, CodecError>
     Ok(serde_json::to_value(wire)?)
 }
 pub fn decode_chat_response(value: Value) -> Result<ChatResponse, CodecError> {
-    let wire: chat::Response = serde_json::from_value(value)?;
+    let mut wire: chat::Response = serde_json::from_value(value)?;
     if wire.object != "chat.completion" {
         return Err(invalid("expected chat.completion object"));
     }
@@ -196,10 +201,16 @@ pub fn decode_chat_response(value: Value) -> Result<ChatResponse, CodecError> {
     {
         return Err(invalid("response messages require assistant role"));
     }
-    convert(wire)
+    let usage = wire.usage.take().map(cache::decode).transpose()?;
+    let mut response: ChatResponse = convert(wire)?;
+    response.usage = usage;
+    Ok(response)
 }
 pub fn encode_chat_response(response: &ChatResponse) -> Result<Value, CodecError> {
-    let wire: chat::Response = convert(response)?;
+    let mut plain = response.clone();
+    let usage = plain.usage.take().as_ref().map(cache::encode).transpose()?;
+    let mut wire: chat::Response = convert(plain)?;
+    wire.usage = usage;
     Ok(serde_json::to_value(wire)?)
 }
 pub fn decode_embedding_response(value: Value) -> Result<EmbeddingResponse, CodecError> {
@@ -217,17 +228,23 @@ pub fn decode_chat_event(data: &str) -> Result<ChatEvent, CodecError> {
     if data.trim() == "[DONE]" {
         return Ok(ChatEvent::Done);
     }
-    let wire: stream::Chunk = serde_json::from_str(data)?;
+    let mut wire: stream::Chunk = serde_json::from_str(data)?;
     if wire.object != "chat.completion.chunk" {
         return Err(invalid("expected chat.completion.chunk object"));
     }
-    Ok(ChatEvent::Chunk(Box::new(convert(wire)?)))
+    let usage = wire.usage.take().map(cache::decode).transpose()?;
+    let mut chunk: ChatChunk = convert(wire)?;
+    chunk.usage = usage;
+    Ok(ChatEvent::Chunk(Box::new(chunk)))
 }
 pub fn encode_chat_event(event: &ChatEvent, public_model: &str) -> Result<String, CodecError> {
     match event {
         ChatEvent::Done => Ok("data: [DONE]\n\n".into()),
         ChatEvent::Chunk(chunk) => {
-            let mut wire: stream::Chunk = convert(chunk)?;
+            let mut plain = (**chunk).clone();
+            let usage = plain.usage.take().as_ref().map(cache::encode).transpose()?;
+            let mut wire: stream::Chunk = convert(plain)?;
+            wire.usage = usage;
             wire.model = public_model.into();
             Ok(format!("data: {}\n\n", serde_json::to_string(&wire)?))
         }
