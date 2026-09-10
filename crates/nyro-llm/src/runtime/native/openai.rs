@@ -54,6 +54,12 @@ pub(super) fn response(
         None
     } else {
         let usage = &value["usage"];
+        super::validate_cache_write(
+            &usage["prompt_tokens_details"],
+            usage["prompt_tokens"]
+                .as_u64()
+                .ok_or_else(Failure::upstream)?,
+        )?;
         Some(Usage {
             prompt_tokens: usage["prompt_tokens"]
                 .as_u64()

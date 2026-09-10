@@ -27,6 +27,8 @@ pub struct Request {
     pub user: Option<String>,
     pub safety_identifier: Option<String>,
     pub prompt_cache_key: Option<String>,
+    pub prompt_cache_retention: Option<super::PromptCacheRetention>,
+    pub prompt_cache_options: Option<super::PromptCacheOptions>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
@@ -229,6 +231,12 @@ pub struct Usage {
 #[serde(deny_unknown_fields)]
 pub struct InputTokensDetails {
     pub cached_tokens: u64,
+    #[serde(
+        default,
+        deserialize_with = "super::present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cache_write_tokens: Option<u64>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

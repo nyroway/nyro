@@ -177,6 +177,23 @@ impl Drop for Fixture {
         self.task.abort();
     }
 }
+fn echo_cache_options(response: &mut Value, request: &Value, format: &str) {
+    if request.get("prompt_cache_options").is_none() {
+        return;
+    }
+    if format == "responses" {
+        response["prompt_cache_options"] = request["prompt_cache_options"].clone();
+    }
+    if !response["usage"].is_null() {
+        let details = if format == "responses" {
+            "input_tokens_details"
+        } else {
+            "prompt_tokens_details"
+        };
+        response["usage"][details] = json!({"cached_tokens":1,"cache_write_tokens":2});
+    }
+}
+
 async fn upstream(format: &'static str, mode: &'static str) -> Fixture {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let observed = calls.clone();
@@ -216,6 +233,31 @@ async fn upstream(format: &'static str, mode: &'static str) -> Fixture {
                 } else {
                     frames(format, mode != "normal")
                 };
+                // Responses echoes request cache options on response envelopes.
+                let text = if matches!(format, "responses" | "openai")
+                    && body.get("prompt_cache_options").is_some()
+                {
+                    text.split_inclusive('\n')
+                        .map(|line| {
+                            if let Some(data) = line
+                                .strip_prefix("data: ")
+                                .filter(|data| data.trim() != "[DONE]")
+                            {
+                                let mut event: Value = serde_json::from_str(data).unwrap();
+                                if format == "openai" {
+                                    echo_cache_options(&mut event, &body, format);
+                                } else if let Some(response) = event.get_mut("response") {
+                                    echo_cache_options(response, &body, format);
+                                }
+                                format!("data: {event}\n")
+                            } else {
+                                line.to_owned()
+                            }
+                        })
+                        .collect()
+                } else {
+                    text
+                };
                 // Split across arbitrary SSE and UTF-8 boundaries, as real transports do.
                 let chunks: Vec<_> = text
                     .into_bytes()
@@ -247,7 +289,13 @@ async fn upstream(format: &'static str, mode: &'static str) -> Fixture {
                             value["choices"][0]["finish_reason"] = json!("length");
                             value
                         } else {
-                            response(format)
+                            let mut response = response(format);
+                            if matches!(format, "responses" | "openai")
+                                && body.get("prompt_cache_options").is_some()
+                            {
+                                echo_cache_options(&mut response, &body, format);
+                            }
+                            response
                         }
                         .to_string(),
                     ))
@@ -1705,6 +1753,167 @@ async fn image_detail_is_preserved_or_rejected_before_dispatch() {
                     );
                 }
             }
+        }
+    }
+}
+
+#[tokio::test]
+async fn cache_controls_survive_openai_api_conversion_and_filter_other_targets() {
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for source in ["openai", "responses"] {
+            for streaming in [false, true] {
+                for (field, control, valid) in [
+                    ("prompt_cache_retention", json!("in_memory"), true),
+                    ("prompt_cache_retention", json!("24h"), true),
+                    ("prompt_cache_retention", Value::Null, true),
+                    ("prompt_cache_retention", json!("1h"), false),
+                    ("prompt_cache_retention", json!(24), false),
+                    (
+                        "prompt_cache_options",
+                        json!({"mode":"implicit","ttl":"30m"}),
+                        true,
+                    ),
+                    (
+                        "prompt_cache_options",
+                        json!({"mode":"explicit","ttl":"30m"}),
+                        true,
+                    ),
+                    ("prompt_cache_options", json!({}), true),
+                    ("prompt_cache_options", Value::Null, true),
+                    ("prompt_cache_options", json!({"ttl":"24h"}), false),
+                    ("prompt_cache_options", json!({"mode":"auto"}), false),
+                ] {
+                    let (parts, body) = request(source, streaming).into_parts();
+                    let mut value: Value =
+                        serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+                    value[field] = control.clone();
+                    if streaming && source == "openai" {
+                        value["stream_options"] = json!({"include_usage":true});
+                    }
+                    let before = fixture.calls.lock().unwrap().len();
+                    let response = gateway
+                        .handle(
+                            Request::from_parts(parts, Body::from(value.to_string())),
+                            CancellationToken::new(),
+                        )
+                        .await;
+                    let allowed =
+                        control.is_null() || (valid && matches!(target, "openai" | "responses"));
+                    assert_eq!(
+                        response.status(),
+                        if allowed {
+                            StatusCode::OK
+                        } else {
+                            StatusCode::BAD_REQUEST
+                        },
+                        "{source} -> {target}, stream={streaming}, {field}={control}"
+                    );
+                    let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+                    assert_eq!(limit.available(), 1);
+                    let calls = fixture.calls.lock().unwrap();
+                    assert_eq!(calls.len(), before + usize::from(allowed));
+                    if allowed {
+                        let result = if streaming {
+                            stream_snapshot(source, &bytes)
+                        } else {
+                            snapshot(source, &serde_json::from_slice(&bytes).unwrap())
+                        };
+                        assert_eq!(result["text"], "Hello");
+                        let call = calls.last().unwrap();
+                        assert_eq!(call["body"][field], control);
+                        if field == "prompt_cache_options" && !control.is_null() {
+                            assert_eq!(result["usage"], json!([3, 2, 5]));
+                            let values = if streaming {
+                                sse_values(&bytes)
+                            } else {
+                                vec![serde_json::from_slice(&bytes).unwrap()]
+                            };
+                            let usage = values
+                                .iter()
+                                .rev()
+                                .find_map(|v| {
+                                    let u = if streaming && source == "responses" {
+                                        &v["response"]["usage"]
+                                    } else {
+                                        &v["usage"]
+                                    };
+                                    u.is_object().then_some(u)
+                                })
+                                .unwrap();
+                            let details = if source == "responses" {
+                                "input_tokens_details"
+                            } else {
+                                "prompt_tokens_details"
+                            };
+                            assert_eq!(usage[details]["cached_tokens"], 1);
+                            assert_eq!(usage[details]["cache_write_tokens"], 2);
+                        }
+                        assert!(!call["headers"].to_string().contains("client-secret"));
+                        if control.is_null() {
+                            assert!(call["body"].get(field).is_none());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn cache_write_usage_settles_once_even_when_chat_stream_usage_is_hidden() {
+    for target in ["openai", "responses"] {
+        let fixture = upstream(target, "normal").await;
+        for streaming in [false, true] {
+            let mut provider = json!({"kind":"openai","base_url":format!("{}/v1",fixture.base)});
+            if target == "responses" {
+                provider["api"] = json!("responses");
+            }
+            let config = serde_json::from_value(json!({"providers":{"p":provider},"models":{"public":{"provider":"p","upstream_model":"internal","workloads":["chat"],"subjects":["alice"],"quota":{"total_tokens":10,"reserve_tokens":1}}}})).unwrap();
+            let limit = ConcurrencyLimit::new(1).unwrap();
+            let gateway = Runtime::new(
+                config,
+                Arc::new(
+                    ApiKeys::new(vec![ApiKey {
+                        id: "alice".into(),
+                        secret: "client-secret".into(),
+                    }])
+                    .unwrap(),
+                ),
+                limit.clone(),
+                Options::default(),
+            )
+            .unwrap();
+            let before = fixture.calls.lock().unwrap().len();
+            for i in 0..3 {
+                let (parts, body) = request("openai", streaming).into_parts();
+                let mut body: Value =
+                    serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+                body["prompt_cache_options"] = json!({"mode":"implicit","ttl":"30m"});
+                let response = gateway
+                    .handle(
+                        Request::from_parts(parts, Body::from(body.to_string())),
+                        CancellationToken::new(),
+                    )
+                    .await;
+                assert_eq!(
+                    response.status(),
+                    if i < 2 {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::TOO_MANY_REQUESTS
+                    }
+                );
+                let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+                if i < 2 && streaming {
+                    assert!(String::from_utf8_lossy(&bytes).contains("[DONE]"));
+                    assert!(sse_values(&bytes).iter().all(|v| v.get("usage").is_none()));
+                }
+                assert_eq!(limit.available(), 1);
+            }
+            assert_eq!(fixture.calls.lock().unwrap().len(), before + 2);
         }
     }
 }

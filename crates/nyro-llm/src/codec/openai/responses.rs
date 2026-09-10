@@ -223,6 +223,8 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
             user: r.user,
             safety_identifier: r.safety_identifier,
             prompt_cache_key: r.prompt_cache_key,
+            prompt_cache_retention: r.prompt_cache_retention,
+            prompt_cache_options: r.prompt_cache_options,
             ..Default::default()
         }),
     };
@@ -351,6 +353,8 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         ("user", json!(o.user)),
         ("safety_identifier", json!(o.safety_identifier)),
         ("prompt_cache_key", json!(o.prompt_cache_key)),
+        ("prompt_cache_retention", json!(o.prompt_cache_retention)),
+        ("prompt_cache_options", json!(o.prompt_cache_options)),
     ] {
         if !value.is_null() {
             map.insert(key.into(), value);
@@ -443,6 +447,13 @@ fn validate_envelope(r: &wire::Response) -> Result<(), CodecError> {
                 v.is_null() || v.as_u64().is_some()
             }
             "parallel_tool_calls" => v.is_null() || v.is_boolean(),
+            "prompt_cache_options" => {
+                v.is_null()
+                    || serde_json::from_value::<nyro_protocol::openai::PromptCacheOptions>(
+                        v.clone(),
+                    )
+                    .is_ok()
+            }
             "instructions"
             | "service_tier"
             | "user"
@@ -516,11 +527,22 @@ fn decode_usage(u: wire::Usage) -> Result<Usage, CodecError> {
     {
         return Err(bad("invalid Responses token usage"));
     }
-    Ok(Usage {
+    let usage = Usage {
         prompt_tokens: u.input_tokens,
         completion_tokens: u.output_tokens,
         total_tokens: u.total_tokens,
-        cache_creation: None,
+        cache_creation: u
+            .input_tokens_details
+            .as_ref()
+            .and_then(|d| d.cache_write_tokens)
+            .filter(|n| *n != 0)
+            .map(|input_tokens| {
+                Box::new(CacheCreationUsage {
+                    input_tokens,
+                    ephemeral_5m_input_tokens: None,
+                    ephemeral_1h_input_tokens: None,
+                })
+            }),
         prompt_tokens_details: u
             .input_tokens_details
             .filter(|d| d.cached_tokens != 0)
@@ -537,12 +559,12 @@ fn decode_usage(u: wire::Usage) -> Result<Usage, CodecError> {
                 accepted_prediction_tokens: None,
                 rejected_prediction_tokens: None,
             }),
-    })
+    };
+    super::cache::validate(&usage)?;
+    Ok(usage)
 }
 fn encode_usage(u: &Usage) -> Result<Value, CodecError> {
-    if u.cache_creation.is_some() {
-        return Err(bad("Responses cannot represent cache creation usage"));
-    }
+    super::cache::validate(u)?;
     if u.prompt_tokens.checked_add(u.completion_tokens) != Some(u.total_tokens)
         || u.prompt_tokens_details
             .as_ref()
@@ -571,11 +593,13 @@ fn encode_usage(u: &Usage) -> Result<Value, CodecError> {
     {
         return Err(bad("Responses cannot represent audio/prediction usage"));
     }
-    Ok(
-        json!({"input_tokens":u.prompt_tokens,"output_tokens":u.completion_tokens,"total_tokens":u.total_tokens,
+    let mut value = json!({"input_tokens":u.prompt_tokens,"output_tokens":u.completion_tokens,"total_tokens":u.total_tokens,
         "input_tokens_details":{"cached_tokens":u.prompt_tokens_details.as_ref().and_then(|d|d.cached_tokens).unwrap_or(0)},
-        "output_tokens_details":{"reasoning_tokens":u.completion_tokens_details.as_ref().and_then(|d|d.reasoning_tokens).unwrap_or(0)}}),
-    )
+        "output_tokens_details":{"reasoning_tokens":u.completion_tokens_details.as_ref().and_then(|d|d.reasoning_tokens).unwrap_or(0)}});
+    if let Some(creation) = &u.cache_creation {
+        value["input_tokens_details"]["cache_write_tokens"] = json!(creation.input_tokens);
+    }
+    Ok(value)
 }
 fn finish_reason(r: &wire::Response) -> Result<&'static str, CodecError> {
     match r.status.as_str() {

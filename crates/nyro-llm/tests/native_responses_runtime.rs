@@ -130,8 +130,9 @@ fn request(body: Value) -> Request<Body> {
 fn input(extended: bool, stream: bool) -> Value {
     let mut body = json!({"model":"public","input":"Hello","stream":stream});
     if extended {
+        body["prompt_cache_options"] = json!({"mode":"explicit","ttl":"30m"});
         body["input"] = json!([
-            {"role":"user","content":[{"type":"input_text","text":"Describe"},{"type":"input_image","image_url":"https://example.com/image.png"}]},
+            {"role":"user","content":[{"type":"input_text","text":"Describe","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_image","image_url":"https://example.com/image.png"}]},
             {"type":"reasoning","id":"rs_history","summary":[],"encrypted_content":"opaque-history"},
             {"type":"message","id":"msg_history","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"Checking","annotations":[]}]},
             {"type":"function_call","call_id":"call_1","name":"weather","arguments":"{}"},
@@ -147,7 +148,7 @@ fn answer() -> Value {
     json!({"id":"resp_answer","object":"response","model":"private-model","created_at":100,"status":"completed","error":null,"incomplete_details":null,
         "output":[{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"想一想"}],"encrypted_content":"opaque-answer"},
             {"type":"message","id":"msg_1","role":"assistant","status":"completed","phase":"final_answer","content":[{"type":"output_text","text":"晴天","annotations":[{"type":"url_citation","url":"https://example.com"}],"logprobs":[]}]}],
-        "usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":6},"output_tokens_details":{"reasoning_tokens":3},"vendor_tokens":99},"vendor_field":{"preserve":true}})
+        "usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":6,"cache_write_tokens":4},"output_tokens_details":{"reasoning_tokens":3},"vendor_tokens":99},"vendor_field":{"preserve":true}})
 }
 fn frames() -> Vec<Value> {
     let mut start = answer();
@@ -424,6 +425,22 @@ async fn invalid_json_envelopes_and_usage_fail_without_retry_or_secret_leaks() {
         ("input_tokens_details", json!({"cached_tokens":11})),
         ("output_tokens_details", json!({"reasoning_tokens":6})),
         ("input_tokens_details", json!({"cached_tokens":-1})),
+        (
+            "input_tokens_details",
+            json!({"cached_tokens":6,"cache_write_tokens":5}),
+        ),
+        (
+            "input_tokens_details",
+            json!({"cached_tokens":6,"cache_write_tokens":-1}),
+        ),
+        (
+            "input_tokens_details",
+            json!({"cached_tokens":6,"cache_write_tokens":null}),
+        ),
+        (
+            "input_tokens_details",
+            json!({"cached_tokens":6,"cache_write_tokens":18446744073709551615u64}),
+        ),
     ] {
         let mut bad = answer();
         bad["usage"][field] = value;
@@ -476,6 +493,11 @@ async fn invalid_sse_identity_sequence_terminal_and_truncation_fail_and_release(
     ] {
         let mut events = valid.clone();
         events[5]["response"][field] = value;
+        cases.push(sse(&events));
+    }
+    for written in [json!(-1), Value::Null, json!(5), json!(u64::MAX)] {
+        let mut events = valid.clone();
+        events[5]["response"]["usage"]["input_tokens_details"]["cache_write_tokens"] = written;
         cases.push(sse(&events));
     }
     let mut duplicate = valid.clone();
