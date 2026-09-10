@@ -83,6 +83,7 @@ fn usage(value: &Value) -> Result<Option<Usage>, Failure> {
         prompt_tokens: input,
         completion_tokens: output,
         total_tokens: total,
+        cache_creation: None,
         prompt_tokens_details: None,
         completion_tokens_details: None,
     }))

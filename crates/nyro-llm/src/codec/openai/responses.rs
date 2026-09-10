@@ -520,6 +520,7 @@ fn decode_usage(u: wire::Usage) -> Result<Usage, CodecError> {
         prompt_tokens: u.input_tokens,
         completion_tokens: u.output_tokens,
         total_tokens: u.total_tokens,
+        cache_creation: None,
         prompt_tokens_details: u
             .input_tokens_details
             .filter(|d| d.cached_tokens != 0)
@@ -539,6 +540,9 @@ fn decode_usage(u: wire::Usage) -> Result<Usage, CodecError> {
     })
 }
 fn encode_usage(u: &Usage) -> Result<Value, CodecError> {
+    if u.cache_creation.is_some() {
+        return Err(bad("Responses cannot represent cache creation usage"));
+    }
     if u.prompt_tokens.checked_add(u.completion_tokens) != Some(u.total_tokens)
         || u.prompt_tokens_details
             .as_ref()

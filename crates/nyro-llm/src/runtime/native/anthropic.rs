@@ -80,6 +80,7 @@ struct Counters {
     output: u64,
     created: u64,
     read: u64,
+    creation: Option<(u64, u64)>,
 }
 impl Counters {
     fn update(&mut self, value: &Value, initial: bool) -> Result<Usage, Failure> {
@@ -107,6 +108,29 @@ impl Counters {
                 None => {}
             }
         }
+        if let Some(value) = value.get("cache_creation") {
+            let five = value
+                .get("ephemeral_5m_input_tokens")
+                .and_then(Value::as_u64)
+                .ok_or_else(Failure::upstream)?;
+            let hour = value
+                .get("ephemeral_1h_input_tokens")
+                .and_then(Value::as_u64)
+                .ok_or_else(Failure::upstream)?;
+            if self
+                .creation
+                .is_some_and(|(old_five, old_hour)| five < old_five || hour < old_hour)
+            {
+                return Err(Failure::upstream());
+            }
+            next.creation = Some((five, hour));
+        }
+        if next
+            .creation
+            .is_some_and(|(five, hour)| five.checked_add(hour) != Some(next.created))
+        {
+            return Err(Failure::upstream());
+        }
         let input = next
             .input
             .checked_add(next.created)
@@ -120,6 +144,7 @@ impl Counters {
             prompt_tokens: input,
             completion_tokens: next.output,
             total_tokens: total,
+            cache_creation: None,
             prompt_tokens_details: None,
             completion_tokens_details: None,
         })

@@ -209,10 +209,22 @@ pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    /// Cache writes are part of prompt_tokens, distinct from cache reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation: Option<Box<CacheCreationUsage>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_tokens_details: Option<CompletionTokensDetails>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheCreationUsage {
+    pub input_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_5m_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_1h_input_tokens: Option<u64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

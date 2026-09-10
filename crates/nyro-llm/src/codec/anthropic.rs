@@ -1,4 +1,5 @@
 //! Anthropic Messages conversion and strict, bounded native SSE state machines.
+mod cache;
 use super::{CodecError, openai};
 use crate::ir::*;
 use nyro_protocol::{anthropic as wire, framing::Event};
@@ -418,18 +419,6 @@ fn stop_out(s: &str) -> Result<&str, CodecError> {
         _ => Err(bad("unsupported finish reason")),
     }
 }
-fn usage(u: &wire::Usage) -> Result<Usage, CodecError> {
-    Ok(Usage {
-        prompt_tokens: u.input_tokens,
-        completion_tokens: u.output_tokens,
-        total_tokens: u
-            .input_tokens
-            .checked_add(u.output_tokens)
-            .ok_or_else(|| bad("usage overflow"))?,
-        prompt_tokens_details: None,
-        completion_tokens_details: None,
-    })
-}
 pub fn decode_chat_response(v: Value) -> Result<ChatResponse, CodecError> {
     let r: wire::Response = serde_json::from_value(v)?;
     if r.r#type != "message"
@@ -469,9 +458,11 @@ pub fn decode_chat_response(v: Value) -> Result<ChatResponse, CodecError> {
             .as_deref()
             .ok_or_else(|| bad("missing stop reason"))?,
     )?;
-    openai::decode_chat_response(
-        json!({"id":r.id,"object":"chat.completion","created":0,"model":r.model,"choices":[{"index":0,"message":message,"finish_reason":reason}],"usage":usage(&r.usage)?}),
-    )
+    let mut response = openai::decode_chat_response(
+        json!({"id":r.id,"object":"chat.completion","created":0,"model":r.model,"choices":[{"index":0,"message":message,"finish_reason":reason}]}),
+    )?;
+    response.usage = Some(cache::decode(&r.usage)?);
+    Ok(response)
 }
 pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     if r.system_fingerprint.is_some() || r.service_tier.is_some() {
@@ -495,11 +486,9 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
         .usage
         .as_ref()
         .ok_or_else(|| bad("Anthropic requires usage"))?;
-    if u.prompt_tokens_details.is_some() || u.completion_tokens_details.is_some() {
-        return Err(bad("unsupported usage details"));
-    }
+    let wire_usage = cache::encode(u)?;
     Ok(
-        json!({"id":r.id,"type":"message","role":"assistant","model":r.model,"content":content,"stop_reason":stop_out(c.finish_reason.as_deref().ok_or_else(||bad("missing finish reason"))?)?,"stop_sequence":null,"usage":{"input_tokens":u.prompt_tokens,"output_tokens":u.completion_tokens}}),
+        json!({"id":r.id,"type":"message","role":"assistant","model":r.model,"content":content,"stop_reason":stop_out(c.finish_reason.as_deref().ok_or_else(||bad("missing finish reason"))?)?,"stop_sequence":null,"usage":wire_usage}),
     )
 }
 const DEFAULT_LIMIT: usize = 1024 * 1024;
@@ -560,7 +549,7 @@ impl StreamDecoder {
                 logprobs: None,
             }],
             usage: if with_usage {
-                Some(usage(&self.usage)?)
+                Some(cache::decode(&self.usage)?)
             } else {
                 None
             },
@@ -737,13 +726,23 @@ impl StreamDecoder {
                         .as_deref()
                         .ok_or_else(|| bad("missing terminal reason"))?,
                 )?;
-                if usage.output_tokens < self.usage.output_tokens {
-                    return Err(bad("usage decreased"));
-                }
-                self.usage.output_tokens = usage.output_tokens;
+                let mut next = self.usage.clone();
+                next.output_tokens = usage.output_tokens;
                 if let Some(input) = usage.input_tokens {
-                    self.usage.input_tokens = input;
+                    next.input_tokens = input;
                 }
+                if usage.cache_read_input_tokens.is_some() {
+                    next.cache_read_input_tokens = usage.cache_read_input_tokens;
+                }
+                if usage.cache_creation_input_tokens.is_some() {
+                    next.cache_creation_input_tokens = usage.cache_creation_input_tokens;
+                }
+                if usage.cache_creation.is_some() {
+                    next.cache_creation = usage.cache_creation;
+                }
+                cache::decode(&next)?;
+                cache::progress(&self.usage, &next)?;
+                self.usage = next;
                 self.terminal = true;
                 out.push(self.chunk(Delta::default(), Some(reason.into()), true)?);
             }
@@ -828,18 +827,28 @@ impl StreamEncoder {
                 {
                     return Err(bad("unsupported stream choice"));
                 }
+                if let Some(u) = &c.usage {
+                    let next = cache::encode(u)?;
+                    if let Some(previous) = &self.usage {
+                        cache::progress(&cache::encode(previous)?, &next)?;
+                    }
+                }
                 let mut output = String::new();
                 if !self.started {
                     self.started = true;
+                    let mut initial = c
+                        .usage
+                        .as_ref()
+                        .map(cache::encode)
+                        .transpose()?
+                        .unwrap_or_default();
+                    initial.output_tokens = 0;
                     output = frame(
                         "message_start",
-                        json!({"message":{"id":c.id,"type":"message","role":"assistant","model":self.model,"content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":c.usage.as_ref().map_or(0,|u|u.prompt_tokens),"output_tokens":0}}}),
+                        json!({"message":{"id":c.id,"type":"message","role":"assistant","model":self.model,"content":[],"stop_reason":null,"stop_sequence":null,"usage":initial}}),
                     );
                 }
                 if let Some(u) = &c.usage {
-                    if u.prompt_tokens_details.is_some() || u.completion_tokens_details.is_some() {
-                        return Err(bad("unsupported streamed usage details"));
-                    }
                     self.usage = Some(u.clone())
                 }
                 for choice in &c.choices {
@@ -948,7 +957,7 @@ impl StreamEncoder {
                     .usage
                     .as_ref()
                     .ok_or_else(|| bad("missing stream usage"))?;
-                out.push_str(&frame("message_delta",json!({"delta":{"stop_reason":reason,"stop_sequence":null},"usage":{"input_tokens":u.prompt_tokens,"output_tokens":u.completion_tokens}})));
+                out.push_str(&frame("message_delta",json!({"delta":{"stop_reason":reason,"stop_sequence":null},"usage":cache::encode(u)?})));
                 out.push_str(&frame("message_stop", json!({})));
                 self.ended = true;
                 Ok(out)

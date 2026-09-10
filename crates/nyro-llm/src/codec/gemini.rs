@@ -613,6 +613,7 @@ fn usage(u: w::Usage) -> Result<Usage, CodecError> {
         prompt_tokens,
         completion_tokens,
         total_tokens,
+        cache_creation: None,
         prompt_tokens_details: u.cached_content_token_count.map(|n| PromptTokensDetails {
             cached_tokens: Some(n),
             audio_tokens: None,
@@ -626,6 +627,9 @@ fn usage(u: w::Usage) -> Result<Usage, CodecError> {
     })
 }
 fn native_usage(u: &Usage) -> Result<w::Usage, CodecError> {
+    if u.cache_creation.is_some() {
+        return Err(bad("Gemini cannot represent cache creation usage"));
+    }
     if u.prompt_tokens_details
         .as_ref()
         .is_some_and(|d| d.audio_tokens.is_some())

@@ -148,6 +148,7 @@ mod tests {
             prompt_tokens,
             completion_tokens,
             total_tokens,
+            cache_creation: None,
             prompt_tokens_details: None,
             completion_tokens_details: None,
         }
