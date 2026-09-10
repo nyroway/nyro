@@ -83,6 +83,16 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                                     parts
                                         .into_iter()
                                         .map(|part| match part {
+                                            wire::InputPart::InputImage { image_url, detail }
+                                                if role == Role::User =>
+                                            {
+                                                Ok(ContentPart::ImageUrl {
+                                                    image_url: ImageUrl {
+                                                        url: image_url,
+                                                        detail,
+                                                    },
+                                                })
+                                            }
                                             wire::InputPart::InputText { text } => {
                                                 Ok(ContentPart::Text { text })
                                             }
@@ -219,7 +229,11 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
     super::validate_chat(&request)?;
     Ok(request)
 }
-fn content_parts(content: &Content, assistant: bool) -> Result<Vec<Value>, CodecError> {
+fn content_parts(
+    content: &Content,
+    assistant: bool,
+    images: bool,
+) -> Result<Vec<Value>, CodecError> {
     match content {
         Content::Text(text) => Ok(vec![if assistant {
             json!({"type":"output_text","text":text,"annotations":[]})
@@ -234,6 +248,14 @@ fn content_parts(content: &Content, assistant: bool) -> Result<Vec<Value>, Codec
                 } else {
                     json!({"type":"input_text","text":text})
                 }),
+                ContentPart::ImageUrl { image_url } if images => {
+                    super::super::image::source(image_url)?;
+                    let mut part = json!({"type":"input_image","image_url":image_url.url});
+                    if let Some(detail) = &image_url.detail {
+                        part["detail"] = json!(detail);
+                    }
+                    Ok(part)
+                }
                 ContentPart::Refusal { refusal } if assistant => {
                     Ok(json!({"type":"refusal","refusal":refusal}))
                 }
@@ -281,7 +303,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         if m.role == Role::Tool {
             let output = match &m.content {
                 Some(Content::Text(s)) => json!(s),
-                Some(content @ Content::Parts(_)) => json!(content_parts(content, false)?),
+                Some(content @ Content::Parts(_)) => json!(content_parts(content, false, false)?),
                 None => return Err(bad("function result requires text")),
             };
             if m.refusal.is_some() {
@@ -295,7 +317,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         let mut parts = m
             .content
             .as_ref()
-            .map(|c| content_parts(c, m.role == Role::Assistant))
+            .map(|c| content_parts(c, m.role == Role::Assistant, m.role == Role::User))
             .transpose()?
             .unwrap_or_default();
         if let Some(refusal) = &m.refusal {
@@ -683,7 +705,7 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     let mut parts = m
         .content
         .as_ref()
-        .map(|c| content_parts(c, true))
+        .map(|c| content_parts(c, true, false))
         .transpose()?
         .unwrap_or_default();
     if let Some(refusal) = &m.refusal {

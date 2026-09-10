@@ -221,9 +221,26 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 
 模型别名选择上游，与客户端协议独立。Anthropic backend 只有在请求显式提供 token 上限时才参与选择（`max_tokens` 或能转换的等价字段），Nyro 不自行设置默认值。原生客户端使用 OpenAI 流式上游时会自动请求用量；OpenAI Chat Completions 客户端只有设置 `stream_options.include_usage: true` 才接收用量。
 
-严格转换路径是实验性的文本／函数 Chat 子集，其 codec 拒绝图片、音频、视频、thinking／签名块、无法保留的内容顺序、多候选以及不支持的厂商选项或诊断字段。例如 Anthropic 缓存／用量扩展和命中 stop sequence 的响应；Gemini 安全设置、safety ratings、grounding／引用、prompt feedback 和结构化输出设置；以及无法在原生输出中表示的 OpenAI fingerprint／service-tier／logprob 元数据。某协议已支持的字段不一定能转换到另一协议：不可转换的请求在发往上游前失败；不可转换的上游响应返回 `502` 或终止 SSE 流。原生 Embedding API 和完整 SDK／厂商功能对齐属于后续工作。
+严格转换路径是实验性的文本／用户图片／客户端函数 Chat 子集，仍不支持跨协议音频／视频、thinking／签名块、无法保留的内容顺序、多候选以及不支持的厂商选项或诊断字段。例如 Anthropic 缓存／用量扩展和命中 stop sequence 的响应；Gemini 安全设置、safety ratings、grounding／引用、prompt feedback 和结构化输出设置；以及无法在原生输出中表示的 OpenAI fingerprint／service-tier／logprob 元数据。某协议已支持的字段不一定能转换到另一协议：不可转换的请求在发往上游前失败；不可转换的上游响应返回 `502` 或终止 SSE 流。原生 Embedding API 和完整 SDK／厂商功能对齐属于后续工作。
 
 协议参考：[Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)、[Gemini generateContent](https://ai.google.dev/api/generate-content)。本地矩阵回归：`cargo test -p nyro-llm --test protocol_matrix`。
+
+## 用户图片输入
+
+用户消息中的图片复用现有 Chat IR，不新增图片生成工作负载。严格转换保留图文顺序、URL 字符串、声明的 MIME 类型及 base64 内容：
+
+| 输入形式 | 可选目标 |
+|---|---|
+| OpenAI Chat `image_url` data URI、Responses `input_image.image_url` data URI、Anthropic `image` base64 source、Gemini `inlineData` | PNG／JPEG／WebP 可在四种格式间转换。 |
+| GIF data URI 或 Anthropic base64 source | OpenAI Chat、Responses、Anthropic；Gemini 不作为候选。 |
+| OpenAI Chat、Responses 或 Anthropic 的 HTTP(S) 图片 URL | 这三种格式；Gemini 不作为候选，不下载图片或虚构 `fileData`。 |
+| OpenAI Chat／Responses `detail` | `auto` 或省略时可使用其他条件满足的目标；`low`、`high`、`original` 仅在 OpenAI Chat／Responses 间保留，使 Anthropic／Gemini 不再符合条件。 |
+
+本轮仅增加 user 消息图片转换。system／developer／assistant 图片、工具结果图片、厂商文件 ID、Gemini `fileData`、HEIC／HEIF、图片缓存／变换／分辨率扩展及图片输出转换不属于本轮范围。未支持的来源形状或非 user 图片在严格解码时拒绝；无法表达的目标在发送前排除，没有候选时返回 `400`。匹配的显式原生转发保持已有契约。
+
+Nyro 校验来源形状、HTTP(S) URL 语法、支持的 MIME 标签和非空标准 base64 编码；不下载 URL、不解码像素、不验证实际字节与 MIME 是否一致、不缩放或转码，也不证明模型支持视觉输入。现有请求体大小限制继续生效；图片内容和模型特定限制由所配置的上游校验。更严格的来源／角色检查也适用于直接调用严格 OpenAI Chat codec。
+
+参考：[OpenAI 图片输入与 detail](https://developers.openai.com/api/docs/guides/images-vision)、[Anthropic 图片来源](https://platform.claude.com/docs/en/build-with-claude/vision)、[Gemini 内嵌图片](https://ai.google.dev/gemini-api/docs/image-understanding)。本地回归：`cargo test -p nyro-llm --test image_codec --test responses_runtime`。测试使用本地 mock 上游，不是厂商视觉能力认证。
 
 ## 严格转换的工具历史与结果
 
@@ -345,7 +362,7 @@ curl http://127.0.0.1:19530/v1/responses \
 
 函数结果 `function_call_output.output` 接受字符串或仅包含 `input_text` 块的数组，包括空数组。转换保留块边界，不拼接文本。多个结果块无法严格转换到 Gemini 目标；媒体及其他结果块类型被拒绝。
 
-此严格转换路径仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、reasoning items、多媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段和 item ID 会归一化，不保证保留上游原始 ID 或精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
+此严格转换路径仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、reasoning items、用户图片子集以外的媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段和 item ID 会归一化，不保证保留上游原始 ID 或精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
 
 SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和完整终态快照，不输出 `[DONE]`。token 上限／内容过滤结束会映射成 `response.incomplete`；上游失败、内容矛盾、格式错误或断流不会伪造成功终态。严格 Responses 上游流关闭 obfuscation。此子集不代表已经完整兼容 Responses SDK 或 Codex CLI。
 

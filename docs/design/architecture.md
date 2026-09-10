@@ -490,13 +490,13 @@ Chat 流使用自己的事件类型，不要求所有交互实现流接口。当
 
 ### 8.2 内容模态与操作分开
 
-包含图片或音频内容的对话仍然可以是 Chat。图片生成、图片编辑、音频转写、语音合成等操作在需要时定义自己的请求和结果；不能仅按媒体名称制造装满可选字段的万能结构。如果未来的视频操作是异步任务，还应表达任务提交、状态与产物，而非强套普通同步响应。
+包含图片或音频内容的对话仍然可以是 Chat。当前严格用户图片转换复用既有 `ContentPart::ImageUrl`，由 codec 映射 OpenAI Chat／Responses、Anthropic URL／base64 和 Gemini inlineData；图片来源解析为 `nyro-llm/codec` 私有辅助逻辑。图片不会进入内核，也不新增下载、转码服务或独立 Image 工作负载。图片生成、图片编辑、音频转写、语音合成等操作在需要时定义自己的请求和结果；不能仅按媒体名称制造装满可选字段的万能结构。如果未来的视频操作是异步任务，还应表达任务提交、状态与产物，而非强套普通同步响应。
 
 共享内容引用、错误和用量类型以语义一致为前提。当前 Chat `Message.tool_error` 是工具结果的显式执行失败标志，默认 `false` 且序列化时省略默认值；只允许用于工具结果消息。Anthropic 的 `is_error:true` 映射到该字段，无法保留它的严格目标在发送前被排除。Gemini 结果 JSON 中的 `error` 键不自动推断为该标志。结果文本块保持边界，不通过拼接掩盖目标协议的表达限制。已知的交互核心字段进入类型化 IR；协议特有和供应商特有字段具有明确归属，不把无约束 JSON 作为常规交互数据模型。
 
 ### 8.3 对外复用范围
 
-`nyro-protocol` 独立提供 OpenAI、Anthropic、Gemini 基础协议格式，社区项目解析这些协议时不需要构建 Nyro runtime、内核或数据库。IR 与跨协议转换暂留 `nyro-llm`，本次不承诺一个独立的 IR/转换 SDK。Responses 是 OpenAI 族内的一种 API，与 Chat Completions 共享 Chat workload；上游通过 `kind: openai` 加 `api: responses` 选择，不新增 Provider 族或 crate。现有 Chat IR 支持无状态文本、拒绝、客户端函数调用／结果及用量，不能完整承载 Responses 的服务端会话、item 引用、内置工具或 reasoning items，因此严格转换路径明确拒绝这些语义。匹配的 Responses 原生模式可保留 reasoning 历史和媒体等 JSON 扩展，但仍不支持托管会话、item 引用或内置工具；这些字段不进入公共 IR。函数参数 Schema 仍由 codec 处理：JSON Schema 对象保留原字段，Gemini 原生 Schema 只转换明确支持的方言子集，无法保留的约束拒绝。当前不引入通用 Schema 校验框架，也不在内核或执行链中展开引用、裁剪约束或验证工具执行参数。具体转换与流状态边界见实验性代理指南。
+`nyro-protocol` 独立提供 OpenAI、Anthropic、Gemini 基础协议格式，社区项目解析这些协议时不需要构建 Nyro runtime、内核或数据库。IR 与跨协议转换暂留 `nyro-llm`，本次不承诺一个独立的 IR/转换 SDK。Responses 是 OpenAI 族内的一种 API，与 Chat Completions 共享 Chat workload；上游通过 `kind: openai` 加 `api: responses` 选择，不新增 Provider 族或 crate。现有 Chat IR 支持无状态文本、用户图片、拒绝、客户端函数调用／结果及用量，不能完整承载 Responses 的服务端会话、item 引用、内置工具或 reasoning items，因此严格转换路径明确拒绝这些语义。匹配的 Responses 原生模式可保留 reasoning 历史和媒体等 JSON 扩展，但仍不支持托管会话、item 引用或内置工具；这些字段不进入公共 IR。函数参数 Schema 仍由 codec 处理：JSON Schema 对象保留原字段，Gemini 原生 Schema 只转换明确支持的方言子集，无法保留的约束拒绝。当前不引入通用 Schema 校验框架，也不在内核或执行链中展开引用、裁剪约束或验证工具执行参数。具体转换与流状态边界见实验性代理指南。
 
 ## 9. 共享安全、限制与观测能力
 
@@ -558,7 +558,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 | 阶段 | 当前进度 | 差异跟踪 |
 |---|---|---|
 | 内核、代际、文件配置 | 基础机制已落地；SIGHUP 重载已有回归 | 后续能力必须保持生命周期与清理约束 |
-| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；G04 已补充 Anthropic／Gemini 完整工具结果批次、显式错误状态边界、文本结果块与 Gemini ID／顺序校验；函数 Schema 已补充 JSON 约束保留、Gemini 方言转换与 strict 目标边界；整体兼容对齐未完成 | G02–G09 |
+| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；G04 已补充 Anthropic／Gemini 完整工具结果批次、显式错误状态边界、文本结果块与 Gemini ID／顺序校验；函数 Schema 已补充 JSON 约束保留、Gemini 方言转换与 strict 目标边界；G03 已补充用户图片输入及目标限制；整体兼容对齐未完成 | G02–G09 |
 | 控制面、存储、管理与持久化观测 | 尚未接入新架构 | G10–G12 |
 | 工具、部署和旧入口切换 | 尚未完成切换验收 | G11、G13 |
 

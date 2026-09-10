@@ -72,6 +72,16 @@ fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
         }
     }
     for message in &request.messages {
+        if let Some(Content::Parts(parts)) = &message.content {
+            for part in parts {
+                if let ContentPart::ImageUrl { image_url } = part {
+                    if message.role != Role::User {
+                        return Err(invalid("images require a user message"));
+                    }
+                    super::image::source(image_url)?;
+                }
+            }
+        }
         if message.tool_error && message.role != Role::Tool {
             return Err(invalid("tool_error requires a tool result"));
         }

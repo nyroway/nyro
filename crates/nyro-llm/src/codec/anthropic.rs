@@ -61,6 +61,23 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                     }
                     parts.push(json!({"type":"text","text":text}));
                 }
+                wire::Block::Image { source } => {
+                    if m.role != "user" {
+                        return Err(bad("images require a user message"));
+                    }
+                    let url = match source {
+                        wire::ImageSource::Base64 { media_type, data } => {
+                            format!("data:{media_type};base64,{data}")
+                        }
+                        wire::ImageSource::Url { url } => {
+                            if url.starts_with("data:") {
+                                return Err(bad("URL image source requires HTTP(S)"));
+                            }
+                            url
+                        }
+                    };
+                    parts.push(json!({"type":"image_url","image_url":{"url":url}}));
+                }
                 wire::Block::ToolUse { id, name, input } => {
                     if m.role != "assistant"
                         || !input.is_object()
@@ -182,7 +199,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
     }
     Ok(request)
 }
-fn content_parts(c: &Option<Content>) -> Result<Vec<Value>, CodecError> {
+fn content_parts(c: &Option<Content>, images: bool) -> Result<Vec<Value>, CodecError> {
     match c {
         None => Ok(vec![]),
         Some(Content::Text(t)) => Ok(vec![json!({"type":"text","text":t})]),
@@ -190,6 +207,16 @@ fn content_parts(c: &Option<Content>) -> Result<Vec<Value>, CodecError> {
             .iter()
             .map(|p| match p {
                 ContentPart::Text { text } => Ok(json!({"type":"text","text":text})),
+                ContentPart::ImageUrl { image_url } if images => {
+                    super::image::default_detail(image_url)?;
+                    let source = match super::image::source(image_url)? {
+                        super::image::Source::Url(url) => json!({"type":"url","url":url}),
+                        super::image::Source::Base64 { mime, data } => {
+                            json!({"type":"base64","media_type":mime,"data":data})
+                        }
+                    };
+                    Ok(json!({"type":"image","source":source}))
+                }
                 _ => Err(bad("unsupported non-text content")),
             })
             .collect(),
@@ -274,7 +301,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         if m.name.is_some() || m.refusal.is_some() || m.audio.is_some() {
             return Err(bad("unsupported message option"));
         }
-        let mut content = content_parts(&m.content)?;
+        let mut content = content_parts(&m.content, m.role == Role::User)?;
         content.extend(call_blocks(&m.tool_calls)?);
         match m.role {
             Role::System | Role::Developer => {
@@ -462,7 +489,7 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     {
         return Err(bad("unsupported response fields"));
     }
-    let mut content = content_parts(&c.message.content)?;
+    let mut content = content_parts(&c.message.content, false)?;
     content.extend(call_blocks(&c.message.tool_calls)?);
     let u = r
         .usage

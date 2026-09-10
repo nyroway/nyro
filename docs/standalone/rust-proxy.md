@@ -221,9 +221,26 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 
 An alias selects the configured upstream independently of the client protocol. An Anthropic backend is eligible only with an explicit token limit (`max_tokens`, or a representable equivalent); Nyro does not invent one. Native clients routed to an OpenAI stream request upstream usage automatically. OpenAI Chat Completions clients receive usage only when `stream_options.include_usage` is true.
 
-The strict conversion path is an experimental text/function Chat subset. Its codecs reject image/audio/video, thinking/signature blocks, unrepresentable content ordering, multiple candidates, and unsupported vendor options or diagnostics. Examples include Anthropic caching/usage details and matched stop-sequence responses; Gemini safety settings, safety ratings, grounding/citations, prompt feedback and structured-output settings; and OpenAI response fingerprint/service-tier/logprob metadata when it cannot be represented by a native output. Supported fields in one protocol are not automatically representable in another: unsupported requests fail before dispatch; unsupported upstream responses fail with `502` or a terminated SSE stream. Native Embedding APIs and full SDK/vendor feature parity remain future work.
+The strict conversion path is an experimental Chat subset for text, user image inputs and client functions. Cross-protocol audio/video, thinking/signature blocks, unrepresentable content ordering, multiple candidates, and unsupported vendor options or diagnostics remain unsupported. Examples include Anthropic caching/usage details and matched stop-sequence responses; Gemini safety settings, safety ratings, grounding/citations, prompt feedback and structured-output settings; and OpenAI response fingerprint/service-tier/logprob metadata when it cannot be represented by a native output. Supported fields in one protocol are not automatically representable in another: unsupported requests fail before dispatch; unsupported upstream responses fail with `502` or a terminated SSE stream. Native Embedding APIs and full SDK/vendor feature parity remain future work.
 
 Protocol reference: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini generateContent](https://ai.google.dev/api/generate-content). Local matrix regression: `cargo test -p nyro-llm --test protocol_matrix`.
+
+## User image inputs
+
+User-message images reuse the existing Chat IR; this does not introduce an image-generation workload. Supported strict conversions preserve image/text order, URL strings, declared MIME types and base64 content:
+
+| Input form | Eligible destinations |
+|---|---|
+| OpenAI Chat `image_url` data URI, Responses `input_image.image_url` data URI, Anthropic `image` base64 source, Gemini `inlineData` | PNG/JPEG/WebP across all four formats. |
+| GIF data URI or Anthropic base64 source | OpenAI Chat, Responses and Anthropic; Gemini is ineligible. |
+| HTTP(S) image URL in OpenAI Chat, Responses or Anthropic | These three formats; Gemini is ineligible because conversion does not download the image or fabricate `fileData`. |
+| OpenAI Chat/Responses `detail` | `auto` or omitted can use all otherwise eligible destinations. `low`, `high` and `original` are retained only for OpenAI Chat/Responses; they make Anthropic/Gemini ineligible. |
+
+Only user messages gain image conversion. System/developer/assistant images, tool-result images, vendor file IDs, Gemini `fileData`, HEIC/HEIF, image-specific caching/transformations/resolution extensions and image output conversion are outside this increment. Unsupported source shapes or non-user images fail strict decoding; incompatible targets are excluded before dispatch. If none remain, the request returns `400`. Opt-in matching native forwarding keeps its existing contract.
+
+Nyro checks source shape, HTTP(S) URL syntax, the supported MIME label and nonempty standard base64 encoding. It does not fetch URLs, decode pixels, verify bytes against the MIME label, resize, transcode or prove model vision support. Existing request-body limits still apply; the configured upstream validates image contents and model-specific limits. The stricter source/role checks also apply to direct strict OpenAI Chat codec use.
+
+References: [OpenAI image inputs and detail](https://developers.openai.com/api/docs/guides/images-vision), [Anthropic image sources](https://platform.claude.com/docs/en/build-with-claude/vision), [Gemini inline images](https://ai.google.dev/gemini-api/docs/image-understanding). Local regressions: `cargo test -p nyro-llm --test image_codec --test responses_runtime`. These use local mock upstreams, not vendor vision certification.
 
 ## Strict tool history and results
 
@@ -345,7 +362,7 @@ curl http://127.0.0.1:19530/v1/responses \
 
 Function results accept a string `function_call_output.output` or an array containing only `input_text` blocks, including an empty array. Conversion preserves block boundaries rather than concatenating them. Multiple result blocks are incompatible with a strict Gemini destination; media and other result block types are rejected.
 
-This strict conversion path is stateless: outbound Responses always sets `store:false`, and Responses ingress translated to Chat Completions also explicitly disables storage. Server conversation state (`conversation`, `previous_response_id`), item references, `store:true`, `background:true`, hosted tools, reasoning items, media, and response retrieval/deletion/cancellation are unsupported. Meaningful options or output items that the current Chat IR cannot preserve are rejected. Responses envelope echoes and item IDs are normalized; exact upstream IDs and request echoes are not preserved. Function `call_id`, content order, finish status, and representable usage remain part of the conversion contract.
+This strict conversion path is stateless: outbound Responses always sets `store:false`, and Responses ingress translated to Chat Completions also explicitly disables storage. Server conversation state (`conversation`, `previous_response_id`), item references, `store:true`, `background:true`, hosted tools, reasoning items, media outside the user-image subset, and response retrieval/deletion/cancellation are unsupported. Meaningful options or output items that the current Chat IR cannot preserve are rejected. Responses envelope echoes and item IDs are normalized; exact upstream IDs and request echoes are not preserved. Function `call_id`, content order, finish status, and representable usage remain part of the conversion contract.
 
 SSE uses named Responses lifecycle events, stable item IDs, ordered sequence numbers, and a full terminal snapshot, without a `[DONE]` marker. Token-limit/content-filter endings produce `response.incomplete`. Failed, contradictory, malformed, or truncated upstream streams terminate without a fabricated successful completion. Strict Responses upstream streaming disables obfuscation. This subset does not establish full Responses SDK or Codex CLI compatibility.
 

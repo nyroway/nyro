@@ -121,7 +121,7 @@ fn rejects_lossy_options_and_missing_max_tokens() {
     request.generation.max_tokens = Some(4);
     request.generation.seed = Some(7);
     assert!(encode_chat(&request).is_err());
-    assert!(decode_chat(json!({"model":"m","max_tokens":4,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://example.com/a.png"}}]}]})).is_err());
+    assert!(decode_chat(json!({"model":"m","max_tokens":4,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"file","file_id":"file-1"}}]}]})).is_err());
 }
 #[test]
 fn malformed_and_oversized_tool_streams_fail_without_done() {
