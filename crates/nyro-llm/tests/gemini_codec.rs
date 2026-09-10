@@ -227,6 +227,7 @@ fn mixed_user_function_responses_preserve_part_order() {
     assert_eq!(
         r.messages[1].content,
         Some(Content::Parts(vec![ContentPart::Text {
+            prompt_cache_breakpoint: None,
             text: "before".into()
         }]))
     );
@@ -238,6 +239,7 @@ fn mixed_user_function_responses_preserve_part_order() {
     assert_eq!(
         r.messages[3].content,
         Some(Content::Parts(vec![ContentPart::Text {
+            prompt_cache_breakpoint: None,
             text: "between".into()
         }]))
     );
@@ -245,6 +247,7 @@ fn mixed_user_function_responses_preserve_part_order() {
     assert_eq!(
         r.messages[5].content,
         Some(Content::Parts(vec![ContentPart::Text {
+            prompt_cache_breakpoint: None,
             text: "after".into()
         }]))
     );
@@ -346,14 +349,23 @@ fn encoder_rejects_incomplete_interrupted_or_invalid_result_batches() {
 fn result_text_blocks_are_not_silently_concatenated() {
     let mut r = result_history();
     r.messages[1].content = Some(Content::Parts(vec![
-        ContentPart::Text { text: "one".into() },
-        ContentPart::Text { text: "two".into() },
+        ContentPart::Text {
+            prompt_cache_breakpoint: None,
+            text: "one".into(),
+        },
+        ContentPart::Text {
+            prompt_cache_breakpoint: None,
+            text: "two".into(),
+        },
     ]));
     assert!(encode_chat(&r).is_err());
     for (parts, expected) in [
         (vec![], json!({"result":""})),
         (
-            vec![ContentPart::Text { text: "one".into() }],
+            vec![ContentPart::Text {
+                prompt_cache_breakpoint: None,
+                text: "one".into(),
+            }],
             json!({"result":"one"}),
         ),
     ] {

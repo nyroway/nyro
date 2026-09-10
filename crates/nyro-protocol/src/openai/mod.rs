@@ -50,3 +50,10 @@ fn present<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
 ) -> Result<Option<T>, D::Error> {
     T::deserialize(deserializer).map(Some)
 }
+
+/// An exact input-prefix boundary; TTL is inherited from request cache options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PromptCacheBreakpoint {
+    Explicit {},
+}
