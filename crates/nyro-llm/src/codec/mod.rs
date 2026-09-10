@@ -1,3 +1,4 @@
+mod image;
 pub mod openai;
 
 /// A rejected or unsupported payload; HTTP ingress sanitizes details before responding.

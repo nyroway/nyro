@@ -58,6 +58,10 @@ pub enum InputContent {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum InputPart {
+    InputImage {
+        image_url: String,
+        detail: Option<String>,
+    },
     InputText {
         text: String,
     },

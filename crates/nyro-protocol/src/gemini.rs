@@ -26,9 +26,17 @@ pub struct Part {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_data: Option<Blob>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub function_call: Option<FunctionCall>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub function_response: Option<FunctionResponse>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Blob {
+    pub mime_type: String,
+    pub data: String,
 }
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

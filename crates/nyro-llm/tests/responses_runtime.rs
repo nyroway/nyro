@@ -961,7 +961,7 @@ async fn responses_protected_intake_and_unsupported_controls_never_dispatch() {
         json!({"reasoning":{"effort":"high"}}),
         json!({"tools":[{"type":"web_search"}]}),
         json!({"input":[{"type":"item_reference","id":"msg_prior"}]}),
-        json!({"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.test/image.png"}]}]}),
+        json!({"input":[{"role":"user","content":[{"type":"input_image","file_id":"file-1"}]}]}),
         json!({"unknown_control":true}),
     ] {
         let mut payload = json!({"model":"public","input":"Hi","max_output_tokens":32});
@@ -1549,6 +1549,162 @@ async fn gemini_schema_normalization_and_rejections_precede_network_dispatch() {
             to_bytes(response.into_body(), 65536).await.unwrap();
             assert_eq!(fixture.calls.lock().unwrap().len(), before);
             assert_eq!(limit.available(), 1);
+        }
+    }
+}
+
+const IMAGE_PNG: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+fn image_content(format: &str, remote: bool, detail: Option<&str>) -> Value {
+    let url = if remote {
+        "https://images.example.test/image.png?signature=opaque".into()
+    } else {
+        format!("data:image/png;base64,{IMAGE_PNG}")
+    };
+    let (before, mut image, after) = match format {
+        "openai" => (
+            json!({"type":"text","text":"before"}),
+            json!({"type":"image_url","image_url":{"url":url}}),
+            json!({"type":"text","text":"after"}),
+        ),
+        "responses" => (
+            json!({"type":"input_text","text":"before"}),
+            json!({"type":"input_image","image_url":url}),
+            json!({"type":"input_text","text":"after"}),
+        ),
+        "anthropic" => (
+            json!({"type":"text","text":"before"}),
+            json!({"type":"image","source":if remote {json!({"type":"url","url":url})} else {json!({"type":"base64","media_type":"image/png","data":IMAGE_PNG})}}),
+            json!({"type":"text","text":"after"}),
+        ),
+        _ => (
+            json!({"text":"before"}),
+            json!({"inlineData":{"mimeType":"image/png","data":IMAGE_PNG}}),
+            json!({"text":"after"}),
+        ),
+    };
+    if let Some(detail) = detail {
+        match format {
+            "openai" => image["image_url"]["detail"] = json!(detail),
+            "responses" => image["detail"] = json!(detail),
+            _ => {}
+        }
+    }
+    json!([before, image, after])
+}
+fn input_image_pointer(format: &str) -> &'static str {
+    match format {
+        "responses" => "/input/0/content",
+        "gemini" => "/contents/0/parts",
+        _ => "/messages/0/content",
+    }
+}
+async fn image_request(
+    format: &str,
+    streaming: bool,
+    remote: bool,
+    detail: Option<&str>,
+) -> Request<Body> {
+    let (parts, body) = request(format, streaming).into_parts();
+    let mut value: Value = serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+    if format == "responses" {
+        value["input"] = json!([{"role":"user","content":[]}]);
+    }
+    *value.pointer_mut(input_image_pointer(format)).unwrap() =
+        image_content(format, remote, detail);
+    Request::from_parts(parts, Body::from(value.to_string()))
+}
+#[tokio::test]
+async fn image_inputs_preserve_content_order_and_bytes_without_fetching_urls() {
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for source in FORMATS {
+            for remote in [false, true] {
+                if remote && source == "gemini" {
+                    continue;
+                }
+                for streaming in [false, true] {
+                    let before = fixture.calls.lock().unwrap().len();
+                    let response = gateway
+                        .handle(
+                            image_request(source, streaming, remote, None).await,
+                            CancellationToken::new(),
+                        )
+                        .await;
+                    let allowed = !(remote && target == "gemini");
+                    assert_eq!(
+                        response.status(),
+                        if allowed {
+                            StatusCode::OK
+                        } else {
+                            StatusCode::BAD_REQUEST
+                        },
+                        "{source} -> {target}, remote={remote}"
+                    );
+                    let body = to_bytes(response.into_body(), 65536).await.unwrap();
+                    assert_eq!(limit.available(), 1);
+                    let calls = fixture.calls.lock().unwrap();
+                    assert_eq!(calls.len(), before + usize::from(allowed));
+                    if !allowed {
+                        continue;
+                    }
+                    assert_eq!(
+                        calls.last().unwrap()["body"]
+                            .pointer(input_image_pointer(target))
+                            .unwrap(),
+                        &image_content(target, remote, None)
+                    );
+                    let result = if streaming {
+                        stream_snapshot(source, &body)
+                    } else {
+                        snapshot(source, &serde_json::from_slice(&body).unwrap())
+                    };
+                    assert_eq!(result["text"], "Hello");
+                }
+            }
+        }
+    }
+}
+#[tokio::test]
+async fn image_detail_is_preserved_or_rejected_before_dispatch() {
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for source in ["openai", "responses"] {
+            for detail in ["auto", "low", "high", "original"] {
+                let before = fixture.calls.lock().unwrap().len();
+                let response = gateway
+                    .handle(
+                        image_request(source, false, false, Some(detail)).await,
+                        CancellationToken::new(),
+                    )
+                    .await;
+                let allowed = detail == "auto" || matches!(target, "openai" | "responses");
+                assert_eq!(
+                    response.status(),
+                    if allowed {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::BAD_REQUEST
+                    },
+                    "{source} -> {target}, detail={detail}"
+                );
+                to_bytes(response.into_body(), 65536).await.unwrap();
+                assert_eq!(limit.available(), 1);
+                let calls = fixture.calls.lock().unwrap();
+                assert_eq!(calls.len(), before + usize::from(allowed));
+                if allowed {
+                    assert_eq!(
+                        calls.last().unwrap()["body"]
+                            .pointer(input_image_pointer(target))
+                            .unwrap(),
+                        &image_content(target, false, Some(detail))
+                    );
+                }
+            }
         }
     }
 }

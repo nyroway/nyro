@@ -128,10 +128,11 @@ fn function_result_rejects_non_input_text_parts_and_invalid_shapes() {
         json!({"type":"input_audio","input_audio":{"data":"YQ==","format":"wav"}}),
         json!({"type":"refusal","refusal":"lost"}),
     ] {
-        let request = openai::decode_chat(json!({"model":"m","messages":[
-            {"role":"tool","tool_call_id":"call1","content":[part]}
+        let mut request = openai::decode_chat(json!({"model":"m","messages":[
+            {"role":"tool","tool_call_id":"call1","content":"result"}
         ]}))
         .unwrap();
+        request.messages[0].content = Some(serde_json::from_value(json!([part])).unwrap());
         assert!(encode_chat(&request).is_err());
     }
 }
@@ -154,7 +155,7 @@ fn request_rejects_unrepresentable_semantics() {
     }
     for item in [
         json!({"type":"item_reference","id":"m"}),
-        json!({"role":"user","content":[{"type":"input_image","image_url":"https://x"}]}),
+        json!({"role":"user","content":[{"type":"input_image","file_id":"file-1"}]}),
         json!({"type":"reasoning","summary":[]}),
     ] {
         assert!(decode_chat(json!({"model":"m","input":[item]})).is_err());

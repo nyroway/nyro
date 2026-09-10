@@ -19,7 +19,7 @@ fn message(role: Role) -> Message {
         audio: None,
     }
 }
-fn texts(content: &Option<Content>) -> Result<Vec<w::Part>, CodecError> {
+fn content_parts(content: &Option<Content>, images: bool) -> Result<Vec<w::Part>, CodecError> {
     match content {
         None => Ok(vec![]),
         Some(Content::Text(s)) => Ok(vec![w::Part {
@@ -33,6 +33,24 @@ fn texts(content: &Option<Content>) -> Result<Vec<w::Part>, CodecError> {
                     text: Some(text.clone()),
                     ..Default::default()
                 }),
+                ContentPart::ImageUrl { image_url } if images => {
+                    super::image::default_detail(image_url)?;
+                    let super::image::Source::Base64 { mime, data } =
+                        super::image::source(image_url)?
+                    else {
+                        return Err(bad("Gemini image conversion requires inline data"));
+                    };
+                    if mime == "image/gif" {
+                        return Err(bad("GIF images unsupported by Gemini"));
+                    }
+                    Ok(w::Part {
+                        inline_data: Some(w::Blob {
+                            mime_type: mime.into(),
+                            data: data.into(),
+                        }),
+                        ..Default::default()
+                    })
+                }
                 _ => Err(bad("Gemini supports text content only in this increment")),
             })
             .collect(),
@@ -40,6 +58,7 @@ fn texts(content: &Option<Content>) -> Result<Vec<w::Part>, CodecError> {
 }
 fn check_part(p: &w::Part) -> Result<(), CodecError> {
     if usize::from(p.text.is_some())
+        + usize::from(p.inline_data.is_some())
         + usize::from(p.function_call.is_some())
         + usize::from(p.function_response.is_some())
         != 1
@@ -107,6 +126,21 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                     ));
                 }
                 parts.push(ContentPart::Text { text });
+            } else if let Some(blob) = p.inline_data {
+                if role != Role::User
+                    || !matches!(
+                        blob.mime_type.as_str(),
+                        "image/png" | "image/jpeg" | "image/webp"
+                    )
+                {
+                    return Err(bad("unsupported inline image type or role"));
+                }
+                parts.push(ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: format!("data:{};base64,{}", blob.mime_type, blob.data),
+                        detail: None,
+                    },
+                });
             } else if let Some(c) = p.function_call {
                 if role != Role::Assistant {
                     return Err(bad("function calls require model role"));
@@ -379,7 +413,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         {
             return Err(bad("unsupported message metadata"));
         }
-        let mut parts = texts(&m.content)?;
+        let mut parts = content_parts(&m.content, m.role == Role::User)?;
         if m.role == Role::Tool {
             if parts.len() > 1 {
                 return Err(bad(
@@ -710,7 +744,7 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
         {
             return Err(bad("unsupported response payload"));
         }
-        let mut parts = texts(&c.message.content)?;
+        let mut parts = content_parts(&c.message.content, false)?;
         if let Some(calls) = &c.message.tool_calls {
             for ToolCall::Function { id, function } in calls {
                 let args: Value = serde_json::from_str(&function.arguments)?;
