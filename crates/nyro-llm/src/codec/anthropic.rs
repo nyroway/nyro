@@ -350,7 +350,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             {
                 return Err(bad("invalid tool definition"));
             }
-            if f.get("strict").is_some() {
+            if f.get("strict").and_then(Value::as_bool) == Some(true) {
                 return Err(bad("strict tools unsupported"));
             }
             let mut item = json!({"name":f["name"],"input_schema":f.get("parameters").cloned().unwrap_or(json!({"type":"object"}))});

@@ -235,56 +235,112 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
     }
     Ok(r)
 }
+// Convert only schema positions. Defaults are literal data, not nested schemas.
 fn schema_to_json(mut v: Value) -> Result<Value, CodecError> {
     let obj = v
         .as_object_mut()
         .ok_or_else(|| bad("function schema must be an object"))?;
-    for key in obj.keys() {
-        if ![
-            "type",
-            "description",
-            "enum",
-            "properties",
-            "required",
-            "items",
-            "nullable",
-            "format",
-            "minimum",
-            "maximum",
-            "minItems",
-            "maxItems",
-        ]
-        .contains(&key.as_str())
-        {
-            return Err(bad(
-                "unsupported Gemini Schema field; use parametersJsonSchema",
-            ));
+    let nullable = match obj.remove("nullable") {
+        None | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        _ => return Err(bad("invalid nullable")),
+    };
+    // Gemini documents nullable independently of enum/anyOf. Do not guess
+    // whether it overrides their constraints when converting to JSON Schema.
+    if nullable && (obj.contains_key("enum") || obj.contains_key("anyOf")) {
+        return Err(bad(
+            "nullable with enum or anyOf requires parametersJsonSchema",
+        ));
+    }
+    for (key, value) in obj.iter_mut() {
+        match key.as_str() {
+            "type" => {
+                let kind = value
+                    .as_str()
+                    .ok_or_else(|| bad("invalid schema type"))?
+                    .to_ascii_lowercase();
+                if ![
+                    "string", "number", "integer", "boolean", "array", "object", "null",
+                ]
+                .contains(&kind.as_str())
+                {
+                    return Err(bad("unsupported schema type"));
+                }
+                *value = Value::String(kind);
+            }
+            "properties" => {
+                let properties = value
+                    .as_object_mut()
+                    .ok_or_else(|| bad("schema properties must be an object"))?;
+                for property in properties.values_mut() {
+                    *property = schema_to_json(property.take())?;
+                }
+            }
+            "items" => *value = schema_to_json(value.take())?,
+            "anyOf" => {
+                let alternatives = value
+                    .as_array_mut()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| bad("schema anyOf must be a nonempty array"))?;
+                for alternative in alternatives {
+                    *alternative = schema_to_json(alternative.take())?;
+                }
+            }
+            "minItems" | "maxItems" | "minProperties" | "maxProperties" | "minLength"
+            | "maxLength" => {
+                // Proto JSON encodes int64 as strings; JSON Schema requires numbers.
+                // Accept ordinary nonnegative integers too, without rounding floats.
+                let count = match value {
+                    Value::String(s) if !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()) => {
+                        s.parse::<i64>().ok()
+                    }
+                    _ => value.as_i64(),
+                }
+                .filter(|n| *n >= 0)
+                .ok_or_else(|| bad("schema count must be a nonnegative int64"))?;
+                *value = Value::from(count);
+            }
+            "required" | "enum" => {
+                if value
+                    .as_array()
+                    .is_none_or(|values| values.iter().any(|v| !v.is_string()))
+                {
+                    return Err(bad("schema required and enum must contain strings"));
+                }
+            }
+            "title" | "description" | "format" | "pattern" => {
+                if !value.is_string() {
+                    return Err(bad("schema annotation must be a string"));
+                }
+            }
+            "minimum" | "maximum" => {
+                if !value.is_number() {
+                    return Err(bad("schema bound must be a number"));
+                }
+            }
+            "default" => {}
+            _ => {
+                return Err(bad(
+                    "unsupported Gemini Schema field; use parametersJsonSchema",
+                ));
+            }
         }
     }
-    if let Some(t) = obj.get_mut("type") {
-        let s = t
-            .as_str()
-            .ok_or_else(|| bad("invalid schema type"))?
-            .to_lowercase();
-        *t = Value::String(s);
+    if obj.contains_key("enum") && obj.get("type").and_then(Value::as_str) != Some("string") {
+        return Err(bad("Gemini Schema enum supports strings only"));
     }
-    if let Some(Value::Object(props)) = obj.get_mut("properties") {
-        for p in props.values_mut() {
-            *p = schema_to_json(p.take())?;
-        }
-    }
-    if let Some(p) = obj.get_mut("items") {
-        *p = schema_to_json(p.take())?;
-    }
-    if let Some(nullable) = obj.remove("nullable") {
-        if nullable == true {
-            let t = obj
-                .remove("type")
-                .ok_or_else(|| bad("nullable schema requires type"))?;
-            obj.insert("type".into(), serde_json::json!([t, "null"]));
-        } else if nullable != false {
-            return Err(bad("invalid nullable"));
-        }
+    if nullable {
+        let kind = obj
+            .remove("type")
+            .ok_or_else(|| bad("nullable schema requires type"))?;
+        obj.insert(
+            "type".into(),
+            if kind == "null" {
+                kind
+            } else {
+                serde_json::json!([kind, "null"])
+            },
+        );
     }
     Ok(v)
 }
@@ -437,7 +493,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         .map(|ts| {
             ts.iter()
                 .map(|o::Tool::Function { function: f }| {
-                    if f.strict.is_some() {
+                    if f.strict == Some(true) {
                         return Err(bad("strict tools unsupported"));
                     }
                     Ok(w::FunctionDeclaration {

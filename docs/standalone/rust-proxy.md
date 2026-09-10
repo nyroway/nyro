@@ -243,7 +243,27 @@ This covers OpenAI Chat, stateless Responses, Anthropic Messages and Gemini gene
 | Gemini missing result ID | Resolved only when the pending function name identifies exactly one call. Explicit IDs must also match the function name; generated missing call IDs avoid explicit IDs anywhere in the history. |
 | Gemini text mixed with function results | Decoded in order into separate IR messages. Anthropic/Gemini targets reject text interrupting an unfinished result batch; compatible OpenAI Chat/Responses targets retain the order. |
 
-No calls are synthesized or content discarded to repair a history. Cross-protocol thinking/signature mapping, media tool results and Schema rewriting remain outside this increment. References: [Anthropic tool results](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls), [Gemini FunctionResponse](https://ai.google.dev/api/generate-content). Local regressions: `cargo test -p nyro-llm --test anthropic_codec --test gemini_codec --test responses_codec --test responses_runtime --test protocol_matrix`.
+No calls are synthesized or content discarded to repair a history. Cross-protocol thinking/signature mapping and media tool results remain unsupported. Function Schema conversion is described below. References: [Anthropic tool results](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls), [Gemini FunctionResponse](https://ai.google.dev/api/generate-content). Local regressions: `cargo test -p nyro-llm --test anthropic_codec --test gemini_codec --test responses_codec --test responses_runtime --test protocol_matrix`.
+
+## Function parameter schemas
+
+The strict path preserves JSON Schema objects in OpenAI Chat `parameters`, Responses `parameters`, Anthropic `input_schema` and Gemini `parametersJsonSchema`. It does not remove `$ref`, `$defs`, `additionalProperties` or other constraints, resolve references, rewrite defaults, or repair schemas. Missing parameters keep the existing no-parameter conversion. Function names must be nonblank and supplied parameter schemas must be JSON objects; this is envelope validation, not a full JSON Schema validator or a guarantee that every model supports every keyword. Argument execution/validation remains the client's responsibility.
+
+OpenAI Chat `strict:false` is accepted for all four destinations. `strict:true` is preserved for OpenAI Chat/Responses and makes Anthropic/Gemini destinations ineligible in the current strict codecs. Responses ingress still requires an explicit boolean `strict`; outgoing Responses always supplies it, defaulting to `false` when the source does not require strict enforcement. Nyro does not add `required` or `additionalProperties:false` to obtain strict-mode compatibility. See [OpenAI function strict mode](https://developers.openai.com/api/docs/guides/function-calling#strict-mode).
+
+Gemini's native `parameters` uses a different Schema dialect and is converted to JSON Schema before destination selection:
+
+| Native Schema field | Strict conversion |
+|---|---|
+| Known `type` names | Lowercase JSON Schema types; unknown types are rejected. |
+| `properties`, `items`, `anyOf` | Recursively convert only schema positions; `anyOf` must be a nonempty array. |
+| `nullable:true` | Add `null` to the explicit type. Combinations with `enum` or `anyOf` are rejected rather than assuming how the constraints interact. |
+| `minItems`/`maxItems`, `minProperties`/`maxProperties`, `minLength`/`maxLength` | Convert nonnegative int64 decimal strings or integer values to JSON numbers, without rounding. |
+| String `enum`, `required`, `minimum`/`maximum`, `title`, `description`, `format`, `pattern` | Validate field shapes and preserve values. Native enum is supported only for string types. |
+| `default` | Preserve literal JSON data without recursively treating it as a schema. |
+| Other native fields, including `propertyOrdering`, `example`, `$ref` and `additionalProperties` | Reject without pruning. Use `parametersJsonSchema` for JSON Schema objects; matching opt-in native forwarding retains its existing contract. |
+
+These checks do not prove satisfiability, resolve references or emulate vendor enforcement. See [Gemini Schema and FunctionDeclaration](https://ai.google.dev/api/generate-content#Schema). Regressions: `cargo test -p nyro-llm --test tool_schema_codec --test responses_runtime`.
 
 ## Opt-in OpenAI Chat native compatibility
 
