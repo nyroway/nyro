@@ -243,7 +243,27 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 | Gemini 结果缺少 ID | 只有 pending 函数名唯一对应一个调用时才解析；显式 ID 还必须匹配函数名。为缺少 ID 的调用生成的 ID 避开整段历史中已有的显式 ID。 |
 | Gemini 文本与函数结果混排 | 按原顺序解码成独立 IR 消息。Anthropic／Gemini 目标拒绝文本打断尚未完成的结果批次；可表达该历史的 OpenAI Chat／Responses 目标保留顺序。 |
 
-不通过合成调用或丢弃内容修复历史。跨协议 thinking／签名映射、媒体工具结果和 Schema 改写不属于本轮范围。参考：[Anthropic 工具结果](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)、[Gemini FunctionResponse](https://ai.google.dev/api/generate-content)。本地回归：`cargo test -p nyro-llm --test anthropic_codec --test gemini_codec --test responses_codec --test responses_runtime --test protocol_matrix`。
+不通过合成调用或丢弃内容修复历史。跨协议 thinking／签名映射和媒体工具结果仍不支持；函数 Schema 转换见下文。参考：[Anthropic 工具结果](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)、[Gemini FunctionResponse](https://ai.google.dev/api/generate-content)。本地回归：`cargo test -p nyro-llm --test anthropic_codec --test gemini_codec --test responses_codec --test responses_runtime --test protocol_matrix`。
+
+## 函数参数 Schema
+
+严格路径保留 OpenAI Chat `parameters`、Responses `parameters`、Anthropic `input_schema` 和 Gemini `parametersJsonSchema` 中的 JSON Schema 对象，不删除 `$ref`、`$defs`、`additionalProperties` 等约束，不展开引用、不改写默认值，也不修复 Schema。缺省参数沿用现有无参数转换。函数名必须非空白，提供的参数 Schema 必须是 JSON 对象；这是函数定义外层的校验，不是完整 JSON Schema 校验器，也不保证所有模型都支持每个关键字。工具参数的执行与校验仍由客户端负责。
+
+OpenAI Chat `strict:false` 可转换到四种目标；`strict:true` 在 OpenAI Chat／Responses 间保留，在当前严格 codec 中使 Anthropic／Gemini 目标不再符合条件。Responses 入口仍要求显式布尔 `strict`，发往 Responses 时始终提供该字段，来源未要求严格执行时使用 `false`。Nyro 不通过补充 `required` 或 `additionalProperties:false` 获得严格模式兼容。参考：[OpenAI 函数严格模式](https://developers.openai.com/api/docs/guides/function-calling#strict-mode)。
+
+Gemini 原生 `parameters` 使用不同的 Schema 方言，在选择目标前转换为 JSON Schema：
+
+| 原生 Schema 字段 | 严格转换 |
+|---|---|
+| 已知 `type` 名称 | 转为小写 JSON Schema 类型；未知类型拒绝。 |
+| `properties`、`items`、`anyOf` | 仅在 Schema 位置递归转换；`anyOf` 必须是非空数组。 |
+| `nullable:true` | 在显式类型中加入 `null`；与 `enum` 或 `anyOf` 同时使用时拒绝，不推测约束的组合语义。 |
+| `minItems`／`maxItems`、`minProperties`／`maxProperties`、`minLength`／`maxLength` | 非负 int64 十进制字符串或整数值转为 JSON 数字，不舍入。 |
+| 字符串 `enum`、`required`、`minimum`／`maximum`、`title`、`description`、`format`、`pattern` | 校验字段形状并保留值；原生 enum 仅支持字符串类型。 |
+| `default` | 保留字面 JSON 数据，不将其递归当成 Schema。 |
+| 其他原生字段，包括 `propertyOrdering`、`example`、`$ref` 和 `additionalProperties` | 明确拒绝，不裁剪。JSON Schema 对象使用 `parametersJsonSchema`；匹配的显式原生转发保持现有契约。 |
+
+这些检查不证明约束可满足，不展开引用，也不模拟厂商执行。参考：[Gemini Schema 与 FunctionDeclaration](https://ai.google.dev/api/generate-content#Schema)。回归：`cargo test -p nyro-llm --test tool_schema_codec --test responses_runtime`。
 
 ## 显式开启 OpenAI Chat 原生兼容
 

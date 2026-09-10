@@ -1403,3 +1403,152 @@ async fn gemini_result_objects_keep_business_data_without_inventing_error_status
         assert_eq!(serde_json::from_str::<Value>(text).unwrap(), object);
     }
 }
+
+fn schema_pointer(format: &str) -> &'static str {
+    match format {
+        "openai" => "/tools/0/function/parameters",
+        "responses" => "/tools/0/parameters",
+        "anthropic" => "/tools/0/input_schema",
+        _ => "/tools/0/functionDeclarations/0/parametersJsonSchema",
+    }
+}
+
+async fn schema_request(
+    format: &str,
+    streaming: bool,
+    schema: &Value,
+    strict: bool,
+    native: bool,
+) -> Request<Body> {
+    let (parts, body) = tool_request(format, streaming).await.into_parts();
+    let mut value: Value = serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+    *value.pointer_mut(schema_pointer(format)).unwrap() = schema.clone();
+    match format {
+        "openai" => value["tools"][0]["function"]["strict"] = json!(strict),
+        "responses" => value["tools"][0]["strict"] = json!(strict),
+        "gemini" if native => {
+            let f = &mut value["tools"][0]["functionDeclarations"][0];
+            f.as_object_mut().unwrap().remove("parametersJsonSchema");
+            f["parameters"] = schema.clone();
+        }
+        _ => {}
+    }
+    Request::from_parts(parts, Body::from(value.to_string()))
+}
+
+#[tokio::test]
+async fn function_schemas_preserve_constraints_and_strict_backend_eligibility() {
+    let schema = json!({"type":"object","$defs":{"query":{"type":"string","pattern":"^[a-z]+$"}},
+        "properties":{"query":{"$ref":"#/$defs/query"}},"required":["query"],"additionalProperties":false,
+        "default":{"type":"literal","nullable":true}});
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for source in FORMATS {
+            for strict in [false, true] {
+                if strict && !matches!(source, "openai" | "responses") {
+                    continue;
+                }
+                for streaming in [false, true] {
+                    let before = fixture.calls.lock().unwrap().len();
+                    let response = gateway
+                        .handle(
+                            schema_request(source, streaming, &schema, strict, false).await,
+                            CancellationToken::new(),
+                        )
+                        .await;
+                    let allowed = !strict || matches!(target, "openai" | "responses");
+                    assert_eq!(
+                        response.status(),
+                        if allowed {
+                            StatusCode::OK
+                        } else {
+                            StatusCode::BAD_REQUEST
+                        },
+                        "{source} -> {target}, strict={strict}"
+                    );
+                    let body = to_bytes(response.into_body(), 65536).await.unwrap();
+                    assert_eq!(limit.available(), 1);
+                    let calls = fixture.calls.lock().unwrap();
+                    assert_eq!(calls.len(), before + usize::from(allowed));
+                    if !allowed {
+                        continue;
+                    }
+                    let result = if streaming {
+                        stream_snapshot(source, &body)
+                    } else {
+                        snapshot(source, &serde_json::from_slice(&body).unwrap())
+                    };
+                    assert_eq!(result["text"], "Hello");
+                    let sent = &calls.last().unwrap()["body"];
+                    assert_eq!(sent.pointer(schema_pointer(target)).unwrap(), &schema);
+                    match target {
+                        "responses" => assert_eq!(sent["tools"][0]["strict"], strict),
+                        "openai" if strict => {
+                            assert_eq!(sent["tools"][0]["function"]["strict"], true)
+                        }
+                        "anthropic" => assert!(sent["tools"][0].get("strict").is_none()),
+                        "gemini" => assert!(
+                            sent["tools"][0]["functionDeclarations"][0]
+                                .get("strict")
+                                .is_none()
+                        ),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn gemini_schema_normalization_and_rejections_precede_network_dispatch() {
+    let schema = json!({"type":"OBJECT","properties":{"query":{"type":"STRING","minLength":"2","nullable":true},"items":{"type":"ARRAY","minItems":"1","items":{"type":"INTEGER","minimum":0}}},"required":["query"]});
+    let expected = json!({"type":"object","properties":{"query":{"type":["string","null"],"minLength":2},"items":{"type":"array","minItems":1,"items":{"type":"integer","minimum":0}}},"required":["query"]});
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for streaming in [false, true] {
+            let response = gateway
+                .handle(
+                    schema_request("gemini", streaming, &schema, false, true).await,
+                    CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::OK, "{target}");
+            let body = to_bytes(response.into_body(), 65536).await.unwrap();
+            let result = if streaming {
+                stream_snapshot("gemini", &body)
+            } else {
+                snapshot("gemini", &serde_json::from_slice(&body).unwrap())
+            };
+            assert_eq!(result["text"], "Hello");
+            assert_eq!(
+                fixture.calls.lock().unwrap().last().unwrap()["body"]
+                    .pointer(schema_pointer(target))
+                    .unwrap(),
+                &expected
+            );
+            assert_eq!(limit.available(), 1);
+        }
+        let before = fixture.calls.lock().unwrap().len();
+        for bad in [
+            json!({"type":"OBJECT","propertyOrdering":["query"]}),
+            json!({"type":"OBJECT","properties":{"x":{"type":"STRING","nullable":true,"enum":["x"]}}}),
+            json!({"type":"OBJECT","properties":{"x":{"type":"ARRAY","minItems":"invalid"}}}),
+        ] {
+            let response = gateway
+                .handle(
+                    schema_request("gemini", false, &bad, false, true).await,
+                    CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            to_bytes(response.into_body(), 65536).await.unwrap();
+            assert_eq!(fixture.calls.lock().unwrap().len(), before);
+            assert_eq!(limit.available(), 1);
+        }
+    }
+}

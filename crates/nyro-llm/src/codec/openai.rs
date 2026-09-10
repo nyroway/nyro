@@ -63,6 +63,14 @@ fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
     if request.messages.is_empty() {
         return Err(invalid("messages must be nonempty"));
     }
+    for tool in request.openai.tools.iter().flatten() {
+        let chat::Tool::Function { function } = tool;
+        if function.name.trim().is_empty()
+            || function.parameters.as_ref().is_some_and(|v| !v.is_object())
+        {
+            return Err(invalid("function requires a name and object parameters"));
+        }
+    }
     for message in &request.messages {
         if message.tool_error && message.role != Role::Tool {
             return Err(invalid("tool_error requires a tool result"));
