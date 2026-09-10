@@ -221,9 +221,19 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 
 模型别名选择上游，与客户端协议独立。Anthropic backend 只有在请求显式提供 token 上限时才参与选择（`max_tokens` 或能转换的等价字段），Nyro 不自行设置默认值。原生客户端使用 OpenAI 流式上游时会自动请求用量；OpenAI Chat Completions 客户端只有设置 `stream_options.include_usage: true` 才接收用量。
 
-严格转换路径是实验性的文本／用户图片／客户端函数 Chat 子集，仍不支持跨协议音频／视频、thinking／签名块、无法保留的内容顺序、多候选以及不支持的厂商选项或诊断字段。例如 Anthropic 缓存／用量扩展和命中 stop sequence 的响应；Gemini 安全设置、safety ratings、grounding／引用、prompt feedback 和结构化输出设置；以及无法在原生输出中表示的 OpenAI fingerprint／service-tier／logprob 元数据。某协议已支持的字段不一定能转换到另一协议：不可转换的请求在发往上游前失败；不可转换的上游响应返回 `502` 或终止 SSE 流。原生 Embedding API 和完整 SDK／厂商功能对齐属于后续工作。
+严格转换路径是实验性的文本／用户图片／客户端函数 Chat 子集，仍不支持跨协议音频／视频、thinking／签名块、无法保留的内容顺序、多候选以及不支持的厂商选项或诊断字段。例如 Anthropic 缓存控制选项、未支持的用量扩展和命中 stop sequence 的响应；Gemini 安全设置、safety ratings、grounding／引用、prompt feedback 和结构化输出设置；以及无法在原生输出中表示的 OpenAI fingerprint／service-tier／logprob 元数据。某协议已支持的字段不一定能转换到另一协议：不可转换的请求在发往上游前失败；不可转换的上游响应返回 `502` 或终止 SSE 流。原生 Embedding API 和完整 SDK／厂商功能对齐属于后续工作。
 
 协议参考：[Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)、[Gemini generateContent](https://ai.google.dev/api/generate-content)。本地矩阵回归：`cargo test -p nyro-llm --test protocol_matrix`。
+
+## 缓存用量计量
+
+严格转换支持 Anthropic JSON／SSE 的缓存读取和写入 token 计数。总输入为 `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`，输出只相加一次。可选 `cache_creation` 中的五分钟与一小时计数之和必须等于缓存写入量，不重复计入总量。计数必须为非负整数且不溢出；显式 null 或不一致的明细会校验失败。流式快照为累计值：省略的输入／缓存字段保留旧值，各项计数不得递减。
+
+缓存读取映射到 OpenAI Chat 缓存 prompt token、Responses 缓存 input token 和 Gemini 缓存 content token。非零缓存写入及可选 TTL 明细在严格 Anthropic 输出中保留；其余三种输出格式无法表达，会拒绝响应（`502` 或终止 SSE 流）。关闭 OpenAI 流式用量输出也适用，不能因此静默丢弃不兼容的明细。零缓存写入及有效的零 TTL 明细归一化为缺省。
+
+Quota 与观测按包含缓存的 token 总量计量，不应用缓存价格折扣或 TTL 倍率。输出转换失败时，已收到的有效用量仍参与扣减；失败结算继续采用预留与已知用量的较大值。严格转换仍不支持请求 `cache_control`、缓存放置及跨协议缓存策略。匹配的原生转发保留这些字段，并校验已知缓存计数和 TTL 合计，不重复累加明细。
+
+参考：[Anthropic 提示词缓存计量](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)。本地回归：`cargo test -p nyro-llm --test cache_usage_codec --test native_anthropic_runtime`。使用合成本地上游，不代表厂商账单认证。
 
 ## 用户图片输入
 
@@ -315,7 +325,7 @@ Anthropic Provider 同样可以设置 `native_chat: true`，只对 `POST /v1/mes
 
 原生流校验 event 名／type 匹配及生命周期：一次 `message_start`、按顺序编号的内容块、message delta，最后在已有停止原因且所有块关闭后接受 `message_stop`。携带用量的 message delta 可以重复；省略停止原因时沿用已有值，显式 null 会清除它，需要后续重新报告非空停止原因才能完成。缺少终态、格式错误、事件乱序、未知顶层事件和上游 error 事件都会失败，收到 `2xx` 后不再重试，上游错误正文不会直接转发。内容块扩展在此生命周期内保持不透明，对已知块／delta 的基础字段做类型校验。工具片段逐段转发，不组装或修复最终 JSON；thinking 签名不做密码学校验。这些由上游负责，不代表跨协议转换已经支持。
 
-quota 和观测中的总输入为 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`，缺省缓存计数从零开始。`message_delta` 使用累计快照，每个 message delta 必须报告 `output_tokens`，省略的输入／缓存计数沿用已有值，重复快照不会重复累加。无效数字、计数递减或溢出会使响应失败。总输入与输出相加得到总 token；嵌套缓存时长明细、service tier 和服务端工具计数会保留，但不额外计入 token。到 `message_stop` 才成功结算，此前失败／丢弃仍使用既有保守扣费规则。参见 [Anthropic 缓存计量](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#tracking-cache-performance)及[流事件约定](https://platform.claude.com/docs/en/build-with-claude/streaming)。
+quota 和观测中的总输入为 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`，缺省缓存计数从零开始。`message_delta` 使用累计快照，每个 message delta 必须报告 `output_tokens`，省略的输入／缓存计数沿用已有值，重复快照不会重复累加。无效数字、计数递减或溢出会使响应失败。总输入与输出相加得到总 token；嵌套缓存时长明细、service tier 和服务端工具计数会保留，但不额外计入 token。到 `message_stop` 才成功结算，此前失败／丢弃仍使用既有保守扣费规则。提供缓存时长明细时，两个已知 TTL 计数必须为非负整数、不得递减，且合计等于缓存写入量。参见 [Anthropic 缓存计量](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#tracking-cache-performance)及[流事件约定](https://platform.claude.com/docs/en/build-with-claude/streaming)。
 
 认证、授权、rate／并发准入、健康状态、期限和代际所有权沿用现有路径。上游仍使用配置中的 `x-api-key` 和 `anthropic-version: 2023-06-01`，不转发调用方凭证、任意 Header 或 `anthropic-beta`。本轮不新增 OAuth／账号通道及 beta Header 配置。
 

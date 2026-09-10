@@ -64,6 +64,7 @@ pub(super) fn response(
             total_tokens: usage["total_tokens"]
                 .as_u64()
                 .ok_or_else(Failure::upstream)?,
+            cache_creation: None,
             prompt_tokens_details: None,
             completion_tokens_details: None,
         })

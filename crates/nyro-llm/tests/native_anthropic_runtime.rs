@@ -9,7 +9,7 @@ use futures::StreamExt;
 use nyro_limit::ConcurrencyLimit;
 use nyro_llm::{
     config::Config,
-    runtime::{Options, Runtime},
+    runtime::{Options, Runtime, SharedResources},
 };
 use nyro_security::{ApiKey, ApiKeys};
 use serde_json::{Value, json};
@@ -97,8 +97,16 @@ fn config(backends: &[(&Upstream, &str, bool)]) -> Value {
     json!({"providers":providers,"models":{"public":{"max_attempts":backends.len(),"backends":backends,"workloads":["chat"],"subjects":["alice"]}}})
 }
 fn runtime(config: Value, limit: &ConcurrencyLimit, options: Options) -> Runtime {
+    runtime_with_resources(config, limit, options, SharedResources::default())
+}
+fn runtime_with_resources(
+    config: Value,
+    limit: &ConcurrencyLimit,
+    options: Options,
+    resources: SharedResources,
+) -> Runtime {
     let config: Config = serde_json::from_value(config).unwrap();
-    Runtime::new(
+    Runtime::with_resources(
         config,
         Arc::new(
             ApiKeys::new(vec![ApiKey {
@@ -109,6 +117,7 @@ fn runtime(config: Value, limit: &ConcurrencyLimit, options: Options) -> Runtime
         ),
         limit.clone(),
         options,
+        resources,
     )
     .unwrap()
 }
@@ -153,7 +162,7 @@ fn answer() -> Value {
 fn frames() -> Vec<Value> {
     vec![
         json!({"type":"message_start","message":{"id":"answer","type":"message","role":"assistant","model":"private-model","content":[],"stop_reason":null,"stop_sequence":null,
-            "usage":{"input_tokens":3,"cache_creation_input_tokens":4,"cache_read_input_tokens":5,"output_tokens":0,"vendor_billable_tokens":99}},"vendor_trace":"trace"}),
+            "usage":{"input_tokens":3,"cache_creation_input_tokens":4,"cache_read_input_tokens":5,"output_tokens":0,"cache_creation":{"ephemeral_1h_input_tokens":4,"ephemeral_5m_input_tokens":0},"vendor_billable_tokens":99}},"vendor_trace":"trace"}),
         json!({"type":"ping"}),
         json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
         json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"想一想"}}),
@@ -412,6 +421,13 @@ async fn malformed_json_and_overflow_keep_reserved_quota_and_never_retry() {
         ("/usage/output_tokens", json!(null)),
         ("/usage/cache_creation_input_tokens", json!(1.5)),
         ("/usage/cache_read_input_tokens", json!(u64::MAX)),
+        ("/usage/cache_creation", json!(null)),
+        (
+            "/usage/cache_creation",
+            json!({"ephemeral_5m_input_tokens":4}),
+        ),
+        ("/usage/cache_creation/ephemeral_1h_input_tokens", json!(3)),
+        ("/usage/cache_creation/ephemeral_5m_input_tokens", json!(-1)),
     ] {
         let mut body = answer();
         *body.pointer_mut(pointer).unwrap() = invalid;
@@ -574,4 +590,264 @@ async fn native_stream_rejects_explicitly_cleared_terminal_stop_reason() {
         "explicit null must not reuse a previous terminal reason"
     );
     assert_eq!(limit.available(), 1);
+}
+
+fn strict_cache_answer() -> Value {
+    json!({"id":"answer","type":"message","role":"assistant","model":"private-model",
+        "content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","stop_sequence":null,
+        "usage":{"input_tokens":3,"cache_read_input_tokens":4,"cache_creation_input_tokens":5,"output_tokens":2,
+            "cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3}}})
+}
+
+fn strict_cache_frames() -> Vec<Value> {
+    let mut message = strict_cache_answer();
+    message["content"] = json!([]);
+    message["stop_reason"] = Value::Null;
+    message["usage"]["output_tokens"] = json!(0);
+    vec![
+        json!({"type":"message_start","message":message}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}),
+        json!({"type":"message_stop"}),
+    ]
+}
+
+#[tokio::test]
+async fn strict_cache_usage_preserves_ttl_and_settles_total_once_for_json_and_sse() {
+    for streaming in [false, true] {
+        let wire = if streaming {
+            sse(&strict_cache_frames())
+        } else {
+            strict_cache_answer().to_string()
+        };
+        let upstream = upstream(200, wire, streaming).await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let mut config = config(&[(&upstream, "anthropic", false)]);
+        config["models"]["public"]["quota"] = json!({"total_tokens":28,"reserve_tokens":1});
+        let resources = SharedResources::default();
+        let quotas = resources.quotas.clone();
+        let gateway = runtime_with_resources(config, &limit, Options::default(), resources);
+        for used in [14, 28] {
+            let response = invoke(&gateway, input(false, streaming)).await;
+            assert_eq!(response.status(), StatusCode::OK, "streaming={streaming}");
+            let output = consume(response).await;
+            let usage = if streaming {
+                assert_eq!(output.matches("event: message_stop\n").count(), 1);
+                output
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("data: "))
+                    .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                    .find(|event| event["type"] == "message_delta")
+                    .unwrap()["usage"]
+                    .clone()
+            } else {
+                serde_json::from_str::<Value>(&output).unwrap()["usage"].clone()
+            };
+            assert_eq!(usage, strict_cache_answer()["usage"]);
+            let balance = quotas.snapshot("public").unwrap();
+            assert_eq!((balance.used, balance.reserved), (used, 0));
+            assert_eq!(limit.available(), 1);
+        }
+        assert_eq!(
+            invoke(&gateway, input(false, streaming)).await.status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(upstream.calls.lock().unwrap().len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn strict_read_only_cache_usage_maps_to_all_client_protocols() {
+    for (path, body, expected) in [
+        (
+            "/v1/messages",
+            input(false, false),
+            json!({"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":4}),
+        ),
+        (
+            "/v1/chat/completions",
+            input(false, false),
+            json!({"prompt_tokens":7,"completion_tokens":2,"total_tokens":9,"prompt_tokens_details":{"cached_tokens":4}}),
+        ),
+        (
+            "/v1/responses",
+            json!({"model":"public","input":"Hello","max_output_tokens":16}),
+            json!({"input_tokens":7,"output_tokens":2,"total_tokens":9,"input_tokens_details":{"cached_tokens":4}}),
+        ),
+        (
+            "/v1beta/models/public:generateContent",
+            json!({"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":16}}),
+            json!({"promptTokenCount":7,"candidatesTokenCount":2,"totalTokenCount":9,"cachedContentTokenCount":4}),
+        ),
+    ] {
+        let mut answer = strict_cache_answer();
+        answer["usage"] = json!({"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":4});
+        let upstream = upstream(200, answer.to_string(), false).await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let mut config = config(&[(&upstream, "anthropic", false)]);
+        config["models"]["public"]["quota"] = json!({"total_tokens":9,"reserve_tokens":1});
+        let resources = SharedResources::default();
+        let quotas = resources.quotas.clone();
+        let gateway = runtime_with_resources(config, &limit, Options::default(), resources);
+        let mut request = request(body);
+        *request.uri_mut() = path.parse().unwrap();
+        request.headers_mut().remove("x-api-key");
+        request
+            .headers_mut()
+            .insert("authorization", "Bearer client-secret".parse().unwrap());
+        let response = gateway.handle(request, CancellationToken::new()).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let actual: Value = serde_json::from_str(&consume(response).await).unwrap();
+        let usage = if path.contains("generateContent") {
+            &actual["usageMetadata"]
+        } else {
+            &actual["usage"]
+        };
+        // Other optional fields may be serialized, but these counters must be preserved exactly.
+        for (key, value) in expected.as_object().unwrap() {
+            if let Some(details) = value.as_object() {
+                for (detail, value) in details {
+                    assert_eq!(&usage[key][detail], value, "{path}: {key}.{detail}");
+                }
+            } else {
+                assert_eq!(&usage[key], value, "{path}: {key}");
+            }
+        }
+        let balance = quotas.snapshot("public").unwrap();
+        assert_eq!((balance.used, balance.reserved), (9, 0));
+        assert_eq!(limit.available(), 1);
+        assert_eq!(upstream.calls.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn unrepresentable_cache_writes_fail_without_retry_after_charging_known_usage() {
+    for (streaming, include_usage) in [(false, false), (true, false), (true, true)] {
+        let mut frames = strict_cache_frames();
+        // Delay write counters until the final delta so all 14 tokens are known before output fails.
+        frames[0]["message"]["usage"] =
+            json!({"input_tokens":3,"cache_read_input_tokens":4,"output_tokens":0});
+        frames[4]["usage"] = strict_cache_answer()["usage"].clone();
+        let wire = if streaming {
+            sse(&frames)
+        } else {
+            strict_cache_answer().to_string()
+        };
+        let first = upstream(200, wire.clone(), streaming).await;
+        let backup = upstream(200, wire, streaming).await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let mut config = config(&[(&first, "anthropic", false), (&backup, "anthropic", false)]);
+        config["models"]["public"]["quota"] = json!({"total_tokens":14,"reserve_tokens":1});
+        let resources = SharedResources::default();
+        let quotas = resources.quotas.clone();
+        let gateway = runtime_with_resources(config, &limit, Options::default(), resources);
+        let mut body = input(false, streaming);
+        if streaming {
+            body["stream_options"] = json!({"include_usage":include_usage});
+        }
+        let mut request = request(body);
+        *request.uri_mut() = "/v1/chat/completions".parse().unwrap();
+        request.headers_mut().remove("x-api-key");
+        request
+            .headers_mut()
+            .insert("authorization", "Bearer client-secret".parse().unwrap());
+        let response = gateway.handle(request, CancellationToken::new()).await;
+        if streaming {
+            assert_eq!(response.status(), StatusCode::OK);
+            let mut chunks = response.into_body().into_data_stream();
+            let mut output = Vec::new();
+            let mut failed = false;
+            while let Some(chunk) = chunks.next().await {
+                match chunk {
+                    Ok(bytes) => output.extend_from_slice(&bytes),
+                    Err(_) => {
+                        failed = true;
+                        break;
+                    }
+                }
+            }
+            assert!(failed, "include_usage={include_usage}");
+            assert!(!String::from_utf8(output).unwrap().contains("[DONE]"));
+            drop(chunks);
+        } else {
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+            consume(response).await;
+        }
+        let balance = quotas.snapshot("public").unwrap();
+        assert_eq!((balance.used, balance.reserved), (14, 0));
+        assert_eq!(
+            invoke(&gateway, input(false, false)).await.status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(first.calls.lock().unwrap().len(), 1);
+        assert!(backup.calls.lock().unwrap().is_empty());
+        assert_eq!(limit.available(), 1);
+    }
+}
+
+#[tokio::test]
+async fn invalid_cache_updates_terminate_strict_and_native_streams_with_conservative_quota() {
+    for native in [false, true] {
+        for (index, invalid) in [
+            json!({"output_tokens":2,"cache_read_input_tokens":-1}),
+            json!({"output_tokens":2,"cache_read_input_tokens":u64::MAX}),
+            // Total increases, but one cumulative counter decreases.
+            json!({"output_tokens":8,"cache_read_input_tokens":3}),
+            json!({"output_tokens":2,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":4}}),
+            // The TTL total remains five, but the one-hour counter decreases.
+            json!({"output_tokens":2,"cache_creation":{"ephemeral_5m_input_tokens":3,"ephemeral_1h_input_tokens":2}}),
+        ].into_iter().enumerate() {
+            let mut frames = strict_cache_frames();
+            frames[4]["usage"] = invalid.clone();
+            let first = upstream(200, sse(&frames), true).await;
+            let backup = upstream(200, sse(&strict_cache_frames()), true).await;
+            let limit = ConcurrencyLimit::new(1).unwrap();
+            let mut config = config(&[
+                (&first, "anthropic", native),
+                (&backup, "anthropic", native),
+            ]);
+            // The first valid frame knows 12 tokens; interruption charges max(known, reserve).
+            let (reserve, charged) = if index == 0 { (20, 20) } else { (1, 12) };
+            config["models"]["public"]["quota"] = json!({"total_tokens":charged,"reserve_tokens":reserve});
+            let resources = SharedResources::default();
+            let quotas = resources.quotas.clone();
+            let gateway = runtime_with_resources(config, &limit, Options::default(), resources);
+            let response = invoke(&gateway, input(false, true)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let mut chunks = response.into_body().into_data_stream();
+            let mut failed = false;
+            let mut output = Vec::new();
+            while let Some(chunk) = chunks.next().await {
+                match chunk {
+                    Ok(bytes) => output.extend_from_slice(&bytes),
+                    Err(_) => {
+                        failed = true;
+                        break;
+                    }
+                }
+            }
+            assert!(failed, "native={native}, usage={invalid}");
+            assert!(
+                !String::from_utf8(output)
+                    .unwrap()
+                    .contains("event: message_stop")
+            );
+            drop(chunks);
+            let balance = quotas.snapshot("public").unwrap();
+            assert_eq!(
+                (balance.used, balance.reserved),
+                (charged, 0),
+                "native={native}, usage={invalid}"
+            );
+            assert_eq!(limit.available(), 1);
+            assert_eq!(
+                invoke(&gateway, input(false, true)).await.status(),
+                StatusCode::TOO_MANY_REQUESTS
+            );
+            assert_eq!(first.calls.lock().unwrap().len(), 1);
+            assert!(backup.calls.lock().unwrap().is_empty());
+        }
+    }
 }

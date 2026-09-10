@@ -84,6 +84,35 @@ pub struct Request {
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cache_creation: Option<CacheCreation>,
+}
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheCreation {
+    pub ephemeral_5m_input_tokens: u64,
+    pub ephemeral_1h_input_tokens: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -113,8 +142,14 @@ pub struct MessageDelta {
 #[serde(deny_unknown_fields)]
 pub struct DeltaUsage {
     pub output_tokens: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     pub input_tokens: Option<u64>,
+    #[serde(default, deserialize_with = "present")]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(default, deserialize_with = "present")]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default, deserialize_with = "present")]
+    pub cache_creation: Option<CacheCreation>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]

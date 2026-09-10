@@ -517,6 +517,8 @@ Chat 流使用自己的事件类型，不要求所有交互实现流接口。当
 
 当前 quota 实现为 `nyro-limit` 中按通用单位原子预留与结算的进程内账本，`nyro-llm` 将其映射到公开模型的累计输入加输出 token。模型可选配置 `quota.total_tokens` 与 `quota.reserve_tokens`，每次实际上游尝试前独立预留；完整 JSON／SSE 协议终止后按有效用量结算，连接建立失败全额释放，其他失败、取消、断流和用量缺失按预留与有效已知用量的较大值扣减。上游实际消耗可以超过预留，超额如实记账并阻止后续准入；配置预留不是可信的消耗上界，当前不承诺真实上游 token 硬上限，也不提供金额、持久化或多副本协调。
 
+缓存计量属于 LLM 协议语义：`Usage.prompt_tokens` 包含普通输入、缓存读取和缓存写入，读取细分复用 `prompt_tokens_details.cached_tokens`，写入细分由可选的类型化 `Usage.cache_creation` 表达，TTL 明细是写入子集，不重复计数。可选写入明细使用 `Box<CacheCreationUsage>`，避免增大普通响应；直接构造 `Usage` 的消费者需提供该字段，无写入时设为 `None`。转换和校验由 `nyro-llm` codec 负责，wire 字段归 `nyro-protocol`；不引入通用 JSON 扩展袋、新 crate 或内核职责。非零写入明细当前只能在 Anthropic 严格输出中保留，其他目标明确拒绝；原生路径保留原始 JSON，观测和 quota 使用经过校验的总量。请求缓存策略及金额计费仍是独立待办。
+
 根程序通过 `nyro_llm::runtime::SharedResources` 显式共享健康、rate 和 quota 注册表。quota 已消耗及在途账本在模型移除／加回后继续保留；有活跃绑定或已消费余额时修改规则会拒绝候选构建，避免配置变更清零。进程重启会重置进程内状态。quota 超限返回原生协议 `429`，不带 `Retry-After` 并立即释放并发许可；其之前的 rate 准入不退款。计量、协议映射和资源组合均未进入 `nyro-kernel`。
 
 观测初始化与资源装配由根程序协调。共享观测实现不认识模型数据库表；控制面的历史日志和统计读取归其业务存储。配置代际租约与限流并发许可是不同概念，不能复用一个计数器代替二者。
@@ -558,7 +560,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 | 阶段 | 当前进度 | 差异跟踪 |
 |---|---|---|
 | 内核、代际、文件配置 | 基础机制已落地；SIGHUP 重载已有回归 | 后续能力必须保持生命周期与清理约束 |
-| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；G04 已补充 Anthropic／Gemini 完整工具结果批次、显式错误状态边界、文本结果块与 Gemini ID／顺序校验；函数 Schema 已补充 JSON 约束保留、Gemini 方言转换与 strict 目标边界；G03 已补充用户图片输入及目标限制；整体兼容对齐未完成 | G02–G09 |
+| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；G04 已补充 Anthropic／Gemini 完整工具结果批次、显式错误状态边界、文本结果块与 Gemini ID／顺序校验；函数 Schema 已补充 JSON 约束保留、Gemini 方言转换与 strict 目标边界；G03 已补充用户图片输入及目标限制、缓存读取转换与 Anthropic 缓存写入／TTL 计量边界；整体兼容对齐未完成 | G02–G09 |
 | 控制面、存储、管理与持久化观测 | 尚未接入新架构 | G10–G12 |
 | 工具、部署和旧入口切换 | 尚未完成切换验收 | G11、G13 |
 
