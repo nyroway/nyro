@@ -23,6 +23,7 @@ fn model(value: &str) -> Result<(), CodecError> {
 pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
     let wire: chat::Request = serde_json::from_value(value)?;
     let request = ChatRequest {
+        anthropic_cache_control: None,
         model: wire.model,
         messages: convert(wire.messages)?,
         stream: wire.stream,
@@ -39,7 +40,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
             logit_bias: wire.logit_bias,
         },
         openai: Box::new(OpenAiOptions {
-            tools: wire.tools,
+            tools: convert(wire.tools)?,
             tool_choice: wire.tool_choice,
             parallel_tool_calls: wire.parallel_tool_calls,
             stream_options: wire.stream_options,
@@ -61,7 +62,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
     validate_chat(&request)?;
     Ok(request)
 }
-fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
+pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
     model(&request.model)?;
     if request.messages.is_empty() {
         return Err(invalid("messages must be nonempty"));
@@ -82,7 +83,7 @@ fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
         return Err(invalid("prediction cache breakpoints require text content"));
     }
     for tool in request.openai.tools.iter().flatten() {
-        let chat::Tool::Function { function } = tool;
+        let Tool::Function { function, .. } = tool;
         if function.name.trim().is_empty()
             || function.parameters.as_ref().is_some_and(|v| !v.is_object())
         {
@@ -99,6 +100,9 @@ fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
                     super::image::source(image_url)?;
                 }
             }
+        }
+        if message.anthropic_cache_control.is_some() && message.role != Role::Tool {
+            return Err(invalid("message cache control requires a tool result"));
         }
         if message.tool_error && message.role != Role::Tool {
             return Err(invalid("tool_error requires a tool result"));
@@ -141,6 +145,11 @@ fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
 }
 pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
     validate_chat(request)?;
+    if request.anthropic_cache_control.is_some() {
+        return Err(invalid(
+            "OpenAI cannot represent Anthropic automatic caching",
+        ));
+    }
     if request.messages.iter().any(|m| m.tool_error) {
         return Err(invalid(
             "OpenAI Chat cannot preserve explicit tool error status",
@@ -160,7 +169,7 @@ pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
         stop: request.generation.stop.clone(),
         n: request.generation.n,
         logit_bias: request.generation.logit_bias.clone(),
-        tools: request.openai.tools.clone(),
+        tools: convert(&request.openai.tools)?,
         tool_choice: request.openai.tool_choice.clone(),
         parallel_tool_calls: request.openai.parallel_tool_calls,
         stream_options: request.openai.stream_options.clone(),
@@ -204,13 +213,30 @@ pub fn encode_embedding(request: &EmbeddingRequest) -> Result<Value, CodecError>
     let wire: embedding::Request = convert(request)?;
     Ok(serde_json::to_value(wire)?)
 }
-fn validate_output_breakpoints(response: &ChatResponse) -> Result<(), CodecError> {
+pub(super) fn validate_output_breakpoints(response: &ChatResponse) -> Result<(), CodecError> {
     for choice in &response.choices {
+        if choice.message.tool_calls.iter().flatten().any(|c| {
+            matches!(
+                c,
+                ToolCall::Function {
+                    anthropic_cache_control: Some(_),
+                    ..
+                }
+            )
+        }) {
+            return Err(invalid("cache control is not generated output"));
+        }
         if let Some(Content::Parts(parts)) = &choice.message.content
             && parts.iter().any(|p| {
                 matches!(
                     p,
                     ContentPart::Text {
+                        anthropic_cache_control: Some(_),
+                        ..
+                    } | ContentPart::ImageUrl {
+                        anthropic_cache_control: Some(_),
+                        ..
+                    } | ContentPart::Text {
                         prompt_cache_breakpoint: Some(_),
                         ..
                     } | ContentPart::ImageUrl {

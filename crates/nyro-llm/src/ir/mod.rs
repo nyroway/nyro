@@ -1,5 +1,5 @@
 use nyro_protocol::openai::chat::{
-    AudioConfig, Modality, Prediction, ResponseFormat, Stop, StreamOptions, Tool, ToolChoice,
+    AudioConfig, Modality, Prediction, ResponseFormat, Stop, StreamOptions, ToolChoice,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -28,11 +28,15 @@ pub enum Content {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContentPart {
     Text {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anthropic_cache_control: Option<nyro_protocol::anthropic::CacheControl>,
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt_cache_breakpoint: Option<nyro_protocol::openai::PromptCacheBreakpoint>,
     },
     ImageUrl {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anthropic_cache_control: Option<nyro_protocol::anthropic::CacheControl>,
         image_url: ImageUrl,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt_cache_breakpoint: Option<nyro_protocol::openai::PromptCacheBreakpoint>,
@@ -66,7 +70,22 @@ pub struct FunctionCall {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ToolCall {
-    Function { id: String, function: FunctionCall },
+    Function {
+        id: String,
+        function: FunctionCall,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anthropic_cache_control: Option<nyro_protocol::anthropic::CacheControl>,
+    },
+}
+/// Tool definitions in the LLM IR, including protocol-specific input controls.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Tool {
+    Function {
+        function: nyro_protocol::openai::chat::FunctionDefinition,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anthropic_cache_control: Option<nyro_protocol::anthropic::CacheControl>,
+    },
 }
 fn is_false(value: &bool) -> bool {
     !value
@@ -74,6 +93,9 @@ fn is_false(value: &bool) -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Message {
+    /// Anthropic control on the outer tool-result block; only valid for Role::Tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_cache_control: Option<nyro_protocol::anthropic::CacheControl>,
     pub role: Role,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<Content>,
@@ -160,6 +182,9 @@ pub struct OpenAiOptions {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatRequest {
+    /// Anthropic automatic caching; absence keeps the upstream default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_cache_control: Option<nyro_protocol::anthropic::CacheControl>,
     pub model: String,
     pub messages: Vec<Message>,
     pub stream: Option<bool>,

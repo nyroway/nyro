@@ -8,25 +8,18 @@ use std::collections::BTreeSet;
 fn bad(s: &str) -> CodecError {
     CodecError(s.into())
 }
-fn text(content: wire::Content) -> Result<String, CodecError> {
-    match content {
-        wire::Content::Text(s) => Ok(s),
-        wire::Content::Blocks(blocks) => {
-            let mut out = String::new();
-            for b in blocks {
-                if let wire::Block::Text { text } = b {
-                    out.push_str(&text)
-                } else {
-                    return Err(bad("expected text content"));
-                }
-            }
-            Ok(out)
-        }
+fn annotated(mut value: Value, control: Option<wire::CacheControl>) -> Value {
+    if let Some(control) = control {
+        value["anthropic_cache_control"] = json!(control);
     }
+    value
 }
 fn blocks(content: wire::Content) -> Vec<wire::Block> {
     match content {
-        wire::Content::Text(text) => vec![wire::Block::Text { text }],
+        wire::Content::Text(text) => vec![wire::Block::Text {
+            text,
+            cache_control: None,
+        }],
         wire::Content::Blocks(b) => b,
     }
 }
@@ -56,13 +49,19 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
         }
         for b in content {
             match b {
-                wire::Block::Text { text } => {
+                wire::Block::Text {
+                    text,
+                    cache_control,
+                } => {
                     if !calls.is_empty() {
                         return Err(bad("text after tool calls cannot be represented"));
                     }
-                    parts.push(json!({"type":"text","text":text}));
+                    parts.push(annotated(json!({"type":"text","text":text}), cache_control));
                 }
-                wire::Block::Image { source } => {
+                wire::Block::Image {
+                    source,
+                    cache_control,
+                } => {
                     if m.role != "user" {
                         return Err(bad("images require a user message"));
                     }
@@ -77,9 +76,17 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                             url
                         }
                     };
-                    parts.push(json!({"type":"image_url","image_url":{"url":url}}));
+                    parts.push(annotated(
+                        json!({"type":"image_url","image_url":{"url":url}}),
+                        cache_control,
+                    ));
                 }
-                wire::Block::ToolUse { id, name, input } => {
+                wire::Block::ToolUse {
+                    id,
+                    name,
+                    input,
+                    cache_control,
+                } => {
                     if m.role != "assistant"
                         || !input.is_object()
                         || id.is_empty()
@@ -87,10 +94,11 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                     {
                         return Err(bad("invalid tool use"));
                     }
-                    calls.push(json!({"type":"function","id":id,"function":{"name":name,"arguments":input.to_string()}}));
+                    calls.push(annotated(json!({"type":"function","id":id,"function":{"name":name,"arguments":input.to_string()}}), cache_control));
                 }
                 wire::Block::ToolResult {
                     tool_use_id,
+                    cache_control,
                     content,
                     is_error,
                 } => {
@@ -106,16 +114,20 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                                 .into_iter()
                                 .map(|block| {
                                     match block {
-                                        wire::Block::Text { text } => {
-                                            Ok(json!({"type":"text","text":text}))
-                                        }
+                                        wire::Block::Text {
+                                            text,
+                                            cache_control,
+                                        } => Ok(annotated(
+                                            json!({"type":"text","text":text}),
+                                            cache_control,
+                                        )),
                                         _ => Err(bad("unsupported tool result content")),
                                     }
                                 })
                                 .collect::<Result<Vec<_>, _>>()?
                         ),
                     };
-                    out.push(json!({"role":"tool","tool_call_id":tool_use_id,"content":content,"tool_error":is_error.unwrap_or(false)}));
+                    out.push(annotated(json!({"role":"tool","tool_call_id":tool_use_id,"content":content,"tool_error":is_error.unwrap_or(false)}), cache_control));
                 }
             }
         }
@@ -139,50 +151,43 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         return Err(bad("temperature out of range"));
     }
     let mut messages = vec![];
-    if let Some(s) = r.system {
-        messages.push(json!({"role":"system","content":text(s)?}));
+    if let Some(system) = r.system {
+        let content = match system {
+            wire::Content::Text(text) => json!(text),
+            wire::Content::Blocks(blocks) => json!(
+                blocks
+                    .into_iter()
+                    .map(|b| match b {
+                        wire::Block::Text {
+                            text,
+                            cache_control,
+                        } => Ok(annotated(json!({"type":"text","text":text}), cache_control)),
+                        _ => Err(bad("system content must be text")),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            ),
+        };
+        messages.push(json!({"role":"system","content":content}));
     }
     messages.extend(decode_messages(r.messages)?);
-    // Wire decoding still goes through the established OpenAI-shaped leaves;
-    // carry the typed error status separately from that protocol's wire fields.
-    let errors: Vec<_> = messages
-        .iter_mut()
-        .map(|m| {
-            m.as_object_mut()
-                .unwrap()
-                .remove("tool_error")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        })
-        .collect();
-    let mut v = json!({"model":r.model,"messages":messages,"max_tokens":r.max_tokens});
-    if let Some(x) = r.stream {
-        v["stream"] = json!(x)
-    }
-    if let Some(x) = r.temperature {
-        v["temperature"] = json!(x)
-    }
-    if let Some(x) = r.top_p {
-        v["top_p"] = json!(x)
-    }
-    if let Some(x) = r.stop_sequences {
-        v["stop"] = json!(x)
-    }
-    if let Some(ts) = r.tools {
-        v["tools"] = json!(
-            ts.into_iter()
-                .map(|t| {
-                    let mut f = json!({"name":t.name,"parameters":t.input_schema});
-                    if let Some(d) = t.description {
-                        f["description"] = json!(d)
-                    }
-                    json!({"type":"function","function":f})
-                })
-                .collect::<Vec<_>>()
-        )
-    }
+    let tools = r.tools.map(|tools| {
+        tools
+            .into_iter()
+            .map(|t| Tool::Function {
+                function: nyro_protocol::openai::chat::FunctionDefinition {
+                    name: t.name,
+                    description: t.description,
+                    parameters: Some(t.input_schema),
+                    strict: None,
+                },
+                anthropic_cache_control: t.cache_control,
+            })
+            .collect()
+    });
+    let mut tool_choice = None;
+    let mut parallel_tool_calls = None;
     if let Some(t) = r.tool_choice {
-        v["tool_choice"] = match t.r#type.as_str() {
+        let choice = match t.r#type.as_str() {
             "auto" | "none" if t.name.is_none() => json!(t.r#type),
             "any" if t.name.is_none() => json!("required"),
             "tool" => {
@@ -190,16 +195,34 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
             }
             _ => return Err(bad("unsupported tool choice")),
         };
-        if let Some(disable) = t.disable_parallel_tool_use {
-            v["parallel_tool_calls"] = json!(!disable)
-        }
+        tool_choice = Some(serde_json::from_value(choice)?);
+        parallel_tool_calls = t.disable_parallel_tool_use.map(|disable| !disable);
     }
-    let mut request = openai::decode_chat(v)?;
-    for (message, error) in request.messages.iter_mut().zip(errors) {
-        message.tool_error = error;
-    }
+    let request = ChatRequest {
+        model: r.model,
+        stream: r.stream,
+        messages: serde_json::from_value(json!(messages))?,
+        anthropic_cache_control: r.cache_control,
+        generation: Generation {
+            max_tokens: Some(r.max_tokens),
+            temperature: r.temperature,
+            top_p: r.top_p,
+            stop: r
+                .stop_sequences
+                .map(nyro_protocol::openai::chat::Stop::Multiple),
+            ..Default::default()
+        },
+        openai: Box::new(OpenAiOptions {
+            tools,
+            tool_choice,
+            parallel_tool_calls,
+            ..Default::default()
+        }),
+    };
+    openai::validate_chat(&request)?;
     Ok(request)
 }
+
 fn content_parts(c: &Option<Content>, images: bool) -> Result<Vec<Value>, CodecError> {
     match c {
         None => Ok(vec![]),
@@ -208,10 +231,18 @@ fn content_parts(c: &Option<Content>, images: bool) -> Result<Vec<Value>, CodecE
             .iter()
             .map(|p| match p {
                 ContentPart::Text {
+                    anthropic_cache_control,
                     text,
                     prompt_cache_breakpoint: None,
-                } => Ok(json!({"type":"text","text":text})),
+                } => {
+                    let mut part = json!({"type":"text","text":text});
+                    if let Some(control) = anthropic_cache_control {
+                        part["cache_control"] = json!(control);
+                    }
+                    Ok(part)
+                }
                 ContentPart::ImageUrl {
+                    anthropic_cache_control,
                     image_url,
                     prompt_cache_breakpoint: None,
                 } if images => {
@@ -222,7 +253,13 @@ fn content_parts(c: &Option<Content>, images: bool) -> Result<Vec<Value>, CodecE
                             json!({"type":"base64","media_type":mime,"data":data})
                         }
                     };
-                    Ok(json!({"type":"image","source":source}))
+                    {
+                        let mut part = json!({"type":"image","source":source});
+                        if let Some(control) = anthropic_cache_control {
+                            part["cache_control"] = json!(control);
+                        }
+                        Ok(part)
+                    }
                 }
                 _ => Err(bad("unsupported non-text content")),
             })
@@ -234,22 +271,63 @@ fn call_blocks(calls: &Option<Vec<ToolCall>>) -> Result<Vec<Value>, CodecError> 
         .iter()
         .flatten()
         .map(|t| {
-            let ToolCall::Function { id, function } = t;
+            let ToolCall::Function {
+                id,
+                function,
+                anthropic_cache_control,
+            } = t;
             let input: Value = serde_json::from_str(&function.arguments)?;
             if !input.is_object() || id.is_empty() || function.name.is_empty() {
                 return Err(bad("invalid tool call"));
             }
-            Ok(json!({"type":"tool_use","id":id,"name":function.name,"input":input}))
+            let mut part = json!({"type":"tool_use","id":id,"name":function.name,"input":input});
+            if let Some(control) = anthropic_cache_control {
+                part["cache_control"] = json!(control);
+            }
+            Ok(part)
         })
         .collect()
 }
 pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
+    openai::validate_chat(r)?;
     let mut portable = r.clone();
+    portable.anthropic_cache_control = None;
+    for Tool::Function {
+        anthropic_cache_control,
+        ..
+    } in portable.openai.tools.iter_mut().flatten()
+    {
+        *anthropic_cache_control = None;
+    }
+
     for message in &mut portable.messages {
         if message.tool_error && message.role != Role::Tool {
             return Err(bad("tool_error requires a tool result"));
         }
         message.tool_error = false;
+        message.anthropic_cache_control = None;
+        if let Some(Content::Parts(parts)) = &mut message.content {
+            for part in parts {
+                match part {
+                    ContentPart::Text {
+                        anthropic_cache_control,
+                        ..
+                    }
+                    | ContentPart::ImageUrl {
+                        anthropic_cache_control,
+                        ..
+                    } => *anthropic_cache_control = None,
+                    _ => {}
+                }
+            }
+        }
+        for ToolCall::Function {
+            anthropic_cache_control,
+            ..
+        } in message.tool_calls.iter_mut().flatten()
+        {
+            *anthropic_cache_control = None;
+        }
     }
     let source = openai::encode_chat(&portable)?;
     if r.openai
@@ -326,6 +404,9 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
                     return Err(bad("unknown or duplicate tool result id"));
                 }
                 let mut result = json!({"type":"tool_result","tool_use_id":id,"content":content});
+                if let Some(control) = m.anthropic_cache_control {
+                    result["cache_control"] = json!(control);
+                }
                 if m.tool_error {
                     result["is_error"] = json!(true);
                 }
@@ -364,6 +445,9 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         return Err(bad("conversation is empty"));
     }
     let mut v = json!({"model":r.model,"messages":messages,"max_tokens":max});
+    if let Some(control) = r.anthropic_cache_control {
+        v["cache_control"] = json!(control);
+    }
     if !system.is_empty() {
         v["system"] = json!(system)
     }
@@ -377,7 +461,18 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
     }
     if let Some(ts) = source.get("tools") {
         let mut out = vec![];
-        for t in ts.as_array().unwrap() {
+        for (
+            t,
+            Tool::Function {
+                anthropic_cache_control,
+                ..
+            },
+        ) in ts
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(r.openai.tools.iter().flatten())
+        {
             let f = &t["function"];
             if f["name"].as_str().is_none_or(str::is_empty)
                 || f.get("parameters").is_some_and(|p| !p.is_object())
@@ -390,6 +485,9 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             let mut item = json!({"name":f["name"],"input_schema":f.get("parameters").cloned().unwrap_or(json!({"type":"object"}))});
             if let Some(d) = f.get("description") {
                 item["description"] = d.clone()
+            }
+            if let Some(control) = anthropic_cache_control {
+                item["cache_control"] = json!(control);
             }
             out.push(item)
         }
@@ -442,7 +540,9 @@ pub fn decode_chat_response(v: Value) -> Result<ChatResponse, CodecError> {
     } else {
         decode_messages(vec![wire::Message {
             role: r.role,
-            content: wire::Content::Blocks(r.content),
+            content: wire::Content::Blocks(serde_json::from_value(serde_json::to_value(
+                r.content,
+            )?)?),
         }])?
     };
     let mut content = vec![];
@@ -471,6 +571,7 @@ pub fn decode_chat_response(v: Value) -> Result<ChatResponse, CodecError> {
     Ok(response)
 }
 pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
+    openai::validate_output_breakpoints(r)?;
     if r.system_fingerprint.is_some() || r.service_tier.is_some() {
         return Err(bad("unsupported response metadata"));
     }
@@ -615,14 +716,14 @@ impl StreamDecoder {
                     .ok_or_else(|| bad("block index overflow"))?;
                 let mut delta = Delta::default();
                 let tool = match content_block {
-                    wire::Block::Text { text } => {
+                    wire::OutputBlock::Text { text } => {
                         if self.tools != 0 {
                             return Err(bad("text after tool calls cannot be represented"));
                         }
                         delta.content = Some(text);
                         None
                     }
-                    wire::Block::ToolUse { id, name, input } => {
+                    wire::OutputBlock::ToolUse { id, name, input } => {
                         if id.is_empty()
                             || name.is_empty()
                             || input.as_object().is_none_or(|o| !o.is_empty())
@@ -645,7 +746,6 @@ impl StreamDecoder {
                         }]);
                         Some((i, String::new()))
                     }
-                    _ => return Err(bad("unsupported streamed block")),
                 };
                 self.active = Some(ActiveBlock { index, tool });
                 out.push(self.chunk(delta, None, false)?);

@@ -236,7 +236,7 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 | OpenAI `prompt_cache_retention` | 兼容字段：`in_memory` 或 `24h`，在 Chat／Responses 之间保留。 | 原样保留。 |
 | OpenAI 内容块 `prompt_cache_breakpoint` | Chat／Responses 间保留文本、用户图片上的断点位置及 `mode: explicit`。 | 原样保留。 |
 | Responses 缓存比较／诊断控制 | 尚未实现，在请求上游前拒绝。 | 在既有无状态原生契约内保留。 |
-| Anthropic 自动或逐块 `cache_control` | 尚未实现，在请求上游前拒绝。 | 保留位置、内容顺序、显式 `5m`／`1h` TTL 及省略 TTL。 |
+| Anthropic 自动或逐块 `cache_control` | 在文本／图片／客户端函数支持子集内向 Anthropic 目标保留，排除其他协议。 | 保留位置、内容顺序、显式 `5m`／`1h` TTL 及省略 TTL。 |
 | Gemini `cachedContent` | 尚未实现，在请求上游前拒绝。 | 保留已有缓存资源引用。 |
 
 例如，OpenAI Chat 或 Responses 请求可包含 `"prompt_cache_options":{"mode":"implicit","ttl":"30m"}`。Nyro 不填充省略的字段；空 options 对象保持为空，严格转换将顶层 options／retention 的 null 归一化为缺省。嵌套 mode／TTL 必须符合支持的枚举，不能为 null。模型支持范围与默认值由上游决定。OpenAI 的 `explicit` 模式在没有显式断点时禁用隐式缓存；两种转发模式都不会自动插入断点。
@@ -246,6 +246,10 @@ system、developer、user、assistant 历史和工具结果的文本块可携带
 带断点的 assistant 历史消息在 Responses 中将整条消息的文本表达为 `input_text`，不能混合 refusal。生成结果与 Responses `output_text` 不接受这些输入断点。Chat prediction 文本断点在 Chat 内保留，Responses 尚不支持 prediction。音频／文件断点仍不在严格子集内。错误 mode、额外字段及显式 null 断点会被拒绝；不设置断点时应省略该字段。
 
 当前 OpenAI API 区分 `prompt_cache_options.ttl` 的最短存活时间与已弃用 `prompt_cache_retention` 的最长保留策略；两者同时提供时分别保留。Nyro 不相互替换、不映射为 Anthropic TTL，也不生成 Gemini 缓存资源。带 OpenAI 控制字段时，Anthropic／Gemini 目标会在发送前被排除。仅原生支持的字段同样会排除严格或不兼容的重试候选。协议匹配不代表其他上游凭证／模型也能访问同一缓存资源。
+
+Anthropic 控制接受 `{"type":"ephemeral"}`，可选 `ttl: "5m"` 或 `"1h"`。支持请求顶层、system 文本块、工具定义、用户／assistant 文本、用户图片、tool_use、外层 tool_result 及工具结果中的文本块。system 文本块保持分离，工具批次保留结果顺序和内外层边界。控制字段 null 归一化为缺省；TTL null、未知字段和未支持的枚举会在发送前拒绝。生成的 JSON／SSE 内容不能携带输入缓存控制。整个请求符合此子集时，原生 Anthropic 请求可重试到严格 Anthropic 后端；其他仅原生支持的扩展仍要求原生转发。
+
+Nyro 保留自动缓存配置，由上游选择断点并执行缓存约束，包括四个断点上限、自动缓存的槽位／冲突规则、tools → system → messages 顺序中长 TTL 必须先于短 TTL，以及模型资格限制。不填充 TTL，也不映射为 OpenAI 选项。document／thinking 块、工具结果内图片及 `max_tokens: 0` 预热仍不在严格子集内。
 
 Responses 对缓存选项的响应回显随其他请求回显一起校验并归一化，要求精确保留回显时使用原生转发。Nyro 不实现缓存存储、资源创建／删除、自动插入断点或模型缓存可用性判断。与请求控制对应的 OpenAI `cache_write_tokens` 已纳入[用量转换子集](#缓存用量计量)；其他未实现的用量扩展仍会被严格转换拒绝。
 

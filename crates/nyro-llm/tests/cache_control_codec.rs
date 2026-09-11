@@ -86,7 +86,10 @@ fn vendor_cache_controls_are_not_silently_converted() {
     let mut anthropic =
         json!({"model":"public","messages":[{"role":"user","content":"Hello"}],"max_tokens":32});
     anthropic["cache_control"] = json!({"type":"ephemeral","ttl":"1h"});
-    assert!(anthropic::decode_chat(anthropic).is_err());
+    let r = anthropic::decode_chat(anthropic).unwrap();
+    assert!(openai::encode_chat(&r).is_err());
+    assert!(openai::responses::encode_chat(&r).is_err());
+    assert!(gemini::encode_chat(&r).is_err());
     assert!(gemini::decode_chat(json!({"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"cachedContent":"cachedContents/existing"}), "public", false).is_err());
 }
 
