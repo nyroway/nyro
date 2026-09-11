@@ -53,12 +53,15 @@ fn function_result_preserves_strings_and_text_part_boundaries() {
             json!([{"type":"input_text","text":"first"},{"type":"input_text","text":""},{"type":"input_text","text":"second"}]),
             Content::Parts(vec![
                 ContentPart::Text {
+                    prompt_cache_breakpoint: None,
                     text: "first".into(),
                 },
                 ContentPart::Text {
+                    prompt_cache_breakpoint: None,
                     text: String::new(),
                 },
                 ContentPart::Text {
+                    prompt_cache_breakpoint: None,
                     text: "second".into(),
                 },
             ]),

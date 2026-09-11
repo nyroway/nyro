@@ -83,19 +83,24 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                                     parts
                                         .into_iter()
                                         .map(|part| match part {
-                                            wire::InputPart::InputImage { image_url, detail }
-                                                if role == Role::User =>
-                                            {
-                                                Ok(ContentPart::ImageUrl {
-                                                    image_url: ImageUrl {
-                                                        url: image_url,
-                                                        detail,
-                                                    },
-                                                })
-                                            }
-                                            wire::InputPart::InputText { text } => {
-                                                Ok(ContentPart::Text { text })
-                                            }
+                                            wire::InputPart::InputImage {
+                                                image_url,
+                                                detail,
+                                                prompt_cache_breakpoint,
+                                            } if role == Role::User => Ok(ContentPart::ImageUrl {
+                                                prompt_cache_breakpoint,
+                                                image_url: ImageUrl {
+                                                    url: image_url,
+                                                    detail,
+                                                },
+                                            }),
+                                            wire::InputPart::InputText {
+                                                text,
+                                                prompt_cache_breakpoint,
+                                            } => Ok(ContentPart::Text {
+                                                text,
+                                                prompt_cache_breakpoint,
+                                            }),
                                             wire::InputPart::OutputText {
                                                 text,
                                                 annotations,
@@ -104,7 +109,10 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                                                 && annotations.is_empty()
                                                 && logprobs.is_empty() =>
                                             {
-                                                Ok(ContentPart::Text { text })
+                                                Ok(ContentPart::Text {
+                                                    text,
+                                                    prompt_cache_breakpoint: None,
+                                                })
                                             }
                                             wire::InputPart::Refusal { refusal }
                                                 if role == Role::Assistant =>
@@ -157,9 +165,17 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                             wire::FunctionOutput::Parts(parts) => Content::Parts(
                                 parts
                                     .into_iter()
-                                    .map(|wire::FunctionOutputPart::InputText { text }| {
-                                        ContentPart::Text { text }
-                                    })
+                                    .map(
+                                        |wire::FunctionOutputPart::InputText {
+                                             text,
+                                             prompt_cache_breakpoint,
+                                         }| {
+                                            ContentPart::Text {
+                                                text,
+                                                prompt_cache_breakpoint,
+                                            }
+                                        },
+                                    )
                                     .collect(),
                             ),
                         };
@@ -235,7 +251,15 @@ fn content_parts(
     content: &Content,
     assistant: bool,
     images: bool,
+    input: bool,
 ) -> Result<Vec<Value>, CodecError> {
+    // A marked assistant message uses EasyInputMessage's input content list
+    // as a whole; mixing input_text with output_text/refusal is not that shape.
+    let assistant = assistant
+        && !(input
+            && matches!(content, Content::Parts(parts) if parts.iter().any(|p|
+                matches!(p, ContentPart::Text { prompt_cache_breakpoint: Some(_), .. })
+            )));
     match content {
         Content::Text(text) => Ok(vec![if assistant {
             json!({"type":"output_text","text":text,"annotations":[]})
@@ -245,16 +269,38 @@ fn content_parts(
         Content::Parts(parts) => parts
             .iter()
             .map(|p| match p {
-                ContentPart::Text { text } => Ok(if assistant {
-                    json!({"type":"output_text","text":text,"annotations":[]})
-                } else {
-                    json!({"type":"input_text","text":text})
-                }),
-                ContentPart::ImageUrl { image_url } if images => {
+                ContentPart::Text {
+                    text,
+                    prompt_cache_breakpoint,
+                } => {
+                    if !input && prompt_cache_breakpoint.is_some() {
+                        return Err(bad(
+                            "cache breakpoints are input controls, not generated output",
+                        ));
+                    }
+                    // EasyInputMessage accepts assistant input_text history. Generated
+                    // output_text has no breakpoint field; never place one on it.
+                    let mut part = if assistant && prompt_cache_breakpoint.is_none() {
+                        json!({"type":"output_text","text":text,"annotations":[]})
+                    } else {
+                        json!({"type":"input_text","text":text})
+                    };
+                    if let Some(marker) = prompt_cache_breakpoint {
+                        part["prompt_cache_breakpoint"] = json!(marker);
+                    }
+                    Ok(part)
+                }
+                ContentPart::ImageUrl {
+                    image_url,
+                    prompt_cache_breakpoint,
+                } if images => {
                     super::super::image::source(image_url)?;
                     let mut part = json!({"type":"input_image","image_url":image_url.url});
                     if let Some(detail) = &image_url.detail {
                         part["detail"] = json!(detail);
+                    }
+                    if let Some(marker) = prompt_cache_breakpoint {
+                        part["prompt_cache_breakpoint"] = json!(marker);
                     }
                     Ok(part)
                 }
@@ -305,7 +351,9 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         if m.role == Role::Tool {
             let output = match &m.content {
                 Some(Content::Text(s)) => json!(s),
-                Some(content @ Content::Parts(_)) => json!(content_parts(content, false, false)?),
+                Some(content @ Content::Parts(_)) => {
+                    json!(content_parts(content, false, false, true)?)
+                }
                 None => return Err(bad("function result requires text")),
             };
             if m.refusal.is_some() {
@@ -319,12 +367,15 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         let mut parts = m
             .content
             .as_ref()
-            .map(|c| content_parts(c, m.role == Role::Assistant, m.role == Role::User))
+            .map(|c| content_parts(c, m.role == Role::Assistant, m.role == Role::User, true))
             .transpose()?
             .unwrap_or_default();
         if let Some(refusal) = &m.refusal {
             if m.role != Role::Assistant {
                 return Err(bad("refusal requires assistant role"));
+            }
+            if parts.iter().any(|p| p["type"] == "input_text") {
+                return Err(bad("marked assistant input cannot contain refusal"));
             }
             parts.push(json!({"type":"refusal","refusal":refusal}));
         }
@@ -733,7 +784,7 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     let mut parts = m
         .content
         .as_ref()
-        .map(|c| content_parts(c, true, false))
+        .map(|c| content_parts(c, true, false, false))
         .transpose()?
         .unwrap_or_default();
     if let Some(refusal) = &m.refusal {

@@ -29,11 +29,17 @@ fn content_parts(content: &Option<Content>, images: bool) -> Result<Vec<w::Part>
         Some(Content::Parts(parts)) => parts
             .iter()
             .map(|p| match p {
-                ContentPart::Text { text } => Ok(w::Part {
+                ContentPart::Text {
+                    text,
+                    prompt_cache_breakpoint: None,
+                } => Ok(w::Part {
                     text: Some(text.clone()),
                     ..Default::default()
                 }),
-                ContentPart::ImageUrl { image_url } if images => {
+                ContentPart::ImageUrl {
+                    image_url,
+                    prompt_cache_breakpoint: None,
+                } if images => {
                     super::image::default_detail(image_url)?;
                     let super::image::Source::Base64 { mime, data } =
                         super::image::source(image_url)?
@@ -100,6 +106,7 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
         for p in s.parts {
             check_part(&p)?;
             parts.push(ContentPart::Text {
+                prompt_cache_breakpoint: None,
                 text: p
                     .text
                     .ok_or_else(|| bad("system instruction must be text"))?,
@@ -125,7 +132,10 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                         "text after function calls cannot be represented in chat messages",
                     ));
                 }
-                parts.push(ContentPart::Text { text });
+                parts.push(ContentPart::Text {
+                    prompt_cache_breakpoint: None,
+                    text,
+                });
             } else if let Some(blob) = p.inline_data {
                 if role != Role::User
                     || !matches!(
@@ -136,6 +146,7 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                     return Err(bad("unsupported inline image type or role"));
                 }
                 parts.push(ContentPart::ImageUrl {
+                    prompt_cache_breakpoint: None,
                     image_url: ImageUrl {
                         url: format!("data:{};base64,{}", blob.mime_type, blob.data),
                         detail: None,

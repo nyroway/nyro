@@ -221,6 +221,12 @@ async fn upstream(format: &'static str, mode: &'static str) -> Fixture {
                     .body(Body::empty())
                     .unwrap();
             }
+            if mode == "unavailable" {
+                return axum::http::Response::builder()
+                    .status(503)
+                    .body(Body::empty())
+                    .unwrap();
+            }
             if streaming {
                 let text = if format == "responses" {
                     native_frames(mode)
@@ -1915,5 +1921,171 @@ async fn cache_write_usage_settles_once_even_when_chat_stream_usage_is_hidden() 
             }
             assert_eq!(fixture.calls.lock().unwrap().len(), before + 2);
         }
+    }
+}
+
+async fn breakpoint_request(source: &str, streaming: bool, options: bool) -> Request<Body> {
+    let (parts, body) = request(source, streaming).into_parts();
+    let mut value: Value = serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+    let responses = source == "responses";
+    let text_kind = if responses { "input_text" } else { "text" };
+    let marker = json!({"mode":"explicit"});
+    let image = if responses {
+        json!({"type":"input_image","image_url":"data:image/png;base64,YQ==","prompt_cache_breakpoint":marker})
+    } else {
+        json!({"type":"image_url","image_url":{"url":"data:image/png;base64,YQ=="},"prompt_cache_breakpoint":marker})
+    };
+    value[if responses { "input" } else { "messages" }] = json!([
+        {"role":"developer","content":[{"type":text_kind,"text":"instructions","prompt_cache_breakpoint":marker}]},
+        {"role":"user","content":[{"type":text_kind,"text":"before"},image,{"type":text_kind,"text":"after","prompt_cache_breakpoint":marker}]}
+    ]);
+    if options {
+        value["prompt_cache_options"] = json!({"mode":"explicit","ttl":"30m"});
+    }
+    Request::from_parts(parts, Body::from(value.to_string()))
+}
+
+fn assert_breakpoint_body(body: &Value, target: &str, options: bool) {
+    assert_eq!(body["model"], "internal");
+    let messages = &body[if target == "responses" {
+        "input"
+    } else {
+        "messages"
+    }];
+    let marker = json!({"mode":"explicit"});
+    assert_eq!(messages.as_array().unwrap().len(), 2);
+    assert_eq!(messages[0]["role"], "developer");
+    assert_eq!(messages[0]["content"][0]["prompt_cache_breakpoint"], marker);
+    let content = &messages[1]["content"];
+    assert_eq!(content.as_array().unwrap().len(), 3);
+    assert_eq!(content[0]["text"], "before");
+    assert!(content[0].get("prompt_cache_breakpoint").is_none());
+    assert_eq!(content[1]["prompt_cache_breakpoint"], marker);
+    assert_eq!(content[2]["text"], "after");
+    assert_eq!(content[2]["prompt_cache_breakpoint"], marker);
+    if target == "responses" {
+        assert_eq!(content[1]["image_url"], "data:image/png;base64,YQ==");
+    } else {
+        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,YQ==");
+    }
+    if options {
+        assert_eq!(
+            body["prompt_cache_options"],
+            json!({"mode":"explicit","ttl":"30m"})
+        );
+    } else {
+        assert!(body.get("prompt_cache_options").is_none());
+    }
+}
+
+#[tokio::test]
+async fn cache_breakpoints_preserve_http_positions_and_filter_incompatible_targets() {
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for source in ["openai", "responses"] {
+            for streaming in [false, true] {
+                for options in [false, true] {
+                    let before = fixture.calls.lock().unwrap().len();
+                    let response = gateway
+                        .handle(
+                            breakpoint_request(source, streaming, options).await,
+                            CancellationToken::new(),
+                        )
+                        .await;
+                    let allowed = matches!(target, "openai" | "responses");
+                    assert_eq!(
+                        response.status(),
+                        if allowed {
+                            StatusCode::OK
+                        } else {
+                            StatusCode::BAD_REQUEST
+                        },
+                        "{source} -> {target}, streaming={streaming}, options={options}"
+                    );
+                    let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+                    assert_eq!(limit.available(), 1);
+                    let calls = fixture.calls.lock().unwrap();
+                    assert_eq!(calls.len(), before + usize::from(allowed));
+                    if allowed {
+                        assert_breakpoint_body(&calls.last().unwrap()["body"], target, options);
+                        let result = if streaming {
+                            stream_snapshot(source, &bytes)
+                        } else {
+                            snapshot(source, &serde_json::from_slice(&bytes).unwrap())
+                        };
+                        assert_eq!(result["text"], "Hello");
+                    }
+                }
+            }
+        }
+        fixture.task.abort();
+    }
+}
+
+#[tokio::test]
+async fn breakpoint_retries_skip_incompatible_backends_without_losing_markers() {
+    let failed = upstream("openai", "unavailable").await;
+    let anthropic = upstream("anthropic", "normal").await;
+    let gemini = upstream("gemini", "normal").await;
+    let success = upstream("responses", "normal").await;
+    let config: Config = serde_json::from_value(json!({
+        "providers":{
+            "failed":{"kind":"openai","base_url":format!("{}/v1",failed.base),"api_key":"upstream-secret"},
+            "anthropic":{"kind":"anthropic","base_url":format!("{}/v1",anthropic.base),"api_key":"upstream-secret"},
+            "gemini":{"kind":"gemini","base_url":format!("{}/v1beta",gemini.base),"api_key":"upstream-secret"},
+            "success":{"kind":"openai","api":"responses","base_url":format!("{}/v1",success.base),"api_key":"upstream-secret"}},
+        "models":{"public":{"max_attempts":2,"workloads":["chat"],"subjects":["alice"],"backends":[
+            {"id":"first","provider":"failed","upstream_model":"internal","priority":0},
+            {"id":"excluded-a","provider":"anthropic","upstream_model":"internal","priority":1},
+            {"id":"excluded-g","provider":"gemini","upstream_model":"internal","priority":2},
+            {"id":"last","provider":"success","upstream_model":"internal","priority":3}]}}
+    })).unwrap();
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let gateway = Runtime::new(
+        config,
+        Arc::new(
+            ApiKeys::new(vec![ApiKey {
+                id: "alice".into(),
+                secret: "client-secret".into(),
+            }])
+            .unwrap(),
+        ),
+        limit.clone(),
+        Options::default(),
+    )
+    .unwrap();
+    for source in ["openai", "responses"] {
+        for streaming in [false, true] {
+            // Marker-only input ensures options do not mask a broken marker filter.
+            let response = gateway
+                .handle(
+                    breakpoint_request(source, streaming, false).await,
+                    CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+            let result = if streaming {
+                stream_snapshot(source, &bytes)
+            } else {
+                snapshot(source, &serde_json::from_slice(&bytes).unwrap())
+            };
+            assert_eq!(result["text"], "Hello");
+            assert_eq!(limit.available(), 1);
+        }
+    }
+    for (fixture, target) in [(&failed, "openai"), (&success, "responses")] {
+        let calls = fixture.calls.lock().unwrap();
+        assert_eq!(calls.len(), 4);
+        for call in calls.iter() {
+            assert_breakpoint_body(&call["body"], target, false);
+        }
+    }
+    assert!(anthropic.calls.lock().unwrap().is_empty());
+    assert!(gemini.calls.lock().unwrap().is_empty());
+    for fixture in [failed, anthropic, gemini, success] {
+        fixture.task.abort();
     }
 }

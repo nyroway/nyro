@@ -88,23 +88,6 @@ fn vendor_cache_controls_are_not_silently_converted() {
     anthropic["cache_control"] = json!({"type":"ephemeral","ttl":"1h"});
     assert!(anthropic::decode_chat(anthropic).is_err());
     assert!(gemini::decode_chat(json!({"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"cachedContent":"cachedContents/existing"}), "public", false).is_err());
-    // Per-block breakpoints are not part of the strict content subset yet.
-    for responses in [false, true] {
-        let mut body = request(responses);
-        if responses {
-            body["input"] = json!([{"role":"user","content":[{"type":"input_text","text":"Hello","prompt_cache_breakpoint":{"mode":"explicit"}}]}]);
-        } else {
-            body["messages"][0]["content"] = json!([{"type":"text","text":"Hello","prompt_cache_breakpoint":{"mode":"explicit"}}]);
-        }
-        assert!(
-            if responses {
-                openai::responses::decode_chat(body)
-            } else {
-                openai::decode_chat(body)
-            }
-            .is_err()
-        );
-    }
 }
 
 #[test]

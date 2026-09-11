@@ -207,8 +207,14 @@ fn content_parts(c: &Option<Content>, images: bool) -> Result<Vec<Value>, CodecE
         Some(Content::Parts(p)) => p
             .iter()
             .map(|p| match p {
-                ContentPart::Text { text } => Ok(json!({"type":"text","text":text})),
-                ContentPart::ImageUrl { image_url } if images => {
+                ContentPart::Text {
+                    text,
+                    prompt_cache_breakpoint: None,
+                } => Ok(json!({"type":"text","text":text})),
+                ContentPart::ImageUrl {
+                    image_url,
+                    prompt_cache_breakpoint: None,
+                } if images => {
                     super::image::default_detail(image_url)?;
                     let source = match super::image::source(image_url)? {
                         super::image::Source::Url(url) => json!({"type":"url","url":url}),

@@ -66,6 +66,21 @@ fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
     if request.messages.is_empty() {
         return Err(invalid("messages must be nonempty"));
     }
+    if let Some(chat::Prediction::Content {
+        content: chat::Content::Parts(parts),
+    }) = &request.openai.prediction
+        && parts.iter().any(|p| {
+            matches!(
+                p,
+                chat::ContentPart::ImageUrl {
+                    prompt_cache_breakpoint: Some(_),
+                    ..
+                }
+            )
+        })
+    {
+        return Err(invalid("prediction cache breakpoints require text content"));
+    }
     for tool in request.openai.tools.iter().flatten() {
         let chat::Tool::Function { function } = tool;
         if function.name.trim().is_empty()
@@ -77,7 +92,7 @@ fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
     for message in &request.messages {
         if let Some(Content::Parts(parts)) = &message.content {
             for part in parts {
-                if let ContentPart::ImageUrl { image_url } = part {
+                if let ContentPart::ImageUrl { image_url, .. } = part {
                     if message.role != Role::User {
                         return Err(invalid("images require a user message"));
                     }
@@ -189,6 +204,29 @@ pub fn encode_embedding(request: &EmbeddingRequest) -> Result<Value, CodecError>
     let wire: embedding::Request = convert(request)?;
     Ok(serde_json::to_value(wire)?)
 }
+fn validate_output_breakpoints(response: &ChatResponse) -> Result<(), CodecError> {
+    for choice in &response.choices {
+        if let Some(Content::Parts(parts)) = &choice.message.content
+            && parts.iter().any(|p| {
+                matches!(
+                    p,
+                    ContentPart::Text {
+                        prompt_cache_breakpoint: Some(_),
+                        ..
+                    } | ContentPart::ImageUrl {
+                        prompt_cache_breakpoint: Some(_),
+                        ..
+                    }
+                )
+            })
+        {
+            return Err(invalid(
+                "cache breakpoints are input controls, not generated output",
+            ));
+        }
+    }
+    Ok(())
+}
 pub fn decode_chat_response(value: Value) -> Result<ChatResponse, CodecError> {
     let mut wire: chat::Response = serde_json::from_value(value)?;
     if wire.object != "chat.completion" {
@@ -204,9 +242,11 @@ pub fn decode_chat_response(value: Value) -> Result<ChatResponse, CodecError> {
     let usage = wire.usage.take().map(cache::decode).transpose()?;
     let mut response: ChatResponse = convert(wire)?;
     response.usage = usage;
+    validate_output_breakpoints(&response)?;
     Ok(response)
 }
 pub fn encode_chat_response(response: &ChatResponse) -> Result<Value, CodecError> {
+    validate_output_breakpoints(response)?;
     let mut plain = response.clone();
     let usage = plain.usage.take().as_ref().map(cache::encode).transpose()?;
     let mut wire: chat::Response = convert(plain)?;

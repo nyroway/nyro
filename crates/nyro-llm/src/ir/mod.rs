@@ -27,10 +27,22 @@ pub enum Content {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContentPart {
-    Text { text: String },
-    ImageUrl { image_url: ImageUrl },
-    InputAudio { input_audio: InputAudio },
-    Refusal { refusal: String },
+    Text {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_cache_breakpoint: Option<nyro_protocol::openai::PromptCacheBreakpoint>,
+    },
+    ImageUrl {
+        image_url: ImageUrl,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_cache_breakpoint: Option<nyro_protocol::openai::PromptCacheBreakpoint>,
+    },
+    InputAudio {
+        input_audio: InputAudio,
+    },
+    Refusal {
+        refusal: String,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

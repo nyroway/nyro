@@ -63,9 +63,13 @@ pub enum InputPart {
     InputImage {
         image_url: String,
         detail: Option<String>,
+        #[serde(default, deserialize_with = "super::present")]
+        prompt_cache_breakpoint: Option<super::PromptCacheBreakpoint>,
     },
     InputText {
         text: String,
+        #[serde(default, deserialize_with = "super::present")]
+        prompt_cache_breakpoint: Option<super::PromptCacheBreakpoint>,
     },
     OutputText {
         text: String,
@@ -104,7 +108,11 @@ pub enum FunctionOutput {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FunctionOutputPart {
-    InputText { text: String },
+    InputText {
+        text: String,
+        #[serde(default, deserialize_with = "super::present")]
+        prompt_cache_breakpoint: Option<super::PromptCacheBreakpoint>,
+    },
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
