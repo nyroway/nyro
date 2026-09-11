@@ -227,6 +227,7 @@ fn mixed_user_function_responses_preserve_part_order() {
     assert_eq!(
         r.messages[1].content,
         Some(Content::Parts(vec![ContentPart::Text {
+            anthropic_cache_control: None,
             prompt_cache_breakpoint: None,
             text: "before".into()
         }]))
@@ -239,6 +240,7 @@ fn mixed_user_function_responses_preserve_part_order() {
     assert_eq!(
         r.messages[3].content,
         Some(Content::Parts(vec![ContentPart::Text {
+            anthropic_cache_control: None,
             prompt_cache_breakpoint: None,
             text: "between".into()
         }]))
@@ -247,6 +249,7 @@ fn mixed_user_function_responses_preserve_part_order() {
     assert_eq!(
         r.messages[5].content,
         Some(Content::Parts(vec![ContentPart::Text {
+            anthropic_cache_control: None,
             prompt_cache_breakpoint: None,
             text: "after".into()
         }]))
@@ -350,10 +353,12 @@ fn result_text_blocks_are_not_silently_concatenated() {
     let mut r = result_history();
     r.messages[1].content = Some(Content::Parts(vec![
         ContentPart::Text {
+            anthropic_cache_control: None,
             prompt_cache_breakpoint: None,
             text: "one".into(),
         },
         ContentPart::Text {
+            anthropic_cache_control: None,
             prompt_cache_breakpoint: None,
             text: "two".into(),
         },
@@ -363,6 +368,7 @@ fn result_text_blocks_are_not_silently_concatenated() {
         (vec![], json!({"result":""})),
         (
             vec![ContentPart::Text {
+                anthropic_cache_control: None,
                 prompt_cache_breakpoint: None,
                 text: "one".into(),
             }],

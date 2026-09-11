@@ -873,8 +873,8 @@ fn cache_inputs(streaming: bool) -> Vec<Value> {
             {"type":"tool_result","tool_use_id":"call-1","content":[{"type":"text","text":"Sunny"}],"cache_control":{"type":"ephemeral"}},
             {"type":"text","text":"Continue"}]}
     ]);
-    // A cache marker on otherwise ordinary text must independently be rejected
-    // by strict conversion, without depending on image or tool support.
+    // A marker on ordinary text independently exercises cache capability,
+    // without depending on image or tool support.
     let mut text = input(false, streaming);
     text["messages"][0]["content"] = json!([
         {"type":"text","text":"Stable prefix","cache_control":{"type":"ephemeral","ttl":"1h"}},
@@ -884,7 +884,7 @@ fn cache_inputs(streaming: bool) -> Vec<Value> {
 }
 
 #[tokio::test]
-async fn cache_controls_keep_ttl_and_placement_across_native_retry_only() {
+async fn cache_controls_keep_ttl_and_placement_across_native_retry() {
     for streaming in [false, true] {
         let first = upstream(503, "unavailable".into(), false).await;
         let incompatible = upstream(200, answer().to_string(), false).await;
@@ -903,7 +903,6 @@ async fn cache_controls_keep_ttl_and_placement_across_native_retry_only() {
             let gateway = runtime(
                 config(&[
                     (&first, "anthropic", true),
-                    (&incompatible, "anthropic", false),
                     (&incompatible, "openai", true),
                     (&backup, "anthropic", true),
                 ]),
@@ -928,7 +927,7 @@ async fn cache_controls_keep_ttl_and_placement_across_native_retry_only() {
                 backup.calls.lock().unwrap().last().unwrap()["body"],
                 expected
             );
-            for kind in ["anthropic", "openai", "gemini"] {
+            for kind in ["openai", "gemini"] {
                 let strict = runtime(
                     config(&[(&incompatible, kind, kind != "anthropic")]),
                     &limit,
@@ -939,6 +938,102 @@ async fn cache_controls_keep_ttl_and_placement_across_native_retry_only() {
                     StatusCode::BAD_REQUEST
                 );
                 assert!(incompatible.calls.lock().unwrap().is_empty());
+                assert_eq!(limit.available(), 1);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn strict_cache_controls_survive_json_sse_and_native_to_strict_retry() {
+    for streaming in [false, true] {
+        let first = upstream(503, "unavailable".into(), false).await;
+        let incompatible = upstream(200, "must not dispatch".into(), false).await;
+        let backup = upstream(
+            200,
+            if streaming {
+                sse(&strict_cache_frames())
+            } else {
+                strict_cache_answer().to_string()
+            },
+            streaming,
+        )
+        .await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        for first_native in [false, true] {
+            for body in cache_inputs(streaming) {
+                let gateway = runtime(
+                    config(&[
+                        (&first, "anthropic", first_native),
+                        (&incompatible, "openai", false),
+                        (&incompatible, "gemini", false),
+                        (&backup, "anthropic", false),
+                    ]),
+                    &limit,
+                    Options::default(),
+                );
+                let response = invoke(&gateway, body.clone()).await;
+                assert_eq!(response.status(), StatusCode::OK);
+                let output = consume(response).await;
+                assert!(output.contains(if streaming { "message_stop" } else { "answer" }));
+                assert_eq!(limit.available(), 1);
+                assert!(incompatible.calls.lock().unwrap().is_empty());
+                let mut expected = body.clone();
+                expected["model"] = json!("private-model");
+                // Existing strict normalization turns the single string into one text block.
+                if let Some(text) = expected["messages"][0]["content"].as_str() {
+                    let text = text.to_owned();
+                    expected["messages"][0]["content"] = json!([{"type":"text","text":text}]);
+                }
+                assert_eq!(
+                    backup.calls.lock().unwrap().last().unwrap()["body"],
+                    expected
+                );
+                if first_native {
+                    let mut raw = body;
+                    raw["model"] = json!("private-model");
+                    assert_eq!(first.calls.lock().unwrap().last().unwrap()["body"], raw);
+                } else {
+                    assert_eq!(
+                        first.calls.lock().unwrap().last().unwrap()["body"],
+                        expected
+                    );
+                }
+            }
+        }
+        assert_eq!(first.calls.lock().unwrap().len(), 6);
+        assert_eq!(backup.calls.lock().unwrap().len(), 6);
+    }
+}
+
+#[tokio::test]
+async fn malformed_cache_controls_never_dispatch_and_release_admission() {
+    let fixture = upstream(200, strict_cache_answer().to_string(), false).await;
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let gateway = runtime(
+        config(&[(&fixture, "anthropic", false)]),
+        &limit,
+        Options::default(),
+    );
+    for streaming in [false, true] {
+        for control in [
+            json!({"type":"ephemeral","ttl":"30m"}),
+            json!({"type":"ephemeral","ttl":null}),
+            json!({"type":"unknown"}),
+        ] {
+            for top in [false, true] {
+                let mut body = input(false, streaming);
+                if top {
+                    body["cache_control"] = control.clone();
+                } else {
+                    body["messages"][0]["content"] =
+                        json!([{"type":"text","text":"prefix","cache_control":control}]);
+                }
+                assert_eq!(
+                    invoke(&gateway, body).await.status(),
+                    StatusCode::BAD_REQUEST
+                );
+                assert!(fixture.calls.lock().unwrap().is_empty());
                 assert_eq!(limit.available(), 1);
             }
         }

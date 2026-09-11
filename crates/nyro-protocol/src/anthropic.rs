@@ -1,6 +1,27 @@
 //! Strict Messages wire subset. Unsupported vendor extensions fail deserialization.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+/// Anthropic cache control. Omitted TTL is left to the upstream default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CacheControl {
+    Ephemeral {
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        ttl: Option<CacheTtl>,
+    },
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CacheTtl {
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Content {
@@ -11,17 +32,25 @@ pub enum Content {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Block {
     Text {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
         text: String,
     },
     Image {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
         source: ImageSource,
     },
     ToolUse {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
         id: String,
         name: String,
         input: Value,
     },
     ToolResult {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
         tool_use_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<Content>,
@@ -44,6 +73,8 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tool {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -61,6 +92,8 @@ pub struct ToolChoice {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
     pub model: String,
     pub messages: Vec<Message>,
     pub max_tokens: u32,
@@ -115,13 +148,25 @@ pub struct CacheCreation {
     pub ephemeral_1h_input_tokens: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OutputBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Response {
     pub id: String,
     pub r#type: String,
     pub role: String,
     pub model: String,
-    pub content: Vec<Block>,
+    pub content: Vec<OutputBlock>,
     pub stop_reason: Option<String>,
     pub stop_sequence: Option<String>,
     pub usage: Usage,
@@ -159,7 +204,7 @@ pub enum StreamEvent {
     },
     ContentBlockStart {
         index: u32,
-        content_block: Block,
+        content_block: OutputBlock,
     },
     ContentBlockDelta {
         index: u32,

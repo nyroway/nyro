@@ -9,6 +9,7 @@ pub use stream::{StreamDecoder, StreamEncoder};
 
 fn message(role: Role, content: Option<Content>) -> Message {
     Message {
+        anthropic_cache_control: None,
         role,
         content,
         tool_calls: None,
@@ -88,6 +89,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                                                 detail,
                                                 prompt_cache_breakpoint,
                                             } if role == Role::User => Ok(ContentPart::ImageUrl {
+                                                anthropic_cache_control: None,
                                                 prompt_cache_breakpoint,
                                                 image_url: ImageUrl {
                                                     url: image_url,
@@ -98,6 +100,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                                                 text,
                                                 prompt_cache_breakpoint,
                                             } => Ok(ContentPart::Text {
+                                                anthropic_cache_control: None,
                                                 text,
                                                 prompt_cache_breakpoint,
                                             }),
@@ -110,6 +113,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                                                 && logprobs.is_empty() =>
                                             {
                                                 Ok(ContentPart::Text {
+                                                    anthropic_cache_control: None,
                                                     text,
                                                     prompt_cache_breakpoint: None,
                                                 })
@@ -148,6 +152,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                             .tool_calls
                             .get_or_insert_with(Vec::new)
                             .push(ToolCall::Function {
+                                anthropic_cache_control: None,
                                 id: call_id,
                                 function: FunctionCall { name, arguments },
                             });
@@ -171,6 +176,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                                              prompt_cache_breakpoint,
                                          }| {
                                             ContentPart::Text {
+                                                anthropic_cache_control: None,
                                                 text,
                                                 prompt_cache_breakpoint,
                                             }
@@ -192,7 +198,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         nonempty(&name)?;
         let strict = match strict { Some(true)=>Some(true), Some(false)=>None, None=>return Err(bad("Responses function tools require explicit strict:true or strict:false")) };
         if parameters.as_ref().is_some_and(|v| !v.is_object()) { return Err(bad("function parameters must be an object")); }
-        Ok(chat::Tool::Function { function: chat::FunctionDefinition { name, description, parameters, strict } })
+        Ok(Tool::Function { anthropic_cache_control: None, function: chat::FunctionDefinition { name, description, parameters, strict } })
     }).collect::<Result<_,CodecError>>()).transpose()?;
     let tool_choice = r.tool_choice.map(|c| match c {
         wire::ToolChoice::Mode(m) => chat::ToolChoice::Mode(m),
@@ -220,6 +226,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         },
     });
     let request = ChatRequest {
+        anthropic_cache_control: None,
         model: r.model,
         messages,
         stream: r.stream,
@@ -270,6 +277,7 @@ fn content_parts(
             .iter()
             .map(|p| match p {
                 ContentPart::Text {
+                    anthropic_cache_control: None,
                     text,
                     prompt_cache_breakpoint,
                 } => {
@@ -291,6 +299,7 @@ fn content_parts(
                     Ok(part)
                 }
                 ContentPart::ImageUrl {
+                    anthropic_cache_control: None,
                     image_url,
                     prompt_cache_breakpoint,
                 } if images => {
@@ -313,7 +322,7 @@ fn content_parts(
     }
 }
 pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
-    super::validate_chat(r)?;
+    super::encode_chat(r)?;
     let g = &r.generation;
     let o = &r.openai;
     if g.frequency_penalty.is_some()
@@ -382,7 +391,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         if !parts.is_empty() {
             input.push(json!({"type":"message","role":m.role,"content":parts}));
         }
-        for ToolCall::Function { id, function } in m.tool_calls.iter().flatten() {
+        for ToolCall::Function { id, function, .. } in m.tool_calls.iter().flatten() {
             nonempty(id)?;
             nonempty(&function.name)?;
             input.push(json!({"type":"function_call","call_id":id,"name":function.name,"arguments":function.arguments}));
@@ -419,7 +428,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             tools
                 .iter()
                 .map(|t| {
-                    let chat::Tool::Function { function } = t;
+                    let Tool::Function { function, .. } = t;
                     nonempty(&function.name)?;
                     if function.parameters.as_ref().is_some_and(|v| !v.is_object()) {
                         return Err(bad("function parameters must be an object"));
@@ -711,6 +720,7 @@ fn decode_response(r: wire::Response) -> Result<ChatResponse, CodecError> {
                 arguments,
                 ..
             } => calls.push(ToolCall::Function {
+                anthropic_cache_control: None,
                 id: call_id,
                 function: FunctionCall { name, arguments },
             }),
@@ -768,6 +778,7 @@ fn envelope(
     )
 }
 pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
+    super::validate_output_breakpoints(r)?;
     if r.choices.len() != 1 || r.choices[0].index != 0 {
         return Err(bad("Responses requires one choice"));
     }
@@ -798,7 +809,7 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     if !parts.is_empty() {
         output.push(json!({"type":"message","id":format!("msg_{}_0",r.id),"role":"assistant","status":state,"content":parts}));
     }
-    for (i, ToolCall::Function { id, function }) in m.tool_calls.iter().flatten().enumerate() {
+    for (i, ToolCall::Function { id, function, .. }) in m.tool_calls.iter().flatten().enumerate() {
         output.push(json!({"type":"function_call","id":format!("fc_{}_{i}",r.id),"status":state,"call_id":id,"name":function.name,"arguments":function.arguments}));
     }
     validate_items(

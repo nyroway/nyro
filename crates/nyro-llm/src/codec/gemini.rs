@@ -9,6 +9,7 @@ fn bad(s: &str) -> CodecError {
 }
 fn message(role: Role) -> Message {
     Message {
+        anthropic_cache_control: None,
         role,
         content: None,
         tool_calls: None,
@@ -30,6 +31,7 @@ fn content_parts(content: &Option<Content>, images: bool) -> Result<Vec<w::Part>
             .iter()
             .map(|p| match p {
                 ContentPart::Text {
+                    anthropic_cache_control: None,
                     text,
                     prompt_cache_breakpoint: None,
                 } => Ok(w::Part {
@@ -37,6 +39,7 @@ fn content_parts(content: &Option<Content>, images: bool) -> Result<Vec<w::Part>
                     ..Default::default()
                 }),
                 ContentPart::ImageUrl {
+                    anthropic_cache_control: None,
                     image_url,
                     prompt_cache_breakpoint: None,
                 } if images => {
@@ -78,6 +81,7 @@ fn call(c: w::FunctionCall, id: String) -> Result<ToolCall, CodecError> {
         return Err(bad("invalid function call"));
     }
     Ok(ToolCall::Function {
+        anthropic_cache_control: None,
         id,
         function: FunctionCall {
             name: c.name,
@@ -106,6 +110,7 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
         for p in s.parts {
             check_part(&p)?;
             parts.push(ContentPart::Text {
+                anthropic_cache_control: None,
                 prompt_cache_breakpoint: None,
                 text: p
                     .text
@@ -133,6 +138,7 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                     ));
                 }
                 parts.push(ContentPart::Text {
+                    anthropic_cache_control: None,
                     prompt_cache_breakpoint: None,
                     text,
                 });
@@ -146,6 +152,7 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                     return Err(bad("unsupported inline image type or role"));
                 }
                 parts.push(ContentPart::ImageUrl {
+                    anthropic_cache_control: None,
                     prompt_cache_breakpoint: None,
                     image_url: ImageUrl {
                         url: format!("data:{};base64,{}", blob.mime_type, blob.data),
@@ -222,7 +229,8 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                         Some(v) => Some(schema_to_json(v)?),
                         None => f.parameters_json_schema,
                     };
-                    Ok(o::Tool::Function {
+                    Ok(Tool::Function {
+                        anthropic_cache_control: None,
                         function: o::FunctionDefinition {
                             name: f.name,
                             description: f.description,
@@ -254,6 +262,7 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
         })
         .transpose()?;
     let r = ChatRequest {
+        anthropic_cache_control: None,
         model: model.into(),
         messages,
         stream: Some(streaming),
@@ -462,7 +471,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             continue;
         }
         if let Some(calls) = &m.tool_calls {
-            for ToolCall::Function { id, function } in calls {
+            for ToolCall::Function { id, function, .. } in calls {
                 let args: Value = serde_json::from_str(&function.arguments)?;
                 if !args.is_object()
                     || id.is_empty()
@@ -537,7 +546,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         .as_ref()
         .map(|ts| {
             ts.iter()
-                .map(|o::Tool::Function { function: f }| {
+                .map(|Tool::Function { function: f, .. }| {
                     if f.strict == Some(true) {
                         return Err(bad("strict tools unsupported"));
                     }
@@ -566,7 +575,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
                 },
                 None,
             ),
-            o::ToolChoice::Named(o::NamedTool::Function { function }) => {
+            o::ToolChoice::Named(o::NamedTool::Function { function, .. }) => {
                 ("ANY", Some(vec![function.name.clone()]))
             }
         };
@@ -747,6 +756,7 @@ pub fn decode_chat_response(v: Value) -> Result<ChatResponse, CodecError> {
     })
 }
 pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
+    super::openai::validate_output_breakpoints(r)?;
     if r.choices.len() != 1 || r.service_tier.is_some() || r.system_fingerprint.is_some() {
         return Err(bad("unsupported response metadata or choices"));
     }
@@ -761,7 +771,7 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
         }
         let mut parts = content_parts(&c.message.content, false)?;
         if let Some(calls) = &c.message.tool_calls {
-            for ToolCall::Function { id, function } in calls {
+            for ToolCall::Function { id, function, .. } in calls {
                 let args: Value = serde_json::from_str(&function.arguments)?;
                 if !args.is_object() {
                     return Err(bad("function arguments must be object"));
@@ -870,7 +880,7 @@ impl StreamDecoder {
                         let id =
                             c.id.clone()
                                 .unwrap_or_else(|| format!("gemini_call_{}", self.tools));
-                        let ToolCall::Function { id, function } = call(c, id)?;
+                        let ToolCall::Function { id, function, .. } = call(c, id)?;
                         calls.push(ToolCallDelta {
                             index: self.tools,
                             id: Some(id),

@@ -47,7 +47,7 @@ fn function_envelopes_are_checked_at_decode_and_public_encode_boundaries() {
         value["tools"][0]["function"]["parameters"] = bad_schema.clone();
         assert!(openai::decode_chat(value).is_err(), "{bad_schema}");
         let mut r = openai::decode_chat(valid.clone()).unwrap();
-        let nyro_protocol::openai::chat::Tool::Function { function } =
+        let nyro_llm::ir::Tool::Function { function, .. } =
             &mut r.openai.tools.as_mut().unwrap()[0];
         function.parameters = Some(bad_schema);
         assert!(openai::encode_chat(&r).is_err());
@@ -69,8 +69,7 @@ fn json_schema_references_constraints_and_literal_data_are_not_rewritten() {
         "default":{"type":"BUSINESS_DATA","nullable":true,"$ref":"literal"}});
     let mut r = openai::decode_chat(chat(schema.clone(), false)).unwrap();
     // Existing non-strict IR form also exercises preservation independently of false support.
-    let nyro_protocol::openai::chat::Tool::Function { function } =
-        &mut r.openai.tools.as_mut().unwrap()[0];
+    let nyro_llm::ir::Tool::Function { function, .. } = &mut r.openai.tools.as_mut().unwrap()[0];
     function.strict = None;
     for actual in schemas(&r) {
         assert_eq!(actual, schema);
