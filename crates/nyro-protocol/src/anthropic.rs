@@ -22,6 +22,36 @@ pub enum CacheTtl {
     OneHour,
 }
 
+/// Model support and defaults are owned by the upstream API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ThinkingConfig {
+    Enabled {
+        budget_tokens: u32,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        display: Option<ThinkingDisplay>,
+    },
+    Adaptive {
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        display: Option<ThinkingDisplay>,
+    },
+    Disabled {},
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingDisplay {
+    Summarized,
+    Omitted,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Content {
@@ -31,6 +61,13 @@ pub enum Content {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Block {
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
+    RedactedThinking {
+        data: String,
+    },
     Text {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
@@ -93,6 +130,8 @@ pub struct ToolChoice {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControl>,
     pub model: String,
     pub messages: Vec<Message>,
@@ -150,6 +189,14 @@ pub struct CacheCreation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OutputBlock {
+    Thinking {
+        thinking: String,
+        #[serde(default)]
+        signature: String,
+    },
+    RedactedThinking {
+        data: String,
+    },
     Text {
         text: String,
     },
@@ -174,6 +221,8 @@ pub struct Response {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Delta {
+    ThinkingDelta { thinking: String },
+    SignatureDelta { signature: String },
     TextDelta { text: String },
     InputJsonDelta { partial_json: String },
 }

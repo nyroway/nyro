@@ -225,6 +225,14 @@ curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
 
 协议参考：[Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming)、[Gemini generateContent](https://ai.google.dev/api/generate-content)。本地矩阵回归：`cargo test -p nyro-llm --test protocol_matrix`。
 
+## 严格模式下的 Anthropic thinking
+
+Anthropic Messages 严格转换保留 `thinking` 配置：带 `budget_tokens` 的 `enabled`、`adaptive` 或 `disabled`；enabled／adaptive 可选 `display: "summarized"` 或 `"omitted"`。省略字段时不改变上游默认值。手动预算不得低于 1,024 token；模型支持、采样／工具兼容性及与 `max_tokens` 的关系仍由上游校验，包括交错推理允许预算超过 `max_tokens` 的例外。依据官方 [thinking 指南](https://platform.claude.com/docs/en/build-with-claude/thinking)与[手动预算规则](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#budget-rules-and-tuning)。
+
+assistant 历史和生成 JSON 按顺序保留 `thinking` 文本与不透明签名、`redacted_thinking` 数据及其后的文本／函数调用。存在签名时允许空 thinking 文本。SSE 保留推理块边界、摘要增量与最终签名事件，包括 omitted 模式下只有签名的块及 redacted 块。严格流拒绝类型／索引不匹配、缺失或重复签名、签名后的文本、未完成块及超限推理数据。Nyro 不解释或验证加密签名，不生成推理文本或推算推理 token；沿用既有用量合计与流失败保守结算。
+
+这些字段属于 Anthropic 专有语义；OpenAI Chat／Responses 和 Gemini 目标明确拒绝，不映射为 reasoning effort、普通回答文本或其他厂商签名。当前 IR 无法保持工具调用块之后的 thinking 顺序，因此明确拒绝。beta `display: "updates"`、`output_config`、`output_tokens_details` 及其他扩展仍需在支持时使用匹配的原生模式；调用方 beta Header 不转发。原生模式保留更广字段，本次没有为它增加严格块重建。该子集有本地 codec／HTTP mock 回归，不代表真实厂商或 SDK 认证。
+
 ## 请求缓存控制
 
 缓存控制以官方 API 定义为准；旧适配器仅作为迁移证据，不决定默认值或等价映射。当前严格转换子集如下：

@@ -226,6 +226,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         },
     });
     let request = ChatRequest {
+        anthropic_thinking: None,
         anthropic_cache_control: None,
         model: r.model,
         messages,

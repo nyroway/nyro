@@ -1039,3 +1039,142 @@ async fn malformed_cache_controls_never_dispatch_and_release_admission() {
         }
     }
 }
+
+fn thinking_input(streaming: bool) -> Value {
+    let mut body = input(false, streaming);
+    body["max_tokens"] = json!(4096);
+    body["thinking"] = json!({"type":"adaptive","display":"omitted"});
+    body["messages"][0]["content"] = json!([{"type":"text","text":"Hello"}]);
+    body["messages"].as_array_mut().unwrap().extend([
+        json!({"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"history-signature"},
+            {"type":"redacted_thinking","data":"history-redacted"},{"type":"tool_use","id":"t","name":"f","input":{}}]}),
+        json!({"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"done"}]}]}),
+    ]);
+    body
+}
+fn thinking_answer() -> Value {
+    let mut message = strict_cache_answer();
+    message["content"] = json!([{"type":"thinking","thinking":"","signature":"answer-signature"},
+        {"type":"redacted_thinking","data":"answer-redacted"},{"type":"text","text":"Hello"}]);
+    message
+}
+fn thinking_frames() -> Vec<Value> {
+    let mut frames = strict_cache_frames();
+    for frame in &mut frames[1..4] {
+        frame["index"] = json!(2);
+    }
+    frames.splice(1..1, [
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"answer-signature"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"answer-redacted"}}),
+        json!({"type":"content_block_stop","index":1}),
+    ]);
+    frames
+}
+#[tokio::test]
+async fn thinking_survives_strict_and_native_retry_and_settles_usage_once() {
+    for streaming in [false, true] {
+        for first_native in [false, true] {
+            let first = upstream(503, "unavailable".into(), false).await;
+            let incompatible = upstream(200, "must not dispatch".into(), false).await;
+            let backup = upstream(
+                200,
+                if streaming {
+                    sse(&thinking_frames())
+                } else {
+                    thinking_answer().to_string()
+                },
+                streaming,
+            )
+            .await;
+            let limit = ConcurrencyLimit::new(1).unwrap();
+            let mut config = config(&[
+                (&first, "anthropic", first_native),
+                (&incompatible, "openai", false),
+                (&incompatible, "gemini", false),
+                (&backup, "anthropic", false),
+            ]);
+            config["models"]["public"]["quota"] = json!({"total_tokens":15,"reserve_tokens":1});
+            let resources = SharedResources::default();
+            let quotas = resources.quotas.clone();
+            let gateway = runtime_with_resources(config, &limit, Options::default(), resources);
+            let body = thinking_input(streaming);
+            let response = invoke(&gateway, body.clone()).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let output = consume(response).await;
+            assert!(output.contains("answer-signature"));
+            assert!(output.contains("answer-redacted"));
+            assert!(!output.contains("private-model"));
+            if streaming {
+                assert_eq!(output.matches("event: message_stop\n").count(), 1);
+            } else {
+                let mut expected = thinking_answer();
+                expected["model"] = json!("public");
+                assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), expected);
+            }
+            assert!(incompatible.calls.lock().unwrap().is_empty());
+            let mut expected = body.clone();
+            expected["model"] = json!("private-model");
+            for observed in [&first, &backup] {
+                let calls = observed.calls.lock().unwrap();
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0]["body"], expected);
+                assert_eq!(calls[0]["headers"]["x-api-key"], "provider-secret");
+            }
+            let balance = quotas.snapshot("public").unwrap();
+            assert_eq!((balance.used, balance.reserved), (15, 0));
+            assert_eq!(limit.available(), 1);
+            assert_eq!(
+                invoke(&gateway, body).await.status(),
+                StatusCode::TOO_MANY_REQUESTS
+            );
+        }
+    }
+}
+#[tokio::test]
+async fn malformed_strict_thinking_stream_never_retries_and_charges_known_input() {
+    let mut frames = thinking_frames();
+    frames.remove(2); // A block cannot stop before its signature.
+    let first = upstream(200, sse(&frames), true).await;
+    let backup = upstream(200, sse(&thinking_frames()), true).await;
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let mut config = config(&[(&first, "anthropic", false), (&backup, "anthropic", false)]);
+    config["models"]["public"]["quota"] = json!({"total_tokens":1,"reserve_tokens":1});
+    let resources = SharedResources::default();
+    let quotas = resources.quotas.clone();
+    let gateway = runtime_with_resources(config, &limit, Options::default(), resources);
+    let response = invoke(&gateway, thinking_input(true)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(to_bytes(response.into_body(), 65536).await.is_err());
+    assert_eq!(first.calls.lock().unwrap().len(), 1);
+    assert!(backup.calls.lock().unwrap().is_empty());
+    assert_eq!(limit.available(), 1);
+    let balance = quotas.snapshot("public").unwrap();
+    // Initial usage already reports 12 input tokens; conservative settlement keeps them.
+    assert_eq!((balance.used, balance.reserved), (12, 0));
+}
+#[tokio::test]
+async fn invalid_thinking_requests_never_dispatch() {
+    let up = upstream(200, thinking_answer().to_string(), false).await;
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let gateway = runtime(
+        config(&[(&up, "anthropic", false)]),
+        &limit,
+        Options::default(),
+    );
+    for invalid in [
+        json!({"type":"enabled","budget_tokens":1023}),
+        json!({"type":"disabled","display":"omitted"}),
+        json!({"type":"adaptive","display":"updates"}),
+    ] {
+        let mut body = thinking_input(false);
+        body["thinking"] = invalid;
+        assert_eq!(
+            invoke(&gateway, body).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(limit.available(), 1);
+    }
+    assert!(up.calls.lock().unwrap().is_empty());
+}
