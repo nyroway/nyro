@@ -225,6 +225,14 @@ The strict conversion path is an experimental Chat subset for text, user image i
 
 Protocol reference: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini generateContent](https://ai.google.dev/api/generate-content). Local matrix regression: `cargo test -p nyro-llm --test protocol_matrix`.
 
+## Anthropic thinking in strict mode
+
+Strict Anthropic Messages conversion now preserves `thinking` configuration (`enabled` with `budget_tokens`, `adaptive`, or `disabled`), with optional `display: "summarized"` or `"omitted"` for enabled/adaptive modes. Omission leaves upstream defaults unchanged. Manual budgets must be at least 1,024 tokens; model availability, sampling/tool compatibility and the relationship to `max_tokens` remain upstream checks, including the interleaved-thinking budget exception. See the official [thinking guide](https://platform.claude.com/docs/en/build-with-claude/thinking) and [manual budget rules](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#budget-rules-and-tuning).
+
+Assistant history and generated JSON retain ordered `thinking` blocks with their opaque signatures, `redacted_thinking` data, and following text/function calls. Empty thinking text is valid when a signature is present. SSE retains thinking block boundaries, summary deltas and the final signature delta, including signature-only omitted display and redacted blocks. Strict streams reject type/index mismatches, missing or repeated signatures, text after a signature, incomplete blocks and oversized thinking data. Nyro neither interprets nor verifies encrypted signatures, and does not synthesize reasoning text or token counts. Existing usage totals and conservative settlement on stream failure still apply.
+
+These fields are Anthropic-specific. OpenAI Chat/Responses and Gemini targets reject them; they are not mapped to reasoning-effort controls, ordinary answer text or another provider's signatures. Thinking after a tool-call block cannot be represented by the current IR ordering and is rejected. Beta `display: "updates"`, `output_config`, `output_tokens_details` and other extensions still require matching native mode where supported; caller beta headers are not forwarded. Native mode preserves a wider field set and does not gain strict block reconstruction from this change. This subset is covered by local codec and HTTP mock tests, not live vendor or SDK certification.
+
 ## Request cache controls
 
 Cache controls follow the official API definitions; legacy adapters are migration evidence, not a source of defaults or equivalent mappings. The current strict subset is:

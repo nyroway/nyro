@@ -262,6 +262,7 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
         })
         .transpose()?;
     let r = ChatRequest {
+        anthropic_thinking: None,
         anthropic_cache_control: None,
         model: model.into(),
         messages,
@@ -1012,6 +1013,7 @@ impl StreamEncoder {
                 || choice.index != 0
                 || choice.logprobs.is_some()
                 || choice.delta.refusal.is_some()
+                || choice.delta.anthropic_thinking.is_some()
                 || choice
                     .delta
                     .role

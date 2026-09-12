@@ -23,6 +23,7 @@ fn model(value: &str) -> Result<(), CodecError> {
 pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
     let wire: chat::Request = serde_json::from_value(value)?;
     let request = ChatRequest {
+        anthropic_thinking: None,
         anthropic_cache_control: None,
         model: wire.model,
         messages: convert(wire.messages)?,
@@ -145,6 +146,11 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
 }
 pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
     validate_chat(request)?;
+    if request.anthropic_thinking.is_some() {
+        return Err(invalid(
+            "OpenAI cannot represent Anthropic thinking configuration",
+        ));
+    }
     if request.anthropic_cache_control.is_some() {
         return Err(invalid(
             "OpenAI cannot represent Anthropic automatic caching",

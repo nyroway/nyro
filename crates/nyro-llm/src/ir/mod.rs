@@ -27,6 +27,14 @@ pub enum Content {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContentPart {
+    /// Opaque signature and original summary must travel together without modification.
+    AnthropicThinking {
+        thinking: String,
+        signature: String,
+    },
+    AnthropicRedactedThinking {
+        data: String,
+    },
     Text {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anthropic_cache_control: Option<nyro_protocol::anthropic::CacheControl>,
@@ -182,6 +190,8 @@ pub struct OpenAiOptions {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_thinking: Option<nyro_protocol::anthropic::ThinkingConfig>,
     /// Anthropic automatic caching; absence keeps the upstream default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anthropic_cache_control: Option<nyro_protocol::anthropic::CacheControl>,
@@ -388,6 +398,8 @@ pub struct StreamChoice {
 #[serde(deny_unknown_fields)]
 pub struct Delta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_thinking: Option<AnthropicThinkingDelta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
@@ -395,6 +407,16 @@ pub struct Delta {
     pub refusal: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCallDelta>>,
+}
+/// Explicit boundaries preserve signature-only and consecutive thinking blocks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AnthropicThinkingDelta {
+    Start,
+    Redacted { data: String },
+    Thinking { thinking: String },
+    Signature { signature: String },
+    Stop,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -788,6 +788,12 @@ impl StreamEncoder {
         let mut out = String::new();
         match event {
             ChatEvent::Chunk(c) => {
+                if c.choices
+                    .iter()
+                    .any(|c| c.delta.anthropic_thinking.is_some())
+                {
+                    return Err(bad("Responses cannot represent Anthropic thinking"));
+                }
                 if c.system_fingerprint.is_some() {
                     return Err(bad("Responses cannot represent system_fingerprint"));
                 }
