@@ -19,6 +19,15 @@ fn message(role: Role, content: Option<Content>) -> Message {
         audio: None,
     }
 }
+fn push_history(messages: &mut Vec<Message>, mut next: Message) {
+    if next.role == Role::Assistant
+        && let Some(previous) = messages.last_mut().filter(|m| m.role == Role::Assistant)
+    {
+        previous.items.append(&mut next.items);
+    } else {
+        messages.push(next);
+    }
+}
 fn nonempty(s: &str) -> Result<(), CodecError> {
     if s.trim().is_empty() {
         Err(bad("Responses identity/name must be nonempty"))
@@ -65,10 +74,13 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                 match item {
                     wire::InputItem::Item(wire::HistoryItem::Reasoning(item)) => {
                         validate_reasoning(&item, true)?;
-                        messages.push(message(
-                            Role::Assistant,
-                            Some(Content::Parts(vec![ContentPart::ResponsesReasoning(item)])),
-                        ));
+                        push_history(
+                            &mut messages,
+                            message(
+                                Role::Assistant,
+                                Some(Content::Parts(vec![ContentPart::ResponsesReasoning(item)])),
+                            ),
+                        );
                     }
                     wire::InputItem::Message(m) => {
                         if m.r#type.as_deref().is_some_and(|s| s != "message") {
@@ -85,7 +97,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                         let content = match m.content {
                             wire::InputContent::Text(text) => Content::Text(text),
                             wire::InputContent::Parts(parts) => {
-                                if parts.is_empty() {
+                                if parts.is_empty() && role != Role::Assistant {
                                     return Err(bad("Responses message content must be nonempty"));
                                 }
                                 Content::Parts(
@@ -139,14 +151,20 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                                 )
                             }
                         };
-                        messages.push(message(role, Some(content)));
+                        let mut decoded = message(role, None);
+                        decoded.items.push(MessageItem::ResponsesMessage {
+                            id: m.id,
+                            status: m.status.as_deref().map(item_status).transpose()?,
+                            content,
+                        });
+                        push_history(&mut messages, decoded);
                     }
                     wire::InputItem::Item(wire::HistoryItem::FunctionCall {
                         call_id,
                         name,
                         arguments,
                         status,
-                        ..
+                        id,
                     }) => {
                         nonempty(&call_id)?;
                         nonempty(&name)?;
@@ -158,12 +176,16 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                             .last_mut()
                             .unwrap()
                             .items
-                            .push(MessageItem::ToolCall(ToolCall::Function {
-                                gemini: None,
-                                anthropic_cache_control: None,
-                                id: call_id,
-                                function: FunctionCall { name, arguments },
-                            }));
+                            .push(MessageItem::ResponsesToolCall {
+                                id,
+                                status: status.as_deref().map(item_status).transpose()?,
+                                call: ToolCall::Function {
+                                    gemini: None,
+                                    anthropic_cache_control: None,
+                                    id: call_id,
+                                    function: FunctionCall { name, arguments },
+                                },
+                            });
                     }
                     wire::InputItem::Item(wire::HistoryItem::FunctionCallOutput {
                         call_id,
@@ -340,13 +362,13 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
     portable.responses_reasoning = None;
     portable.responses_include_encrypted = false;
     for m in &mut portable.messages {
-        let (_, content) = split_reasoning(m.content(), m.role == Role::Assistant)?;
-        m.items.retain(|i| !matches!(i, MessageItem::Content(_)));
-        if let Some(content) = content {
-            m.items.insert(0, MessageItem::Content(content));
+        for item in &mut m.items {
+            if let Some(Content::Parts(parts)) = item.as_content_mut() {
+                parts.retain(|part| !matches!(part, ContentPart::ResponsesReasoning(_)));
+            }
         }
     }
-    super::encode_chat(&portable)?;
+    super::validate_portable_chat(&portable)?;
     let g = &r.generation;
     let o = &r.openai;
     if g.frequency_penalty.is_some()
@@ -381,12 +403,19 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             return Err(bad("unsupported Responses message metadata"));
         }
         if m.role == Role::Tool {
-            let output = match m.content() {
-                Some(Content::Text(s)) => json!(s),
-                Some(content @ Content::Parts(_)) => {
-                    json!(content_parts(content, false, false, true)?)
+            let output = if m.items.len() == 1
+                && let Some(Content::Text(text)) = m.items[0].as_content()
+            {
+                json!(text)
+            } else {
+                let mut parts = Vec::new();
+                for item in &m.items {
+                    let content = item
+                        .as_content()
+                        .ok_or_else(|| bad("function result requires text"))?;
+                    parts.extend(content_parts(content, false, false, true)?);
                 }
-                None => return Err(bad("function result requires text")),
+                json!(parts)
             };
             if m.refusal.is_some() {
                 return Err(bad("function result cannot contain refusal"));
@@ -396,33 +425,42 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             );
             continue;
         }
-        let (reasoning, content) = split_reasoning(m.content(), m.role == Role::Assistant)?;
-        input.extend(
-            reasoning
-                .into_iter()
-                .map(|r| json!(wire::OutputItem::Reasoning(r))),
-        );
-        let mut parts = content
-            .as_ref()
-            .map(|c| content_parts(c, m.role == Role::Assistant, m.role == Role::User, true))
-            .transpose()?
-            .unwrap_or_default();
-        if let Some(refusal) = &m.refusal {
-            if m.role != Role::Assistant {
-                return Err(bad("refusal requires assistant role"));
+        for item in body_items(&m.items, m.refusal.as_deref())? {
+            let (id, state) = item_metadata(&item);
+            if let Some(state) = state {
+                history_status(Some(state.as_str()))?;
             }
-            if parts.iter().any(|p| p["type"] == "input_text") {
-                return Err(bad("marked assistant input cannot contain refusal"));
+            if let Some(content) = item.as_content() {
+                input.extend(encode_content_items(
+                    content,
+                    &m.role,
+                    true,
+                    matches!(&item, MessageItem::ResponsesMessage { .. }).then_some((id, state)),
+                    None,
+                    &mut 0,
+                )?);
+            } else if let Some(ToolCall::Function {
+                id: call_id,
+                function,
+                gemini,
+                anthropic_cache_control,
+            }) = item.as_tool_call()
+            {
+                if gemini.is_some() || anthropic_cache_control.is_some() {
+                    return Err(bad("unsupported Responses call metadata"));
+                }
+                nonempty(call_id)?;
+                nonempty(&function.name)?;
+                let mut value = json!({"type":"function_call","call_id":call_id,"name":function.name,"arguments":function.arguments});
+                if let Some(id) = id {
+                    nonempty(id)?;
+                    value["id"] = json!(id);
+                }
+                if let Some(state) = state {
+                    value["status"] = json!(state);
+                }
+                input.push(value);
             }
-            parts.push(json!({"type":"refusal","refusal":refusal}));
-        }
-        if !parts.is_empty() {
-            input.push(json!({"type":"message","role":m.role,"content":parts}));
-        }
-        for ToolCall::Function { id, function, .. } in m.tool_calls() {
-            nonempty(id)?;
-            nonempty(&function.name)?;
-            input.push(json!({"type":"function_call","call_id":id,"name":function.name,"arguments":function.arguments}));
         }
     }
     let mut v = json!({"model":r.model,"input":input,"store":false});
@@ -568,9 +606,6 @@ fn validate_part(part: &wire::OutputPart) -> Result<(), CodecError> {
 fn validate_items(items: &[wire::OutputItem], terminal: bool) -> Result<(), CodecError> {
     let mut ids = BTreeSet::new();
     let mut calls = BTreeSet::new();
-    let mut saw_tool = false;
-    let mut saw_message = false;
-    let mut saw_refusal = false;
     for item in items {
         nonempty(item.id())?;
         if !ids.insert(item.id())
@@ -582,26 +617,13 @@ fn validate_items(items: &[wire::OutputItem], terminal: bool) -> Result<(), Code
         match item {
             wire::OutputItem::Reasoning(r) => {
                 validate_reasoning(r, terminal)?;
-                if saw_tool || saw_message {
-                    return Err(bad(
-                        "reasoning after message/function calls cannot preserve output order",
-                    ));
-                }
             }
             wire::OutputItem::Message { role, content, .. } => {
-                saw_message = true;
-                if role != "assistant" || saw_tool {
+                if role != "assistant" {
                     return Err(bad("Responses output order/role cannot be represented"));
                 }
                 for part in content {
                     validate_part(part)?;
-                    match part {
-                        wire::OutputPart::Refusal { .. } => saw_refusal = true,
-                        wire::OutputPart::OutputText { .. } if saw_refusal => {
-                            return Err(bad("text after refusal cannot be represented"));
-                        }
-                        _ => {}
-                    }
                 }
             }
             wire::OutputItem::FunctionCall { call_id, name, .. } => {
@@ -610,7 +632,6 @@ fn validate_items(items: &[wire::OutputItem], terminal: bool) -> Result<(), Code
                 if !calls.insert(call_id) {
                     return Err(bad("duplicate Responses call_id"));
                 }
-                saw_tool = true;
             }
         }
     }
@@ -730,59 +751,54 @@ fn decode_response(r: wire::Response) -> Result<ChatResponse, CodecError> {
     validate_envelope(&r)?;
     validate_items(&r.output, true)?;
     let finish = finish_reason(&r)?;
-    let mut reasoning = Vec::new();
-    let mut text = String::new();
-    let mut refusal = String::new();
-    let mut saw_text = false;
-    let mut saw_refusal = false;
-    let mut calls = Vec::new();
+    let mut items = Vec::new();
     for item in r.output {
-        match item {
+        items.push(match item {
             wire::OutputItem::Reasoning(item) => {
-                reasoning.push(ContentPart::ResponsesReasoning(item))
+                MessageItem::Content(Content::Parts(vec![ContentPart::ResponsesReasoning(item)]))
             }
-            wire::OutputItem::Message { content, .. } => {
-                for part in content {
-                    match part {
-                        wire::OutputPart::OutputText { text: t, .. } => {
-                            if saw_refusal {
-                                return Err(bad("text after refusal cannot be represented"));
+            wire::OutputItem::Message {
+                id,
+                status,
+                content,
+                ..
+            } => MessageItem::ResponsesMessage {
+                id: Some(id),
+                status: Some(item_status(&status)?),
+                content: Content::Parts(
+                    content
+                        .into_iter()
+                        .map(|part| match part {
+                            wire::OutputPart::OutputText { text, .. } => ContentPart::Text {
+                                text,
+                                anthropic_cache_control: None,
+                                prompt_cache_breakpoint: None,
+                            },
+                            wire::OutputPart::Refusal { refusal } => {
+                                ContentPart::Refusal { refusal }
                             }
-                            text.push_str(&t);
-                            saw_text = true;
-                        }
-                        wire::OutputPart::Refusal { refusal: r } => {
-                            refusal.push_str(&r);
-                            saw_refusal = true;
-                        }
-                    }
-                }
-            }
+                        })
+                        .collect(),
+                ),
+            },
             wire::OutputItem::FunctionCall {
+                id,
+                status,
                 call_id,
                 name,
                 arguments,
-                ..
-            } => calls.push(ToolCall::Function {
-                gemini: None,
-                anthropic_cache_control: None,
-                id: call_id,
-                function: FunctionCall { name, arguments },
-            }),
-        }
+            } => MessageItem::ResponsesToolCall {
+                id: Some(id),
+                status: Some(item_status(&status)?),
+                call: ToolCall::Function {
+                    gemini: None,
+                    anthropic_cache_control: None,
+                    id: call_id,
+                    function: FunctionCall { name, arguments },
+                },
+            },
+        });
     }
-    let content = if reasoning.is_empty() {
-        saw_text.then_some(Content::Text(text))
-    } else {
-        if saw_text {
-            reasoning.push(ContentPart::Text {
-                text,
-                anthropic_cache_control: None,
-                prompt_cache_breakpoint: None,
-            });
-        }
-        Some(Content::Parts(reasoning))
-    };
     Ok(ChatResponse {
         id: r.id,
         object: "chat.completion".into(),
@@ -792,8 +808,8 @@ fn decode_response(r: wire::Response) -> Result<ChatResponse, CodecError> {
             index: 0,
             message: ResponseMessage {
                 role: Role::Assistant,
-                items: MessageItem::from_parts(content, (!calls.is_empty()).then_some(calls)),
-                refusal: saw_refusal.then_some(refusal),
+                items,
+                refusal: None,
                 audio: None,
             },
             finish_reason: Some(finish.into()),
@@ -847,41 +863,41 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     {
         return Err(bad("unsupported Responses response role/audio/logprobs"));
     }
-    let (reasoning, content) = split_reasoning(m.content(), true)?;
-    let mut output: Vec<Value> = reasoning
-        .into_iter()
-        .map(|r| json!(wire::OutputItem::Reasoning(r)))
-        .collect();
-    let mut parts = content
-        .as_ref()
-        .map(|c| content_parts(c, true, false, false))
-        .transpose()?
-        .unwrap_or_default();
-    if let Some(refusal) = &m.refusal {
-        parts.push(json!({"type":"refusal","refusal":refusal}));
-    }
     let finish = c
         .finish_reason
         .as_deref()
         .ok_or_else(|| bad("Responses requires terminal finish reason"))?;
     let (state, _) = status(finish)?;
-    if !parts.is_empty() {
-        output.push(json!({"type":"message","id":format!("msg_{}_0",r.id),"role":"assistant","status":state,"content":parts}));
-    }
-    for (
-        i,
-        ToolCall::Function {
-            id,
+    let mut output = Vec::new();
+    let mut message_index = 0;
+    let mut call_index = 0;
+    for item in body_items(&m.items, m.refusal.as_deref())? {
+        let (id, item_state) = item_metadata(&item);
+        if let Some(content) = item.as_content() {
+            output.extend(encode_content_items(
+                content,
+                &m.role,
+                false,
+                matches!(&item, MessageItem::ResponsesMessage { .. }).then_some((id, item_state)),
+                Some((&r.id, state)),
+                &mut message_index,
+            )?);
+        } else if let Some(ToolCall::Function {
+            id: call_id,
             function,
             gemini,
-            ..
-        },
-    ) in m.tool_calls().enumerate()
-    {
-        if gemini.is_some() {
-            return Err(bad("Responses cannot represent Gemini call signatures"));
+            anthropic_cache_control,
+        }) = item.as_tool_call()
+        {
+            if gemini.is_some() || anthropic_cache_control.is_some() {
+                return Err(bad("unsupported Responses call metadata"));
+            }
+            let id = id
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("fc_{}_{call_index}", r.id));
+            call_index += 1;
+            output.push(json!({"type":"function_call","id":id,"status":item_state.map_or(state, wire::ItemStatus::as_str),"call_id":call_id,"name":function.name,"arguments":function.arguments}));
         }
-        output.push(json!({"type":"function_call","id":format!("fc_{}_{i}",r.id),"status":state,"call_id":id,"name":function.name,"arguments":function.arguments}));
     }
     let items: Vec<wire::OutputItem> = serde_json::from_value(json!(output))?;
     validate_items(&items, true)?;
@@ -912,25 +928,129 @@ fn validate_reasoning(r: &wire::ReasoningItem, terminal: bool) -> Result<(), Cod
 }
 // The current Chat IR can preserve reasoning prefixes, but cannot interleave them
 // with function calls or split ordinary output messages without moving content.
-fn split_reasoning(
-    content: Option<&Content>,
-    assistant: bool,
-) -> Result<(Vec<wire::ReasoningItem>, Option<Content>), CodecError> {
-    let Some(Content::Parts(parts)) = content else {
-        return Ok((Vec::new(), content.cloned()));
-    };
-    let mut reasoning = Vec::new();
-    let mut rest = Vec::new();
-    for p in parts {
-        if let ContentPart::ResponsesReasoning(r) = p {
-            if !assistant || !rest.is_empty() {
-                return Err(bad("Responses reasoning requires an assistant prefix"));
+fn item_status(value: &str) -> Result<wire::ItemStatus, CodecError> {
+    match value {
+        "in_progress" => Ok(wire::ItemStatus::InProgress),
+        "completed" => Ok(wire::ItemStatus::Completed),
+        "incomplete" => Ok(wire::ItemStatus::Incomplete),
+        _ => Err(bad("invalid Responses item status")),
+    }
+}
+fn item_metadata(item: &MessageItem) -> (Option<&str>, Option<&wire::ItemStatus>) {
+    match item {
+        MessageItem::ResponsesMessage { id, status, .. }
+        | MessageItem::ResponsesToolCall { id, status, .. } => (id.as_deref(), status.as_ref()),
+        _ => (None, None),
+    }
+}
+fn body_items(
+    items: &[MessageItem],
+    refusal: Option<&str>,
+) -> Result<Vec<MessageItem>, CodecError> {
+    let mut items = items.to_vec();
+    if let Some(refusal) = refusal {
+        if items
+            .iter()
+            .filter(|item| item.as_content().is_some())
+            .count()
+            > 1
+        {
+            return Err(bad("separate refusal has ambiguous ordered placement"));
+        }
+        let part = ContentPart::Refusal {
+            refusal: refusal.into(),
+        };
+        if let Some(content) = items.iter_mut().find_map(MessageItem::as_content_mut) {
+            match content {
+                Content::Text(text) => {
+                    *content = Content::Parts(vec![
+                        ContentPart::Text {
+                            text: std::mem::take(text),
+                            anthropic_cache_control: None,
+                            prompt_cache_breakpoint: None,
+                        },
+                        part,
+                    ])
+                }
+                Content::Parts(parts) => parts.push(part),
             }
-            validate_reasoning(r, true)?;
-            reasoning.push(r.clone());
         } else {
-            rest.push(p.clone());
+            items.insert(0, MessageItem::Content(Content::Parts(vec![part])));
         }
     }
-    Ok((reasoning, Some(Content::Parts(rest))))
+    Ok(items)
+}
+fn encode_content_items(
+    content: &Content,
+    role: &Role,
+    input: bool,
+    metadata: Option<(Option<&str>, Option<&wire::ItemStatus>)>,
+    output: Option<(&str, &str)>,
+    next_message: &mut usize,
+) -> Result<Vec<Value>, CodecError> {
+    let (id, state) = metadata.unwrap_or((None, None));
+    if let Some(id) = id {
+        nonempty(id)?;
+    }
+    let assistant = *role == Role::Assistant
+        && !(input
+            && matches!(content, Content::Parts(parts) if parts.iter().any(|p| matches!(p,ContentPart::Text {prompt_cache_breakpoint:Some(_),..}))));
+    let mut items = Vec::new();
+    let mut parts = Vec::new();
+    let flush = |parts: &mut Vec<Value>, items: &mut Vec<Value>, next: &mut usize| {
+        let mut value = json!({"type":"message","role":role,"content":std::mem::take(parts)});
+        if let Some((response_id, default_status)) = output {
+            value["id"] = json!(
+                id.map(str::to_owned)
+                    .unwrap_or_else(|| format!("msg_{response_id}_{}", *next))
+            );
+            value["status"] = json!(
+                state
+                    .map(wire::ItemStatus::as_str)
+                    .unwrap_or(default_status)
+            );
+        } else {
+            if let Some(id) = id {
+                value["id"] = json!(id);
+            }
+            if let Some(state) = state {
+                value["status"] = json!(state);
+            }
+        }
+        *next += 1;
+        items.push(value);
+    };
+    match content {
+        Content::Text(_) => parts.extend(content_parts(
+            content,
+            assistant,
+            *role == Role::User,
+            input,
+        )?),
+        Content::Parts(content) => {
+            for part in content {
+                if let ContentPart::ResponsesReasoning(reasoning) = part {
+                    if *role != Role::Assistant || metadata.is_some() {
+                        return Err(bad("reasoning cannot belong to a Responses message item"));
+                    }
+                    validate_reasoning(reasoning, true)?;
+                    if !parts.is_empty() {
+                        flush(&mut parts, &mut items, next_message);
+                    }
+                    items.push(json!(wire::OutputItem::Reasoning(reasoning.clone())));
+                } else {
+                    parts.extend(content_parts(
+                        &Content::Parts(vec![part.clone()]),
+                        assistant,
+                        *role == Role::User,
+                        input,
+                    )?);
+                }
+            }
+        }
+    }
+    if !parts.is_empty() || metadata.is_some() {
+        flush(&mut parts, &mut items, next_message);
+    }
+    Ok(items)
 }

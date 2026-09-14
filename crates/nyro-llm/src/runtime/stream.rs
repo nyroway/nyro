@@ -42,7 +42,10 @@ impl Decode {
     }
 }
 enum Encode {
-    Openai { model: String, include_usage: bool },
+    Openai {
+        encoder: openai::StreamEncoder,
+        include_usage: bool,
+    },
     Responses(openai::responses::StreamEncoder),
     Anthropic(anthropic::StreamEncoder),
     Gemini(gemini::StreamEncoder),
@@ -51,7 +54,7 @@ impl Encode {
     fn push(&mut self, event: &ChatEvent) -> Result<String, CodecError> {
         match self {
             Self::Openai {
-                model,
+                encoder,
                 include_usage,
             } => {
                 if let ChatEvent::Chunk(chunk) = event
@@ -65,9 +68,9 @@ impl Encode {
                     }
                     let mut chunk = chunk.clone();
                     chunk.usage = None;
-                    return openai::encode_chat_event(&ChatEvent::Chunk(chunk), model);
+                    return encoder.push(&ChatEvent::Chunk(chunk));
                 }
-                openai::encode_chat_event(event, model)
+                encoder.push(event)
             }
             Self::Responses(encoder) => encoder.push(event),
             Self::Anthropic(encoder) => encoder.push(event),
@@ -115,7 +118,7 @@ impl StreamState {
                 openai::responses::StreamEncoder::with_limit(model, max_bytes),
             ),
             ChatFormat::OpenAiChat => Encode::Openai {
-                model,
+                encoder: openai::StreamEncoder::with_limit(model, max_bytes),
                 include_usage,
             },
             ChatFormat::Anthropic => {

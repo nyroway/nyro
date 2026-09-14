@@ -196,7 +196,7 @@ fn invalid_reasoning_items_and_unsupported_order_are_rejected() {
             "{item}"
         );
     }
-    assert!(r::decode_chat_response(response(json!([message(), reasoning()]))).is_err());
+    assert!(r::decode_chat_response(response(json!([message(), reasoning()]))).is_ok());
     assert!(r::decode_chat_response(response(json!([reasoning(), reasoning()]))).is_err());
     let mut ir = r::decode_chat(json!({"model":"m","input":[reasoning()]})).unwrap();
     ir.messages[0].role = nyro_llm::ir::Role::User;
@@ -440,9 +440,143 @@ fn reasoning_positions_preserve_summary_indices_and_reject_retargeting() {
 }
 
 #[test]
-fn ordered_history_is_validated_before_reasoning_projection() {
+fn ordered_history_preserves_reasoning_after_function_call() {
     let body = json!({"model":"m","input":[reasoning(),{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}]});
     let mut request = r::decode_chat(body).unwrap();
     request.messages[0].items.swap(0, 1);
-    assert!(r::encode_chat(&request).is_err());
+    let encoded = r::encode_chat(&request).unwrap();
+    assert_eq!(encoded["input"][0]["type"], "function_call");
+    assert_eq!(encoded["input"][1], reasoning());
+}
+
+fn interleaved_output() -> Value {
+    let mut after = message();
+    after["id"] = json!("msg_after");
+    after["content"][0]["text"] = json!("After the call");
+    json!([
+        message(),
+        {"type":"function_call","id":"fc_original","call_id":"call_original","name":"lookup","arguments":"{}","status":"completed"},
+        reasoning(),
+        after
+    ])
+}
+
+#[test]
+fn interleaved_json_preserves_content_calls_and_reasoning_in_order() {
+    let decoded = r::decode_chat_response(response(interleaved_output())).unwrap();
+    assert_eq!(decoded.choices[0].message.items.len(), 4);
+    let encoded = r::encode_chat_response(&decoded).unwrap();
+    let output = encoded["output"].as_array().unwrap();
+    assert_eq!(
+        output
+            .iter()
+            .map(|item| item["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["message", "function_call", "reasoning", "message"]
+    );
+    assert_eq!(output[0]["content"][0]["text"], "Answer");
+    assert_eq!(output[1]["call_id"], "call_original");
+    assert_eq!(output[2], reasoning());
+    assert_eq!(output[3]["content"][0]["text"], "After the call");
+}
+
+#[test]
+fn interleaved_snapshot_stream_closes_items_before_following_output() {
+    let mut decoder = r::StreamDecoder::new();
+    let mut encoder = r::StreamEncoder::new("m".into());
+    let mut output = String::new();
+    for event in decoder
+        .push(&event(
+            0,
+            "response.completed",
+            json!({"response":response(interleaved_output())}),
+        ))
+        .unwrap()
+    {
+        output.push_str(&encoder.push(&event).unwrap());
+    }
+    let frames = Decoder::new(1024 * 1024).push(output.as_bytes()).unwrap();
+    let values: Vec<Value> = frames
+        .iter()
+        .map(|frame| serde_json::from_str(&frame.data).unwrap())
+        .collect();
+    let function_done = values
+        .iter()
+        .position(|e| {
+            e["type"] == "response.output_item.done" && e["item"]["type"] == "function_call"
+        })
+        .unwrap();
+    let reasoning_start = values
+        .iter()
+        .position(|e| e["type"] == "response.output_item.added" && e["item"]["type"] == "reasoning")
+        .unwrap();
+    assert!(function_done < reasoning_start);
+    assert_eq!(
+        serde_json::from_value::<Vec<nyro_protocol::openai::responses::OutputItem>>(
+            values.last().unwrap()["response"]["output"].clone()
+        )
+        .unwrap(),
+        serde_json::from_value::<Vec<nyro_protocol::openai::responses::OutputItem>>(
+            interleaved_output()
+        )
+        .unwrap(),
+    );
+    let mut second = r::StreamDecoder::new();
+    for frame in frames {
+        second.push(&frame).unwrap();
+    }
+    second.finish().unwrap();
+}
+
+#[test]
+fn overlapping_message_items_keep_start_order_when_second_body_arrives_first() {
+    let messages = ["a", "b"].map(|id| json!({"type":"message","id":id,"role":"assistant","status":"completed","content":[{"type":"output_text","text":id,"annotations":[],"logprobs":[]}]}));
+    let mut initial = response(json!([]));
+    initial["status"] = json!("in_progress");
+    initial["usage"] = Value::Null;
+    let mut raw = vec![("response.created", json!({"response":initial}))];
+    for (index, message) in messages.iter().enumerate() {
+        let mut start = message.clone();
+        start["status"] = json!("in_progress");
+        start["content"] = json!([]);
+        raw.push((
+            "response.output_item.added",
+            json!({"output_index":index,"item":start}),
+        ));
+    }
+    for index in [1, 0] {
+        let id = messages[index]["id"].as_str().unwrap();
+        let part = &messages[index]["content"][0];
+        raw.extend([
+            ("response.content_part.added", json!({"output_index":index,"item_id":id,"content_index":0,"part":{"type":"output_text","text":"","annotations":[],"logprobs":[]}})),
+            ("response.output_text.delta", json!({"output_index":index,"item_id":id,"content_index":0,"delta":id})),
+            ("response.output_text.done", json!({"output_index":index,"item_id":id,"content_index":0,"text":id})),
+            ("response.content_part.done", json!({"output_index":index,"item_id":id,"content_index":0,"part":part})),
+            ("response.output_item.done", json!({"output_index":index,"item":messages[index]})),
+        ]);
+    }
+    raw.push((
+        "response.completed",
+        json!({"response":response(json!(messages))}),
+    ));
+    let mut decoder = r::StreamDecoder::new();
+    let mut encoder = r::StreamEncoder::new("public".into());
+    let mut wire = String::new();
+    for (sequence, (kind, fields)) in raw.into_iter().enumerate() {
+        for decoded in decoder.push(&event(sequence, kind, fields)).unwrap() {
+            wire.push_str(&encoder.push(&decoded).unwrap());
+        }
+    }
+    decoder.finish().unwrap();
+    let frames = Decoder::new(1024 * 1024).push(wire.as_bytes()).unwrap();
+    let mut second = r::StreamDecoder::new();
+    for frame in &frames {
+        second.push(frame).unwrap();
+    }
+    second.finish().unwrap();
+    let terminal: Value = serde_json::from_str(&frames.last().unwrap().data).unwrap();
+    assert_eq!(terminal["response"]["output"][0]["id"], "a");
+    assert_eq!(terminal["response"]["output"][1]["id"], "b");
+    assert_eq!(terminal["response"]["output"][0]["content"][0]["text"], "a");
+    assert_eq!(terminal["response"]["output"][1]["content"][0]["text"], "b");
 }

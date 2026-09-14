@@ -231,7 +231,7 @@ Anthropic Messages 严格转换保留 `thinking` 配置：带 `budget_tokens` �
 
 assistant 历史和生成 JSON 按顺序保留 `thinking` 文本与不透明签名、`redacted_thinking` 数据及其后的文本／函数调用。存在签名时允许空 thinking 文本。SSE 保留推理块边界、摘要增量与最终签名事件，包括 omitted 模式下只有签名的块及 redacted 块。严格流拒绝类型／索引不匹配、缺失或重复签名、签名后的文本、未完成块及超限推理数据。Nyro 不解释或验证加密签名，不生成推理文本或推算推理 token；沿用既有用量合计与流失败保守结算。
 
-这些字段属于 Anthropic 专有语义；OpenAI Chat／Responses 和 Gemini 目标明确拒绝，不映射为 reasoning effort、普通回答文本或其他厂商签名。当前 IR 无法保持工具调用块之后的 thinking 顺序，因此明确拒绝。beta `display: "updates"`、`output_config`、`output_tokens_details` 及其他扩展仍需在支持时使用匹配的原生模式；调用方 beta Header 不转发。原生模式保留更广字段，本次没有为它增加严格块重建。该子集有本地 codec／HTTP mock 回归，不代表真实厂商或 SDK 认证。
+这些字段属于 Anthropic 专有语义；OpenAI Chat／Responses 和 Gemini 目标明确拒绝，不映射为 reasoning effort、普通回答文本或其他厂商签名。同协议历史、JSON 和 SSE 保留工具调用块之后的 thinking 与正文顺序。beta `display: "updates"`、`output_config`、`output_tokens_details` 及其他扩展仍需在支持时使用匹配的原生模式；调用方 beta Header 不转发。原生模式保留更广字段，本次没有为它增加严格块重建。该子集有本地 codec／HTTP mock 回归，不代表真实厂商或 SDK 认证。
 
 ## 严格模式下的 Gemini thinking
 
@@ -239,7 +239,7 @@ assistant 历史和生成 JSON 按顺序保留 `thinking` 文本与不透明签�
 
 model 文本 Part 保留 `thought` 和不透明 `thoughtSignature`，包括带签名但文本为空／缺省的 Part；带签名 Part 不与相邻文本合并。客户端函数调用 Part 在历史、JSON 及 SSE 中保留签名与原有可选 ID；内部工具结果关联使用的合成 ID 不写入原本没有 ID 的带签名调用。签名作为不透明字符串保存，不做密码学校验或替换。遵循官方[签名回放规则](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)。
 
-该能力只保留 Gemini 自身语义，OpenAI Chat／Responses 与 Anthropic 目标明确拒绝。system／user／工具结果或图片 Part 上的推理／签名元数据，以及函数调用后的文本／签名 Part，仍不属于严格子集；匹配原生模式保留更广的 JSON 字段。SSE 保留各 Part 边界，等待正常 EOF 并处理末尾用量帧后才交付结束原因；复制响应身份前检查拆帧展开规模。同帧已知用量在首个 Part 编码前观测，避免不兼容输出导致已报告用量丢失。thinking token 沿用既有规则，只计入 IR 输出总量一次。本地 codec／HTTP 回归覆盖重试、凭证、配额及畸形／截断流，不代表真实模型或完整 SDK 会话认证。
+该能力只保留 Gemini 自身语义，OpenAI Chat／Responses 与 Anthropic 目标明确拒绝。system／user／工具结果或图片 Part 上的推理／签名元数据仍不属于严格子集；同协议历史、JSON 和 SSE 保留函数调用后的文本／签名 Part；匹配原生模式保留更广的 JSON 字段。SSE 保留各 Part 边界，等待正常 EOF 并处理末尾用量帧后才交付结束原因；复制响应身份前检查拆帧展开规模。同帧已知用量在首个 Part 编码前观测，避免不兼容输出导致已报告用量丢失。thinking token 沿用既有规则，只计入 IR 输出总量一次。本地 codec／HTTP 回归覆盖重试、凭证、配额及畸形／截断流，不代表真实模型或完整 SDK 会话认证。
 
 ## 请求缓存控制
 
@@ -418,7 +418,7 @@ curl http://127.0.0.1:19530/v1/responses \
 
 函数结果 `function_call_output.output` 接受字符串或仅包含 `input_text` 块的数组，包括空数组。转换保留块边界，不拼接文本。多个结果块无法严格转换到 Gemini 目标；媒体及其他结果块类型被拒绝。
 
-此严格转换路径仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、原始 reasoning text、用户图片子集以外的媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段及 message／function item ID 会归一化；reasoning item ID 为历史回传保留，不保证精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
+此严格转换路径仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、原始 reasoning text、用户图片子集以外的媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段会归一化；同 API 保留 message／function／reasoning item ID 和状态，其他 API 规范化容器元数据，函数调用 ID 独立保留。不保证精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
 
 SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和完整终态快照，不输出 `[DONE]`。token 上限／内容过滤结束会映射成 `response.incomplete`；上游失败、内容矛盾、格式错误或断流不会伪造成功终态。严格 Responses 上游流关闭 obfuscation。此子集不代表已经完整兼容 Responses SDK 或 Codex CLI。
 
@@ -428,9 +428,9 @@ SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和
 
 严格 Responses 保留 `reasoning.effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`）、`summary` 和已弃用的 `generate_summary`（`auto`、`concise`、`detailed`）、`context`（`auto`、`current_turn`、`all_turns`）以及由上游定义的 `mode` 字符串。Nyro 不注入默认值，不校验模型专属组合。兼容旧写法 `include: ["reasoning.encrypted_content"]`；省略时不会主动添加 include。当前官方[推理指南](https://developers.openai.com/api/docs/guides/reasoning)说明无状态响应默认返回加密推理内容，控制字段依据[创建请求 schema](https://developers.openai.com/api/reference/python/resources/responses/methods/create)。
 
-assistant 历史及生成 JSON 保留 reasoning item ID、有序 `summary_text` 块（含空摘要）、可选 item status 和不透明的 `encrypted_content`。SSE 保留顺序推理 item 及摘要 part／text 生命周期事件。`response.output_item.added` 中的密文可能不完整；以 `response.output_item.done` 的最终值保留，并与终态快照核对。摘要文本与身份必须和已接收增量一致，摘要 part 的中断状态也会保留。Nyro 不解密或合成推理；`reasoning_tokens` 是输出用量子集，不额外累加。仅含终态快照的流会在下游转换前交付已知用量，并限制展开后的增量大小。
+assistant 历史及生成 JSON 保留 reasoning item ID、有序 `summary_text` 块（含空摘要）、可选 item status 和不透明的 `encrypted_content`。SSE 保留 reasoning／message／function items 的交错顺序及摘要 part／text 生命周期事件。`response.output_item.added` 中的密文可能不完整；以 `response.output_item.done` 的最终值保留，并与终态快照核对。摘要文本与身份必须和已接收增量一致，摘要 part 的中断状态也会保留。Nyro 不解密或合成推理；`reasoning_tokens` 是输出用量子集，不额外累加。仅含终态快照的流会在下游转换前交付已知用量，并限制展开后的增量大小。
 
-Responses 推理历史与生成 item 仍属于 API 专有能力。仅含 effort 的请求配置可以映射到 OpenAI Chat Completions；其他 Responses 控制及全部推理 item 在 Chat Completions、Anthropic 和 Gemini 目标上明确拒绝。输出支持 reasoning items → 普通消息内容 → 函数调用的顺序。原始 `reasoning_text` 内容／事件、普通输出或函数调用后的 reasoning、重叠推理 item 及不支持的扩展在严格转换中拒绝；匹配原生模式继续提供更广的原样载荷支持。可选原始 content 数组为空或 null 时接受。错误索引、重复 ID、冲突快照、未结束 item 及超限流不会生成伪成功终态。本地回归覆盖 codec、回环 HTTP、重试、公开模型别名与配额结算，不代表真实 SDK／客户端会话认证。事件定义见官方[流式接口](https://developers.openai.com/api/reference/resources/responses/streaming-events)。
+Responses 推理历史与生成 item 仍属于 API 专有能力。仅含 effort 的请求配置可以映射到 OpenAI Chat Completions；其他 Responses 控制及全部推理 item 在 Chat Completions、Anthropic 和 Gemini 目标上明确拒绝。输出支持 reasoning、普通消息与函数调用交错排列，包含调用后的 reasoning。原始 `reasoning_text` 内容／事件及不支持的扩展在严格转换中拒绝；匹配原生模式继续提供更广的原样载荷支持。可选原始 content 数组为空或 null 时接受。错误索引、重复 ID、冲突快照、未结束 item 及超限流不会生成伪成功终态。本地回归覆盖 codec、回环 HTTP、重试、公开模型别名与配额结算，不代表真实 SDK／客户端会话认证。事件定义见官方[流式接口](https://developers.openai.com/api/reference/resources/responses/streaming-events)。
 
 ## 推理转换与旧行为取舍
 
@@ -447,7 +447,7 @@ OpenAI 官方将 Chat Completions 的 `reasoning_effort` 与 Responses 的 `reas
 
 请求 effort 可转换**不代表输出一定可转换**：Responses 上游即使未请求摘要，也可能返回 reasoning items。Chat Completions 入口无法表达这些输出时，JSON 失败，或已交付的流中断且不返回成功终态；已知用量仍纳入结算。需要保留 reasoning items 时应使用匹配的 Responses 入口。直接构造 IR 的两处 effort 冲突时拒绝，相等时合并且不覆盖其他 Responses 控制。
 
-新代理不迁入旧 `<think>` 启发式解析或无签名 thinking 合成。这是新路径的行为，旧入口保持原有实现。厂商历史规则各异：[DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)要求工具会话保留其推理历史，[Anthropic thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)与 [Gemini thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)保留不透明状态；这些规则不能证明签名或历史可以互换。原生模式是显式的同 API 选择，不会自动丢字段以实现回退。本地 [codec 回归](../../crates/nyro-llm/tests/reasoning_boundary_codec.rs)覆盖映射、拒绝与字面量文本契约；完整客户端会话及交错输出仍为独立迁移项。
+新代理不迁入旧 `<think>` 启发式解析或无签名 thinking 合成。这是新路径的行为，旧入口保持原有实现。厂商历史规则各异：[DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)要求工具会话保留其推理历史，[Anthropic thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)与 [Gemini thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)保留不透明状态；这些规则不能证明签名或历史可以互换。原生模式是显式的同 API 选择，不会自动丢字段以实现回退。本地 [codec 回归](../../crates/nyro-llm/tests/reasoning_boundary_codec.rs)覆盖映射、拒绝与字面量文本契约；完整客户端会话仍为独立迁移项。
 
 ## 请求与用量观测
 
@@ -483,8 +483,10 @@ python3 tests/proxy_smoke.py
 
 ## Rust 调用方的有序 IR 迁移
 
-Rust `nyro-llm` API 现在通过 `Message.items` 和 `ResponseMessage.items` 的有序 `Vec<MessageItem>` 存储消息正文。`MessageItem::Content(Content)` 保留原有文本／内容块表示，`MessageItem::ToolCall(ToolCall)` 保留调用元数据。直接调用方需替换原 `content`／`tool_calls` 字段；`content()`、`tool_calls()` 借用视图不存储第二份数据，也不重新决定顺序。
+Rust `nyro-llm` API 现在通过 `Message.items` 和 `ResponseMessage.items` 的有序 `Vec<MessageItem>` 存储消息正文。`MessageItem::Content(Content)` 保留原有文本／内容块表示，`MessageItem::ToolCall(ToolCall)` 保留调用元数据。`ResponsesMessage`／`ResponsesToolCall` 另行保留可选的源容器 ID／状态，与函数 `call_id` 分开；借用视图识别普通变体和 Responses 变体。直接调用方需替换原 `content`／`tool_calls` 字段；`content()`、`tool_calls()` 借用视图不存储第二份数据，也不重新决定顺序。
 
-`Delta` 改为 `role` 和 `events: Vec<PositionedDelta>`，事件携带类型化 `PartDelta` 与 item／part 位置。OpenAI Chat 使用稳定的正文／工具字段槽位，保留原工具索引，不声称不同字段之间存在总顺序；其他 decoder 保留源块／item 坐标或收到的 Gemini Part 序号。用量和流式结束信息仍由原外层字段承载。
+`Delta` 改为 `role` 和 `events: Vec<PositionedDelta>`，事件携带类型化 `PartDelta` 与 item／part 位置。OpenAI Chat 使用稳定的正文／工具字段槽位，保留原工具索引，不声称不同字段之间存在总顺序；其他 decoder 保留源块／item 坐标或收到的 Gemini Part 序号。普通叶节点使用 `PartDelta::Start(StreamPartKind)`／`End`，Responses 使用独立的 `ResponsesItemStart`／`ResponsesItemEnd` 容器事件，推理沿用专有生命周期。消费 IR 的调用方需处理这些新变体，Chat 有状态投影使用 `openai::StreamEncoder`。用量和流式结束信息仍由原外层字段承载。
 
-本轮调整表示方式，未扩大交错输出支持。严格 codec 继续拒绝工具调用后的不支持内容及其他已说明的顺序，包括直接构造的多正文组／交错 IR。普通块完整 start／end 事件、Responses 完整 item 元数据及各协议交错支持留待后续增量。JSON 配置与厂商 wire 字段名不变。严格 Chat 转换将空 `tool_calls` 数组归一化为省略字段；非 assistant 请求消息携带该字段时，即使为空仍拒绝。匹配的原生模式保留原始数组。回归：[有序 IR codec](../../crates/nyro-llm/tests/ordered_ir_codec.rs)。
+Anthropic／Gemini 输出队列保持源开始顺序，包括并行调用反序完成、较早 Responses item 尚未出现正文的情况。受阻载荷与位置状态均有界；未受阻的普通正文逐段输出，不累计完整正文。Responses 为协议要求的最终响应保留有界快照。生命周期冲突、未结束节点和预算超限会失败，不伪造成功终态。
+
+Anthropic、Gemini 和 Responses 在历史、JSON 和 SSE 中按项保序，支持正文／函数／正文及各自专有推理的交错排列。普通内容交错可在这三种 API 间转换；签名与加密推理继续遵守协议专有的拒绝规则。Chat 静态投影仍拒绝多个正文组或工具后正文，运行时流式 encoder 也会跨帧校验不可表达顺序。Anthropic／Gemini 目标继续要求完整且紧邻的工具结果批次。JSON 配置与厂商 wire 字段名不变。严格 Chat 转换将空 `tool_calls` 数组归一化为省略字段；非 assistant 请求消息携带该字段时，即使为空仍拒绝。匹配的原生模式保留原始数组。回归：[有序 IR codec](../../crates/nyro-llm/tests/ordered_ir_codec.rs)。

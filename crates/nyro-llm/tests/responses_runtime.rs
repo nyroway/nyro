@@ -22,6 +22,400 @@ use tokio_util::sync::CancellationToken;
 
 const FORMATS: [&str; 4] = ["openai", "anthropic", "gemini", "responses"];
 
+fn interleaved_response(format: &str) -> Value {
+    let mut value = tool_response(format);
+    match format {
+        "responses" => {
+            let call = value["output"][0].clone();
+            value["output"] = json!([
+                {"type":"message","id":"before","role":"assistant","status":"completed","content":[{"type":"output_text","text":"before","annotations":[]}]},
+                call,
+                {"type":"message","id":"after","role":"assistant","status":"completed","content":[{"type":"output_text","text":"after","annotations":[]}]}
+            ]);
+        }
+        "anthropic" => {
+            let call = value["content"][0].clone();
+            value["content"] =
+                json!([{"type":"text","text":"before"},call,{"type":"text","text":"after"}]);
+        }
+        "gemini" => {
+            let call = value["candidates"][0]["content"]["parts"][0].clone();
+            value["candidates"][0]["content"]["parts"] =
+                json!([{"text":"before"},call,{"text":"after"}]);
+        }
+        _ => unreachable!(),
+    }
+    value
+}
+
+// Independent wire fixtures, never encoded from the IR under test.
+fn interleaved_frames(format: &str) -> String {
+    let response = interleaved_response(format);
+    let mut events = Vec::new();
+    match format {
+        "gemini" => return format!("data: {response}\n\n"),
+        "anthropic" => {
+            let mut initial = response.clone();
+            initial["content"] = json!([]);
+            initial["stop_reason"] = Value::Null;
+            events.push(json!({"type":"message_start","message":initial}));
+            for (index, block) in response["content"].as_array().unwrap().iter().enumerate() {
+                let mut start = block.clone();
+                let delta = if block["type"] == "text" {
+                    start["text"] = json!("");
+                    json!({"type":"text_delta","text":block["text"]})
+                } else {
+                    start["input"] = json!({});
+                    json!({"type":"input_json_delta","partial_json":block["input"].to_string()})
+                };
+                events.extend([
+                    json!({"type":"content_block_start","index":index,"content_block":start}),
+                    json!({"type":"content_block_delta","index":index,"delta":delta}),
+                    json!({"type":"content_block_stop","index":index}),
+                ]);
+            }
+            events.extend([
+                json!({"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}),
+                json!({"type":"message_stop"}),
+            ]);
+        }
+        "responses" => {
+            let mut initial = response.clone();
+            initial["output"] = json!([]);
+            initial["status"] = json!("in_progress");
+            initial["usage"] = Value::Null;
+            events.push(json!({"type":"response.created","response":initial}));
+            for (index, item) in response["output"].as_array().unwrap().iter().enumerate() {
+                let mut start = item.clone();
+                start["status"] = json!("in_progress");
+                if item["type"] == "message" {
+                    start["content"] = json!([]);
+                } else {
+                    start["arguments"] = json!("");
+                }
+                events.push(
+                    json!({"type":"response.output_item.added","output_index":index,"item":start}),
+                );
+                if item["type"] == "message" {
+                    let part = &item["content"][0];
+                    events.extend([
+                        json!({"type":"response.content_part.added","output_index":index,"content_index":0,"item_id":item["id"],"part":{"type":"output_text","text":"","annotations":[]}}),
+                        json!({"type":"response.output_text.delta","output_index":index,"content_index":0,"item_id":item["id"],"delta":part["text"]}),
+                        json!({"type":"response.output_text.done","output_index":index,"content_index":0,"item_id":item["id"],"text":part["text"]}),
+                        json!({"type":"response.content_part.done","output_index":index,"content_index":0,"item_id":item["id"],"part":part}),
+                    ]);
+                } else {
+                    events.extend([
+                        json!({"type":"response.function_call_arguments.delta","output_index":index,"item_id":item["id"],"delta":item["arguments"]}),
+                        json!({"type":"response.function_call_arguments.done","output_index":index,"item_id":item["id"],"arguments":item["arguments"]}),
+                    ]);
+                }
+                events.push(
+                    json!({"type":"response.output_item.done","output_index":index,"item":item}),
+                );
+            }
+            events
+                .push(json!({"type":"response.completed","sequence_number":0,"response":response}));
+        }
+        _ => unreachable!(),
+    }
+    events
+        .iter()
+        .enumerate()
+        .map(|(index, event)| {
+            let mut event = event.clone();
+            if format == "responses" {
+                event["sequence_number"] = json!(index);
+            }
+            format!(
+                "event: {}\ndata: {event}\n\n",
+                event["type"].as_str().unwrap()
+            )
+        })
+        .collect()
+}
+
+fn interleaved_order(format: &str, value: &Value) -> Vec<String> {
+    let parts = match format {
+        "responses" => &value["output"],
+        "anthropic" => &value["content"],
+        "gemini" => &value["candidates"][0]["content"]["parts"],
+        _ => unreachable!(),
+    };
+    let mut order = Vec::new();
+    for part in parts.as_array().unwrap() {
+        match format {
+            "responses" if part["type"] == "message" => {
+                for text in part["content"].as_array().unwrap() {
+                    order.push(text["text"].as_str().unwrap().into());
+                }
+            }
+            "responses" => {
+                assert_eq!(part["call_id"], "call-next");
+                order.push("call".into());
+            }
+            "anthropic" if part["type"] == "text" => {
+                order.push(part["text"].as_str().unwrap().into())
+            }
+            "anthropic" => {
+                assert_eq!(part["id"], "call-next");
+                order.push("call".into());
+            }
+            _ if part.get("text").is_some() => order.push(part["text"].as_str().unwrap().into()),
+            _ => {
+                assert_eq!(part["functionCall"]["id"], "call-next");
+                order.push("call".into());
+            }
+        }
+    }
+    order
+}
+
+#[tokio::test]
+async fn interleaved_output_crosses_three_protocols_without_reordering() {
+    for upstream_format in ["anthropic", "gemini", "responses"] {
+        let fixture = upstream(upstream_format, "interleaved").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let runtime = runtime(&fixture, upstream_format, limit.clone(), Options::default());
+        for ingress in ["anthropic", "gemini", "responses"] {
+            for streaming in [false, true] {
+                let result = runtime
+                    .handle(request(ingress, streaming), CancellationToken::new())
+                    .await;
+                assert_eq!(
+                    result.status(),
+                    StatusCode::OK,
+                    "{upstream_format}->{ingress} stream={streaming}"
+                );
+                let bytes = to_bytes(result.into_body(), 1_048_576)
+                    .await
+                    .unwrap_or_else(|e| {
+                        panic!("{upstream_format}->{ingress} stream={streaming}: {e}")
+                    });
+                let order = if !streaming {
+                    interleaved_order(ingress, &serde_json::from_slice(&bytes).unwrap())
+                } else {
+                    let events = sse_values(&bytes);
+                    match ingress {
+                        "responses" => {
+                            interleaved_order(ingress, &events.last().unwrap()["response"])
+                        }
+                        "gemini" => events
+                            .iter()
+                            .filter(|e| e["candidates"][0]["content"]["parts"].is_array())
+                            .flat_map(|e| interleaved_order(ingress, e))
+                            .collect(),
+                        _ => {
+                            let mut order = Vec::new();
+                            for event in events {
+                                if event["type"] == "content_block_start"
+                                    && event["content_block"]["type"] == "tool_use"
+                                {
+                                    assert_eq!(event["content_block"]["id"], "call-next");
+                                    order.push("call".into());
+                                } else if event["type"] == "content_block_delta"
+                                    && event["delta"]["type"] == "text_delta"
+                                {
+                                    order.push(event["delta"]["text"].as_str().unwrap().into());
+                                }
+                            }
+                            order
+                        }
+                    }
+                };
+                let order: Vec<_> = order
+                    .into_iter()
+                    .filter(|s: &String| !s.is_empty())
+                    .collect();
+                assert_eq!(
+                    order,
+                    ["before", "call", "after"],
+                    "{upstream_format}->{ingress} stream={streaming}"
+                );
+                assert_eq!(limit.available(), 1);
+            }
+        }
+    }
+}
+
+async fn interleaved_history(format: &str) -> Request<Body> {
+    let (parts, body) = tool_request(format, false).await.into_parts();
+    let mut value: Value = serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+    match format {
+        "responses" => {
+            let input = value["input"].as_array_mut().unwrap();
+            input.insert(1,json!({"type":"message","id":"before","role":"assistant","status":"completed","content":[{"type":"output_text","text":"before","annotations":[]}]}));
+            input.insert(3,json!({"type":"message","id":"after","role":"assistant","status":"completed","content":[{"type":"output_text","text":"after","annotations":[]}]}));
+        }
+        "anthropic" => {
+            let items = value["messages"][1]["content"].as_array_mut().unwrap();
+            items.insert(0, json!({"type":"text","text":"before"}));
+            items.push(json!({"type":"text","text":"after"}));
+        }
+        _ => {
+            let items = value["contents"][1]["parts"].as_array_mut().unwrap();
+            items.insert(0, json!({"text":"before"}));
+            items.push(json!({"text":"after"}));
+        }
+    }
+    Request::from_parts(parts, Body::from(value.to_string()))
+}
+
+#[tokio::test]
+async fn interleaved_history_preserves_call_and_result_adjacency_across_three_protocols() {
+    for target in ["anthropic", "gemini", "responses"] {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for source in ["anthropic", "gemini", "responses"] {
+            let response = gateway
+                .handle(interleaved_history(source).await, CancellationToken::new())
+                .await;
+            let status = response.status();
+            let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{source}->{target}: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            let calls = fixture.calls.lock().unwrap();
+            let body = &calls.last().unwrap()["body"];
+            let (items, result) = match target {
+                "responses" => (&body["input"], &body["input"][4]),
+                "anthropic" => (
+                    &body["messages"][1]["content"],
+                    &body["messages"][2]["content"][0],
+                ),
+                _ => (
+                    &body["contents"][1]["parts"],
+                    &body["contents"][2]["parts"][0],
+                ),
+            };
+            let mut order = Vec::new();
+            for item in items.as_array().unwrap() {
+                if item["role"] == "user" || item["type"] == "function_call_output" {
+                    continue;
+                }
+                if target == "responses" && item["type"] == "message" {
+                    order.push(item["content"][0]["text"].as_str().unwrap().to_owned());
+                } else if let Some(text) = item["text"].as_str() {
+                    order.push(text.to_owned());
+                } else {
+                    let id = if target == "responses" {
+                        &item["call_id"]
+                    } else if target == "anthropic" {
+                        &item["id"]
+                    } else {
+                        &item["functionCall"]["id"]
+                    };
+                    assert_eq!(id, "call-before");
+                    order.push("call".into());
+                }
+            }
+            assert_eq!(order, ["before", "call", "after"], "{source}->{target}");
+            let result_id = match target {
+                "responses" => &result["call_id"],
+                "anthropic" => &result["tool_use_id"],
+                _ => &result["functionResponse"]["id"],
+            };
+            assert_eq!(result_id, "call-before");
+            assert_eq!(limit.available(), 1);
+        }
+    }
+    let fixture = upstream("openai", "normal").await;
+    let gateway = runtime(
+        &fixture,
+        "openai",
+        ConcurrencyLimit::new(1).unwrap(),
+        Options::default(),
+    );
+    for source in ["anthropic", "gemini", "responses"] {
+        let response = gateway
+            .handle(interleaved_history(source).await, CancellationToken::new())
+            .await;
+        assert!(!response.status().is_success());
+        to_bytes(response.into_body(), 65536).await.unwrap();
+    }
+    assert!(fixture.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn chat_rejects_interleaved_output_and_settles_observed_usage_once() {
+    for target in ["anthropic", "gemini", "responses"] {
+        // A terminal-only Responses snapshot carries usage before projection fails.
+        let fixture = upstream(
+            target,
+            if target == "responses" {
+                "interleaved_snapshot"
+            } else {
+                "interleaved"
+            },
+        )
+        .await;
+        for streaming in [false, true] {
+            let mut provider = json!({"kind":if target == "responses" {"openai"} else {target},"base_url":format!("{}/{}",fixture.base,if target == "gemini" {"v1beta"} else {"v1"})});
+            if target == "responses" {
+                provider["api"] = json!("responses");
+            }
+            let config = serde_json::from_value(json!({"providers":{"p":provider},"models":{"public":{"provider":"p","upstream_model":"internal","workloads":["chat"],"subjects":["alice"],"quota":{"total_tokens":10,"reserve_tokens":1}}}})).unwrap();
+            let limit = ConcurrencyLimit::new(1).unwrap();
+            let gateway = Runtime::new(
+                config,
+                Arc::new(
+                    ApiKeys::new(vec![ApiKey {
+                        id: "alice".into(),
+                        secret: "client-secret".into(),
+                    }])
+                    .unwrap(),
+                ),
+                limit.clone(),
+                Options::default(),
+            )
+            .unwrap();
+            let before = fixture.calls.lock().unwrap().len();
+            for i in 0..3 {
+                let response = gateway
+                    .handle(request("openai", streaming), CancellationToken::new())
+                    .await;
+                if i == 2 {
+                    assert_eq!(
+                        response.status(),
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "{target} stream={streaming}"
+                    );
+                    to_bytes(response.into_body(), 65536).await.unwrap();
+                } else if streaming && response.status() == StatusCode::OK {
+                    let mut body = response.into_body().into_data_stream();
+                    let mut failed = false;
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = body.next().await {
+                        match chunk {
+                            Ok(chunk) => bytes.extend_from_slice(&chunk),
+                            Err(_) => {
+                                failed = true;
+                                break;
+                            }
+                        }
+                    }
+                    assert!(failed, "{target}: {}", String::from_utf8_lossy(&bytes));
+                    assert!(!String::from_utf8_lossy(&bytes).contains("[DONE]"));
+                    drop(body);
+                } else {
+                    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+                    to_bytes(response.into_body(), 65536).await.unwrap();
+                }
+                assert_eq!(limit.available(), 1);
+            }
+            assert_eq!(
+                fixture.calls.lock().unwrap().len(),
+                before + 2,
+                "failed conversions must not retry"
+            );
+        }
+    }
+}
+
 // Native fixtures deliberately do not pass through nyro's codec or canonical IR.
 fn native_response(tools: bool, incomplete: bool) -> Value {
     json!({
@@ -228,7 +622,15 @@ async fn upstream(format: &'static str, mode: &'static str) -> Fixture {
                     .unwrap();
             }
             if streaming {
-                let text = if format == "responses" {
+                let text = if mode == "interleaved" {
+                    interleaved_frames(format)
+                } else if mode == "interleaved_snapshot" {
+                    let response = interleaved_response(format);
+                    format!(
+                        "event: response.completed\ndata: {}\n\n",
+                        json!({"type":"response.completed","sequence_number":0,"response":response})
+                    )
+                } else if format == "responses" {
                     native_frames(mode)
                 } else if matches!(mode, "refusal" | "filtered") {
                     safety_frames(format, mode)
@@ -284,7 +686,9 @@ async fn upstream(format: &'static str, mode: &'static str) -> Fixture {
                 axum::http::Response::builder()
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        if matches!(mode, "refusal" | "filtered") {
+                        if mode.starts_with("interleaved") {
+                            interleaved_response(format)
+                        } else if matches!(mode, "refusal" | "filtered") {
                             safety_response(format, mode)
                         } else if mode == "tools" {
                             tool_response(format)

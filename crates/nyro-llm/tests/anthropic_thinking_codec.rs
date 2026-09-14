@@ -204,12 +204,11 @@ fn malformed_thinking_streams_reject_mismatches_missing_signatures_and_overflow(
     assert!(decoder.push(&event(json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"after signature"}}))).is_err());
 }
 #[test]
-fn invalid_history_roles_order_and_output_are_rejected() {
+fn invalid_history_roles_and_output_are_rejected() {
     for content in [
         json!([{"type":"thinking","thinking":"summary"}]),
         json!([{"type":"thinking","thinking":"summary","signature":""}]),
         json!([{"type":"redacted_thinking","data":""}]),
-        json!([{"type":"tool_use","id":"t","name":"f","input":{}},thinking()]),
     ] {
         let mut input = request();
         input["messages"] = json!([{"role":"assistant","content":content}]);

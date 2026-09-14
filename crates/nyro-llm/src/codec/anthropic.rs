@@ -30,19 +30,16 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
             return Err(bad("invalid Messages role"));
         }
         let mut parts = vec![];
-        let mut calls = vec![];
-        let flush = |out: &mut Vec<Value>, parts: &mut Vec<Value>, calls: &mut Vec<Value>| {
-            if !parts.is_empty() || !calls.is_empty() {
-                let mut items = vec![];
-                if !parts.is_empty() {
-                    items.push(json!({"type":"content","value":std::mem::take(parts)}));
-                }
-                items.extend(
-                    std::mem::take(calls)
-                        .into_iter()
-                        .map(|call| json!({"type":"tool_call","value":call})),
-                );
-                out.push(json!({"role":m.role,"items":items}));
+        let mut items = vec![];
+        let flush_parts = |parts: &mut Vec<Value>, items: &mut Vec<Value>| {
+            if !parts.is_empty() {
+                items.push(json!({"type":"content","value":std::mem::take(parts)}));
+            }
+        };
+        let flush = |out: &mut Vec<Value>, parts: &mut Vec<Value>, items: &mut Vec<Value>| {
+            flush_parts(parts, items);
+            if !items.is_empty() {
+                out.push(json!({"role":m.role,"items":std::mem::take(items)}));
             }
         };
         let content = blocks(m.content);
@@ -55,18 +52,14 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                     thinking,
                     signature,
                 } => {
-                    if m.role != "assistant" || !calls.is_empty() || signature.is_empty() {
-                        return Err(bad(
-                            "thinking requires assistant content before tool calls and a signature",
-                        ));
+                    if m.role != "assistant" || signature.is_empty() {
+                        return Err(bad("thinking requires assistant content and a signature"));
                     }
                     parts.push(json!({"type":"anthropic_thinking","thinking":thinking,"signature":signature}));
                 }
                 wire::Block::RedactedThinking { data } => {
-                    if m.role != "assistant" || !calls.is_empty() || data.is_empty() {
-                        return Err(bad(
-                            "redacted thinking requires assistant content before tool calls and data",
-                        ));
+                    if m.role != "assistant" || data.is_empty() {
+                        return Err(bad("redacted thinking requires assistant content and data"));
                     }
                     parts.push(json!({"type":"anthropic_redacted_thinking","data":data}));
                 }
@@ -74,9 +67,6 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                     text,
                     cache_control,
                 } => {
-                    if !calls.is_empty() {
-                        return Err(bad("text after tool calls cannot be represented"));
-                    }
                     parts.push(annotated(json!({"type":"text","text":text}), cache_control));
                 }
                 wire::Block::Image {
@@ -115,7 +105,8 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                     {
                         return Err(bad("invalid tool use"));
                     }
-                    calls.push(annotated(json!({"type":"function","id":id,"function":{"name":name,"arguments":input.to_string()}}), cache_control));
+                    flush_parts(&mut parts, &mut items);
+                    items.push(json!({"type":"tool_call","value":annotated(json!({"type":"function","id":id,"function":{"name":name,"arguments":input.to_string()}}), cache_control)}));
                 }
                 wire::Block::ToolResult {
                     tool_use_id,
@@ -126,7 +117,7 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                     if m.role != "user" {
                         return Err(bad("unsupported tool result role"));
                     }
-                    flush(&mut out, &mut parts, &mut calls);
+                    flush(&mut out, &mut parts, &mut items);
                     let content = match content {
                         None => json!([]),
                         Some(wire::Content::Text(text)) => json!(text),
@@ -152,7 +143,7 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                 }
             }
         }
-        flush(&mut out, &mut parts, &mut calls);
+        flush(&mut out, &mut parts, &mut items);
     }
     Ok(out)
 }
@@ -255,7 +246,10 @@ fn validate_thinking(r: &ChatRequest) -> Result<(), CodecError> {
         return Err(bad("thinking budget must be at least 1024 tokens"));
     }
     for m in &r.messages {
-        if let Some(Content::Parts(parts)) = m.content() {
+        for parts in m.items.iter().filter_map(|item| match item.as_content() {
+            Some(Content::Parts(parts)) => Some(parts),
+            _ => None,
+        }) {
             for part in parts {
                 match part {
                     ContentPart::AnthropicThinking { signature, .. }
@@ -352,6 +346,18 @@ fn call_blocks<'a>(calls: impl Iterator<Item = &'a ToolCall>) -> Result<Vec<Valu
         })
         .collect()
 }
+fn item_blocks(items: &[MessageItem], images: bool) -> Result<Vec<Value>, CodecError> {
+    let mut blocks = Vec::new();
+    for item in items {
+        if let Some(content) = item.as_content() {
+            blocks.extend(content_parts(Some(content), images)?);
+        } else if let Some(call) = item.as_tool_call() {
+            blocks.extend(call_blocks(std::iter::once(call))?);
+        }
+    }
+    Ok(blocks)
+}
+
 pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
     openai::validate_chat(r)?;
     validate_thinking(r)?;
@@ -372,7 +378,14 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         }
         message.tool_error = false;
         message.anthropic_cache_control = None;
-        if let Some(Content::Parts(parts)) = message.content_mut() {
+        for parts in message
+            .items
+            .iter_mut()
+            .filter_map(|item| match item.as_content_mut() {
+                Some(Content::Parts(parts)) => Some(parts),
+                _ => None,
+            })
+        {
             parts.retain(|part| {
                 !matches!(
                     part,
@@ -402,7 +415,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             *anthropic_cache_control = None;
         }
     }
-    let source = openai::encode_chat(&portable)?;
+    let source = openai::encode_portable_options(&portable)?;
     if r.openai
         .stream_options
         .as_ref()
@@ -459,8 +472,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         if m.name.is_some() || m.refusal.is_some() || m.audio.is_some() {
             return Err(bad("unsupported message option"));
         }
-        let mut content = content_parts(m.content(), m.role == Role::User)?;
-        content.extend(call_blocks(m.tool_calls())?);
+        let content = item_blocks(&m.items, m.role == Role::User)?;
         match m.role {
             Role::System | Role::Developer => {
                 if !messages.is_empty()
@@ -660,8 +672,7 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     {
         return Err(bad("unsupported response fields"));
     }
-    let mut content = content_parts(c.message.content(), false)?;
-    content.extend(call_blocks(c.message.tool_calls())?);
+    let content = item_blocks(&c.message.items, false)?;
     let u = r
         .usage
         .as_ref()
@@ -857,12 +868,9 @@ impl StreamDecoder {
                     .next
                     .checked_add(1)
                     .ok_or_else(|| bad("block index overflow"))?;
-                let delta;
+                let mut delta;
                 let content = match content_block {
                     wire::OutputBlock::Text { text } => {
-                        if self.tools != 0 {
-                            return Err(bad("text after tool calls cannot be represented"));
-                        }
                         delta = block_delta(index, PartDelta::Text(text));
                         ActiveContent::Text
                     }
@@ -870,10 +878,8 @@ impl StreamDecoder {
                         thinking,
                         signature,
                     } => {
-                        if self.tools != 0 || !thinking.is_empty() || !signature.is_empty() {
-                            return Err(bad(
-                                "thinking stream requires empty initial block before tool calls",
-                            ));
+                        if !thinking.is_empty() || !signature.is_empty() {
+                            return Err(bad("thinking stream requires empty initial block"));
                         }
                         let start = AnthropicThinkingDelta::Start;
                         let state = ThinkingState::start(&start, self.limit)?;
@@ -881,9 +887,6 @@ impl StreamDecoder {
                         ActiveContent::Thinking(state)
                     }
                     wire::OutputBlock::RedactedThinking { data } => {
-                        if self.tools != 0 {
-                            return Err(bad("thinking after tool calls cannot be represented"));
-                        }
                         let start = AnthropicThinkingDelta::Redacted { data };
                         let state = ThinkingState::start(&start, self.limit)?;
                         delta = thinking_delta(index, start);
@@ -917,6 +920,23 @@ impl StreamDecoder {
                         ActiveContent::Tool(i, String::new())
                     }
                 };
+                let kind = match content {
+                    ActiveContent::Text => Some(StreamPartKind::Text),
+                    ActiveContent::Tool(..) => Some(StreamPartKind::ToolCall),
+                    ActiveContent::Thinking(_) => None,
+                };
+                if let Some(kind) = kind {
+                    delta.events.insert(
+                        0,
+                        PositionedDelta {
+                            position: StreamPosition {
+                                item: StreamItem::Ordered(index),
+                                part: 0,
+                            },
+                            delta: PartDelta::Start(kind),
+                        },
+                    );
+                }
                 self.active = Some(ActiveBlock { index, content });
                 out.push(self.chunk(delta, None, false)?);
             }
@@ -976,39 +996,43 @@ impl StreamDecoder {
                 if index != a.index {
                     return Err(bad("stop index mismatch"));
                 }
-                if let ActiveContent::Tool(i, args) = a.content {
-                    if args.is_empty() {
-                        out.push(self.chunk(
-                            block_delta(
-                                index,
-                                PartDelta::ToolCall(ToolCallDelta {
-                                    gemini: None,
-                                    index: i,
-                                    id: None,
-                                    r#type: None,
-                                    function: Some(FunctionDelta {
-                                        name: None,
-                                        arguments: Some("{}".into()),
+                let mut delta = block_delta(index, PartDelta::End);
+                match a.content {
+                    ActiveContent::Tool(i, args) => {
+                        if args.is_empty() {
+                            delta.events.insert(
+                                0,
+                                PositionedDelta {
+                                    position: StreamPosition {
+                                        item: StreamItem::Ordered(index),
+                                        part: 0,
+                                    },
+                                    delta: PartDelta::ToolCall(ToolCallDelta {
+                                        gemini: None,
+                                        index: i,
+                                        id: None,
+                                        r#type: None,
+                                        function: Some(FunctionDelta {
+                                            name: None,
+                                            arguments: Some("{}".into()),
+                                        }),
                                     }),
-                                }),
-                            ),
-                            None,
-                            false,
-                        )?)
-                    } else {
-                        let v: Value = serde_json::from_str(&args)?;
-                        if !v.is_object() {
-                            return Err(bad("tool JSON must be object"));
+                                },
+                            );
+                        } else {
+                            let v: Value = serde_json::from_str(&args)?;
+                            if !v.is_object() {
+                                return Err(bad("tool JSON must be object"));
+                            }
                         }
                     }
-                } else if let ActiveContent::Thinking(mut state) = a.content {
-                    state.advance(&AnthropicThinkingDelta::Stop, self.limit)?;
-                    out.push(self.chunk(
-                        thinking_delta(index, AnthropicThinkingDelta::Stop),
-                        None,
-                        false,
-                    )?);
+                    ActiveContent::Thinking(mut state) => {
+                        state.advance(&AnthropicThinkingDelta::Stop, self.limit)?;
+                        delta = thinking_delta(index, AnthropicThinkingDelta::Stop);
+                    }
+                    ActiveContent::Text => {}
                 }
+                out.push(self.chunk(delta, None, false)?);
             }
             wire::StreamEvent::MessageDelta { delta, usage } => {
                 if delta.stop_sequence.is_some() {
@@ -1071,6 +1095,21 @@ struct PendingTool {
     id: String,
     name: String,
     args: String,
+    emitted: bool,
+}
+struct OrdinaryPart {
+    kind: Option<StreamPartKind>,
+    tool: Option<u32>,
+    ended: bool,
+    thinking: Option<ThinkingState>,
+    pending: Vec<PartDelta>,
+    buffered_bytes: usize,
+}
+struct ResponseContainer {
+    function: bool,
+    ended: bool,
+    id: String,
+    last_part: Option<u32>,
 }
 pub struct StreamEncoder {
     model: String,
@@ -1083,8 +1122,12 @@ pub struct StreamEncoder {
     text_position: Option<StreamPosition>,
     last_content_position: Option<StreamPosition>,
     next_index: u32,
-    thinking: Option<(StreamPosition, ThinkingState)>,
     tools: std::collections::BTreeMap<u32, PendingTool>,
+    parts: std::collections::BTreeMap<StreamPosition, OrdinaryPart>,
+    part_order: std::collections::VecDeque<StreamPosition>,
+    containers: std::collections::BTreeMap<StreamItem, ResponseContainer>,
+    incomplete_container: bool,
+    explicit: bool,
     usage: Option<Usage>,
 }
 impl StreamEncoder {
@@ -1103,8 +1146,12 @@ impl StreamEncoder {
             text_position: None,
             last_content_position: None,
             next_index: 0,
-            thinking: None,
             tools: Default::default(),
+            parts: Default::default(),
+            part_order: Default::default(),
+            containers: Default::default(),
+            incomplete_container: false,
+            explicit: false,
             usage: None,
         }
     }
@@ -1138,58 +1185,342 @@ impl StreamEncoder {
         self.last_content_position = Some(position);
         Ok(())
     }
+    fn emit_tool(&mut self, tool_index: u32, output: &mut String) -> Result<(), CodecError> {
+        let tool = self
+            .tools
+            .get_mut(&tool_index)
+            .ok_or_else(|| bad("missing tool payload"))?;
+        if tool.emitted || tool.id.is_empty() || tool.name.is_empty() {
+            return Err(bad("incomplete or repeated tool block"));
+        }
+        if !serde_json::from_str::<Value>(&tool.args)?.is_object() {
+            return Err(bad("tool JSON must be object"));
+        }
+        output.push_str(&frame("content_block_start",json!({"index":self.next_index,"content_block":{"type":"tool_use","id":tool.id,"name":tool.name,"input":{}}})));
+        output.push_str(&frame("content_block_delta",json!({"index":self.next_index,"delta":{"type":"input_json_delta","partial_json":tool.args}})));
+        output.push_str(&frame(
+            "content_block_stop",
+            json!({"index":self.next_index}),
+        ));
+        tool.emitted = true;
+        self.next_index = self
+            .next_index
+            .checked_add(1)
+            .ok_or_else(|| bad("block index overflow"))?;
+        Ok(())
+    }
+    fn pending_implicit_tools(&self) -> bool {
+        self.tools
+            .values()
+            .any(|tool| !tool.emitted && tool.position.is_none_or(|p| !self.parts.contains_key(&p)))
+    }
+    fn queue_output(
+        &mut self,
+        position: StreamPosition,
+        delta: &PartDelta,
+        output: &mut String,
+    ) -> Result<(), CodecError> {
+        let blocked = self.part_order.front() != Some(&position) || self.container_blocks(position);
+        let bytes = if blocked {
+            serde_json::to_vec(delta)?
+                .len()
+                .saturating_add(std::mem::size_of::<PartDelta>())
+        } else {
+            0
+        };
+        if self.bytes.saturating_add(bytes) > self.limit {
+            return Err(bad("blocked stream content exceeds limit"));
+        }
+        self.bytes += bytes;
+        let part = self
+            .parts
+            .get_mut(&position)
+            .ok_or_else(|| bad("payload without part"))?;
+        part.buffered_bytes = part.buffered_bytes.saturating_add(bytes);
+        part.pending.push(delta.clone());
+        self.flush_parts(output)
+    }
+    fn flush_parts(&mut self, output: &mut String) -> Result<(), CodecError> {
+        while let Some(position) = self.part_order.front().copied() {
+            if self.container_blocks(position) {
+                break;
+            }
+            let part = self.parts.get_mut(&position).unwrap();
+            if part.kind == Some(StreamPartKind::ToolCall) {
+                if !part.ended {
+                    break;
+                }
+                let index = part.tool.ok_or_else(|| bad("tool ended without payload"))?;
+                self.emit_tool(index, output)?;
+            } else {
+                let pending = std::mem::take(&mut part.pending);
+                self.bytes -= part.buffered_bytes;
+                part.buffered_bytes = 0;
+                for delta in pending {
+                    match delta {
+                        PartDelta::Start(StreamPartKind::Text) => {
+                            self.close_text(output)?;
+                            output.push_str(&frame("content_block_start",json!({"index":self.next_index,"content_block":{"type":"text","text":""}})));
+                            self.text_open = true;
+                            self.text_position = Some(position);
+                        }
+                        PartDelta::Text(text) => output.push_str(&frame("content_block_delta",json!({"index":self.next_index,"delta":{"type":"text_delta","text":text}}))),
+                        PartDelta::End => self.close_text(output)?,
+                        PartDelta::AnthropicThinking(delta) => match delta {
+                            AnthropicThinkingDelta::Start | AnthropicThinkingDelta::Redacted { .. } => {
+                                self.close_text(output)?;
+                                let block = match delta { AnthropicThinkingDelta::Redacted { data } => json!({"type":"redacted_thinking","data":data}), _ => json!({"type":"thinking","thinking":"","signature":""}) };
+                                output.push_str(&frame("content_block_start",json!({"index":self.next_index,"content_block":block})));
+                            }
+                            AnthropicThinkingDelta::Thinking { thinking } => output.push_str(&frame("content_block_delta",json!({"index":self.next_index,"delta":{"type":"thinking_delta","thinking":thinking}}))),
+                            AnthropicThinkingDelta::Signature { signature } => output.push_str(&frame("content_block_delta",json!({"index":self.next_index,"delta":{"type":"signature_delta","signature":signature}}))),
+                            AnthropicThinkingDelta::Stop => {
+                                output.push_str(&frame("content_block_stop",json!({"index":self.next_index})));
+                                self.next_index = self.next_index.checked_add(1).ok_or_else(|| bad("block index overflow"))?;
+                            }
+                        },
+                        _ => return Err(bad("unsupported buffered stream part")),
+                    }
+                }
+                if !self.parts[&position].ended {
+                    break;
+                }
+            }
+            self.parts.remove(&position);
+            self.part_order.pop_front();
+            self.bytes -= std::mem::size_of::<(StreamPosition, OrdinaryPart)>()
+                + std::mem::size_of::<StreamPosition>()
+                + 32;
+        }
+        Ok(())
+    }
+    fn container_blocks(&self, position: StreamPosition) -> bool {
+        self.containers
+            .range(..position.item)
+            .any(|(_, container)| !container.ended)
+    }
+    fn start_part(
+        &mut self,
+        position: StreamPosition,
+        kind: Option<StreamPartKind>,
+        thinking: Option<ThinkingState>,
+    ) -> Result<(), CodecError> {
+        if self.pending_implicit_tools() {
+            return Err(bad("explicit block after unfinished implicit tools"));
+        }
+        if let Some(container) = self.containers.get_mut(&position.item) {
+            if container
+                .last_part
+                .is_some_and(|part| part >= position.part)
+            {
+                return Err(bad("reused or out of order container part"));
+            }
+            container.last_part = Some(position.part);
+        } else {
+            self.start_content(position)?;
+        }
+        let bytes = std::mem::size_of::<(StreamPosition, OrdinaryPart)>()
+            + std::mem::size_of::<StreamPosition>()
+            + 32;
+        if self.bytes.saturating_add(bytes) > self.limit {
+            return Err(bad("stream part state exceeds limit"));
+        }
+        self.bytes += bytes;
+        self.parts.insert(
+            position,
+            OrdinaryPart {
+                kind,
+                tool: None,
+                ended: false,
+                thinking,
+                pending: Vec::new(),
+                buffered_bytes: 0,
+            },
+        );
+        let index = self.part_order.partition_point(|part| *part < position);
+        self.part_order.insert(index, position);
+        Ok(())
+    }
+    fn lifecycle(
+        &mut self,
+        position: StreamPosition,
+        kind: Option<StreamPartKind>,
+        output: &mut String,
+    ) -> Result<(), CodecError> {
+        if let Some(kind) = kind {
+            if kind == StreamPartKind::Refusal {
+                return Err(bad("Anthropic does not support refusal blocks"));
+            }
+            self.explicit = true;
+            self.start_part(position, Some(kind), None)?;
+            if kind == StreamPartKind::Text {
+                self.queue_output(position, &PartDelta::Start(kind), output)?;
+            } else if self.part_order.front() == Some(&position) {
+                self.close_text(output)?;
+            }
+        } else {
+            let part = self
+                .parts
+                .get_mut(&position)
+                .ok_or_else(|| bad("end without part"))?;
+            if part.ended || part.kind.is_none() {
+                return Err(bad("repeated or mismatched part end"));
+            }
+            part.ended = true;
+            if part.kind == Some(StreamPartKind::Text) {
+                self.queue_output(position, &PartDelta::End, output)?;
+            } else {
+                self.flush_parts(output)?;
+            }
+        }
+        Ok(())
+    }
+    fn thinking_part(
+        &mut self,
+        position: StreamPosition,
+        delta: &AnthropicThinkingDelta,
+        output: &mut String,
+    ) -> Result<(), CodecError> {
+        match delta {
+            AnthropicThinkingDelta::Start | AnthropicThinkingDelta::Redacted { .. } => {
+                let state = ThinkingState::start(delta, self.limit)?;
+                self.start_part(position, None, Some(state))?;
+            }
+            _ => {
+                let part = self
+                    .parts
+                    .get_mut(&position)
+                    .ok_or_else(|| bad("thinking delta without block"))?;
+                if part.ended {
+                    return Err(bad("thinking after block end"));
+                }
+                part.thinking
+                    .as_mut()
+                    .ok_or_else(|| bad("thinking delta type mismatch"))?
+                    .advance(delta, self.limit)?;
+                part.ended = matches!(delta, AnthropicThinkingDelta::Stop);
+            }
+        }
+        self.queue_output(
+            position,
+            &PartDelta::AnthropicThinking(delta.clone()),
+            output,
+        )
+    }
+    fn container(&mut self, event: &PositionedDelta) -> Result<(), CodecError> {
+        match &event.delta {
+            PartDelta::ResponsesItemStart(start) => {
+                let (function, id) = match start {
+                    ResponsesItemStart::Message { id } => (false, id),
+                    ResponsesItemStart::FunctionCall { id } => (true, id),
+                };
+                if id.is_empty()
+                    || self
+                        .containers
+                        .keys()
+                        .any(|item| *item >= event.position.item)
+                    || self.containers.values().any(|c| c.id == *id)
+                {
+                    return Err(bad("invalid or reused Responses item"));
+                }
+                let additional = id
+                    .len()
+                    .saturating_add(std::mem::size_of::<(StreamItem, ResponseContainer)>() + 32);
+                if self.bytes.saturating_add(additional) > self.limit {
+                    return Err(bad("container state exceeds limit"));
+                }
+                self.bytes += additional;
+                self.containers.insert(
+                    event.position.item,
+                    ResponseContainer {
+                        function,
+                        ended: false,
+                        id: id.clone(),
+                        last_part: None,
+                    },
+                );
+            }
+            PartDelta::ResponsesItemEnd(status) => {
+                let c = self
+                    .containers
+                    .get_mut(&event.position.item)
+                    .ok_or_else(|| bad("item end without start"))?;
+                if c.ended
+                    || self
+                        .parts
+                        .iter()
+                        .any(|(p, part)| p.item == event.position.item && !part.ended)
+                    || *status == nyro_protocol::openai::responses::ItemStatus::InProgress
+                {
+                    return Err(bad("unfinished or repeated Responses item end"));
+                }
+                c.ended = true;
+                self.incomplete_container |=
+                    *status == nyro_protocol::openai::responses::ItemStatus::Incomplete;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
     fn part(&mut self, event: &PositionedDelta, output: &mut String) -> Result<(), CodecError> {
         super::validate_position(event)?;
         let position = event.position;
-        match &event.delta {
-            PartDelta::AnthropicThinking(delta) => {
-                if !self.tools.is_empty() {
-                    return Err(bad("thinking after tool calls cannot be represented"));
-                }
-                match delta {
-                    AnthropicThinkingDelta::Start | AnthropicThinkingDelta::Redacted { .. } => {
-                        if self.thinking.is_some() {
-                            return Err(bad("overlapping thinking blocks"));
-                        }
-                        self.start_content(position)?;
-                        let state = ThinkingState::start(delta, self.limit)?;
-                        self.close_text(output)?;
-                        let block = match delta {
-                            AnthropicThinkingDelta::Redacted { data } => {
-                                json!({"type":"redacted_thinking","data":data})
-                            }
-                            _ => json!({"type":"thinking","thinking":"","signature":""}),
-                        };
-                        output.push_str(&frame(
-                            "content_block_start",
-                            json!({"index":self.next_index,"content_block":block}),
-                        ));
-                        self.thinking = Some((position, state));
-                    }
-                    _ => {
-                        let (active, state) = self
-                            .thinking
-                            .as_mut()
-                            .ok_or_else(|| bad("thinking delta without block"))?;
-                        if *active != position {
-                            return Err(bad("thinking delta position mismatch"));
-                        }
-                        state.advance(delta, self.limit)?;
-                        match delta {
-                            AnthropicThinkingDelta::Thinking { thinking } => output.push_str(&frame("content_block_delta", json!({"index":self.next_index,"delta":{"type":"thinking_delta","thinking":thinking}}))),
-                            AnthropicThinkingDelta::Signature { signature } => output.push_str(&frame("content_block_delta", json!({"index":self.next_index,"delta":{"type":"signature_delta","signature":signature}}))),
-                            AnthropicThinkingDelta::Stop => {
-                                output.push_str(&frame("content_block_stop", json!({"index":self.next_index})));
-                                self.next_index = self.next_index.checked_add(1).ok_or_else(|| bad("block index overflow"))?;
-                                self.thinking = None;
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
-                }
+        if matches!(
+            event.delta,
+            PartDelta::ResponsesItemStart(_) | PartDelta::ResponsesItemEnd(_)
+        ) {
+            self.container(event)?;
+            return self.flush_parts(output);
+        }
+        if !self.containers.is_empty() {
+            let container = self
+                .containers
+                .get(&position.item)
+                .ok_or_else(|| bad("part outside Responses item"))?;
+            let function = match &event.delta {
+                PartDelta::Start(kind) => *kind == StreamPartKind::ToolCall,
+                PartDelta::End => self
+                    .parts
+                    .get(&position)
+                    .is_some_and(|p| p.kind == Some(StreamPartKind::ToolCall)),
+                PartDelta::ToolCall(_) => true,
+                _ => false,
+            };
+            if container.ended || container.function != function {
+                return Err(bad("Responses item payload mismatch"));
             }
+        }
+        if matches!(event.delta, PartDelta::Text(_) | PartDelta::ToolCall(_)) {
+            if let Some(part) = self.parts.get(&position) {
+                let kind = if matches!(event.delta, PartDelta::Text(_)) {
+                    StreamPartKind::Text
+                } else {
+                    StreamPartKind::ToolCall
+                };
+                if part.ended || part.kind != Some(kind) {
+                    return Err(bad("part payload mismatch or after end"));
+                }
+            } else if !self.parts.is_empty()
+                || (self.explicit && matches!(position.item, StreamItem::Ordered(_)))
+            {
+                return Err(bad("payload without matching part start"));
+            }
+        }
+        match &event.delta {
+            PartDelta::Start(kind) => self.lifecycle(position, Some(*kind), output)?,
+            PartDelta::End => self.lifecycle(position, None, output)?,
+            PartDelta::AnthropicThinking(delta) => self.thinking_part(position, delta, output)?,
             PartDelta::Text(text) => {
-                if self.thinking.is_some() || text.len() > self.limit || !self.tools.is_empty() {
+                if self.parts.contains_key(&position) {
+                    if text.len() > self.limit {
+                        return Err(bad("text exceeds limit"));
+                    }
+                    return self.queue_output(position, &event.delta, output);
+                }
+                if !self.parts.is_empty()
+                    || text.len() > self.limit
+                    || self.pending_implicit_tools()
+                {
                     return Err(bad(
                         "invalid text within thinking, after tools, or over limit",
                     ));
@@ -1212,16 +1543,17 @@ impl StreamEncoder {
                 ));
             }
             PartDelta::ToolCall(t) => {
-                if self.thinking.is_some() || t.gemini.is_some() {
+                if t.gemini.is_some() {
                     return Err(bad("unsupported tool metadata or tool within thinking"));
                 }
-                if self
-                    .last_content_position
-                    .is_some_and(|last| match (last.item, position.item) {
-                        (StreamItem::Ordered(content), StreamItem::Ordered(tool)) => {
-                            tool <= content
+                if !self.parts.contains_key(&position)
+                    && self.last_content_position.is_some_and(|last| {
+                        match (last.item, position.item) {
+                            (StreamItem::Ordered(content), StreamItem::Ordered(tool)) => {
+                                tool <= content
+                            }
+                            _ => last == position,
                         }
-                        _ => last == position,
                     })
                     || self
                         .tools
@@ -1256,10 +1588,16 @@ impl StreamEncoder {
                     return Err(bad("tool accumulation exceeds limit"));
                 }
                 let item = self.tools.entry(t.index).or_default();
-                if item.position.is_some_and(|p| p != position) {
+                if item.emitted || item.position.is_some_and(|p| p != position) {
                     return Err(bad("tool delta position mismatch"));
                 }
                 item.position = Some(position);
+                if let Some(part) = self.parts.get_mut(&position) {
+                    if part.tool.is_some_and(|index| index != t.index) {
+                        return Err(bad("multiple tool calls in one part"));
+                    }
+                    part.tool = Some(t.index);
+                }
                 self.bytes = self.bytes.saturating_add(additional);
                 if let Some(id) = &t.id {
                     if !item.id.is_empty() {
@@ -1366,10 +1704,13 @@ impl StreamEncoder {
                     for event in &choice.delta.events {
                         self.part(event, &mut output)?;
                     }
-                    if self.thinking.is_some() && choice.finish_reason.is_some() {
-                        return Err(bad("finish within thinking block"));
-                    }
                     if let Some(reason) = &choice.finish_reason {
+                        if !self.parts.is_empty() || self.containers.values().any(|c| !c.ended) {
+                            return Err(bad("finish within unfinished block or item"));
+                        }
+                        if self.incomplete_container && reason != "length" {
+                            return Err(bad("incomplete item requires incomplete finish"));
+                        }
                         self.finished = Some(stop_out(reason)?.into())
                     }
                 }
@@ -1379,31 +1720,26 @@ impl StreamEncoder {
                 Ok(output)
             }
             ChatEvent::Done => {
-                if !self.started || self.thinking.is_some() {
+                if !self.started {
                     return Err(bad("done before message or within thinking block"));
+                }
+                if !self.parts.is_empty() || self.containers.values().any(|c| !c.ended) {
+                    return Err(bad("done within unfinished part or item"));
                 }
                 let reason = self
                     .finished
-                    .as_ref()
+                    .clone()
                     .ok_or_else(|| bad("missing finish reason"))?;
                 let mut out = String::new();
-                let mut index = self.next_index;
-                if self.text_open {
-                    out.push_str(&frame("content_block_stop", json!({"index":index})));
-                    index += 1;
-                }
-                for (expected, (i, t)) in self.tools.iter().enumerate() {
-                    if *i as usize != expected || t.id.is_empty() || t.name.is_empty() {
+                self.close_text(&mut out)?;
+                let indices: Vec<_> = self.tools.keys().copied().collect();
+                for (expected, index) in indices.into_iter().enumerate() {
+                    if index as usize != expected {
                         return Err(bad("incomplete tool stream"));
                     }
-                    let args: Value = serde_json::from_str(&t.args)?;
-                    if !args.is_object() {
-                        return Err(bad("tool JSON must be object"));
+                    if !self.tools[&index].emitted {
+                        self.emit_tool(index, &mut out)?;
                     }
-                    out.push_str(&frame("content_block_start",json!({"index":index,"content_block":{"type":"tool_use","id":t.id,"name":t.name,"input":{}}})));
-                    out.push_str(&frame("content_block_delta",json!({"index":index,"delta":{"type":"input_json_delta","partial_json":t.args}})));
-                    out.push_str(&frame("content_block_stop", json!({"index":index})));
-                    index += 1;
                 }
                 let u = self
                     .usage

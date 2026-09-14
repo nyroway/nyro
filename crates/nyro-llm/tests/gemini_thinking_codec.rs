@@ -57,6 +57,68 @@ fn signed_text_parts_and_function_calls_round_trip_without_merging() {
     assert!(anthropic::encode_chat(&ir).is_err());
 }
 
+#[test]
+fn interleaved_history_and_json_preserve_text_calls_and_signed_parts() {
+    for call in [
+        json!({"functionCall":{"id":"call-1","name":"f","args":{}}}),
+        json!({"functionCall":{"name":"f","args":{}},"thoughtSignature":"c2ln"}),
+    ] {
+        let parts = json!([
+            {"text":"before"}, call,
+            {"text":"after","thoughtSignature":"c2lnMg=="},
+            {"text":"final"}
+        ]);
+        let ir = gemini::decode_chat_response(response(parts.clone())).unwrap();
+        assert_eq!(
+            gemini::encode_chat_response(&ir).unwrap()["candidates"][0]["content"]["parts"],
+            parts
+        );
+        let mut history = request();
+        history["contents"] = json!([
+            {"role":"model","parts":parts},
+            {"role":"user","parts":[{"functionResponse":{"name":"f","response":{"ok":true}}}]}
+        ]);
+        let ir = gemini::decode_chat(history.clone(), "m", false).unwrap();
+        assert_eq!(
+            gemini::encode_chat(&ir).unwrap()["contents"][0]["parts"],
+            parts
+        );
+        assert!(openai::encode_chat(&ir).is_err());
+    }
+}
+
+#[test]
+fn interleaved_stream_emits_signed_calls_before_following_text() {
+    let parts = json!([
+        {"text":"before"},
+        {"functionCall":{"name":"f","args":{"x":1}},"thoughtSignature":"c2ln"},
+        {"text":"after","thoughtSignature":"c2lnMg=="}
+    ]);
+    let mut decoder = gemini::StreamDecoder::new();
+    let mut encoder = gemini::StreamEncoder::new("m".into());
+    let events = decoder.push(&event(response(parts.clone()))).unwrap();
+    let mut emitted = vec![];
+    for event in &events {
+        let output = encoder.push(event).unwrap();
+        for data in output
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+        {
+            let value: Value = serde_json::from_str(data).unwrap();
+            emitted.extend(
+                value["candidates"][0]["content"]["parts"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+    }
+    assert_eq!(Value::Array(emitted), parts);
+    for event in decoder.finish().unwrap() {
+        assert!(encoder.push(&event).unwrap().contains("finishReason"));
+    }
+}
+
 fn event(v: Value) -> nyro_protocol::framing::Event {
     nyro_protocol::framing::Event {
         data: v.to_string(),
@@ -223,10 +285,10 @@ fn invalid_roles_order_payloads_and_direct_ir_are_rejected() {
     input["systemInstruction"] = json!({"parts":[{"text":"x","thought":false}]});
     assert!(gemini::decode_chat(input, "m", false).is_err());
     let invalid = json!([{"functionCall":{"name":"f","args":{}},"thoughtSignature":"sig"},{"text":"later","thought":true}]);
-    assert!(gemini::decode_chat_response(response(invalid.clone())).is_err());
+    assert!(gemini::decode_chat_response(response(invalid.clone())).is_ok());
     let mut decoder = gemini::StreamDecoder::new();
-    assert!(decoder.push(&event(response(invalid))).is_err());
-    assert!(decoder.finish().is_err());
+    assert!(decoder.push(&event(response(invalid))).is_ok());
+    assert!(decoder.finish().is_ok());
     let mut input = request();
     input["contents"] = json!([{"role":"model","parts":parts()}]);
     let mut ir = gemini::decode_chat(input, "m", false).unwrap();

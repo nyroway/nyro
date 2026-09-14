@@ -330,9 +330,9 @@ fn parallel_call_history_stays_one_assistant_turn_and_strict_defaults_are_explic
     let serialized = serde_json::to_value(&r.messages[0]).unwrap();
     assert!(serialized.get("content").is_none());
     assert!(serialized.get("tool_calls").is_none());
-    assert_eq!(serialized["items"][0]["type"], "content");
-    assert_eq!(serialized["items"][1]["type"], "tool_call");
-    assert_eq!(serialized["items"][2]["type"], "tool_call");
+    assert_eq!(serialized["items"][0]["type"], "responses_message");
+    assert_eq!(serialized["items"][1]["type"], "responses_tool_call");
+    assert_eq!(serialized["items"][2]["type"], "responses_tool_call");
     assert_eq!(
         serde_json::to_value(&r.openai.tools).unwrap()[0]["function"].get("strict"),
         None
@@ -343,7 +343,7 @@ fn parallel_call_history_stays_one_assistant_turn_and_strict_defaults_are_explic
     assert!(decode_chat(json!({"model":"m","input":"x","stream":true,"stream_options":{"include_obfuscation":true}})).is_err());
 }
 #[test]
-fn response_echoes_normalize_and_refusal_uses_canonical_refusal_field() {
+fn response_echoes_normalize_and_refusal_keeps_its_message_part() {
     let mut v = response(
         json!([{"id":"m","type":"message","role":"assistant","status":"completed","content":[{"type":"refusal","refusal":"No"}]}]),
         "completed",
@@ -352,8 +352,10 @@ fn response_echoes_normalize_and_refusal_uses_canonical_refusal_field() {
     v["text"] = json!({"format":{"type":"text"},"verbosity":"medium"});
     let r = decode_chat_response(v).unwrap();
     assert!(r.service_tier.is_none());
-    assert_eq!(r.choices[0].message.refusal.as_deref(), Some("No"));
-    assert!(r.choices[0].message.content().is_none());
+    assert!(r.choices[0].message.refusal.is_none());
+    assert!(
+        matches!(r.choices[0].message.content(),Some(Content::Parts(parts)) if matches!(&parts[..],[ContentPart::Refusal {refusal}] if refusal=="No"))
+    );
 }
 #[test]
 fn rejects_contradictory_status_usage_and_output_order() {
@@ -384,7 +386,9 @@ fn rejects_contradictory_status_usage_and_output_order() {
     }
     let mut v = base;
     v["output"][0]["content"] = json!([{"type":"refusal","refusal":"No"},{"type":"output_text","text":"later","annotations":[]}]);
-    assert!(decode_chat_response(v).is_err());
+    let encoded = encode_chat_response(&decode_chat_response(v).unwrap()).unwrap();
+    assert_eq!(encoded["output"][0]["content"][0]["refusal"], "No");
+    assert_eq!(encoded["output"][0]["content"][1]["text"], "later");
 }
 fn text_stream() -> Vec<Event> {
     let mut added = message("");
@@ -498,7 +502,7 @@ fn stream_snapshots_identity_lifecycle_and_bounds_are_enforced() {
     assert!(failed);
 }
 #[test]
-fn message_output_items_cannot_overlap_or_emit_text_after_refusal() {
+fn overlapping_message_items_remain_indexed_and_cross_event_fields_are_rejected() {
     for next in [
         json!({"type":"message","id":"second","role":"assistant","status":"in_progress","content":[]}),
         json!({"type":"function_call","id":"fc","call_id":"call","name":"f","arguments":"","status":"in_progress"}),
@@ -514,7 +518,7 @@ fn message_output_items_cannot_overlap_or_emit_text_after_refusal() {
                 "response.output_item.added",
                 json!({"output_index":1,"item":next})
             ))
-            .is_err()
+            .is_ok()
         );
     }
     let mut frames = text_stream();
@@ -620,4 +624,58 @@ fn tool_delta_identity_argument_snapshots_and_done_order_are_validated() {
         ))
         .is_err()
     );
+}
+
+#[test]
+fn chat_refusal_slot_does_not_require_a_preceding_text_part() {
+    let mut encoder = StreamEncoder::new("m".into());
+    let source = json!({"id":"c","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"refusal":"No"},"finish_reason":null}]});
+    let output = encoder
+        .push(&openai::decode_chat_event(&source.to_string()).unwrap())
+        .unwrap();
+    assert!(output.contains("response.refusal.delta"));
+}
+
+#[test]
+fn interleaved_assistant_history_keeps_one_turn_and_original_metadata() {
+    let input = json!([
+        {"role":"user","content":"lookup"},
+        {"type":"message","id":"before","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Before","annotations":[]}]},
+        {"type":"function_call","id":"function-item","call_id":"call","name":"lookup","arguments":"{}","status":"completed"},
+        {"type":"message","id":"after","role":"assistant","status":"completed","content":[{"type":"output_text","text":"After","annotations":[]}]},
+        {"type":"function_call_output","call_id":"call","output":"result"}
+    ]);
+    let decoded = decode_chat(json!({"model":"m","input":input})).unwrap();
+    assert_eq!(decoded.messages.len(), 3);
+    assert_eq!(decoded.messages[1].items.len(), 3);
+    let encoded = encode_chat(&decoded).unwrap();
+    for i in 1..4 {
+        assert_eq!(encoded["input"][i], input[i]);
+    }
+}
+
+#[test]
+fn chat_projection_extracts_terminal_refusal_without_changing_responses_parts() {
+    for (parts, portable) in [
+        (
+            json!([{"type":"output_text","text":"Before","annotations":[]},{"type":"refusal","refusal":"No"}]),
+            true,
+        ),
+        (
+            json!([{"type":"refusal","refusal":"No"},{"type":"output_text","text":"After","annotations":[]}]),
+            false,
+        ),
+    ] {
+        let decoded=decode_chat_response(response(json!([{"type":"message","id":"m","role":"assistant","status":"completed","content":parts}]),"completed")).unwrap();
+        assert_eq!(
+            encode_chat_response(&decoded).unwrap()["output"][0]["content"],
+            parts
+        );
+        let encoded = openai::encode_chat_response(&decoded);
+        if portable {
+            assert_eq!(encoded.unwrap()["choices"][0]["message"]["refusal"], "No");
+        } else {
+            assert!(encoded.is_err());
+        }
+    }
 }

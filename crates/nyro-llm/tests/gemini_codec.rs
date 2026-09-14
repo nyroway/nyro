@@ -67,8 +67,20 @@ fn stream_parts_keep_receive_order_across_frames() {
             let ChatEvent::Chunk(chunk) = event else {
                 panic!()
             };
-            for event in chunk.choices.into_iter().flat_map(|c| c.delta.events) {
-                positions.push(event.position);
+            for choice in chunk.choices {
+                assert!(matches!(
+                    choice.delta.events.first().unwrap().delta,
+                    PartDelta::Start(_)
+                ));
+                assert!(matches!(
+                    choice.delta.events.last().unwrap().delta,
+                    PartDelta::End
+                ));
+                for event in choice.delta.events {
+                    if !matches!(event.delta, PartDelta::Start(_) | PartDelta::End) {
+                        positions.push(event.position);
+                    }
+                }
             }
         }
     }
@@ -141,10 +153,310 @@ fn multi_event_encoder_batch_counts_structures_and_text_payloads() {
 }
 
 #[test]
-fn encoder_rejects_position_reassignment_and_static_interleaving() {
+fn bounded_ordered_queue_preserves_parallel_call_start_order_and_blocked_text() {
+    let at = |item, delta| PositionedDelta {
+        position: StreamPosition {
+            item: StreamItem::Ordered(item),
+            part: 0,
+        },
+        delta,
+    };
+    let call = |index, id: &str| {
+        PartDelta::ToolCall(ToolCallDelta {
+            gemini: None,
+            index,
+            id: Some(id.into()),
+            r#type: Some(FunctionType::Function),
+            function: Some(FunctionDelta {
+                name: Some("f".into()),
+                arguments: Some("{}".into()),
+            }),
+        })
+    };
+    let prefix = vec![
+        at(0, PartDelta::Start(StreamPartKind::ToolCall)),
+        at(0, call(0, "a")),
+        at(1, PartDelta::Start(StreamPartKind::Text)),
+        at(1, PartDelta::Text("between".into())),
+        at(1, PartDelta::End),
+        at(2, PartDelta::Start(StreamPartKind::ToolCall)),
+        at(2, call(1, "b")),
+        at(2, PartDelta::End),
+    ];
+    let mut encoder = StreamEncoder::new("m".into());
+    assert_eq!(
+        encoder
+            .push(&chunk(
+                Delta {
+                    role: None,
+                    events: prefix.clone()
+                },
+                None
+            ))
+            .unwrap(),
+        ""
+    );
+    let output = encoder
+        .push(&chunk(
+            Delta {
+                role: None,
+                events: vec![at(0, PartDelta::End)],
+            },
+            None,
+        ))
+        .unwrap();
+    let value: serde_json::Value =
+        serde_json::from_str(output.trim().strip_prefix("data: ").unwrap()).unwrap();
+    let parts = &value["candidates"][0]["content"]["parts"];
+    assert_eq!(parts[0]["functionCall"]["id"], "a");
+    assert_eq!(parts[1]["text"], "between");
+    assert_eq!(parts[2]["functionCall"]["id"], "b");
+    let mut truncated = StreamEncoder::new("m".into());
+    truncated
+        .push(&chunk(
+            Delta {
+                role: None,
+                events: prefix,
+            },
+            None,
+        ))
+        .unwrap();
+    assert!(truncated.push(&ChatEvent::Done).is_err());
+
+    let mut small = StreamEncoder::with_limit("m".into(), 1024);
+    small
+        .push(&chunk(
+            Delta {
+                role: None,
+                events: vec![
+                    at(0, PartDelta::Start(StreamPartKind::ToolCall)),
+                    at(0, call(0, "a")),
+                    at(1, PartDelta::Start(StreamPartKind::Text)),
+                ],
+            },
+            None,
+        ))
+        .unwrap();
+    let text = chunk(
+        Delta {
+            role: None,
+            events: vec![at(1, PartDelta::Text("x".repeat(400)))],
+        },
+        None,
+    );
+    assert!(
+        [&text, &text, &text]
+            .into_iter()
+            .any(|event| small.push(event).is_err())
+    );
+}
+
+#[test]
+fn ordered_part_and_response_container_lifecycles_fail_closed() {
+    let at = |item, delta| PositionedDelta {
+        position: StreamPosition {
+            item: StreamItem::Ordered(item),
+            part: 0,
+        },
+        delta,
+    };
+    let frame = |events| chunk(Delta { role: None, events }, None);
+    let start = at(0, PartDelta::Start(StreamPartKind::Text));
+    for invalid in [start.clone(), at(1, PartDelta::End)] {
+        let mut encoder = StreamEncoder::new("m".into());
+        encoder.push(&frame(vec![start.clone()])).unwrap();
+        assert!(encoder.push(&frame(vec![invalid])).is_err());
+    }
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&frame(vec![start, at(0, PartDelta::End)]))
+        .unwrap();
+    assert!(
+        encoder
+            .push(&frame(vec![at(0, PartDelta::Text("late".into()))]))
+            .is_err()
+    );
+
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&frame(vec![at(
+            0,
+            PartDelta::ResponsesItemStart(ResponsesItemStart::FunctionCall {
+                id: "item_a".into(),
+            }),
+        )]))
+        .unwrap();
+    assert!(
+        encoder
+            .push(&frame(vec![at(0, PartDelta::Start(StreamPartKind::Text))]))
+            .is_err()
+    );
+
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&frame(vec![at(
+            0,
+            PartDelta::ResponsesItemStart(ResponsesItemStart::Message { id: "msg_a".into() }),
+        )]))
+        .unwrap();
+    assert!(
+        encoder
+            .push(&frame(vec![at(
+                0,
+                PartDelta::ResponsesItemEnd(
+                    nyro_protocol::openai::responses::ItemStatus::InProgress
+                )
+            )]))
+            .is_err()
+    );
+}
+
+#[test]
+fn ordered_parts_cannot_bypass_an_earlier_implicit_tool_call() {
+    let mut encoder = StreamEncoder::new("m".into());
+    let implicit = nyro_llm::codec::openai::decode_chat_event(&json!({"id":"r","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"first","type":"function","function":{"name":"f","arguments":"{}"}}]}}]}).to_string()).unwrap();
+    encoder.push(&implicit).unwrap();
+    let events = [
+        PartDelta::Start(StreamPartKind::Text),
+        PartDelta::Text("later".into()),
+        PartDelta::End,
+    ]
+    .into_iter()
+    .map(|delta| PositionedDelta {
+        position: StreamPosition {
+            item: StreamItem::Ordered(0),
+            part: 0,
+        },
+        delta,
+    })
+    .collect();
+    assert!(
+        encoder
+            .push(&chunk(Delta { role: None, events }, None))
+            .is_err()
+    );
+}
+
+#[test]
+fn response_containers_reserve_order_before_their_first_leaf() {
+    let at = |item, delta| PositionedDelta {
+        position: StreamPosition {
+            item: StreamItem::Ordered(item),
+            part: 0,
+        },
+        delta,
+    };
+    let start = |item, id: &str| {
+        at(
+            item,
+            PartDelta::ResponsesItemStart(ResponsesItemStart::Message { id: id.into() }),
+        )
+    };
+    let end = |item| {
+        at(
+            item,
+            PartDelta::ResponsesItemEnd(nyro_protocol::openai::responses::ItemStatus::Completed),
+        )
+    };
+    for empty_first in [false, true] {
+        let mut encoder = StreamEncoder::new("m".into());
+        let prefix = vec![
+            start(0, "a"),
+            start(1, "b"),
+            at(1, PartDelta::Start(StreamPartKind::Text)),
+            at(1, PartDelta::Text("B".into())),
+            at(1, PartDelta::End),
+            end(1),
+        ];
+        assert!(
+            encoder
+                .push(&chunk(
+                    Delta {
+                        role: None,
+                        events: prefix
+                    },
+                    None
+                ))
+                .unwrap()
+                .is_empty()
+        );
+        let mut suffix = vec![];
+        if !empty_first {
+            suffix.extend([
+                at(0, PartDelta::Start(StreamPartKind::Text)),
+                at(0, PartDelta::Text("A".into())),
+                at(0, PartDelta::End),
+            ]);
+        }
+        suffix.push(end(0));
+        let output = encoder
+            .push(&chunk(
+                Delta {
+                    role: None,
+                    events: suffix,
+                },
+                None,
+            ))
+            .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(output.trim().strip_prefix("data: ").unwrap()).unwrap();
+        let texts: Vec<_> = value["candidates"][0]["content"]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            texts,
+            if empty_first {
+                vec!["B"]
+            } else {
+                vec!["A", "B"]
+            }
+        );
+    }
+    let mut encoder = StreamEncoder::with_limit("m".into(), 1024);
+    encoder
+        .push(&chunk(
+            Delta {
+                role: None,
+                events: vec![
+                    start(0, "a"),
+                    start(1, "b"),
+                    at(1, PartDelta::Start(StreamPartKind::Text)),
+                ],
+            },
+            None,
+        ))
+        .unwrap();
+    let blocked = chunk(
+        Delta {
+            role: None,
+            events: vec![at(1, PartDelta::Text("x".repeat(100)))],
+        },
+        None,
+    );
+    assert!(encoder.push(&blocked).unwrap().is_empty());
+    assert!(
+        (0..10).any(|_| encoder.push(&blocked).is_err()),
+        "a container without leaves still bounds later buffered text"
+    );
+}
+
+#[test]
+fn encoder_preserves_static_interleaving_and_rejects_position_reassignment() {
     let mut response = decode_chat_response(json!({"candidates":[{"content":{"parts":[{"text":"before"},{"functionCall":{"id":"a","name":"f","args":{}}}]},"finishReason":"STOP"}]})).unwrap();
     response.choices[0].message.items.swap(0, 1);
-    assert!(encode_chat_response(&response).is_err());
+    let output = encode_chat_response(&response).unwrap();
+    assert!(
+        output["candidates"][0]["content"]["parts"][0]
+            .get("functionCall")
+            .is_some()
+    );
+    assert_eq!(
+        output["candidates"][0]["content"]["parts"][1]["text"],
+        "before"
+    );
 
     let mut first = tool_delta("{", true);
     first.events[0].position.item = StreamItem::Ordered(0);
@@ -261,9 +573,15 @@ fn streamed_tool_fragments_roundtrip_and_limits() {
     let ChatEvent::Chunk(c) = &events[0] else {
         panic!()
     };
-    let PartDelta::ToolCall(t) = &c.choices[0].delta.events[0].delta else {
-        panic!()
-    };
+    let t = c.choices[0]
+        .delta
+        .events
+        .iter()
+        .find_map(|event| match &event.delta {
+            PartDelta::ToolCall(call) => Some(call),
+            _ => None,
+        })
+        .unwrap();
     assert_eq!(t.id.as_deref(), Some("id1"));
     assert_eq!(
         t.function.as_ref().unwrap().arguments.as_deref(),
@@ -547,7 +865,7 @@ fn result_text_blocks_are_not_silently_concatenated() {
 }
 
 #[test]
-fn decoder_rejects_unmatched_identity_and_assistant_reordering() {
+fn decoder_rejects_unmatched_identity_and_accepts_interleaved_assistant() {
     for response in [
         json!({"id":"a","name":"wrong","response":{}}),
         json!({"id":"unknown","name":"first","response":{}}),
@@ -583,11 +901,11 @@ fn decoder_rejects_unmatched_identity_and_assistant_reordering() {
             "m",
             false
         )
-        .is_err()
+        .is_ok()
     );
 }
 #[test]
-fn streamed_tool_then_text_is_rejected_without_reordering() {
+fn explicit_stream_parts_allow_tool_then_text_without_changing_legacy_slots() {
     let tool = json!({"functionCall":{"name":"f","args":{}}});
     let text = json!({"text":"after"});
     let mut d = StreamDecoder::new();
@@ -595,14 +913,14 @@ fn streamed_tool_then_text_is_rejected_without_reordering() {
         d.push(&event(
             json!({"candidates":[{"content":{"parts":[tool.clone(),text.clone()]}}]})
         ))
-        .is_err()
+        .is_ok()
     );
     let mut d = StreamDecoder::new();
     d.push(&event(json!({"candidates":[{"content":{"parts":[tool]}}]})))
         .unwrap();
     assert!(
         d.push(&event(json!({"candidates":[{"content":{"parts":[text]}}]})))
-            .is_err()
+            .is_ok()
     );
     let mut e = StreamEncoder::new("m".into());
     e.push(&chunk(tool_delta("{}", true), None)).unwrap();

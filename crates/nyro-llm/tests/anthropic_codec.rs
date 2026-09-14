@@ -1,12 +1,38 @@
 use nyro_llm::{
     codec::anthropic::*,
-    ir::{ChatEvent, PartDelta, PositionedDelta, StreamItem, StreamPosition},
+    ir::{ChatEvent, PartDelta, PositionedDelta, StreamItem, StreamPartKind, StreamPosition},
 };
 use nyro_protocol::framing::Event;
 use serde_json::{Value, json};
 
 #[test]
-fn static_ir_uses_ordered_items_and_keeps_the_existing_subset() {
+fn interleaved_history_and_json_preserve_text_tools_and_signed_blocks() {
+    let content = json!([
+        {"type":"text","text":"before"},
+        {"type":"tool_use","id":"a","name":"f","input":{}},
+        {"type":"text","text":"between"},
+        {"type":"thinking","thinking":"reason","signature":"signature-one"},
+        {"type":"redacted_thinking","data":"opaque"},
+        {"type":"tool_use","id":"b","name":"g","input":{"x":1}},
+        {"type":"thinking","thinking":"","signature":"signature-two"},
+        {"type":"text","text":"after"}
+    ]);
+    let request = decode_chat(json!({"model":"m","max_tokens":16,"messages":[
+        {"role":"assistant","content":content},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":"ok"},{"type":"tool_result","tool_use_id":"b","content":"ok"}]}
+    ]})).unwrap();
+    assert_eq!(
+        encode_chat(&request).unwrap()["messages"][0]["content"],
+        content
+    );
+    assert!(nyro_llm::codec::openai::encode_chat(&request).is_err());
+    let response = decode_chat_response(json!({"id":"r","type":"message","role":"assistant","model":"m","content":content,"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":2}})).unwrap();
+    assert_eq!(encode_chat_response(&response).unwrap()["content"], content);
+    assert!(nyro_llm::codec::openai::encode_chat_response(&response).is_err());
+}
+
+#[test]
+fn static_ir_uses_ordered_items_and_preserves_reordered_groups() {
     let content = json!([
         {"type":"text","text":"checking"},
         {"type":"tool_use","id":"t","name":"f","input":{}}
@@ -31,7 +57,10 @@ fn static_ir_uses_ordered_items_and_keeps_the_existing_subset() {
         .unwrap()
         .swap(0, 1);
     let interleaved = serde_json::from_value(value).unwrap();
-    assert!(encode_chat(&interleaved).is_err());
+    assert_eq!(
+        encode_chat(&interleaved).unwrap()["messages"][0]["content"][0]["type"],
+        "tool_use"
+    );
 
     let response = decode_chat_response(json!({"id":"r","type":"message","role":"assistant","model":"m","content":content,"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}})).unwrap();
     let mut value = serde_json::to_value(&response).unwrap();
@@ -44,7 +73,10 @@ fn static_ir_uses_ordered_items_and_keeps_the_existing_subset() {
         .as_array_mut()
         .unwrap()
         .swap(0, 1);
-    assert!(encode_chat_response(&serde_json::from_value(value).unwrap()).is_err());
+    assert_eq!(
+        encode_chat_response(&serde_json::from_value(value).unwrap()).unwrap()["content"][0]["type"],
+        "tool_use"
+    );
 }
 
 #[test]
@@ -171,6 +203,368 @@ fn text_part(item: u32, part: u32, text: String) -> PositionedDelta {
         },
         delta: PartDelta::Text(text),
     }
+}
+
+fn part(item: u32, delta: PartDelta) -> PositionedDelta {
+    PositionedDelta {
+        position: StreamPosition {
+            item: StreamItem::Ordered(item),
+            part: 0,
+        },
+        delta,
+    }
+}
+
+fn call(index: u32, id: &str) -> PartDelta {
+    PartDelta::ToolCall(nyro_llm::ir::ToolCallDelta {
+        index,
+        id: Some(id.into()),
+        r#type: Some(nyro_llm::ir::FunctionType::Function),
+        function: Some(nyro_llm::ir::FunctionDelta {
+            name: Some("f".into()),
+            arguments: Some("{}".into()),
+        }),
+        gemini: None,
+    })
+}
+
+#[test]
+fn explicit_parallel_tools_keep_start_order_when_ends_arrive_backwards() {
+    let mut encoder = StreamEncoder::new("m".into());
+    for index in 0..2 {
+        encoder
+            .push(&parts_chunk(vec![
+                part(index, PartDelta::Start(StreamPartKind::ToolCall)),
+                part(
+                    index,
+                    call(index, if index == 0 { "first" } else { "second" }),
+                ),
+            ]))
+            .unwrap();
+    }
+    assert!(
+        encoder
+            .push(&parts_chunk(vec![part(1, PartDelta::End)]))
+            .unwrap()
+            .is_empty()
+    );
+    let output = encoder
+        .push(&parts_chunk(vec![part(0, PartDelta::End)]))
+        .unwrap();
+    assert!(output.find("first").unwrap() < output.find("second").unwrap());
+    assert_eq!(output.matches("event: content_block_start\n").count(), 2);
+    let output = encoder
+        .push(&parts_chunk(vec![
+            part(2, PartDelta::Start(StreamPartKind::Text)),
+            part(2, PartDelta::Text("after".into())),
+            part(2, PartDelta::End),
+        ]))
+        .unwrap();
+    assert!(output.contains("after"));
+}
+
+#[test]
+fn explicit_parts_reject_wrong_lifecycle_and_unfinished_parts() {
+    let start = part(0, PartDelta::Start(StreamPartKind::Text));
+    for invalid in [
+        start.clone(),
+        part(1, PartDelta::End),
+        part(0, call(0, "t")),
+    ] {
+        let mut encoder = StreamEncoder::new("m".into());
+        encoder.push(&parts_chunk(vec![start.clone()])).unwrap();
+        assert!(encoder.push(&parts_chunk(vec![invalid])).is_err());
+    }
+    let mut encoder = StreamEncoder::new("m".into());
+    assert!(
+        encoder
+            .push(&parts_chunk(vec![part(0, PartDelta::End)]))
+            .is_err()
+    );
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&parts_chunk(vec![start, part(0, PartDelta::End)]))
+        .unwrap();
+    assert!(
+        encoder
+            .push(&parts_chunk(vec![part(0, PartDelta::Text("late".into()))]))
+            .is_err()
+    );
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&parts_chunk(vec![
+            part(0, PartDelta::Start(StreamPartKind::ToolCall)),
+            part(0, call(0, "t")),
+        ]))
+        .unwrap();
+    encoder
+        .push(&parts_chunk(vec![part(
+            1,
+            PartDelta::Start(StreamPartKind::Text),
+        )]))
+        .unwrap();
+    assert!(encoder.push(&ChatEvent::Done).is_err());
+}
+
+#[test]
+fn blocked_text_and_thinking_are_released_in_start_order() {
+    use nyro_llm::ir::AnthropicThinkingDelta as T;
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&parts_chunk(vec![
+            part(0, PartDelta::Start(StreamPartKind::ToolCall)),
+            part(0, call(0, "first")),
+        ]))
+        .unwrap();
+    for event in [
+        part(1, PartDelta::Start(StreamPartKind::Text)),
+        part(1, PartDelta::Text("between".into())),
+        part(1, PartDelta::End),
+        part(2, PartDelta::AnthropicThinking(T::Start)),
+        part(
+            2,
+            PartDelta::AnthropicThinking(T::Signature {
+                signature: "signed".into(),
+            }),
+        ),
+        part(2, PartDelta::AnthropicThinking(T::Stop)),
+        part(3, PartDelta::Start(StreamPartKind::ToolCall)),
+        part(3, call(1, "last")),
+        part(3, PartDelta::End),
+    ] {
+        assert!(encoder.push(&parts_chunk(vec![event])).unwrap().is_empty());
+    }
+    let output = encoder
+        .push(&parts_chunk(vec![part(0, PartDelta::End)]))
+        .unwrap();
+    let types: Vec<String> = output
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|frame| frame["type"] == "content_block_start")
+        .map(|frame| frame["content_block"]["type"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(types, ["tool_use", "text", "thinking", "tool_use"]);
+    assert!(output.find("first").unwrap() < output.find("between").unwrap());
+    assert!(output.find("signed").unwrap() < output.find("last").unwrap());
+}
+
+#[test]
+fn only_blocked_content_accumulates_against_the_stream_limit() {
+    let mut encoder = StreamEncoder::with_limit("m".into(), 4096);
+    encoder
+        .push(&parts_chunk(vec![part(
+            0,
+            PartDelta::Start(StreamPartKind::Text),
+        )]))
+        .unwrap();
+    for _ in 0..20 {
+        encoder
+            .push(&parts_chunk(vec![part(
+                0,
+                PartDelta::Text("x".repeat(2000)),
+            )]))
+            .unwrap();
+    }
+    let mut encoder = StreamEncoder::with_limit("m".into(), 4096);
+    encoder
+        .push(&parts_chunk(vec![
+            part(0, PartDelta::Start(StreamPartKind::ToolCall)),
+            part(0, call(0, "t")),
+            part(1, PartDelta::Start(StreamPartKind::Text)),
+        ]))
+        .unwrap();
+    encoder
+        .push(&parts_chunk(vec![part(
+            1,
+            PartDelta::Text("x".repeat(2000)),
+        )]))
+        .unwrap();
+    assert!(
+        encoder
+            .push(&parts_chunk(vec![part(
+                1,
+                PartDelta::Text("x".repeat(2000))
+            )]))
+            .is_err()
+    );
+}
+
+#[test]
+fn response_items_preserve_order_when_an_earlier_message_part_arrives_late() {
+    use nyro_llm::ir::ResponsesItemStart as R;
+    use nyro_protocol::openai::responses::ItemStatus as S;
+    for empty in [false, true] {
+        let mut encoder = StreamEncoder::new("m".into());
+        encoder
+            .push(&parts_chunk(vec![part(
+                0,
+                PartDelta::ResponsesItemStart(R::Message { id: "a".into() }),
+            )]))
+            .unwrap();
+        let output = encoder
+            .push(&parts_chunk(vec![
+                part(
+                    1,
+                    PartDelta::ResponsesItemStart(R::FunctionCall { id: "b".into() }),
+                ),
+                part(1, PartDelta::Start(StreamPartKind::ToolCall)),
+                part(1, call(0, "later-call")),
+                part(1, PartDelta::End),
+                part(1, PartDelta::ResponsesItemEnd(S::Completed)),
+            ]))
+            .unwrap();
+        assert!(
+            output.is_empty(),
+            "later item bypassed an earlier open container: {output}"
+        );
+        if !empty {
+            for index in 0..2 {
+                let at = |delta| PositionedDelta {
+                    position: StreamPosition {
+                        item: StreamItem::Ordered(0),
+                        part: index,
+                    },
+                    delta,
+                };
+                let output = encoder
+                    .push(&parts_chunk(vec![
+                        at(PartDelta::Start(StreamPartKind::Text)),
+                        at(PartDelta::Text(format!("earlier-{index}"))),
+                        at(PartDelta::End),
+                    ]))
+                    .unwrap();
+                assert!(output.contains(&format!("earlier-{index}")));
+                assert!(!output.contains("later-call"));
+            }
+        }
+        let output = encoder
+            .push(&parts_chunk(vec![part(
+                0,
+                PartDelta::ResponsesItemEnd(S::Completed),
+            )]))
+            .unwrap();
+        assert!(output.contains("later-call"));
+    }
+}
+
+#[test]
+fn response_container_blocking_is_bounded_and_unblocked_parts_do_not_accumulate() {
+    use nyro_llm::ir::ResponsesItemStart as R;
+    let container = |index| {
+        part(
+            index,
+            PartDelta::ResponsesItemStart(R::Message {
+                id: format!("message-{index}"),
+            }),
+        )
+    };
+    let mut encoder = StreamEncoder::with_limit("m".into(), 4096);
+    encoder
+        .push(&parts_chunk(vec![
+            container(0),
+            container(1),
+            part(1, PartDelta::Start(StreamPartKind::Text)),
+        ]))
+        .unwrap();
+    encoder
+        .push(&parts_chunk(vec![part(
+            1,
+            PartDelta::Text("x".repeat(2000)),
+        )]))
+        .unwrap();
+    assert!(
+        encoder
+            .push(&parts_chunk(vec![part(
+                1,
+                PartDelta::Text("x".repeat(2000))
+            )]))
+            .is_err()
+    );
+
+    let mut encoder = StreamEncoder::with_limit("m".into(), 1024);
+    encoder.push(&parts_chunk(vec![container(0)])).unwrap();
+    for index in 0..256 {
+        let at = |delta| PositionedDelta {
+            position: StreamPosition {
+                item: StreamItem::Ordered(0),
+                part: index,
+            },
+            delta,
+        };
+        let output = encoder
+            .push(&parts_chunk(vec![
+                at(PartDelta::Start(StreamPartKind::Text)),
+                at(PartDelta::Text("short".into())),
+                at(PartDelta::End),
+            ]))
+            .unwrap();
+        assert!(output.contains("short"));
+    }
+}
+
+#[test]
+fn responses_container_identity_is_normalized_but_lifecycle_is_checked() {
+    use nyro_llm::ir::ResponsesItemStart as R;
+    use nyro_protocol::openai::responses::ItemStatus as S;
+    let mut encoder = StreamEncoder::new("m".into());
+    let output = encoder
+        .push(&parts_chunk(vec![
+            part(
+                0,
+                PartDelta::ResponsesItemStart(R::FunctionCall {
+                    id: "source-item-id".into(),
+                }),
+            ),
+            part(0, PartDelta::Start(StreamPartKind::ToolCall)),
+            part(0, call(0, "call-id")),
+            part(0, PartDelta::End),
+            part(0, PartDelta::ResponsesItemEnd(S::Completed)),
+        ]))
+        .unwrap();
+    assert!(output.contains("call-id"));
+    assert!(!output.contains("source-item-id"));
+    assert!(
+        encoder
+            .push(&parts_chunk(vec![part(
+                0,
+                PartDelta::ResponsesItemEnd(S::Completed)
+            )]))
+            .is_err()
+    );
+    for invalid in [
+        PartDelta::Start(StreamPartKind::Text),
+        PartDelta::ResponsesItemEnd(S::InProgress),
+    ] {
+        let mut encoder = StreamEncoder::new("m".into());
+        encoder
+            .push(&parts_chunk(vec![part(
+                0,
+                PartDelta::ResponsesItemStart(R::FunctionCall {
+                    id: "source".into(),
+                }),
+            )]))
+            .unwrap();
+        assert!(encoder.push(&parts_chunk(vec![part(0, invalid)])).is_err());
+    }
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&parts_chunk(vec![
+            part(
+                0,
+                PartDelta::ResponsesItemStart(R::Message { id: "msg".into() }),
+            ),
+            part(0, PartDelta::Start(StreamPartKind::Text)),
+        ]))
+        .unwrap();
+    assert!(
+        encoder
+            .push(&parts_chunk(vec![part(
+                0,
+                PartDelta::ResponsesItemEnd(S::Completed)
+            )]))
+            .is_err()
+    );
 }
 
 #[test]
@@ -406,24 +800,104 @@ fn parallel_tool_encoder_validates_fragmented_arguments() {
     assert!(out.contains("[DONE]"));
 }
 #[test]
-fn rejects_text_after_tool_use_instead_of_reordering() {
-    let content = json!([{"type":"tool_use","id":"t","name":"f","input":{}},{"type":"text","text":"after tool"}]);
-    assert!(decode_chat_response(json!({"id":"m","type":"message","role":"assistant","model":"c","content":content,"stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}})).is_err());
-    assert!(
-        decode_chat(
-            json!({"model":"c","max_tokens":4,"messages":[{"role":"assistant","content":content}]})
-        )
-        .is_err()
-    );
-    let mut decoder = StreamDecoder::new();
-    for value in [
-        json!({"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"c","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}),
-        json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t","name":"f","input":{}}}),
+fn interleaved_stream_preserves_block_lifecycles_and_emits_tools_at_end() {
+    let frames = [
+        json!({"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"c","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"before"}}),
         json!({"type":"content_block_stop","index":0}),
-    ] {
-        decoder.push(&event(value)).unwrap();
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t","name":"f","input":{}}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"x\":"}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"1}"}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_stop","index":2}),
+        json!({"type":"content_block_start","index":3,"content_block":{"type":"thinking","thinking":"","signature":""}}),
+        json!({"type":"content_block_delta","index":3,"delta":{"type":"thinking_delta","thinking":"reason"}}),
+        json!({"type":"content_block_delta","index":3,"delta":{"type":"signature_delta","signature":"opaque"}}),
+        json!({"type":"content_block_stop","index":3}),
+        json!({"type":"content_block_start","index":4,"content_block":{"type":"tool_use","id":"u","name":"g","input":{}}}),
+        json!({"type":"content_block_stop","index":4}),
+        json!({"type":"content_block_start","index":5,"content_block":{"type":"redacted_thinking","data":"opaque-redacted"}}),
+        json!({"type":"content_block_stop","index":5}),
+        json!({"type":"content_block_start","index":6,"content_block":{"type":"text","text":"after"}}),
+        json!({"type":"content_block_stop","index":6}),
+        json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":7}}),
+        json!({"type":"message_stop"}),
+    ];
+    let mut decoder = StreamDecoder::new();
+    let mut encoder = StreamEncoder::new("c".into());
+    let mut output = String::new();
+    let mut starts = 0;
+    let mut ends = 0;
+    for frame in frames {
+        for ir in decoder.push(&event(frame.clone())).unwrap() {
+            if let ChatEvent::Chunk(chunk) = &ir {
+                for e in &chunk.choices[0].delta.events {
+                    let delta = serde_json::to_value(&e.delta).unwrap();
+                    starts += usize::from(delta["type"] == "start");
+                    ends += usize::from(delta["type"] == "end");
+                }
+            }
+            output.push_str(&encoder.push(&ir).unwrap());
+        }
+        if frame["type"] == "content_block_stop" && frame["index"] == 1 {
+            assert!(
+                output.contains("tool_use"),
+                "tool must be emitted when its block ends"
+            );
+        }
     }
-    assert!(decoder.push(&event(json!({"type":"content_block_start","index":1,"content_block":{"type":"text","text":"after tool"}}))).is_err());
+    decoder.finish().unwrap();
+    assert_eq!((starts, ends), (5, 5));
+    let output: Vec<Value> = output
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let blocks: Vec<_> = output
+        .iter()
+        .filter(|frame| frame["type"] == "content_block_start")
+        .collect();
+    assert_eq!(
+        blocks
+            .iter()
+            .map(|frame| frame["content_block"]["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "text",
+            "tool_use",
+            "text",
+            "thinking",
+            "tool_use",
+            "redacted_thinking",
+            "text"
+        ]
+    );
+    for (index, block) in blocks.iter().enumerate() {
+        assert_eq!(block["index"], index);
+    }
+    assert_eq!(
+        output
+            .iter()
+            .filter(|frame| frame["type"] == "content_block_stop")
+            .count(),
+        7
+    );
+    assert!(
+        output
+            .iter()
+            .any(|frame| frame["delta"]["signature"] == "opaque")
+    );
+    assert!(
+        output
+            .iter()
+            .any(|frame| frame["delta"]["partial_json"] == "{\"x\":1}")
+    );
+    assert!(
+        output
+            .iter()
+            .any(|frame| frame["usage"]["output_tokens"] == 7)
+    );
 }
 #[test]
 fn rejects_unrepresentable_matched_stop_sequence() {

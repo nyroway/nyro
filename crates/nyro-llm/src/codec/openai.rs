@@ -2,6 +2,8 @@
 pub use super::CodecError;
 pub(crate) mod cache;
 mod ordered;
+mod streaming;
+pub use streaming::StreamEncoder;
 pub mod responses;
 use crate::ir::*;
 use nyro_protocol::openai::{chat, embedding, stream};
@@ -111,14 +113,18 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
         }
     }
     for message in &request.messages {
-        super::validate_message_items(&message.items)?;
-        if let Some(Content::Parts(parts)) = message.content() {
-            for part in parts {
-                if let ContentPart::ImageUrl { image_url, .. } = part {
-                    if message.role != Role::User {
-                        return Err(invalid("images require a user message"));
+        for item in &message.items {
+            super::validate_item_metadata(item)?;
+        }
+        for content in message.items.iter().filter_map(MessageItem::as_content) {
+            if let Content::Parts(parts) = content {
+                for part in parts {
+                    if let ContentPart::ImageUrl { image_url, .. } = part {
+                        if message.role != Role::User {
+                            return Err(invalid("images require a user message"));
+                        }
+                        super::image::source(image_url)?;
                     }
-                    super::image::source(image_url)?;
                 }
             }
         }
@@ -164,6 +170,34 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
     }
     Ok(())
 }
+/// Validate each portable item without imposing Chat's cross-field projection.
+/// Only options are returned; this temporary message list is never dispatched.
+pub(super) fn encode_portable_options(request: &ChatRequest) -> Result<Value, CodecError> {
+    validate_chat(request)?;
+    for message in &request.messages {
+        let mut metadata = serde_json::to_value(message)?;
+        metadata.as_object_mut().unwrap().remove("items");
+        let _: chat::Message = serde_json::from_value(metadata)?;
+        for item in &message.items {
+            if let Some(content) = item.as_content() {
+                let _: chat::Content = convert(content)?;
+            }
+            if let Some(call) = item.as_tool_call() {
+                let _: chat::ToolCall = convert(call)?;
+            }
+        }
+    }
+    let mut portable = request.clone();
+    portable.messages.truncate(1);
+    portable.messages[0].items = vec![MessageItem::Content(Content::Text(String::new()))];
+    let mut value = encode_chat(&portable)?;
+    value.as_object_mut().unwrap().remove("messages");
+    Ok(value)
+}
+pub(super) fn validate_portable_chat(request: &ChatRequest) -> Result<(), CodecError> {
+    encode_portable_options(request).map(|_| ())
+}
+
 pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
     validate_chat(request)?;
     let reasoning = reasoning_config(request)?;
@@ -267,7 +301,9 @@ pub fn encode_embedding(request: &EmbeddingRequest) -> Result<Value, CodecError>
 }
 pub(super) fn validate_output_breakpoints(response: &ChatResponse) -> Result<(), CodecError> {
     for choice in &response.choices {
-        super::validate_message_items(&choice.message.items)?;
+        for item in &choice.message.items {
+            super::validate_item_metadata(item)?;
+        }
         if choice.message.tool_calls().any(|c| {
             matches!(
                 c,
@@ -279,24 +315,30 @@ pub(super) fn validate_output_breakpoints(response: &ChatResponse) -> Result<(),
         }) {
             return Err(invalid("cache control is not generated output"));
         }
-        if let Some(Content::Parts(parts)) = choice.message.content()
-            && parts.iter().any(|p| {
-                matches!(
-                    p,
-                    ContentPart::Text {
-                        anthropic_cache_control: Some(_),
-                        ..
-                    } | ContentPart::ImageUrl {
-                        anthropic_cache_control: Some(_),
-                        ..
-                    } | ContentPart::Text {
-                        prompt_cache_breakpoint: Some(_),
-                        ..
-                    } | ContentPart::ImageUrl {
-                        prompt_cache_breakpoint: Some(_),
-                        ..
-                    }
-                )
+        if choice
+            .message
+            .items
+            .iter()
+            .filter_map(MessageItem::as_content)
+            .any(|content| {
+                matches!(content, Content::Parts(parts) if parts.iter().any(|p| {
+                    matches!(
+                        p,
+                        ContentPart::Text {
+                            anthropic_cache_control: Some(_),
+                            ..
+                        } | ContentPart::ImageUrl {
+                            anthropic_cache_control: Some(_),
+                            ..
+                        } | ContentPart::Text {
+                            prompt_cache_breakpoint: Some(_),
+                            ..
+                        } | ContentPart::ImageUrl {
+                            prompt_cache_breakpoint: Some(_),
+                            ..
+                        }
+                    )
+                }))
             })
         {
             return Err(invalid(
