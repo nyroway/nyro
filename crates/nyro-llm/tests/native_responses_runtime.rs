@@ -591,3 +591,128 @@ async fn early_usage_is_not_settled_as_final_when_terminal_usage_is_missing() {
     );
     assert_eq!(limit.available(), 1);
 }
+
+fn strict_reasoning_input(streaming: bool) -> Value {
+    json!({"model":"public","stream":streaming,"reasoning":{"effort":"high","summary":"auto","context":"all_turns"},"include":["reasoning.encrypted_content"],"input":[{"role":"user","content":"Hi"},{"type":"reasoning","id":"rs_history","summary":[],"encrypted_content":"opaque-history"},{"role":"user","content":"Continue"}]})
+}
+fn strict_reasoning_answer() -> Value {
+    json!({"id":"resp_answer","object":"response","model":"private-model","created_at":100,"status":"completed","output":[{"type":"reasoning","id":"rs_original","summary":[{"type":"summary_text","text":"摘要"}],"encrypted_content":"opaque-final"}],"usage":{"input_tokens":3,"output_tokens":7,"total_tokens":10,"output_tokens_details":{"reasoning_tokens":5}}})
+}
+fn strict_reasoning_frames() -> Vec<Value> {
+    let mut start = strict_reasoning_answer();
+    start["status"] = json!("in_progress");
+    start["output"] = json!([]);
+    start["usage"] = Value::Null;
+    let mut frames = vec![
+        json!({"type":"response.created","response":start}),
+        json!({"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_original","summary":[],"encrypted_content":"opaque-partial"}}),
+        json!({"type":"response.reasoning_summary_part.added","output_index":0,"item_id":"rs_original","summary_index":0,"part":{"type":"summary_text","text":""}}),
+        json!({"type":"response.reasoning_summary_text.delta","output_index":0,"item_id":"rs_original","summary_index":0,"delta":"摘要"}),
+        json!({"type":"response.reasoning_summary_text.done","output_index":0,"item_id":"rs_original","summary_index":0,"text":"摘要"}),
+        json!({"type":"response.reasoning_summary_part.done","output_index":0,"item_id":"rs_original","summary_index":0,"part":{"type":"summary_text","text":"摘要"}}),
+        json!({"type":"response.output_item.done","output_index":0,"item":strict_reasoning_answer()["output"][0]}),
+        json!({"type":"response.completed","response":strict_reasoning_answer()}),
+    ];
+    for (i, frame) in frames.iter_mut().enumerate() {
+        frame["sequence_number"] = json!(i);
+    }
+    frames
+}
+#[tokio::test]
+async fn strict_reasoning_retry_history_final_ciphertext_and_usage() {
+    for native in [false, true] {
+        for streaming in [false, true] {
+            let failing = spawn_upstream(503, "unavailable".into(), false).await;
+            let upstream = spawn_upstream(
+                200,
+                if streaming {
+                    sse(&strict_reasoning_frames())
+                } else {
+                    strict_reasoning_answer().to_string()
+                },
+                streaming,
+            )
+            .await;
+            let limit = ConcurrencyLimit::new(1).unwrap();
+            let mut cfg = config(&[(&failing, "openai", native), (&upstream, "openai", native)]);
+            cfg["models"]["public"]["quota"] = json!({"total_tokens":14,"reserve_tokens":5});
+            let gateway = runtime(cfg, &limit, Options::default());
+            let body = strict_reasoning_input(streaming);
+            let response = invoke(&gateway, body.clone()).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "native={native} stream={streaming}"
+            );
+            let result = consume(response).await;
+            if streaming {
+                let mut framing = nyro_protocol::framing::Decoder::new(65536);
+                let frames = framing.push(result.as_bytes()).unwrap();
+                let terminal: Value = serde_json::from_str(&frames.last().unwrap().data).unwrap();
+                assert_eq!(
+                    terminal["response"]["output"][0],
+                    strict_reasoning_answer()["output"][0]
+                );
+                assert_eq!(terminal["response"]["model"], "public");
+            } else {
+                let v: Value = serde_json::from_str(&result).unwrap();
+                assert_eq!(v["output"][0], strict_reasoning_answer()["output"][0]);
+                assert_eq!(v["model"], "public");
+            }
+            assert_eq!(limit.available(), 1);
+            assert_eq!(failing.calls.lock().unwrap().len(), 1);
+            let sent = upstream.calls.lock().unwrap()[0]["body"].clone();
+            assert_eq!(sent["reasoning"], body["reasoning"]);
+            assert_eq!(sent["input"][1], body["input"][1]);
+            assert_eq!(sent["model"], "private-model");
+            assert_eq!(sent["store"], false);
+            assert_eq!(
+                invoke(&gateway, body).await.status(),
+                StatusCode::TOO_MANY_REQUESTS
+            );
+            assert_eq!(upstream.calls.lock().unwrap().len(), 1);
+        }
+    }
+}
+#[tokio::test]
+async fn invalid_reasoning_config_never_dispatches() {
+    let upstream = spawn_upstream(200, strict_reasoning_answer().to_string(), false).await;
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let gateway = runtime(
+        config(&[(&upstream, "openai", false)]),
+        &limit,
+        Options::default(),
+    );
+    for config in [
+        json!({"effort":"invalid"}),
+        json!({"context":true}),
+        json!({"summary":"none"}),
+    ] {
+        let mut body = strict_reasoning_input(false);
+        body["reasoning"] = config;
+        assert_eq!(
+            invoke(&gateway, body).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert!(upstream.calls.lock().unwrap().is_empty());
+    assert_eq!(limit.available(), 1);
+}
+#[tokio::test]
+async fn malformed_strict_reasoning_stream_never_retries_after_delivery() {
+    let mut frames = strict_reasoning_frames();
+    frames[4]["text"] = json!("conflict");
+    let upstream = spawn_upstream(200, sse(&frames), true).await;
+    let fallback = spawn_upstream(200, sse(&strict_reasoning_frames()), true).await;
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let gateway = runtime(
+        config(&[(&upstream, "openai", false), (&fallback, "openai", false)]),
+        &limit,
+        Options::default(),
+    );
+    let response = invoke(&gateway, strict_reasoning_input(true)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(to_bytes(response.into_body(), 65536).await.is_err());
+    assert!(fallback.calls.lock().unwrap().is_empty());
+    assert_eq!(limit.available(), 1);
+}

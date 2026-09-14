@@ -150,8 +150,8 @@ fn request_rejects_unrepresentable_semantics() {
         ("conversation", json!("c")),
         ("store", json!(true)),
         ("background", json!(true)),
-        ("reasoning", json!({"effort":"low"})),
-        ("include", json!(["reasoning.encrypted_content"])),
+        ("reasoning", json!({"effort":"unsupported"})),
+        ("include", json!(["message.output_text.logprobs"])),
         ("truncation", json!("auto")),
         ("unknown", json!(true)),
     ] {
@@ -218,7 +218,7 @@ fn response_text_refusal_tools_usage_and_incomplete() {
         "No"
     );
     for bad in [
-        json!({"type":"reasoning","id":"r","summary":[]}),
+        json!({"type":"reasoning","id":"r","summary":[],"content":[{"type":"reasoning_text","text":"raw"}]}),
         json!({"type":"message","id":"m","role":"assistant","status":"completed","content":[{"type":"output_text","text":"x","annotations":[{"type":"url_citation","url":"https://x"}]}]}),
     ] {
         assert!(decode_chat_response(response(json!([bad]), "completed")).is_err());
