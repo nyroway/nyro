@@ -716,3 +716,87 @@ async fn malformed_strict_reasoning_stream_never_retries_after_delivery() {
     assert!(fallback.calls.lock().unwrap().is_empty());
     assert_eq!(limit.available(), 1);
 }
+
+#[tokio::test]
+async fn effort_only_retry_skips_gemini_and_reaches_chat_without_losing_controls() {
+    for native in [false, true] {
+        let first = spawn_upstream(503, String::new(), false).await;
+        let other = spawn_upstream(200, String::new(), false).await;
+        let last=spawn_upstream(200,json!({"id":"r","object":"chat.completion","created":1,"model":"private-model","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5,"completion_tokens_details":{"reasoning_tokens":2}}}).to_string(),false).await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let mut cfg = config(&[
+            (&first, "openai", native),
+            (&other, "gemini", false),
+            (&last, "openai", native),
+        ]);
+        cfg["providers"]["p2"]["api"] = json!("chat_completions");
+        cfg["models"]["public"]["quota"] = json!({"total_tokens":5,"reserve_tokens":1});
+        let gateway = runtime(cfg, &limit, Options::default());
+        let mut body = input(false, false);
+        body["reasoning"] = json!({"effort":"high"});
+        let response = invoke(&gateway, body.clone()).await;
+        assert_eq!(response.status(), StatusCode::OK, "native={native}");
+        let result: Value = serde_json::from_str(&consume(response).await).unwrap();
+        assert_eq!(result["model"], "public");
+        assert_eq!(result["usage"]["total_tokens"], 5);
+        assert_eq!(
+            result["usage"]["output_tokens_details"]["reasoning_tokens"],
+            2
+        );
+        assert_eq!(first.calls.lock().unwrap().len(), 1);
+        assert!(other.calls.lock().unwrap().is_empty());
+        let sent = last.calls.lock().unwrap()[0].clone();
+        assert_eq!(sent["path"], "/v1/chat/completions");
+        assert_eq!(sent["body"]["reasoning_effort"], "high");
+        assert_eq!(sent["body"]["store"], false);
+        assert_eq!(sent["body"]["model"], "private-model");
+        assert_eq!(
+            invoke(&gateway, body).await.status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(last.calls.lock().unwrap().len(), 1);
+        assert_eq!(limit.available(), 1);
+    }
+}
+
+#[tokio::test]
+async fn effort_mapping_never_drops_unrepresentable_reasoning_output_or_known_usage() {
+    for streaming in [false, true] {
+        let answer = strict_reasoning_answer();
+        let payload = if streaming {
+            sse(&[json!({"type":"response.completed","sequence_number":0,"response":answer})])
+        } else {
+            answer.to_string()
+        };
+        let up = spawn_upstream(200, payload, streaming).await;
+        let fallback = spawn_upstream(200, String::new(), false).await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let mut cfg = config(&[(&up, "openai", false), (&fallback, "openai", false)]);
+        cfg["models"]["public"]["quota"] = json!({"total_tokens":10,"reserve_tokens":1});
+        let gateway = runtime(cfg, &limit, Options::default());
+        let make = || {
+            let mut req = request(
+                json!({"model":"public","messages":[{"role":"user","content":"Hi"}],"reasoning_effort":"high","stream":streaming}),
+            );
+            *req.uri_mut() = "/v1/chat/completions".parse().unwrap();
+            req
+        };
+        let response = gateway.handle(make(), CancellationToken::new()).await;
+        if streaming && response.status() == StatusCode::OK {
+            assert!(to_bytes(response.into_body(), 65536).await.is_err());
+        } else {
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+            assert!(!consume(response).await.contains("opaque-final"));
+        }
+        assert!(fallback.calls.lock().unwrap().is_empty());
+        assert_eq!(limit.available(), 1);
+        assert_eq!(
+            gateway
+                .handle(make(), CancellationToken::new())
+                .await
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(up.calls.lock().unwrap().len(), 1);
+    }
+}

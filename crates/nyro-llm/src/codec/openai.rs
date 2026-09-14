@@ -149,7 +149,16 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
 }
 pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
     validate_chat(request)?;
-    if request.responses_reasoning.is_some() || request.responses_include_encrypted {
+    let reasoning = reasoning_config(request)?;
+    if request.responses_include_encrypted
+        || reasoning.as_ref().is_some_and(|r| {
+            r.effort.is_none()
+                || r.summary.is_some()
+                || r.generate_summary.is_some()
+                || r.context.is_some()
+                || r.mode.is_some()
+        })
+    {
         return Err(invalid(
             "Chat Completions cannot represent Responses reasoning options",
         ));
@@ -196,7 +205,7 @@ pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
         modalities: request.openai.modalities.clone(),
         audio: request.openai.audio.clone(),
         prediction: request.openai.prediction.clone(),
-        reasoning_effort: request.openai.reasoning_effort.clone(),
+        reasoning_effort: reasoning.and_then(|r| r.effort),
         service_tier: request.openai.service_tier.clone(),
         user: request.openai.user.clone(),
         store: request.openai.store,
@@ -334,4 +343,20 @@ pub fn encode_chat_event(event: &ChatEvent, public_model: &str) -> Result<String
             Ok(format!("data: {}\n\n", serde_json::to_string(&wire)?))
         }
     }
+}
+
+// Only effort has an explicit correspondence between the two OpenAI APIs.
+// Reject conflicting direct IR settings instead of silently choosing one.
+fn reasoning_config(
+    request: &ChatRequest,
+) -> Result<Option<nyro_protocol::openai::responses::ReasoningConfig>, CodecError> {
+    let mut config = request.responses_reasoning.as_deref().cloned();
+    if let Some(effort) = request.openai.reasoning_effort {
+        let config = config.get_or_insert_with(Default::default);
+        if config.effort.is_some_and(|e| e != effort) {
+            return Err(invalid("conflicting OpenAI reasoning effort settings"));
+        }
+        config.effort = Some(effort);
+    }
+    Ok(config)
 }

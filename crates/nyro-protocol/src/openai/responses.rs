@@ -18,17 +18,8 @@ pub struct ReasoningConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
 }
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReasoningEffort {
-    None,
-    Minimal,
-    Low,
-    Medium,
-    High,
-    Xhigh,
-    Max,
-}
+// Keep the original public path available to consumers.
+pub use super::ReasoningEffort;
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningSummary {

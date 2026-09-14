@@ -430,7 +430,24 @@ SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和
 
 assistant 历史及生成 JSON 保留 reasoning item ID、有序 `summary_text` 块（含空摘要）、可选 item status 和不透明的 `encrypted_content`。SSE 保留顺序推理 item 及摘要 part／text 生命周期事件。`response.output_item.added` 中的密文可能不完整；以 `response.output_item.done` 的最终值保留，并与终态快照核对。摘要文本与身份必须和已接收增量一致，摘要 part 的中断状态也会保留。Nyro 不解密或合成推理；`reasoning_tokens` 是输出用量子集，不额外累加。仅含终态快照的流会在下游转换前交付已知用量，并限制展开后的增量大小。
 
-这属于 Responses 专有能力：OpenAI Chat Completions、Anthropic 和 Gemini 目标会拒绝其配置、历史与生成推理。输出支持 reasoning items → 普通消息内容 → 函数调用的顺序。原始 `reasoning_text` 内容／事件、普通输出或函数调用后的 reasoning、重叠推理 item 及不支持的扩展在严格转换中拒绝；匹配原生模式继续提供更广的原样载荷支持。可选原始 content 数组为空或 null 时接受。错误索引、重复 ID、冲突快照、未结束 item 及超限流不会生成伪成功终态。本地回归覆盖 codec、回环 HTTP、重试、公开模型别名与配额结算，不代表真实 SDK／客户端会话认证。事件定义见官方[流式接口](https://developers.openai.com/api/reference/resources/responses/streaming-events)。
+Responses 推理历史与生成 item 仍属于 API 专有能力。仅含 effort 的请求配置可以映射到 OpenAI Chat Completions；其他 Responses 控制及全部推理 item 在 Chat Completions、Anthropic 和 Gemini 目标上明确拒绝。输出支持 reasoning items → 普通消息内容 → 函数调用的顺序。原始 `reasoning_text` 内容／事件、普通输出或函数调用后的 reasoning、重叠推理 item 及不支持的扩展在严格转换中拒绝；匹配原生模式继续提供更广的原样载荷支持。可选原始 content 数组为空或 null 时接受。错误索引、重复 ID、冲突快照、未结束 item 及超限流不会生成伪成功终态。本地回归覆盖 codec、回环 HTTP、重试、公开模型别名与配额结算，不代表真实 SDK／客户端会话认证。事件定义见官方[流式接口](https://developers.openai.com/api/reference/resources/responses/streaming-events)。
+
+## 推理转换与旧行为取舍
+
+OpenAI 官方将 Chat Completions 的 `reasoning_effort` 与 Responses 的 `reasoning.effort` 列为对应控制。严格转换原值保留共享取值：`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。省略时保持省略，不将 effort 换算成 token 预算，不因切换模型而调整档位；模型支持由上游负责。依据官方 [Chat schema](https://developers.openai.com/api/reference/python/resources/chat/subresources/completions/methods/create)与[两种 API 的对应示例](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2)。
+
+| 输入或输出 | 转换契约 |
+|---|---|
+| Chat `reasoning_effort`／仅包含 `effort` 的 Responses 配置 | 两种 OpenAI API 间双向映射；严格 codec 拒绝未知 effort 值。 |
+| Responses `summary`、`generate_summary`、`context`、`mode`、加密内容 include 或空 `reasoning` 对象 | 在 Responses 保留；其他目标拒绝，即使同时设置了 effort。 |
+| Anthropic thinking 预算／display、Gemini thinking 预算／level | 在对应 codec 保留，不自动进行跨厂商映射。 |
+| 推理摘要、签名、加密 item 与历史 | 在对应 API 已声明的严格子集内保留；不转换为普通回答文本，不合成签名或通用 `reasoning_content`。 |
+| 兼容服务的 `reasoning_content`、`reasoning`、`reasoning_signature` 字段 | 匹配的 OpenAI Chat 原生模式保留这些 JSON 字段；严格请求／响应／SSE codec 拒绝。 |
+| 普通文本中的字面量 `<think>…</think>` | 原样保留文本，包括空白与跨流式 chunk 的标签；不自动抽取、裁剪或改写。 |
+
+请求 effort 可转换**不代表输出一定可转换**：Responses 上游即使未请求摘要，也可能返回 reasoning items。Chat Completions 入口无法表达这些输出时，JSON 失败，或已交付的流中断且不返回成功终态；已知用量仍纳入结算。需要保留 reasoning items 时应使用匹配的 Responses 入口。直接构造 IR 的两处 effort 冲突时拒绝，相等时合并且不覆盖其他 Responses 控制。
+
+新代理不迁入旧 `<think>` 启发式解析或无签名 thinking 合成。这是新路径的行为，旧入口保持原有实现。厂商历史规则各异：[DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)要求工具会话保留其推理历史，[Anthropic thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)与 [Gemini thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)保留不透明状态；这些规则不能证明签名或历史可以互换。原生模式是显式的同 API 选择，不会自动丢字段以实现回退。本地 [codec 回归](../../crates/nyro-llm/tests/reasoning_boundary_codec.rs)覆盖映射、拒绝与字面量文本契约；完整客户端会话及交错输出仍为独立迁移项。
 
 ## 请求与用量观测
 

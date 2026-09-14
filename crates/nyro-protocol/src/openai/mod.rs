@@ -1,4 +1,4 @@
-//! OpenAI wire types and cache controls shared by Chat and Responses.
+//! OpenAI wire types and controls shared by Chat and Responses.
 pub mod chat;
 pub mod embedding;
 pub mod responses;
@@ -56,4 +56,17 @@ fn present<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PromptCacheBreakpoint {
     Explicit {},
+}
+
+/// Shared effort vocabulary; model-specific support and defaults remain upstream-owned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
 }
