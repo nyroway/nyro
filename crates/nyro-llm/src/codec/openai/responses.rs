@@ -336,6 +336,7 @@ fn content_parts(
     }
 }
 pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
+    let reasoning = super::reasoning_config(r)?;
     let mut portable = r.clone();
     portable.responses_reasoning = None;
     portable.responses_include_encrypted = false;
@@ -357,7 +358,6 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             && g.max_tokens != g.max_completion_tokens)
         || o.audio.is_some()
         || o.prediction.is_some()
-        || o.reasoning_effort.is_some()
         || o.store == Some(true)
         || o.modalities
             .as_ref()
@@ -446,7 +446,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             map.insert(key.into(), value);
         }
     }
-    if let Some(config) = &r.responses_reasoning {
+    if let Some(config) = reasoning {
         v["reasoning"] = json!(config);
     }
     if r.responses_include_encrypted {

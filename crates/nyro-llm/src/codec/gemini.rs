@@ -417,6 +417,9 @@ fn schema_to_json(mut v: Value) -> Result<Value, CodecError> {
     Ok(v)
 }
 pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
+    if r.responses_reasoning.is_some() || r.responses_include_encrypted {
+        return Err(bad("Gemini cannot represent Responses reasoning controls"));
+    }
     super::openai::encode_chat(&thinking::portable(r)?)?;
     let mut options = (*r.openai).clone();
     options.tools = None;

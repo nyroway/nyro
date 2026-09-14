@@ -174,7 +174,7 @@ pub struct OpenAiOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prediction: Option<Prediction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
+    pub reasoning_effort: Option<nyro_protocol::openai::ReasoningEffort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

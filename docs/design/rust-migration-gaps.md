@@ -1,6 +1,6 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，本轮在 `31a34d1a` 上推进 Responses 严格推理，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，本轮在 `ff5369d3` 上收敛跨协议推理边界，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
 
 **新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
@@ -28,7 +28,7 @@
 |---|---|---|---|
 | G01 模型发现 | 已落地 | [旧模型列表](../../crates/nyro-core/src/proxy/handler.rs)的发现能力已由[新运行时](../../crates/nyro-llm/src/runtime.rs)承接；[模型列表测试](../../crates/nyro-llm/tests/models_runtime.rs)与[重载进程测试](../../tests/proxy_reload_smoke.py)覆盖过滤及代际变化。 | 按授权返回稳定排序的公开别名；匿名／绑定／无效／歧义凭证、空列表、成功／失败重载、密钥轮换和预算隔离已覆盖。无效密钥明确拒绝，不沿用旧公开列表回退；密钥到期仍由 G06 跟踪。 |
 | G02 同协议保真 | 部分 | [旧调度器](../../crates/nyro-core/src/proxy/dispatcher/mod.rs)按条件选择 Native 模式；[请求构建](../../crates/nyro-core/src/provider/common/pipeline.rs)和[非流式响应](../../crates/nyro-core/src/proxy/dispatcher/non_stream.rs)可跳过 IR 往返。[新运行时](../../crates/nyro-llm/src/runtime/native.rs)通过 Provider `native_chat: true` 保留匹配的 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 请求、JSON 响应及 SSE 扩展；默认仍严格转换。 | OpenAI Chat／无状态 Responses／Anthropic Messages 和单候选 Gemini 的别名路由、usage、凭证隔离、重试兼容筛选、有界解析及流终态已覆盖；多候选／独立工具提示词计量和完整客户端仍待验收；Responses 已补无状态原生 mock 验证。Gemini 原生保留上游 modelVersion。只保留 JSON 字段，不承诺字节或任意 Header 透传；跨协议原始请求仍须通过来源严格 codec。 |
-| G03 推理、缓存与媒体语义 | 部分 | [旧转换测试](../../crates/nyro-core/tests/protocol_conversion.rs)覆盖 thinking／签名回放、`reasoning_content`、think-tag 归一化和 Gemini `fileData`。[新版限制](../standalone/rust-proxy_CN.md)已补充 Anthropic 严格 thinking 配置、签名／redacted 历史与 JSON／SSE 回放，本轮进一步支持 Gemini generateContent 严格配置与文本／函数 Part 签名；其他协议目标及工具调用后的推理块明确拒绝。严格转换路径仍拒绝未支持的 Chat 内容块、缓存控制扩展和 Responses reasoning items；OpenAI Chat／Responses／Anthropic Messages／Gemini 原生模式保留这些 JSON 字段；新[用户图片回归](../../crates/nyro-llm/tests/image_codec.rs)补充四格式内嵌 PNG／JPEG／WebP 及三格式 URL 引用转换，保持 detail／格式／角色边界。新增[缓存用量回归](../../crates/nyro-llm/tests/cache_usage_codec.rs)覆盖缓存读取转换、Anthropic 写入／TTL 保留与拒绝边界、总量及流式累计校验。新增[请求缓存控制回归](../../crates/nyro-llm/tests/cache_control_codec.rs)覆盖 OpenAI 当前 options／兼容 retention 及不兼容目标边界，原生路径补充缓存放置、TTL 和资源引用重试证据。新增[严格断点回归](../../crates/nyro-llm/tests/cache_breakpoint_codec.rs)覆盖 OpenAI 文本／用户图片及工具结果的断点保留、输入／输出边界和候选过滤；新增[Anthropic 缓存控制回归](../../crates/nyro-llm/tests/anthropic_cache_control_codec.rs)保留自动控制与各内容／工具节点的断点；跨协议推理、其他未实现用量扩展及其余媒体仍待处理。 | 为保留客户端建立字段／场景矩阵，保留可表达语义，明确拒绝不可表达的跨协议转换。OpenAI Chat 已有图片／音频类型字段，不能笼统说所有多模态都缺失；新增独立 Image/Audio/Video 操作另算范围。 |
+| G03 推理、缓存与媒体语义 | 部分 | [旧转换测试](../../crates/nyro-core/tests/protocol_conversion.rs)包含 thinking／签名、`reasoning_content`、think-tag 归一化和 Gemini `fileData`。新版已支持 Anthropic、Gemini generateContent、Responses 各自的严格推理配置、历史及 JSON／SSE 保留；本轮补齐 OpenAI Chat／Responses effort 双向映射与[边界回归](../../crates/nyro-llm/tests/reasoning_boundary_codec.rs)。厂商签名／加密状态不互换，旧标签自动抽取不迁入，兼容扩展交由匹配原生模式；具体范围见[代理指南](../standalone/rust-proxy_CN.md#推理转换与旧行为取舍)。用户图片、缓存用量、OpenAI 与 Anthropic 严格缓存控制／断点已有回归（第 15–22 节）。 | 当前推理转换取舍见第 23 节；交错输出、其余 Chat 媒体、未实现缓存／用量扩展及完整客户端验收继续推进。独立 Image/Audio/Video 操作另算范围，不将自动合成签名或丢弃推理当作兼容方案。 |
 | G04 工具历史与 Schema 处理 | 部分／待取舍 | 旧转换测试包含合成调用、重复 ID 修复、丢弃中间文本／孤立调用、Gemini Schema 裁剪。新 [Anthropic](../../crates/nyro-llm/tests/anthropic_codec.rs)／[Gemini](../../crates/nyro-llm/tests/gemini_codec.rs) encoder 保留完整结果批次及后续文本，拒绝缺失／重复／交错批次；Anthropic 显式错误、空结果、[Responses](../../crates/nyro-llm/tests/responses_codec.rs) 文本块数组及 Gemini ID／顺序已补充。多块结果到 Gemini、跨协议错误标志映射和媒体结果明确拒绝。[Schema 回归](../../crates/nyro-llm/tests/tool_schema_codec.rs)已覆盖 JSON Schema 对象保留、Gemini 计数／类型／嵌套方言转换及 strict 目标筛选；不裁剪引用或约束。完整客户端／厂商验收仍待后续。 | 回放并行调用、交错文本、工具结果和 Schema，保留合法客户端历史；不自动迁移虚构调用或丢内容的处理。区分有意拒绝和兼容回退。 |
 | G05 Provider 通道与凭证 | 部分 | 旧版有[厂商适配](../../crates/nyro-core/src/provider/mod.rs)、[账号认证 driver](../../crates/nyro-core/src/auth/drivers/mod.rs)和 Vertex 服务账号支持。新 Provider 配置只有协议 kind、可选 OpenAI API、URL 和可选静态 API Key。 | 迁移必要端点、Header 和凭证行为，不向 driver 传递 Gateway 或数据库实体。账号授权、刷新、持久化归控制面；driver 消费已解析凭证。详见下方清单。 |
 | G06 API Key 生命周期 | 部分 | [旧授权](../../crates/nyro-core/src/proxy/dispatcher/auth.rs)检查启用状态、过期时间和模型绑定。新 `ApiKey` 只有 `id`、`secret`；可以重载移除密钥，但没有到期自动失效。 | 对新准入执行到期检查；发布配置保留绑定及禁用语义，验证时间边界和重载；明确已准入请求保持原代际。模型发现与调用授权保持一致。 |
@@ -76,7 +76,7 @@
 | 4 | G10–G12：最小 `nyro serve`，先 SQLite 和一条管理到发布路径，再补 Postgres 等价与其余管理能力。 | 持久化 → 校验 → 发布 → 新请求使用快照；失败保留活动代际；重启／数据兼容；WebUI/API 与观测一致。可与兼容工作并行推进，单独完成不代表可发布替换。 |
 | 5 | G11/G13：部署、工具、发布切换。 | 文件／控制面等价，保留 CLI、录制客户端矩阵、支持平台构建、迁移／恢复说明全部过关后移除旧入口。 |
 
-步骤 1 已完成；步骤 2 已完成 16 份录制样本分类、OpenAI Chat／Anthropic Messages 原生增量及单候选 Gemini mock 验证，无状态 Responses 原生 mock 验证也已完成；PR #329 补充四种入口到 Anthropic 的完整并行工具结果历史转换，PR #330 补充工具错误、空／分块文本结果及 Gemini ID／批次语义，PR #331 补充函数 Schema 保留、转换和拒绝边界；PR #332 补充用户图片输入，PR #333 补充缓存用量计量，PR #334 补充按官方定义的缓存控制，PR #335 补充 OpenAI 文本／用户图片的严格断点转换，PR #336 补充 Anthropic 严格缓存控制，PR #337 补充 Anthropic 严格推理配置、历史及 JSON／SSE 签名回放，本轮补充 Gemini 严格推理配置、Part／函数签名及流式保留；跨协议推理和真实会话仍继续跟踪。原生保真和密钥限制语义仍是发布阻塞项；后续每一步可能需要多份聚焦 PR。
+步骤 1 已完成；步骤 2 已完成 16 份录制样本分类、OpenAI Chat／Anthropic Messages 原生增量及单候选 Gemini mock 验证，无状态 Responses 原生 mock 验证也已完成；PR #329 补充四种入口到 Anthropic 的完整并行工具结果历史转换，PR #330 补充工具错误、空／分块文本结果及 Gemini ID／批次语义，PR #331 补充函数 Schema 保留、转换和拒绝边界；PR #332 补充用户图片输入，PR #333 补充缓存用量计量，PR #334 补充按官方定义的缓存控制，PR #335 补充 OpenAI 文本／用户图片的严格断点转换，PR #336 补充 Anthropic 严格缓存控制，PR #337 补充 Anthropic 严格推理配置、历史及 JSON／SSE 签名回放，PR #339 补充 Gemini 严格推理配置、Part／函数签名及流式保留，PR #340 补充 Responses 严格推理；本轮补齐 OpenAI effort 映射并明确跨协议签名、兼容扩展与旧标签处理的取舍，交错输出、其余媒体／缓存和真实会话仍继续跟踪。原生保真和密钥限制语义仍是发布阻塞项；后续每一步可能需要多份聚焦 PR。
 
 复用[现有录制 fixture](../../tests/e2e/fixtures)和[旧回放矩阵](../../tests/e2e/proxy/test_protocol_matrix.py)作为输入，不能把它们当作新代理已通过的证据。旧 harness 依赖旧配置／工具流程，部分断言仅检查文本锚点／字段名；新断言必须核对有效内容顺序、工具 ID／参数、用量、凭证隔离和终态。端到端认证需记录客户端版本，本地 mock 不代表当前 SDK／厂商兼容。
 
@@ -444,3 +444,16 @@ G03 仍为部分完成：跨协议推理映射、其他媒体、无法表示的�
 验证共覆盖 379 项 Rust 测试：受影响 crates 全量 378 项通过，独立审查新增的 JSON completed／incomplete 一致性回归先失败后修复，12 项 reasoning codec 测试复跑通过（其中新增 1 项）。受影响 crate 的 Clippy、非桌面 workspace 检查、构建及五组代理进程回归通过。16 份原生录制精确回放与严格／显式 false 分类保持通过；格式、diff 和 127 个文档相对链接检查通过。独立审查及修复复查无剩余问题。
 
 G03 仍为部分完成：跨协议推理映射、原始 reasoning_text、工具调用后的交错顺序、其余媒体及完整客户端会话继续跟踪。本轮严格输出只接受推理前缀→普通内容→函数调用；其他协议目标明确拒绝 Responses 推理，不合成或丢弃它。不新增 crate、依赖或内核职责，不使用真实厂商密钥。整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。
+
+
+## 23. G03 跨协议推理边界与旧行为取舍
+
+根据官方字段定义，在两种 OpenAI API 之间原值转换 `reasoning_effort`／`reasoning.effort`，共用 effort 枚举，不注入模型默认值，不将档位换算成预算。直接 IR 的两处 effort 相等则合并，冲突则拒绝。Responses 的摘要／context／mode／include 等控制继续专有；修正 Gemini 对共享 OpenAI validator 的依赖，避免新映射放行后忽略原始 Responses 控制。官方来源、支持矩阵及调用方类型变更见[代理指南](../standalone/rust-proxy_CN.md#推理转换与旧行为取舍)和[架构文档](architecture.md)。
+
+本轮明确以下新路径取舍：厂商摘要不转为普通回答，签名／密文不互换，不合成缺失签名；OpenAI 兼容扩展 `reasoning_content`／`reasoning`／`reasoning_signature` 仅由匹配原生模式保留；普通文本的 `<think>` 标签与空白原样保留，不迁入旧自动抽取、拼接或裁剪。旧入口暂不修改。上述有损启发式迁移不再作为待实现功能，但目标客户端是否能使用这些边界仍须 G02 会话验收，不据此关闭全部 G03。
+
+新增 [codec 回归](../../crates/nyro-llm/tests/reasoning_boundary_codec.rs)覆盖官方取值、字段省略、双向转换、不兼容目标、冲突 IR、旧扩展拒绝及 JSON／SSE 字面量标签；[HTTP 矩阵](../../crates/nyro-llm/tests/responses_runtime.rs)验证网络请求前的转换／拒绝；[重试回归](../../crates/nyro-llm/tests/native_responses_runtime.rs)验证严格／原生输入跳过不兼容候选、公开别名、配额，以及推理输出无法表达时失败但仍结算已知用量。配置可转换不保证上游生成内容可表达，不会丢弃 reasoning items 后伪造成功响应。
+
+388 项 Rust 测试（新增 9 项）、受影响 crate 的 Clippy、非桌面 workspace 检查、构建及五组代理进程回归通过。16 份原生录制精确回放与严格／显式 false 分类保持通过；格式、diff 和 131 个文档相对链接检查通过。代码与文档独立审查未发现可操作问题。验证仅使用本地 mock 与现有录制样本，不代表真实厂商／完整客户端认证。
+
+G03 仍为部分完成：工具调用后的交错顺序、原始 reasoning_text、其余媒体与缓存／用量扩展及完整客户端会话继续跟踪。本轮不新增 crate、依赖或内核职责，不使用真实厂商密钥。整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。

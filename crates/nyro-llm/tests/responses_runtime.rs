@@ -1012,7 +1012,7 @@ async fn responses_protected_intake_and_unsupported_controls_never_dispatch() {
         json!({"conversation":"conv_prior"}),
         json!({"store":true}),
         json!({"background":true}),
-        json!({"reasoning":{"effort":"high"}}),
+        json!({"reasoning":{"effort":"high","summary":"auto"}}),
         json!({"tools":[{"type":"web_search"}]}),
         json!({"input":[{"type":"item_reference","id":"msg_prior"}]}),
         json!({"input":[{"role":"user","content":[{"type":"input_image","file_id":"file-1"}]}]}),
@@ -2087,5 +2087,73 @@ async fn breakpoint_retries_skip_incompatible_backends_without_losing_markers() 
     assert!(gemini.calls.lock().unwrap().is_empty());
     for fixture in [failed, anthropic, gemini, success] {
         fixture.task.abort();
+    }
+}
+
+#[tokio::test]
+async fn reasoning_effort_maps_only_between_openai_apis_before_dispatch() {
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for source in ["openai", "responses"] {
+            for streaming in [false, true] {
+                for effort in [json!("none"), json!("high"), json!("max"), json!("invalid")] {
+                    let (parts, body) = request(source, streaming).into_parts();
+                    let mut value: Value =
+                        serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+                    if source == "openai" {
+                        value["reasoning_effort"] = effort.clone();
+                    } else {
+                        value["reasoning"] = json!({"effort":effort});
+                    }
+                    let before = fixture.calls.lock().unwrap().len();
+                    let response = gateway
+                        .handle(
+                            Request::from_parts(parts, Body::from(value.to_string())),
+                            CancellationToken::new(),
+                        )
+                        .await;
+                    let allowed = matches!(target, "openai" | "responses") && effort != "invalid";
+                    assert_eq!(
+                        response.status(),
+                        if allowed {
+                            StatusCode::OK
+                        } else {
+                            StatusCode::BAD_REQUEST
+                        },
+                        "{source}->{target} stream={streaming} effort={effort}"
+                    );
+                    let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+                    assert_eq!(limit.available(), 1);
+                    let calls = fixture.calls.lock().unwrap();
+                    assert_eq!(calls.len(), before + usize::from(allowed));
+                    if allowed {
+                        let result = if streaming {
+                            stream_snapshot(source, &bytes)
+                        } else {
+                            snapshot(source, &serde_json::from_slice(&bytes).unwrap())
+                        };
+                        assert_eq!(result["text"], "Hello");
+                        let sent = &calls.last().unwrap()["body"];
+                        let config = if target == "openai" {
+                            &sent["reasoning_effort"]
+                        } else {
+                            &sent["reasoning"]["effort"]
+                        };
+                        assert_eq!(config, &effort);
+                        assert_eq!(sent["model"], "internal");
+                        assert!(
+                            sent.get(if target == "openai" {
+                                "reasoning"
+                            } else {
+                                "reasoning_effort"
+                            })
+                            .is_none()
+                        );
+                    }
+                }
+            }
+        }
     }
 }
