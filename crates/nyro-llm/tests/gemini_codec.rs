@@ -40,8 +40,8 @@ fn response_and_stream_terminal() {
     assert!(d.finish().is_err());
 }
 #[test]
-fn rejects_thought_signature() {
-    assert!(decode_chat_response(json!({"candidates":[{"content":{"parts":[{"text":"x","thoughtSignature":"abc"}]},"finishReason":"STOP"}]})).is_err());
+fn rejects_non_string_thought_signature() {
+    assert!(decode_chat_response(json!({"candidates":[{"content":{"parts":[{"text":"x","thoughtSignature":7}]},"finishReason":"STOP"}]})).is_err());
 }
 fn chunk(delta: Delta, finish: Option<&str>) -> ChatEvent {
     ChatEvent::Chunk(Box::new(ChatChunk {
@@ -64,6 +64,7 @@ fn chunk(delta: Delta, finish: Option<&str>) -> ChatEvent {
 fn tool_delta(args: &str, first: bool) -> Delta {
     Delta {
         tool_calls: Some(vec![ToolCallDelta {
+            gemini: None,
             index: 0,
             id: first.then(|| "id1".into()),
             r#type: Some(FunctionType::Function),

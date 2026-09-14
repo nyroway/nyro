@@ -218,6 +218,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         parallel_tool_calls = t.disable_parallel_tool_use.map(|disable| !disable);
     }
     let request = ChatRequest {
+        gemini_thinking: None,
         anthropic_thinking: r.thinking,
         model: r.model,
         stream: r.stream,
@@ -329,10 +330,14 @@ fn call_blocks(calls: &Option<Vec<ToolCall>>) -> Result<Vec<Value>, CodecError> 
         .flatten()
         .map(|t| {
             let ToolCall::Function {
+                gemini,
                 id,
                 function,
                 anthropic_cache_control,
             } = t;
+            if gemini.is_some() {
+                return Err(bad("Anthropic cannot represent Gemini call signatures"));
+            }
             let input: Value = serde_json::from_str(&function.arguments)?;
             if !input.is_object() || id.is_empty() || function.name.is_empty() {
                 return Err(bad("invalid tool call"));
@@ -889,6 +894,7 @@ impl StreamDecoder {
                             .checked_add(1)
                             .ok_or_else(|| bad("tool index overflow"))?;
                         delta.tool_calls = Some(vec![ToolCallDelta {
+                            gemini: None,
                             index: i,
                             id: Some(id),
                             r#type: Some(FunctionType::Function),
@@ -926,6 +932,7 @@ impl StreamDecoder {
                         args.push_str(&partial_json);
                         Delta {
                             tool_calls: Some(vec![ToolCallDelta {
+                                gemini: None,
                                 index: *i,
                                 id: None,
                                 r#type: None,
@@ -964,6 +971,7 @@ impl StreamDecoder {
                         out.push(self.chunk(
                             Delta {
                                 tool_calls: Some(vec![ToolCallDelta {
+                                    gemini: None,
                                     index: i,
                                     id: None,
                                     r#type: None,
@@ -1105,6 +1113,12 @@ impl StreamEncoder {
                         c.index != 0
                             || c.logprobs.is_some()
                             || c.delta.refusal.is_some()
+                            || c.delta.gemini_text.is_some()
+                            || c.delta
+                                .tool_calls
+                                .iter()
+                                .flatten()
+                                .any(|t| t.gemini.is_some())
                             || c.delta.role.as_ref().is_some_and(|r| *r != Role::Assistant)
                     })
                 {

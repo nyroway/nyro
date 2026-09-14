@@ -233,6 +233,14 @@ assistant 历史和生成 JSON 按顺序保留 `thinking` 文本与不透明签�
 
 这些字段属于 Anthropic 专有语义；OpenAI Chat／Responses 和 Gemini 目标明确拒绝，不映射为 reasoning effort、普通回答文本或其他厂商签名。当前 IR 无法保持工具调用块之后的 thinking 顺序，因此明确拒绝。beta `display: "updates"`、`output_config`、`output_tokens_details` 及其他扩展仍需在支持时使用匹配的原生模式；调用方 beta Header 不转发。原生模式保留更广字段，本次没有为它增加严格块重建。该子集有本地 codec／HTTP mock 回归，不代表真实厂商或 SDK 认证。
 
+## 严格模式下的 Gemini thinking
+
+现有 `generateContent` API 支持 `generationConfig.thinkingConfig`：`includeThoughts`、`thinkingBudget`（有符号整数，支持 `-1`、`0` 和正数）或 `thinkingLevel`（`THINKING_LEVEL_UNSPECIFIED`、`MINIMAL`、`LOW`、`MEDIUM`、`HIGH`）。官方 REST 指南使用的小写 level 同样接受，输出规范化为大写。budget 和 level 不得同时设置。省略及可选字段 null 不改变上游默认值；显式 false、零及空配置各自保留。模型能力、预算上限和默认 level 由上游决定。依据官方 [ThinkingConfig](https://ai.google.dev/api/generate-content#ThinkingConfig) 与 [generateContent thinking 指南](https://ai.google.dev/gemini-api/docs/generate-content/thinking)。Interactions 使用不同的 thought 表达，本轮不扩展该 API。
+
+model 文本 Part 保留 `thought` 和不透明 `thoughtSignature`，包括带签名但文本为空／缺省的 Part；带签名 Part 不与相邻文本合并。客户端函数调用 Part 在历史、JSON 及 SSE 中保留签名与原有可选 ID；内部工具结果关联使用的合成 ID 不写入原本没有 ID 的带签名调用。签名作为不透明字符串保存，不做密码学校验或替换。遵循官方[签名回放规则](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)。
+
+该能力只保留 Gemini 自身语义，OpenAI Chat／Responses 与 Anthropic 目标明确拒绝。system／user／工具结果或图片 Part 上的推理／签名元数据，以及函数调用后的文本／签名 Part，仍不属于严格子集；匹配原生模式保留更广的 JSON 字段。SSE 保留各 Part 边界，等待正常 EOF 并处理末尾用量帧后才交付结束原因；复制响应身份前检查拆帧展开规模。同帧已知用量在首个 Part 编码前观测，避免不兼容输出导致已报告用量丢失。thinking token 沿用既有规则，只计入 IR 输出总量一次。本地 codec／HTTP 回归覆盖重试、凭证、配额及畸形／截断流，不代表真实模型或完整 SDK 会话认证。
+
 ## 请求缓存控制
 
 缓存控制以官方 API 定义为准；旧适配器仅作为迁移证据，不决定默认值或等价映射。当前严格转换子集如下：

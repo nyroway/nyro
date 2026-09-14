@@ -24,6 +24,10 @@ pub struct Content {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Part {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inline_data: Option<Blob>,
@@ -58,6 +62,8 @@ pub struct FunctionResponse {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GenerationConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_config: Option<ThinkingConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,4 +148,29 @@ pub struct Usage {
 
 fn empty_arguments() -> serde_json::Value {
     serde_json::json!({})
+}
+
+/// Defaults and model-specific ranges remain upstream-owned.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThinkingConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_thoughts: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<ThinkingLevel>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThinkingLevel {
+    #[serde(rename = "THINKING_LEVEL_UNSPECIFIED")]
+    Unspecified,
+    #[serde(rename = "MINIMAL", alias = "minimal")]
+    Minimal,
+    #[serde(rename = "LOW", alias = "low")]
+    Low,
+    #[serde(rename = "MEDIUM", alias = "medium")]
+    Medium,
+    #[serde(rename = "HIGH", alias = "high")]
+    High,
 }

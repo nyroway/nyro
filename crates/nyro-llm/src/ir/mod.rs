@@ -27,6 +27,7 @@ pub enum Content {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContentPart {
+    GeminiText(GeminiText),
     /// Opaque signature and original summary must travel together without modification.
     AnthropicThinking {
         thinking: String,
@@ -79,6 +80,8 @@ pub struct FunctionCall {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ToolCall {
     Function {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gemini: Option<GeminiCall>,
         id: String,
         function: FunctionCall,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,6 +193,8 @@ pub struct OpenAiOptions {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini_thinking: Option<nyro_protocol::gemini::ThinkingConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anthropic_thinking: Option<nyro_protocol::anthropic::ThinkingConfig>,
     /// Anthropic automatic caching; absence keeps the upstream default.
@@ -398,6 +403,8 @@ pub struct StreamChoice {
 #[serde(deny_unknown_fields)]
 pub struct Delta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini_text: Option<GeminiText>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anthropic_thinking: Option<AnthropicThinkingDelta>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
@@ -421,6 +428,8 @@ pub enum AnthropicThinkingDelta {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolCallDelta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini: Option<GeminiCall>,
     pub index: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -485,4 +494,27 @@ impl ChatEvent {
     pub fn is_done(&self) -> bool {
         matches!(self, Self::Done)
     }
+}
+
+/// A Gemini text/signature part; empty or absent text must not discard a signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeminiText {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
+}
+/// Signed Gemini calls preserve their original optional wire identity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeminiCall {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub omit_id: bool,
 }

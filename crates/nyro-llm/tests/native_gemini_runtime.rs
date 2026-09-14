@@ -742,3 +742,200 @@ async fn cached_resource_reference_survives_native_retry_without_cross_protocol_
         }
     }
 }
+
+fn strict_thinking_input() -> Value {
+    json!({"contents":[{"role":"user","parts":[{"text":"Hello"}]},
+        {"role":"model","parts":[{"text":"summary","thought":true},{"functionCall":{"name":"f","args":{}},"thoughtSignature":"c2ln"}]},
+        {"role":"user","parts":[{"functionResponse":{"name":"f","response":{"ok":true}}}]}],
+        "generationConfig":{"maxOutputTokens":4096,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":-1}}})
+}
+fn strict_thinking_answer(with_call: bool) -> Value {
+    json!({"responseId":"r","modelVersion":"private-model","candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"summary","thought":true},
+        if with_call {json!({"functionCall":{"name":"f","args":{"x":1}},"thoughtSignature":"c2ln"})} else {json!({"text":"","thoughtSignature":"c2ln"})}]},"finishReason":"STOP"}],
+        "usageMetadata":{"promptTokenCount":8,"cachedContentTokenCount":5,"candidatesTokenCount":2,"thoughtsTokenCount":3,"totalTokenCount":13}})
+}
+fn strict_thinking_frames(with_call: bool) -> Vec<Value> {
+    let full = strict_thinking_answer(with_call);
+    vec![
+        json!({"responseId":"r","modelVersion":"private-model","candidates":[{"content":{"parts":[{"text":"summary","thought":true}]}}],
+        "usageMetadata":{"promptTokenCount":8,"cachedContentTokenCount":5,"candidatesTokenCount":0,"thoughtsTokenCount":1,"totalTokenCount":9}}),
+        json!({"responseId":"r","modelVersion":"private-model","candidates":[{"content":{"parts":[full["candidates"][0]["content"]["parts"][1].clone()]},"finishReason":"STOP"}]}),
+        json!({"responseId":"r","modelVersion":"private-model","usageMetadata":full["usageMetadata"]}),
+    ]
+}
+#[tokio::test]
+async fn strict_thinking_retry_preserves_signed_history_outputs_and_final_usage() {
+    for streaming in [false, true] {
+        for first_native in [false, true] {
+            for with_call in [false, true] {
+                let first = upstream(503, "unavailable".into(), false).await;
+                let incompatible = upstream(200, "must not dispatch".into(), false).await;
+                let backup = upstream(
+                    200,
+                    if streaming {
+                        sse(&strict_thinking_frames(with_call))
+                    } else {
+                        strict_thinking_answer(with_call).to_string()
+                    },
+                    streaming,
+                )
+                .await;
+                let limit = ConcurrencyLimit::new(1).unwrap();
+                let mut config = config(&[
+                    (&first, "gemini", first_native),
+                    (&incompatible, "openai", false),
+                    (&incompatible, "anthropic", false),
+                    (&backup, "gemini", false),
+                ]);
+                config["models"]["public"]["quota"] = json!({"total_tokens":28,"reserve_tokens":1});
+                let gateway = runtime(config, &limit, Options::default());
+                for _ in 0..2 {
+                    let response = invoke(&gateway, strict_thinking_input(), streaming).await;
+                    assert_eq!(response.status(), StatusCode::OK);
+                    let output = consume(response).await;
+                    assert!(!output.contains("private-model"));
+                    if streaming {
+                        let values: Vec<Value> = output
+                            .lines()
+                            .filter_map(|l| l.strip_prefix("data: "))
+                            .map(|s| serde_json::from_str(s).unwrap())
+                            .collect();
+                        let parts: Vec<Value> = values
+                            .iter()
+                            .flat_map(|v| v["candidates"].as_array().into_iter().flatten())
+                            .flat_map(|c| {
+                                c["content"]["parts"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .cloned()
+                            })
+                            .collect();
+                        assert_eq!(
+                            json!(parts),
+                            strict_thinking_answer(with_call)["candidates"][0]["content"]["parts"]
+                        );
+                        assert_eq!(
+                            values.last().unwrap()["candidates"][0]["finishReason"],
+                            "STOP"
+                        );
+                        assert_eq!(
+                            values
+                                .iter()
+                                .filter_map(|v| v.get("usageMetadata"))
+                                .next_back()
+                                .unwrap(),
+                            &strict_thinking_answer(with_call)["usageMetadata"]
+                        );
+                    } else {
+                        let mut expected = strict_thinking_answer(with_call);
+                        expected["modelVersion"] = json!("public");
+                        assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), expected);
+                    }
+                    assert_eq!(limit.available(), 1);
+                }
+                assert_eq!(
+                    invoke(&gateway, strict_thinking_input(), streaming)
+                        .await
+                        .status(),
+                    StatusCode::TOO_MANY_REQUESTS
+                );
+                assert!(incompatible.calls.lock().unwrap().is_empty());
+                for up in [&first, &backup] {
+                    let calls = up.calls.lock().unwrap();
+                    assert_eq!(calls.len(), 2);
+                    for call in calls.iter() {
+                        assert_eq!(call["body"], strict_thinking_input());
+                        assert_eq!(call["headers"]["x-goog-api-key"], "provider-secret");
+                    }
+                }
+            }
+        }
+    }
+}
+#[tokio::test]
+async fn invalid_strict_thinking_requests_do_not_dispatch() {
+    let up = upstream(200, strict_thinking_answer(false).to_string(), false).await;
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let gateway = runtime(
+        config(&[(&up, "gemini", false)]),
+        &limit,
+        Options::default(),
+    );
+    for config in [
+        json!({"thinkingBudget":-2}),
+        json!({"thinkingBudget":0,"thinkingLevel":"HIGH"}),
+        json!({"thinkingLevel":"DEEP"}),
+    ] {
+        let mut input = strict_thinking_input();
+        input["generationConfig"]["thinkingConfig"] = config;
+        assert_eq!(
+            invoke(&gateway, input, false).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(limit.available(), 1);
+    }
+    assert!(up.calls.lock().unwrap().is_empty());
+}
+#[tokio::test]
+async fn malformed_strict_thinking_responses_never_retry_and_release_admission() {
+    for streaming in [false, true] {
+        let invalid = if streaming {
+            let mut frames = strict_thinking_frames(false);
+            frames[1]["candidates"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("finishReason");
+            sse(&frames)
+        } else {
+            let mut value = strict_thinking_answer(false);
+            value["candidates"][0]["content"]["parts"][1]["thoughtSignature"] = json!(7);
+            value.to_string()
+        };
+        let first = upstream(200, invalid, streaming).await;
+        let backup = upstream(200, "must not dispatch".into(), false).await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let mut config = config(&[(&first, "gemini", false), (&backup, "gemini", false)]);
+        config["models"]["public"]["quota"] = json!({"total_tokens":14,"reserve_tokens":14});
+        let gateway = runtime(config, &limit, Options::default());
+        let response = invoke(&gateway, strict_thinking_input(), streaming).await;
+        if streaming {
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(to_bytes(response.into_body(), 65536).await.is_err());
+        } else {
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+            let error = consume(response).await;
+            assert!(!error.contains("c2ln") && !error.contains("provider-secret"));
+        }
+        assert_eq!(limit.available(), 1);
+        assert_eq!(first.calls.lock().unwrap().len(), 1);
+        assert!(backup.calls.lock().unwrap().is_empty());
+        assert_eq!(
+            invoke(&gateway, strict_thinking_input(), streaming)
+                .await
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+}
+
+#[tokio::test]
+async fn incompatible_first_stream_part_still_charges_the_received_frame_usage() {
+    let up = upstream(200, sse(&[strict_thinking_answer(false)]), true).await;
+    let limit = ConcurrencyLimit::new(1).unwrap();
+    let mut config = config(&[(&up, "gemini", false)]);
+    config["models"]["public"]["quota"] = json!({"total_tokens":13,"reserve_tokens":1});
+    let gateway = runtime(config, &limit, Options::default());
+    let request = || {
+        Request::builder().method("POST").uri("/v1/chat/completions")
+        .header("content-type","application/json").header("authorization","Bearer client-secret")
+        .body(Body::from(json!({"model":"public","messages":[{"role":"user","content":"Hello"}],"stream":true,"max_tokens":4096}).to_string())).unwrap()
+    };
+    let response = gateway.handle(request(), CancellationToken::new()).await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    consume(response).await;
+    assert_eq!(limit.available(), 1);
+    let next = gateway.handle(request(), CancellationToken::new()).await;
+    assert_eq!(next.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(up.calls.lock().unwrap().len(), 1);
+}
