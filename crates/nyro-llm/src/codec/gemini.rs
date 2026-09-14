@@ -9,6 +9,62 @@ use std::collections::{BTreeMap, BTreeSet};
 fn bad(s: &str) -> CodecError {
     CodecError(s.into())
 }
+fn validate_function_response(result: &GeminiFunctionResponse) -> Result<(), CodecError> {
+    use base64::Engine;
+    let mut names = BTreeSet::new();
+    for part in &result.parts {
+        let blob = &part.inline_data;
+        if !matches!(
+            blob.mime_type.as_str(),
+            "image/png" | "image/jpeg" | "image/webp"
+        ) || blob.data.is_empty()
+            || base64::engine::general_purpose::STANDARD
+                .decode(&blob.data)
+                .is_err()
+        {
+            return Err(bad("unsupported or invalid Gemini function response image"));
+        }
+        if let Some(name) = &blob.display_name
+            && (name.is_empty() || !names.insert(name.as_str()))
+        {
+            return Err(bad(
+                "function response display names must be nonempty and unique",
+            ));
+        }
+    }
+    let mut references = BTreeSet::new();
+    let mut pending: Vec<_> = result.response.values().collect();
+    // The response itself may also be a reference object.
+    if result.response.len() == 1 && result.response.contains_key("$ref") {
+        check_image_reference(&result.response["$ref"], &names, &mut references)?;
+    }
+    while let Some(value) = pending.pop() {
+        match value {
+            Value::Object(object) if object.len() == 1 && object.contains_key("$ref") => {
+                check_image_reference(&object["$ref"], &names, &mut references)?;
+            }
+            Value::Object(object) => pending.extend(object.values()),
+            Value::Array(array) => pending.extend(array.iter()),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+fn check_image_reference<'a>(
+    value: &'a Value,
+    names: &BTreeSet<&str>,
+    references: &mut BTreeSet<&'a str>,
+) -> Result<(), CodecError> {
+    let name = value
+        .as_str()
+        .ok_or_else(|| bad("image reference must be a display name"))?;
+    if !names.contains(name) || !references.insert(name) {
+        return Err(bad(
+            "unmatched or repeated function response image reference",
+        ));
+    }
+    Ok(())
+}
 fn message(role: Role) -> Message {
     Message {
         anthropic_cache_control: None,
@@ -209,10 +265,16 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                 let (id, _) = pending.remove(matches[0]);
                 let mut t = message(Role::Tool);
                 t.tool_call_id = Some(id);
-                t.items
-                    .push(MessageItem::Content(Content::Text(serde_json::to_string(
-                        &r.response,
-                    )?)));
+                let content = match r.parts {
+                    Some(parts) => Content::Parts(vec![ContentPart::GeminiFunctionResponse(
+                        GeminiFunctionResponse {
+                            response: r.response.as_object().unwrap().clone(),
+                            parts,
+                        },
+                    )]),
+                    None => Content::Text(serde_json::to_string(&r.response)?),
+                };
+                t.items.push(MessageItem::Content(content));
                 if !parts.is_empty() {
                     let mut text = message(Role::User);
                     text.items
@@ -459,12 +521,33 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         }
         if m.role == Role::Tool {
             super::validate_message_items(&m.items)?;
-            let parts = content_parts(m.content(), false)?;
-            if parts.len() > 1 {
-                return Err(bad(
-                    "multiple tool result text parts cannot be represented in Gemini",
-                ));
-            }
+            let (response, image_parts) = match m.content() {
+                Some(Content::Parts(parts))
+                    if matches!(parts.as_slice(), [ContentPart::GeminiFunctionResponse(_)]) =>
+                {
+                    let ContentPart::GeminiFunctionResponse(result) = &parts[0] else {
+                        unreachable!()
+                    };
+                    (
+                        Value::Object(result.response.clone()),
+                        Some(result.parts.clone()),
+                    )
+                }
+                content => {
+                    let parts = content_parts(content, false)?;
+                    if parts.len() > 1 {
+                        return Err(bad(
+                            "multiple tool result text parts cannot be represented in Gemini",
+                        ));
+                    }
+                    let text = parts.first().and_then(|p| p.text.as_deref()).unwrap_or("");
+                    let response = match serde_json::from_str::<Value>(text) {
+                        Ok(v) if v.is_object() => v,
+                        _ => serde_json::json!({"result":text}),
+                    };
+                    (response, None)
+                }
+            };
             let id = m
                 .tool_call_id
                 .as_ref()
@@ -472,17 +555,12 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             let (name, wire_id) = pending
                 .remove(id)
                 .ok_or_else(|| bad("unknown tool response id"))?;
-            // An empty or single text part maps to one object without joining blocks.
-            let text = parts.first().and_then(|p| p.text.as_deref()).unwrap_or("");
-            let response = match serde_json::from_str::<Value>(text) {
-                Ok(v) if v.is_object() => v,
-                _ => serde_json::json!({"result":text}),
-            };
             results.push(w::Part {
                 function_response: Some(w::FunctionResponse {
                     id: wire_id,
                     name,
                     response,
+                    parts: image_parts,
                 }),
                 ..Default::default()
             });

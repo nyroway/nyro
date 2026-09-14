@@ -200,18 +200,28 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                             wire::FunctionOutput::Parts(parts) => Content::Parts(
                                 parts
                                     .into_iter()
-                                    .map(
-                                        |wire::FunctionOutputPart::InputText {
-                                             text,
-                                             prompt_cache_breakpoint,
-                                         }| {
-                                            ContentPart::Text {
-                                                anthropic_cache_control: None,
-                                                text,
-                                                prompt_cache_breakpoint,
-                                            }
+                                    .map(|part| match part {
+                                        wire::FunctionOutputPart::InputText {
+                                            text,
+                                            prompt_cache_breakpoint,
+                                        } => ContentPart::Text {
+                                            anthropic_cache_control: None,
+                                            text,
+                                            prompt_cache_breakpoint,
                                         },
-                                    )
+                                        wire::FunctionOutputPart::InputImage {
+                                            image_url,
+                                            detail,
+                                            prompt_cache_breakpoint,
+                                        } => ContentPart::ImageUrl {
+                                            anthropic_cache_control: None,
+                                            image_url: ImageUrl {
+                                                url: image_url,
+                                                detail,
+                                            },
+                                            prompt_cache_breakpoint,
+                                        },
+                                    })
                                     .collect(),
                             ),
                         };
@@ -412,8 +422,8 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
                 for item in &m.items {
                     let content = item
                         .as_content()
-                        .ok_or_else(|| bad("function result requires text"))?;
-                    parts.extend(content_parts(content, false, false, true)?);
+                        .ok_or_else(|| bad("function result requires content"))?;
+                    parts.extend(content_parts(content, false, true, true)?);
                 }
                 json!(parts)
             };

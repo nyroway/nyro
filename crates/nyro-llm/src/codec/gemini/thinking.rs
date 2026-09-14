@@ -62,6 +62,30 @@ pub(super) fn portable(r: &ChatRequest) -> Result<ChatRequest, CodecError> {
     let mut portable = r.clone();
     portable.gemini_thinking = None;
     for m in &mut portable.messages {
+        let has_function_response = m.items.iter().filter_map(MessageItem::as_content).any(|content| {
+            matches!(content, Content::Parts(parts) if parts.iter().any(|part| matches!(part, ContentPart::GeminiFunctionResponse(_))))
+        });
+        if has_function_response {
+            let [MessageItem::Content(Content::Parts(parts))] = m.items.as_slice() else {
+                return Err(bad(
+                    "Gemini function response must be the only tool result body",
+                ));
+            };
+            let [ContentPart::GeminiFunctionResponse(result)] = parts.as_slice() else {
+                return Err(bad(
+                    "Gemini function response cannot mix with other content",
+                ));
+            };
+            if m.role != Role::Tool {
+                return Err(bad("Gemini function response requires tool role"));
+            }
+            validate_function_response(result)?;
+            // This temporary view validates portable options only; the encoder uses
+            // the original structured response and media without this projection.
+            m.items = vec![MessageItem::Content(Content::Text(serde_json::to_string(
+                &result.response,
+            )?))];
+        }
         let assistant = m.role == Role::Assistant;
         for item in &mut m.items {
             let Some(Content::Parts(parts)) = item.as_content_mut() else {

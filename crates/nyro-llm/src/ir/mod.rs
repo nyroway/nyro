@@ -31,6 +31,8 @@ pub enum Content {
 pub enum ContentPart {
     ResponsesReasoning(nyro_protocol::openai::responses::ReasoningItem),
     GeminiText(GeminiText),
+    /// Gemini's structured tool result and referenced media form one indivisible body.
+    GeminiFunctionResponse(GeminiFunctionResponse),
     /// Opaque signature and original summary must travel together without modification.
     AnthropicThinking {
         thinking: String,
@@ -66,6 +68,12 @@ pub struct ImageUrl {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeminiFunctionResponse {
+    pub response: serde_json::Map<String, serde_json::Value>,
+    pub parts: Vec<nyro_protocol::gemini::FunctionResponsePart>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

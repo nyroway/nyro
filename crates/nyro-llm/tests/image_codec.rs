@@ -130,7 +130,7 @@ fn malformed_images_and_unsupported_sources_are_rejected() {
     assert!(gemini::decode_chat(v, "m", false).is_err());
 }
 #[test]
-fn images_are_user_input_only_including_direct_ir_encoders() {
+fn images_respect_role_and_destination_boundaries() {
     for role in [Role::System, Role::Developer, Role::Assistant, Role::Tool] {
         let mut r = openai::decode_chat(chat(&image_url(), None)).unwrap();
         r.messages[0].role = role.clone();
@@ -138,7 +138,11 @@ fn images_are_user_input_only_including_direct_ir_encoders() {
             r.messages[0].tool_call_id = Some("call".into());
         }
         assert!(openai::encode_chat(&r).is_err());
-        assert!(openai::responses::encode_chat(&r).is_err());
+        assert_eq!(
+            openai::responses::encode_chat(&r).is_ok(),
+            role == Role::Tool
+        );
+        // Anthropic additionally requires a matching immediately preceding call.
         assert!(anthropic::encode_chat(&r).is_err());
         assert!(gemini::encode_chat(&r).is_err());
     }

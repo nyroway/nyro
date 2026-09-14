@@ -2561,3 +2561,169 @@ async fn reasoning_effort_maps_only_between_openai_apis_before_dispatch() {
         }
     }
 }
+
+const TOOL_PNG: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+fn image_result_blocks(format: &str) -> Value {
+    let image = if format == "responses" {
+        json!({"type":"input_image","image_url":format!("data:image/png;base64,{TOOL_PNG}")})
+    } else {
+        json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":TOOL_PNG}})
+    };
+    let text = if format == "responses" {
+        "input_text"
+    } else {
+        "text"
+    };
+    json!([{"type":text,"text":"before"},image,{"type":text,"text":"after"}])
+}
+
+async fn image_result_request(format: &str, streaming: bool) -> Request<Body> {
+    if format != "gemini" {
+        return result_request(format, streaming, image_result_blocks(format), false).await;
+    }
+    let (parts, body) = result_request(
+        format,
+        streaming,
+        json!({"screenshot":{"$ref":"screen.png"},"status":"ok"}),
+        false,
+    )
+    .await
+    .into_parts();
+    let mut value: Value = serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+    value["contents"][2]["parts"][0]["functionResponse"]["parts"] = json!([
+        {"inlineData":{"mimeType":"image/png","data":TOOL_PNG,"displayName":"screen.png"}}
+    ]);
+    Request::from_parts(parts, Body::from(value.to_string()))
+}
+
+#[tokio::test]
+async fn tool_result_images_remain_nested_and_filter_incompatible_targets() {
+    for target in FORMATS {
+        let fixture = upstream(target, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, target, limit.clone(), Options::default());
+        for source in ["anthropic", "responses", "gemini"] {
+            for streaming in [false, true] {
+                let before = fixture.calls.lock().unwrap().len();
+                let response = gateway
+                    .handle(
+                        image_result_request(source, streaming).await,
+                        CancellationToken::new(),
+                    )
+                    .await;
+                let eligible = if source == "gemini" {
+                    target == "gemini"
+                } else {
+                    matches!(target, "anthropic" | "responses")
+                };
+                let status = response.status();
+                let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+                assert_eq!(
+                    status,
+                    if eligible {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::BAD_REQUEST
+                    },
+                    "{source}->{target} stream={streaming}: {}",
+                    String::from_utf8_lossy(&bytes)
+                );
+                assert_eq!(limit.available(), 1);
+                let calls = fixture.calls.lock().unwrap();
+                assert_eq!(calls.len(), before + usize::from(eligible));
+                if !eligible {
+                    continue;
+                }
+                let body = &calls.last().unwrap()["body"];
+                match target {
+                    "responses" => {
+                        assert_eq!(body["input"].as_array().unwrap().len(), 3);
+                        assert_eq!(body["input"][2]["call_id"], "call-before");
+                        assert_eq!(body["input"][2]["output"], image_result_blocks(target));
+                    }
+                    "anthropic" => {
+                        assert_eq!(body["messages"].as_array().unwrap().len(), 3);
+                        assert_eq!(body["messages"][2]["content"].as_array().unwrap().len(), 1);
+                        let result = &body["messages"][2]["content"][0];
+                        assert_eq!(result["tool_use_id"], "call-before");
+                        assert_eq!(result["content"], image_result_blocks(target));
+                    }
+                    _ => {
+                        assert_eq!(body["contents"].as_array().unwrap().len(), 3);
+                        assert_eq!(body["contents"][2]["parts"].as_array().unwrap().len(), 1);
+                        let result = &body["contents"][2]["parts"][0]["functionResponse"];
+                        assert_eq!(result["id"], "call-before");
+                        assert_eq!(result["name"], "lookup");
+                        assert_eq!(
+                            result["response"],
+                            json!({"screenshot":{"$ref":"screen.png"},"status":"ok"})
+                        );
+                        assert_eq!(
+                            result["parts"],
+                            json!([{"inlineData":{"mimeType":"image/png","data":TOOL_PNG,"displayName":"screen.png"}}])
+                        );
+                    }
+                }
+                let result = if streaming {
+                    stream_snapshot(source, &bytes)
+                } else {
+                    snapshot(source, &serde_json::from_slice(&bytes).unwrap())
+                };
+                assert_eq!(result["text"], "Hello");
+                assert_eq!(result["usage"], json!([3, 2, 5]));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn invalid_tool_result_images_fail_before_network_dispatch() {
+    for source in ["anthropic", "responses", "gemini"] {
+        let fixture = upstream(source, "normal").await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let gateway = runtime(&fixture, source, limit.clone(), Options::default());
+        for invalid_mime in [false, true] {
+            let (parts, body) = image_result_request(source, false).await.into_parts();
+            let mut value: Value =
+                serde_json::from_slice(&to_bytes(body, 65536).await.unwrap()).unwrap();
+            match source {
+                "responses" => {
+                    value["input"][2]["output"][1]["image_url"] = json!(if invalid_mime {
+                        "data:application/pdf;base64,YQ=="
+                    } else {
+                        "data:image/png;base64,%%%"
+                    })
+                }
+                "anthropic" => {
+                    value["messages"][2]["content"][0]["content"][1]["source"]
+                        [if invalid_mime { "media_type" } else { "data" }] =
+                        json!(if invalid_mime {
+                            "application/pdf"
+                        } else {
+                            "%%%"
+                        })
+                }
+                _ => {
+                    value["contents"][2]["parts"][0]["functionResponse"]["parts"][0]["inlineData"]
+                        [if invalid_mime { "mimeType" } else { "data" }] = json!(if invalid_mime {
+                        "application/pdf"
+                    } else {
+                        "%%%"
+                    })
+                }
+            }
+            let response = gateway
+                .handle(
+                    Request::from_parts(parts, Body::from(value.to_string())),
+                    CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{source}");
+            to_bytes(response.into_body(), 65536).await.unwrap();
+            assert_eq!(limit.available(), 1);
+        }
+        assert!(fixture.calls.lock().unwrap().is_empty());
+    }
+}

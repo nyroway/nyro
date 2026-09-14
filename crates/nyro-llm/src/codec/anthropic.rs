@@ -14,6 +14,26 @@ fn annotated(mut value: Value, control: Option<wire::CacheControl>) -> Value {
     }
     value
 }
+fn image_part(
+    source: wire::ImageSource,
+    control: Option<wire::CacheControl>,
+) -> Result<Value, CodecError> {
+    let url = match source {
+        wire::ImageSource::Base64 { media_type, data } => {
+            format!("data:{media_type};base64,{data}")
+        }
+        wire::ImageSource::Url { url } => {
+            if url.starts_with("data:") {
+                return Err(bad("URL image source requires HTTP(S)"));
+            }
+            url
+        }
+    };
+    Ok(annotated(
+        json!({"type":"image_url","image_url":{"url":url}}),
+        control,
+    ))
+}
 fn blocks(content: wire::Content) -> Vec<wire::Block> {
     match content {
         wire::Content::Text(text) => vec![wire::Block::Text {
@@ -76,21 +96,7 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                     if m.role != "user" {
                         return Err(bad("images require a user message"));
                     }
-                    let url = match source {
-                        wire::ImageSource::Base64 { media_type, data } => {
-                            format!("data:{media_type};base64,{data}")
-                        }
-                        wire::ImageSource::Url { url } => {
-                            if url.starts_with("data:") {
-                                return Err(bad("URL image source requires HTTP(S)"));
-                            }
-                            url
-                        }
-                    };
-                    parts.push(annotated(
-                        json!({"type":"image_url","image_url":{"url":url}}),
-                        cache_control,
-                    ));
+                    parts.push(image_part(source, cache_control)?);
                 }
                 wire::Block::ToolUse {
                     id,
@@ -133,6 +139,10 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                                             json!({"type":"text","text":text}),
                                             cache_control,
                                         )),
+                                        wire::Block::Image {
+                                            source,
+                                            cache_control,
+                                        } => image_part(source, cache_control),
                                         _ => Err(bad("unsupported tool result content")),
                                     }
                                 })
@@ -472,7 +482,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         if m.name.is_some() || m.refusal.is_some() || m.audio.is_some() {
             return Err(bad("unsupported message option"));
         }
-        let content = item_blocks(&m.items, m.role == Role::User)?;
+        let content = item_blocks(&m.items, matches!(m.role, Role::User | Role::Tool))?;
         match m.role {
             Role::System | Role::Developer => {
                 if !messages.is_empty()

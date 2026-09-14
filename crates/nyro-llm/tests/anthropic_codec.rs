@@ -1041,7 +1041,7 @@ fn empty_tool_results_are_supported_without_inventing_text() {
 }
 
 #[test]
-fn successful_tool_result_blocks_keep_boundaries_and_media_stays_rejected() {
+fn successful_tool_result_blocks_keep_boundaries_and_invalid_images_are_rejected() {
     let mut input = json!({"model":"m","max_tokens":32,"messages":[
         {"role":"assistant","content":[{"type":"tool_use","id":"t","name":"f","input":{}}]},
         {"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"one"},{"type":"text","text":"two"}]}]}]});
