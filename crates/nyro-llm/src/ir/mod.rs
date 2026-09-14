@@ -27,6 +27,7 @@ pub enum Content {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContentPart {
+    ResponsesReasoning(nyro_protocol::openai::responses::ReasoningItem),
     GeminiText(GeminiText),
     /// Opaque signature and original summary must travel together without modification.
     AnthropicThinking {
@@ -193,6 +194,10 @@ pub struct OpenAiOptions {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responses_reasoning: Option<Box<nyro_protocol::openai::responses::ReasoningConfig>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub responses_include_encrypted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_thinking: Option<nyro_protocol::gemini::ThinkingConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -403,6 +408,8 @@ pub struct StreamChoice {
 #[serde(deny_unknown_fields)]
 pub struct Delta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responses_reasoning: Option<ResponsesReasoningDelta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_text: Option<GeminiText>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anthropic_thinking: Option<AnthropicThinkingDelta>,
@@ -517,4 +524,24 @@ pub struct GeminiCall {
     pub thought_signature: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub omit_id: bool,
+}
+
+/// Sequential Responses reasoning items, before ordinary content and function calls.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ResponsesReasoningDelta {
+    Start {
+        item: nyro_protocol::openai::responses::ReasoningItem,
+    },
+    SummaryStart,
+    SummaryText {
+        text: String,
+    },
+    SummaryTextDone,
+    SummaryDone {
+        incomplete: bool,
+    },
+    Done {
+        item: nyro_protocol::openai::responses::ReasoningItem,
+    },
 }

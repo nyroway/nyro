@@ -1,6 +1,6 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，本轮在 `4c0bdb8e` 上推进 Gemini 严格推理／签名，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，本轮在 `31a34d1a` 上推进 Responses 严格推理，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
 
 **新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
@@ -433,3 +433,14 @@ G03 仍为部分完成：跨协议推理、工具调用后的 thinking 顺序、
 364 项 Rust 测试（新增 12 项）、受影响 crate 的 Clippy、非桌面 workspace 检查、构建及五组代理进程回归通过。16 份原生录制精确回放和严格／显式 false 分类保持通过；格式、diff 与 123 个文档相对链接检查通过。独立审查发现的同帧用量延后观测问题已先由 HTTP 测试复现后修复：首个 Part 编码前观测已知用量，finish 仍在最后一个 Part。另补拆帧内存放大边界，在重复复制响应身份前限制展开规模，回归先失败后通过。两项修复均经复查，无剩余阻塞问题。
 
 G03 仍为部分完成：跨协议推理映射、其他媒体、无法表示的交错顺序及真实客户端验收仍需后续增量。本轮不新增 crate、依赖或内核职责，不使用真实厂商密钥。整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。
+
+
+## 22. G03 Responses 严格推理
+
+本轮依据官方创建请求与流事件 schema，在既有 `nyro-protocol`／`nyro-llm` 中支持 Responses 专有 reasoning 配置、assistant 历史及 JSON／SSE 推理 item。保留原 item ID、有序摘要块、空摘要、可选状态、历史密文及 done 事件的最终密文，不将 added 的部分密文当作最终值。配置保留 effort／summary／generate_summary／context／mode，不写死模型默认值；旧 include 写法兼容，无状态默认加密行为交由上游执行。字段范围与官方来源见[代理指南](../standalone/rust-proxy_CN.md#严格模式下的-responses-reasoning)。
+
+[codec 回归](../../crates/nyro-llm/tests/responses_reasoning_codec.rs)覆盖配置与历史往返、JSON 用量、摘要块边界、空摘要、最终密文、incomplete、中断／错误生命周期、快照冲突、跨协议拒绝、有界展开与累计状态。新增 [HTTP 回归](../../crates/nyro-llm/tests/native_responses_runtime.rs)验证严格／原生重试、历史保留、模型别名、配额结算、无效配置不访问上游以及已交付流失败不重试。
+
+验证共覆盖 379 项 Rust 测试：受影响 crates 全量 378 项通过，独立审查新增的 JSON completed／incomplete 一致性回归先失败后修复，12 项 reasoning codec 测试复跑通过（其中新增 1 项）。受影响 crate 的 Clippy、非桌面 workspace 检查、构建及五组代理进程回归通过。16 份原生录制精确回放与严格／显式 false 分类保持通过；格式、diff 和 127 个文档相对链接检查通过。独立审查及修复复查无剩余问题。
+
+G03 仍为部分完成：跨协议推理映射、原始 reasoning_text、工具调用后的交错顺序、其余媒体及完整客户端会话继续跟踪。本轮严格输出只接受推理前缀→普通内容→函数调用；其他协议目标明确拒绝 Responses 推理，不合成或丢弃它。不新增 crate、依赖或内核职责，不使用真实厂商密钥。整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。

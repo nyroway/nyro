@@ -418,11 +418,19 @@ curl http://127.0.0.1:19530/v1/responses \
 
 函数结果 `function_call_output.output` 接受字符串或仅包含 `input_text` 块的数组，包括空数组。转换保留块边界，不拼接文本。多个结果块无法严格转换到 Gemini 目标；媒体及其他结果块类型被拒绝。
 
-此严格转换路径仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、reasoning items、用户图片子集以外的媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段和 item ID 会归一化，不保证保留上游原始 ID 或精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
+此严格转换路径仅支持无状态调用：发往 Responses 上游时固定 `store:false`；Responses 入口转为 Chat Completions 上游时也显式禁用存储。暂不支持服务端会话（`conversation`、`previous_response_id`）、item 引用、`store:true`、`background:true`、内置工具、原始 reasoning text、用户图片子集以外的媒体及响应查询／删除／取消。当前 Chat IR 无法保留的有效选项或输出项会被明确拒绝。Responses 外层回显字段及 message／function item ID 会归一化；reasoning item ID 为历史回传保留，不保证精确请求回显；函数 `call_id`、内容顺序、终止状态和可表达的用量属于转换契约。
 
 SSE 使用 Responses 命名生命周期事件、稳定 item ID、递增序号和完整终态快照，不输出 `[DONE]`。token 上限／内容过滤结束会映射成 `response.incomplete`；上游失败、内容矛盾、格式错误或断流不会伪造成功终态。严格 Responses 上游流关闭 obfuscation。此子集不代表已经完整兼容 Responses SDK 或 Codex CLI。
 
 参考：[OpenAI Responses 迁移指南](https://developers.openai.com/api/docs/guides/migrate-to-responses)、[Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses)。本地回归：`cargo test -p nyro-llm --test responses_codec --test responses_runtime`。
+
+## 严格模式下的 Responses reasoning
+
+严格 Responses 保留 `reasoning.effort`（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`）、`summary` 和已弃用的 `generate_summary`（`auto`、`concise`、`detailed`）、`context`（`auto`、`current_turn`、`all_turns`）以及由上游定义的 `mode` 字符串。Nyro 不注入默认值，不校验模型专属组合。兼容旧写法 `include: ["reasoning.encrypted_content"]`；省略时不会主动添加 include。当前官方[推理指南](https://developers.openai.com/api/docs/guides/reasoning)说明无状态响应默认返回加密推理内容，控制字段依据[创建请求 schema](https://developers.openai.com/api/reference/python/resources/responses/methods/create)。
+
+assistant 历史及生成 JSON 保留 reasoning item ID、有序 `summary_text` 块（含空摘要）、可选 item status 和不透明的 `encrypted_content`。SSE 保留顺序推理 item 及摘要 part／text 生命周期事件。`response.output_item.added` 中的密文可能不完整；以 `response.output_item.done` 的最终值保留，并与终态快照核对。摘要文本与身份必须和已接收增量一致，摘要 part 的中断状态也会保留。Nyro 不解密或合成推理；`reasoning_tokens` 是输出用量子集，不额外累加。仅含终态快照的流会在下游转换前交付已知用量，并限制展开后的增量大小。
+
+这属于 Responses 专有能力：OpenAI Chat Completions、Anthropic 和 Gemini 目标会拒绝其配置、历史与生成推理。输出支持 reasoning items → 普通消息内容 → 函数调用的顺序。原始 `reasoning_text` 内容／事件、普通输出或函数调用后的 reasoning、重叠推理 item 及不支持的扩展在严格转换中拒绝；匹配原生模式继续提供更广的原样载荷支持。可选原始 content 数组为空或 null 时接受。错误索引、重复 ID、冲突快照、未结束 item 及超限流不会生成伪成功终态。本地回归覆盖 codec、回环 HTTP、重试、公开模型别名与配额结算，不代表真实 SDK／客户端会话认证。事件定义见官方[流式接口](https://developers.openai.com/api/reference/resources/responses/streaming-events)。
 
 ## 请求与用量观测
 

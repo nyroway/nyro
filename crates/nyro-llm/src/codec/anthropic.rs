@@ -218,6 +218,8 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         parallel_tool_calls = t.disable_parallel_tool_use.map(|disable| !disable);
     }
     let request = ChatRequest {
+        responses_reasoning: None,
+        responses_include_encrypted: false,
         gemini_thinking: None,
         anthropic_thinking: r.thinking,
         model: r.model,
@@ -1114,6 +1116,7 @@ impl StreamEncoder {
                             || c.logprobs.is_some()
                             || c.delta.refusal.is_some()
                             || c.delta.gemini_text.is_some()
+                            || c.delta.responses_reasoning.is_some()
                             || c.delta
                                 .tool_calls
                                 .iter()

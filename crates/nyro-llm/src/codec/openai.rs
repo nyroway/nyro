@@ -23,6 +23,8 @@ fn model(value: &str) -> Result<(), CodecError> {
 pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
     let wire: chat::Request = serde_json::from_value(value)?;
     let request = ChatRequest {
+        responses_reasoning: None,
+        responses_include_encrypted: false,
         gemini_thinking: None,
         anthropic_thinking: None,
         anthropic_cache_control: None,
@@ -147,6 +149,11 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
 }
 pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
     validate_chat(request)?;
+    if request.responses_reasoning.is_some() || request.responses_include_encrypted {
+        return Err(invalid(
+            "Chat Completions cannot represent Responses reasoning options",
+        ));
+    }
     if request.gemini_thinking.is_some() {
         return Err(invalid(
             "OpenAI cannot represent Gemini thinking configuration",

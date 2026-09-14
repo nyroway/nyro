@@ -3,9 +3,99 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// Model-dependent defaults and compatibility remain the upstream's responsibility.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ReasoningConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ReasoningSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generate_summary: Option<ReasoningSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<ReasoningContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningSummary {
+    Auto,
+    Concise,
+    Detailed,
+}
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningContext {
+    Auto,
+    CurrentTurn,
+    AllTurns,
+}
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasoningItem {
+    pub id: String,
+    pub summary: Vec<SummaryPart>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<ItemStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<ReasoningText>>,
+}
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SummaryPart {
+    SummaryText { text: String },
+}
+impl SummaryPart {
+    pub fn text(&self) -> &str {
+        let Self::SummaryText { text } = self;
+        text
+    }
+    pub fn text_mut(&mut self) -> &mut String {
+        let Self::SummaryText { text } = self;
+        text
+    }
+}
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ReasoningText {
+    ReasoningText { text: String },
+}
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemStatus {
+    InProgress,
+    Completed,
+    Incomplete,
+}
+impl ItemStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::InProgress => "in_progress",
+            Self::Completed => "completed",
+            Self::Incomplete => "incomplete",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    pub reasoning: Option<ReasoningConfig>,
     pub model: String,
     pub input: Input,
     pub instructions: Option<String>,
@@ -85,6 +175,7 @@ pub enum InputPart {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HistoryItem {
+    Reasoning(ReasoningItem),
     FunctionCall {
         id: Option<String>,
         call_id: String,
@@ -184,6 +275,7 @@ pub struct IncompleteDetails {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OutputItem {
+    Reasoning(ReasoningItem),
     Message {
         id: String,
         role: String,
@@ -201,11 +293,17 @@ pub enum OutputItem {
 impl OutputItem {
     pub fn id(&self) -> &str {
         match self {
+            Self::Reasoning(r) => &r.id,
             Self::Message { id, .. } | Self::FunctionCall { id, .. } => id,
         }
     }
     pub fn status(&self) -> &str {
         match self {
+            Self::Reasoning(r) => r
+                .status
+                .as_ref()
+                .map(ItemStatus::as_str)
+                .unwrap_or("completed"),
             Self::Message { status, .. } | Self::FunctionCall { status, .. } => status,
         }
     }
@@ -263,7 +361,9 @@ pub struct StreamEvent {
     pub content_index: Option<usize>,
     pub item_id: Option<String>,
     pub item: Option<OutputItem>,
-    pub part: Option<OutputPart>,
+    pub part: Option<StreamPart>,
+    pub summary_index: Option<usize>,
+    pub status: Option<String>,
     pub delta: Option<String>,
     pub text: Option<String>,
     pub refusal: Option<String>,
@@ -272,4 +372,11 @@ pub struct StreamEvent {
     pub obfuscation: Option<String>,
     #[serde(default)]
     pub logprobs: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum StreamPart {
+    Output(OutputPart),
+    Summary(SummaryPart),
 }

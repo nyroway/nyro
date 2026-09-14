@@ -38,7 +38,9 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
     if r.store == Some(true)
         || r.background == Some(true)
         || r.truncation.as_deref().is_some_and(|s| s != "disabled")
-        || r.include.as_ref().is_some_and(|v| !v.is_empty())
+        || r.include
+            .as_ref()
+            .is_some_and(|v| v.iter().any(|s| s != "reasoning.encrypted_content"))
     {
         return Err(bad(
             "Responses state, background, includes and truncation are unsupported",
@@ -62,6 +64,13 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         wire::Input::Items(items) => {
             for item in items {
                 match item {
+                    wire::InputItem::Item(wire::HistoryItem::Reasoning(item)) => {
+                        validate_reasoning(&item, true)?;
+                        messages.push(message(
+                            Role::Assistant,
+                            Some(Content::Parts(vec![ContentPart::ResponsesReasoning(item)])),
+                        ));
+                    }
                     wire::InputItem::Message(m) => {
                         if m.r#type.as_deref().is_some_and(|s| s != "message") {
                             return Err(bad("unsupported Responses input item"));
@@ -227,6 +236,8 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         },
     });
     let request = ChatRequest {
+        responses_reasoning: r.reasoning.map(Box::new),
+        responses_include_encrypted: r.include.as_ref().is_some_and(|v| !v.is_empty()),
         gemini_thinking: None,
         anthropic_thinking: None,
         anthropic_cache_control: None,
@@ -325,7 +336,14 @@ fn content_parts(
     }
 }
 pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
-    super::encode_chat(r)?;
+    let mut portable = r.clone();
+    portable.responses_reasoning = None;
+    portable.responses_include_encrypted = false;
+    for m in &mut portable.messages {
+        let (_, content) = split_reasoning(m.content.as_ref(), m.role == Role::Assistant)?;
+        m.content = content;
+    }
+    super::encode_chat(&portable)?;
     let g = &r.generation;
     let o = &r.openai;
     if g.frequency_penalty.is_some()
@@ -376,8 +394,13 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             );
             continue;
         }
-        let mut parts = m
-            .content
+        let (reasoning, content) = split_reasoning(m.content.as_ref(), m.role == Role::Assistant)?;
+        input.extend(
+            reasoning
+                .into_iter()
+                .map(|r| json!(wire::OutputItem::Reasoning(r))),
+        );
+        let mut parts = content
             .as_ref()
             .map(|c| content_parts(c, m.role == Role::Assistant, m.role == Role::User, true))
             .transpose()?
@@ -422,6 +445,12 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         if !value.is_null() {
             map.insert(key.into(), value);
         }
+    }
+    if let Some(config) = &r.responses_reasoning {
+        v["reasoning"] = json!(config);
+    }
+    if r.responses_include_encrypted {
+        v["include"] = json!(["reasoning.encrypted_content"]);
     }
     if r.stream == Some(true) {
         v["stream_options"] = json!({"include_obfuscation":false});
@@ -478,11 +507,7 @@ fn validate_envelope(r: &wire::Response) -> Result<(), CodecError> {
             "store" | "background" => v.is_null() || v == false,
             "previous_response_id" | "conversation" => v.is_null(),
             "reasoning" => {
-                v.is_null()
-                    || v.as_object().is_some_and(|m| {
-                        m.iter()
-                            .all(|(k, v)| matches!(k.as_str(), "effort" | "summary") && v.is_null())
-                    })
+                v.is_null() || serde_json::from_value::<wire::ReasoningConfig>(v.clone()).is_ok()
             }
             "truncation" => v.is_null() || v == "disabled",
             "tools" => serde_json::from_value::<Vec<wire::FunctionTool>>(v.clone()).is_ok(),
@@ -542,6 +567,7 @@ fn validate_items(items: &[wire::OutputItem], terminal: bool) -> Result<(), Code
     let mut ids = BTreeSet::new();
     let mut calls = BTreeSet::new();
     let mut saw_tool = false;
+    let mut saw_message = false;
     let mut saw_refusal = false;
     for item in items {
         nonempty(item.id())?;
@@ -552,7 +578,16 @@ fn validate_items(items: &[wire::OutputItem], terminal: bool) -> Result<(), Code
             return Err(bad("invalid Responses output identity/status"));
         }
         match item {
+            wire::OutputItem::Reasoning(r) => {
+                validate_reasoning(r, terminal)?;
+                if saw_tool || saw_message {
+                    return Err(bad(
+                        "reasoning after message/function calls cannot preserve output order",
+                    ));
+                }
+            }
             wire::OutputItem::Message { role, content, .. } => {
+                saw_message = true;
                 if role != "assistant" || saw_tool {
                     return Err(bad("Responses output order/role cannot be represented"));
                 }
@@ -693,6 +728,7 @@ fn decode_response(r: wire::Response) -> Result<ChatResponse, CodecError> {
     validate_envelope(&r)?;
     validate_items(&r.output, true)?;
     let finish = finish_reason(&r)?;
+    let mut reasoning = Vec::new();
     let mut text = String::new();
     let mut refusal = String::new();
     let mut saw_text = false;
@@ -700,6 +736,9 @@ fn decode_response(r: wire::Response) -> Result<ChatResponse, CodecError> {
     let mut calls = Vec::new();
     for item in r.output {
         match item {
+            wire::OutputItem::Reasoning(item) => {
+                reasoning.push(ContentPart::ResponsesReasoning(item))
+            }
             wire::OutputItem::Message { content, .. } => {
                 for part in content {
                     match part {
@@ -730,6 +769,18 @@ fn decode_response(r: wire::Response) -> Result<ChatResponse, CodecError> {
             }),
         }
     }
+    let content = if reasoning.is_empty() {
+        saw_text.then_some(Content::Text(text))
+    } else {
+        if saw_text {
+            reasoning.push(ContentPart::Text {
+                text,
+                anthropic_cache_control: None,
+                prompt_cache_breakpoint: None,
+            });
+        }
+        Some(Content::Parts(reasoning))
+    };
     Ok(ChatResponse {
         id: r.id,
         object: "chat.completion".into(),
@@ -739,7 +790,7 @@ fn decode_response(r: wire::Response) -> Result<ChatResponse, CodecError> {
             index: 0,
             message: ResponseMessage {
                 role: Role::Assistant,
-                content: saw_text.then_some(Content::Text(text)),
+                content,
                 tool_calls: (!calls.is_empty()).then_some(calls),
                 refusal: saw_refusal.then_some(refusal),
                 audio: None,
@@ -795,9 +846,12 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     {
         return Err(bad("unsupported Responses response role/audio/logprobs"));
     }
-    let mut output = Vec::new();
-    let mut parts = m
-        .content
+    let (reasoning, content) = split_reasoning(m.content.as_ref(), true)?;
+    let mut output: Vec<Value> = reasoning
+        .into_iter()
+        .map(|r| json!(wire::OutputItem::Reasoning(r)))
+        .collect();
+    let mut parts = content
         .as_ref()
         .map(|c| content_parts(c, true, false, false))
         .transpose()?
@@ -828,10 +882,11 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
         }
         output.push(json!({"type":"function_call","id":format!("fc_{}_{i}",r.id),"status":state,"call_id":id,"name":function.name,"arguments":function.arguments}));
     }
-    validate_items(
-        &serde_json::from_value::<Vec<wire::OutputItem>>(json!(output))?,
-        true,
-    )?;
+    let items: Vec<wire::OutputItem> = serde_json::from_value(json!(output))?;
+    validate_items(&items, true)?;
+    if state == "completed" && items.iter().any(|i| i.status() != "completed") {
+        return Err(bad("completed response contains incomplete item"));
+    }
     envelope(
         &r.id,
         r.created,
@@ -840,4 +895,41 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
         Some(finish),
         r.usage.as_ref(),
     )
+}
+
+fn validate_reasoning(r: &wire::ReasoningItem, terminal: bool) -> Result<(), CodecError> {
+    nonempty(&r.id)?;
+    if terminal && r.status == Some(wire::ItemStatus::InProgress) {
+        return Err(bad("unfinished Responses reasoning item"));
+    }
+    if r.content.as_ref().is_some_and(|c| !c.is_empty()) {
+        return Err(bad(
+            "raw Responses reasoning text is not supported in strict conversion",
+        ));
+    }
+    Ok(())
+}
+// The current Chat IR can preserve reasoning prefixes, but cannot interleave them
+// with function calls or split ordinary output messages without moving content.
+fn split_reasoning(
+    content: Option<&Content>,
+    assistant: bool,
+) -> Result<(Vec<wire::ReasoningItem>, Option<Content>), CodecError> {
+    let Some(Content::Parts(parts)) = content else {
+        return Ok((Vec::new(), content.cloned()));
+    };
+    let mut reasoning = Vec::new();
+    let mut rest = Vec::new();
+    for p in parts {
+        if let ContentPart::ResponsesReasoning(r) = p {
+            if !assistant || !rest.is_empty() {
+                return Err(bad("Responses reasoning requires an assistant prefix"));
+            }
+            validate_reasoning(r, true)?;
+            reasoning.push(r.clone());
+        } else {
+            rest.push(p.clone());
+        }
+    }
+    Ok((reasoning, Some(Content::Parts(rest))))
 }

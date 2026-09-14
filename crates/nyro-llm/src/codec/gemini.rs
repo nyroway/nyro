@@ -276,6 +276,8 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
         })
         .transpose()?;
     let r = ChatRequest {
+        responses_reasoning: None,
+        responses_include_encrypted: false,
         gemini_thinking: g.thinking_config.clone(),
         anthropic_thinking: None,
         anthropic_cache_control: None,
@@ -1091,6 +1093,7 @@ impl StreamEncoder {
                 || choice.logprobs.is_some()
                 || choice.delta.refusal.is_some()
                 || choice.delta.anthropic_thinking.is_some()
+                || choice.delta.responses_reasoning.is_some()
                 || choice
                     .delta
                     .role
