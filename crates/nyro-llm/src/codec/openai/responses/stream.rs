@@ -194,6 +194,7 @@ impl StreamDecoder {
                         out.push(self.started()?.chunk(
                             Delta {
                                 tool_calls: Some(vec![ToolCallDelta {
+                                    gemini: None,
                                     index,
                                     id: Some(call_id.clone()),
                                     r#type: Some(FunctionType::Function),
@@ -331,6 +332,7 @@ impl StreamDecoder {
                 out.push(self.started()?.chunk(
                     Delta {
                         tool_calls: Some(vec![ToolCallDelta {
+                            gemini: None,
                             index,
                             id: None,
                             r#type: None,
@@ -418,6 +420,7 @@ impl StreamDecoder {
                                 out.push(self.started()?.chunk(
                                     Delta {
                                         tool_calls: Some(vec![ToolCallDelta {
+                                            gemini: None,
                                             index: tool_index,
                                             id: Some(call_id.clone()),
                                             r#type: Some(FunctionType::Function),
@@ -788,11 +791,16 @@ impl StreamEncoder {
         let mut out = String::new();
         match event {
             ChatEvent::Chunk(c) => {
-                if c.choices
-                    .iter()
-                    .any(|c| c.delta.anthropic_thinking.is_some())
-                {
-                    return Err(bad("Responses cannot represent Anthropic thinking"));
+                if c.choices.iter().any(|c| {
+                    c.delta.anthropic_thinking.is_some()
+                        || c.delta.gemini_text.is_some()
+                        || c.delta
+                            .tool_calls
+                            .iter()
+                            .flatten()
+                            .any(|t| t.gemini.is_some())
+                }) {
+                    return Err(bad("Responses cannot represent vendor thinking"));
                 }
                 if c.system_fingerprint.is_some() {
                     return Err(bad("Responses cannot represent system_fingerprint"));

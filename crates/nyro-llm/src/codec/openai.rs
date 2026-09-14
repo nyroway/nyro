@@ -23,6 +23,7 @@ fn model(value: &str) -> Result<(), CodecError> {
 pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
     let wire: chat::Request = serde_json::from_value(value)?;
     let request = ChatRequest {
+        gemini_thinking: None,
         anthropic_thinking: None,
         anthropic_cache_control: None,
         model: wire.model,
@@ -146,6 +147,11 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
 }
 pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
     validate_chat(request)?;
+    if request.gemini_thinking.is_some() {
+        return Err(invalid(
+            "OpenAI cannot represent Gemini thinking configuration",
+        ));
+    }
     if request.anthropic_thinking.is_some() {
         return Err(invalid(
             "OpenAI cannot represent Anthropic thinking configuration",

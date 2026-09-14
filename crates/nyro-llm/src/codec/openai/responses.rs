@@ -152,6 +152,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                             .tool_calls
                             .get_or_insert_with(Vec::new)
                             .push(ToolCall::Function {
+                                gemini: None,
                                 anthropic_cache_control: None,
                                 id: call_id,
                                 function: FunctionCall { name, arguments },
@@ -226,6 +227,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         },
     });
     let request = ChatRequest {
+        gemini_thinking: None,
         anthropic_thinking: None,
         anthropic_cache_control: None,
         model: r.model,
@@ -721,6 +723,7 @@ fn decode_response(r: wire::Response) -> Result<ChatResponse, CodecError> {
                 arguments,
                 ..
             } => calls.push(ToolCall::Function {
+                gemini: None,
                 anthropic_cache_control: None,
                 id: call_id,
                 function: FunctionCall { name, arguments },
@@ -810,7 +813,19 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     if !parts.is_empty() {
         output.push(json!({"type":"message","id":format!("msg_{}_0",r.id),"role":"assistant","status":state,"content":parts}));
     }
-    for (i, ToolCall::Function { id, function, .. }) in m.tool_calls.iter().flatten().enumerate() {
+    for (
+        i,
+        ToolCall::Function {
+            id,
+            function,
+            gemini,
+            ..
+        },
+    ) in m.tool_calls.iter().flatten().enumerate()
+    {
+        if gemini.is_some() {
+            return Err(bad("Responses cannot represent Gemini call signatures"));
+        }
         output.push(json!({"type":"function_call","id":format!("fc_{}_{i}",r.id),"status":state,"call_id":id,"name":function.name,"arguments":function.arguments}));
     }
     validate_items(
