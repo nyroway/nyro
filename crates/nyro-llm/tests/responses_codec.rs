@@ -108,9 +108,8 @@ fn function_result_encode_preserves_ir_text_parts() {
 }
 
 #[test]
-fn function_result_rejects_non_input_text_parts_and_invalid_shapes() {
+fn function_result_rejects_unsupported_parts_and_invalid_shapes() {
     for output in [
-        json!([{"type":"input_image","image_url":"https://example.com/image.png"}]),
         json!([{"type":"input_audio","input_audio":{"data":"YQ==","format":"wav"}}]),
         json!([{"type":"input_file","file_id":"file1"}]),
         json!([{"type":"output_text","text":"lost"}]),
@@ -130,7 +129,6 @@ fn function_result_rejects_non_input_text_parts_and_invalid_shapes() {
         );
     }
     for part in [
-        json!({"type":"image_url","image_url":{"url":"https://example.com/image.png"}}),
         json!({"type":"input_audio","input_audio":{"data":"YQ==","format":"wav"}}),
         json!({"type":"refusal","refusal":"lost"}),
     ] {

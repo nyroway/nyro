@@ -190,6 +190,12 @@ pub enum FunctionOutput {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FunctionOutputPart {
+    InputImage {
+        image_url: String,
+        detail: Option<String>,
+        #[serde(default, deserialize_with = "super::present")]
+        prompt_cache_breakpoint: Option<super::PromptCacheBreakpoint>,
+    },
     InputText {
         text: String,
         #[serde(default, deserialize_with = "super::present")]

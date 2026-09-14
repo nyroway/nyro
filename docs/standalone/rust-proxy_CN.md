@@ -292,7 +292,7 @@ Quota 与观测按包含缓存的 token 总量计量，不应用缓存价格折�
 | OpenAI Chat、Responses 或 Anthropic 的 HTTP(S) 图片 URL | 这三种格式；Gemini 不作为候选，不下载图片或虚构 `fileData`。 |
 | OpenAI Chat／Responses `detail` | `auto` 或省略时可使用其他条件满足的目标；`low`、`high`、`original` 仅在 OpenAI Chat／Responses 间保留，使 Anthropic／Gemini 不再符合条件。 |
 
-本轮仅增加 user 消息图片转换。system／developer／assistant 图片、工具结果图片、厂商文件 ID、Gemini `fileData`、HEIC／HEIF、图片缓存／变换／分辨率扩展及图片输出转换不属于本轮范围。未支持的来源形状或非 user 图片在严格解码时拒绝；无法表达的目标在发送前排除，没有候选时返回 `400`。匹配的显式原生转发保持已有契约。
+上表描述 user 图片，工具结果图片遵循下文单独规则。system／developer／assistant 图片、厂商文件 ID、Gemini `fileData`、HEIC／HEIF、图片缓存／变换／分辨率扩展及图片输出转换不属于本轮范围。未支持的来源形状或图片角色在严格解码时拒绝；无法表达的目标在发送前排除，没有候选时返回 `400`。匹配的显式原生转发保持已有契约。
 
 Nyro 校验来源形状、HTTP(S) URL 语法、支持的 MIME 标签和非空标准 base64 编码；不下载 URL、不解码像素、不验证实际字节与 MIME 是否一致、不缩放或转码，也不证明模型支持视觉输入。现有请求体大小限制继续生效；图片内容和模型特定限制由所配置的上游校验。更严格的来源／角色检查也适用于直接调用严格 OpenAI Chat codec。
 
@@ -300,7 +300,7 @@ Nyro 校验来源形状、HTTP(S) URL 语法、支持的 MIME 标签和非空标
 
 ## 严格转换的工具历史与结果
 
-严格转换选择 Anthropic 或 Gemini 上游时，同一 assistant 工具调用批次的全部结果放入紧随其后的一条 `user` 消息。结果保持原始顺序以及 `tool_call_id`／`tool_use_id` 对应关系，即使返回顺序与调用顺序不同。完整结果批次之后紧邻的用户文本追加在结果块后。工具名称、解析后的对象参数和结果文本保留；Gemini 对象结果沿用既有 JSON 转文本的转换方式。
+严格转换选择 Anthropic 或 Gemini 上游时，同一 assistant 工具调用批次的全部结果放入紧随其后的一条 `user` 消息。结果保持原始顺序以及 `tool_call_id`／`tool_use_id` 对应关系，即使返回顺序与调用顺序不同。完整结果批次之后紧邻的用户文本追加在结果块后。工具名称、解析后的对象参数和结果文本保留；Gemini 不含媒体的对象结果沿用既有 JSON 转文本方式，带媒体的结果使用独立的类型化表示。
 
 批次中每个调用必须恰好对应一个相邻结果。批次内重复调用 ID、缺失／未知／重复结果，以及结果收齐前插入 user 或 assistant 消息，都会在发往上游前使该 backend 不再符合条件。Nyro 不合成调用、不删除中间文本，也不重排历史进行修复；没有 backend 能表达原始请求时返回 `400`。这些是严格 Anthropic 和 Gemini encoder 的目标协议检查，匹配的显式原生模式保持已有契约。
 
@@ -311,12 +311,24 @@ Nyro 校验来源形状、HTTP(S) URL 语法、支持的 MIME 标签和非空标
 | 文本结果块，包括空数组 | OpenAI Chat、Responses 和 Anthropic 保留块边界。Gemini 最多接受一个文本块；多个块使该 backend 不再符合条件。 |
 | Anthropic 省略结果 content | 解码为空结果，不虚构文本。 |
 | Anthropic `is_error:true` | 类型化 IR 和 Anthropic 输出保留该标记。OpenAI Chat、Responses 和 Gemini 无已支持的无损执行错误标记映射，因此不再作为候选 backend。 |
-| Responses 结果字符串或 `input_text` 数组 | 保留字符串或有序块；媒体、`output_text` 和 refusal 结果块仍不支持。 |
-| Gemini 结果对象 | Gemini 目标保留对象，其他目标使用 JSON 文本；`error` 键仍是业务数据，不据此产生执行错误标志。 |
+| Responses 结果字符串或 `input_text`／`input_image` 数组 | 保留字符串或有序块；文件、音视频、`output_text` 和 refusal 结果块仍不支持。 |
+| Gemini 不含 `parts` 的结果对象 | Gemini 目标保留对象，其他目标使用 JSON 文本；`error` 键仍是业务数据，不据此产生执行错误标志。 |
 | Gemini 结果缺少 ID | 只有 pending 函数名唯一对应一个调用时才解析；显式 ID 还必须匹配函数名。为缺少 ID 的调用生成的 ID 避开整段历史中已有的显式 ID。 |
 | Gemini 文本与函数结果混排 | 按原顺序解码成独立 IR 消息。Anthropic／Gemini 目标拒绝文本打断尚未完成的结果批次；可表达该历史的 OpenAI Chat／Responses 目标保留顺序。 |
 
-不通过合成调用或丢弃内容修复历史。跨协议 thinking／签名映射和媒体工具结果仍不支持；函数 Schema 转换见下文。参考：[Anthropic 工具结果](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)、[Gemini FunctionResponse](https://ai.google.dev/api/generate-content)。本地回归：`cargo test -p nyro-llm --test anthropic_codec --test gemini_codec --test responses_codec --test responses_runtime --test protocol_matrix`。
+不通过合成调用或丢弃内容修复历史。跨协议 thinking／签名映射和图片以外的媒体工具结果仍不支持；函数 Schema 转换见下文。参考：[Anthropic 工具结果](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)、[Gemini FunctionResponse](https://ai.google.dev/api/generate-content)。本地回归：`cargo test -p nyro-llm --test anthropic_codec --test gemini_codec --test responses_codec --test responses_runtime --test protocol_matrix`。
+
+## 工具结果中的图片
+
+严格 Anthropic 和 Responses 历史支持有序文本／图片结果块，保留调用 ID，图片留在工具结果内部。两种 API 之间可转换 PNG／JPEG／WebP／GIF base64 和 HTTP(S) 图片 URL，不下载、解码或转码。Responses 图片 `detail` 在 Responses 目标保留，非默认 detail 使 Anthropic 不再符合条件。Anthropic 结果／块上的 `cache_control` 和 `is_error:true` 仍仅由 Anthropic 保留；Responses 的 `prompt_cache_breakpoint` 仍属于 OpenAI 输入控制，Anthropic 目标明确拒绝。完整且紧邻的结果批次校验继续适用。
+
+Gemini 同时保留 `functionResponse.response` 与嵌套的 `parts[].inlineData`，支持 PNG／JPEG／WebP、base64、可选 `displayName` 和对象引用。校验命名引用并保留媒体顺序，不把图片移到同级 user parts。该结构化媒体结果目前只转换到 Gemini；其他 API 的文本／图片数组也不会转为 Gemini，因为本轮不合成 `response.result` 结构或命名引用来假定等价。显式空 `parts` 数组保留 Gemini 专有表示，省略数组时沿用既有纯对象路径。
+
+Chat Completions 工具消息仍只允许文本，图片结果在发送前使该目标不再符合条件。厂商 file ID、Gemini `fileData`、文档、音视频、图片输出及托管 computer-use 工具不在本轮范围。非法 MIME／base64／URL 在发送前拒绝，继续受配置的请求体上限约束。校验不证明字节确为有效图片，也不证明模型具备对应能力。
+
+Rust 调用方复用 `ContentPart::ImageUrl` 表示 Anthropic／Responses 工具图片。Gemini 媒体结果使用 `ContentPart::GeminiFunctionResponse`，只存一份 response 对象及有序媒体 parts，且必须作为工具结果消息的唯一本体；消费 IR 时需处理新增枚举变体。直接构造 `nyro_protocol::gemini::FunctionResponse` 的调用方还需提供 `parts`，省略时设为 `None`。不新增 crate 或内核职责。
+
+来源：[Anthropic 图片结果](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls)、[Responses 函数调用](https://developers.openai.com/api/docs/guides/function-calling)、[Chat 工具消息 schema](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、[Gemini 多模态结果](https://ai.google.dev/gemini-api/docs/generate-content/function-calling)。本地 codec／HTTP 回归使用 mock 上游，不代表真实厂商认证。
 
 ## 函数参数 Schema
 

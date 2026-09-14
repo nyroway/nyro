@@ -82,6 +82,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         }),
     };
     validate_chat(&request)?;
+    validate_chat_tool_content(&request)?;
     Ok(request)
 }
 pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
@@ -120,8 +121,8 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
             if let Content::Parts(parts) = content {
                 for part in parts {
                     if let ContentPart::ImageUrl { image_url, .. } = part {
-                        if message.role != Role::User {
-                            return Err(invalid("images require a user message"));
+                        if !matches!(message.role, Role::User | Role::Tool) {
+                            return Err(invalid("images require a user or tool message"));
                         }
                         super::image::source(image_url)?;
                     }
@@ -198,8 +199,25 @@ pub(super) fn validate_portable_chat(request: &ChatRequest) -> Result<(), CodecE
     encode_portable_options(request).map(|_| ())
 }
 
+// Chat tool messages accept text only; portable codecs have separate media rules.
+fn validate_chat_tool_content(request: &ChatRequest) -> Result<(), CodecError> {
+    for message in request.messages.iter().filter(|m| m.role == Role::Tool) {
+        for content in message.items.iter().filter_map(MessageItem::as_content) {
+            if let Content::Parts(parts) = content
+                && parts
+                    .iter()
+                    .any(|part| !matches!(part, ContentPart::Text { .. }))
+            {
+                return Err(invalid("Chat tool results require text content"));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
     validate_chat(request)?;
+    validate_chat_tool_content(request)?;
     let reasoning = reasoning_config(request)?;
     if request.responses_include_encrypted
         || reasoning.as_ref().is_some_and(|r| {
