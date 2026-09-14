@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 #[test]
 fn ordered_messages_keep_nested_content_and_reject_unrepresentable_projection() {
-    let wire = json!({"model":"m","messages":[{"role":"assistant","content":[{"type":"text","text":"first"},{"type":"text","text":"second"}],"tool_calls":[{"type":"function","id":"a","function":{"name":"lookup","arguments":"{}"}},{"type":"function","id":"b","function":{"name":"lookup","arguments":"{}"}}]}]});
+    let wire = json!({"model":"m","max_tokens":100,"messages":[{"role":"assistant","content":[{"type":"text","text":"first"},{"type":"text","text":"second"}],"tool_calls":[{"type":"function","id":"a","function":{"name":"lookup","arguments":"{}"}},{"type":"function","id":"b","function":{"name":"lookup","arguments":"{}"}}]}]});
     let mut request = openai::decode_chat(wire.clone()).unwrap();
     assert_eq!(openai::encode_chat(&request).unwrap(), wire);
     assert!(matches!(
@@ -21,15 +21,21 @@ fn ordered_messages_keep_nested_content_and_reject_unrepresentable_projection() 
     request.messages[0]
         .items
         .push(MessageItem::Content(Content::Text("after tools".into())));
+    let results = openai::decode_chat(json!({"model":"m","messages":[
+        {"role":"tool","tool_call_id":"a","content":"ok"},
+        {"role":"tool","tool_call_id":"b","content":"ok"}
+    ]}))
+    .unwrap();
+    request.messages.extend(results.messages);
+    assert!(openai::encode_chat(&request).is_err());
     for result in [
-        openai::encode_chat(&request),
         openai::responses::encode_chat(&request),
         anthropic::encode_chat(&request),
         gemini::encode_chat(&request),
     ] {
         assert!(
-            result.is_err(),
-            "unsupported content must not be omitted or moved"
+            result.is_ok(),
+            "ordered content must remain representable: {result:?}"
         );
     }
 }
@@ -106,4 +112,185 @@ fn chat_encoder_rejects_mismatched_slots_and_does_not_reorder_ordered_events() {
         delta: PartDelta::Text("after call".into()),
     });
     assert!(openai::encode_chat_event(&ChatEvent::Chunk(decoded), "m").is_err());
+}
+
+fn ordered_event(item: u32, delta: PartDelta) -> ChatEvent {
+    let ChatEvent::Chunk(mut event) =
+        openai::decode_chat_event(&chunk(json!({})).to_string()).unwrap()
+    else {
+        unreachable!()
+    };
+    event.choices[0].delta.events.push(PositionedDelta {
+        position: StreamPosition {
+            item: StreamItem::Ordered(item),
+            part: 0,
+        },
+        delta,
+    });
+    ChatEvent::Chunk(event)
+}
+
+#[test]
+fn chat_stateful_projection_rejects_later_text_after_tool_and_incomplete_parts() {
+    use nyro_llm::ir::StreamPartKind;
+    let mut encoder = openai::StreamEncoder::with_limit("m".into(), 4096);
+    for delta in [
+        PartDelta::Start(StreamPartKind::Text),
+        PartDelta::Text("before".into()),
+        PartDelta::End,
+    ] {
+        encoder.push(&ordered_event(0, delta)).unwrap();
+    }
+    encoder
+        .push(&ordered_event(
+            1,
+            PartDelta::Start(StreamPartKind::ToolCall),
+        ))
+        .unwrap();
+    let ChatEvent::Chunk(call) = openai::decode_chat_event(&chunk(json!({"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"lookup","arguments":"{}"}}]})).to_string()).unwrap() else { unreachable!() };
+    encoder
+        .push(&ordered_event(
+            1,
+            call.choices[0].delta.events[0].delta.clone(),
+        ))
+        .unwrap();
+    encoder.push(&ordered_event(1, PartDelta::End)).unwrap();
+    assert!(
+        encoder
+            .push(&ordered_event(2, PartDelta::Start(StreamPartKind::Text)))
+            .is_err()
+    );
+    assert!(encoder.push(&ChatEvent::Done).is_err());
+    for first in [PartDelta::End, PartDelta::Text("missing start".into())] {
+        assert!(
+            openai::StreamEncoder::with_limit("m".into(), 4096)
+                .push(&ordered_event(0, first))
+                .is_err()
+        );
+    }
+    let mut encoder = openai::StreamEncoder::with_limit("m".into(), 4096);
+    encoder
+        .push(&ordered_event(0, PartDelta::Start(StreamPartKind::Text)))
+        .unwrap();
+    assert!(encoder.push(&ChatEvent::Done).is_err());
+}
+
+#[test]
+fn chat_stateful_projection_keeps_native_parallel_slots() {
+    let mut encoder = openai::StreamEncoder::with_limit("m".into(), 4096);
+    for delta in [
+        json!({"tool_calls":[{"index":1,"id":"b","type":"function","function":{"name":"lookup","arguments":"{"}},{"index":0,"id":"a","type":"function","function":{"name":"lookup","arguments":"{}"}}]}),
+        json!({"content":"native field","tool_calls":[{"index":1,"function":{"arguments":"}"}}]}),
+    ] {
+        let wire = chunk(delta);
+        let event = openai::decode_chat_event(&wire.to_string()).unwrap();
+        let encoded = encoder.push(&event).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(encoded.strip_prefix("data: ").unwrap()).unwrap(),
+            wire
+        );
+    }
+    encoder.push(&ChatEvent::Done).unwrap();
+}
+
+#[test]
+fn chat_stream_budget_covers_all_choices_together() {
+    let mut encoder = openai::StreamEncoder::with_limit("m".into(), 4096);
+    let mut rejected = false;
+    for index in 0..8 {
+        for tool in 0..8 {
+            let mut wire = chunk(
+                json!({"tool_calls":[{"index":tool,"id":format!("c{tool}"),"type":"function","function":{"name":"f","arguments":"{}"}}]}),
+            );
+            wire["choices"][0]["index"] = json!(index);
+            if encoder
+                .push(&openai::decode_chat_event(&wire.to_string()).unwrap())
+                .is_err()
+            {
+                rejected = true;
+                break;
+            }
+        }
+        if rejected {
+            break;
+        }
+    }
+    assert!(
+        rejected,
+        "individually small choices must share one state budget"
+    );
+}
+
+#[test]
+fn chat_rejects_payload_that_would_overtake_earlier_content() {
+    use nyro_llm::ir::{ResponsesItemStart, StreamPartKind};
+    for container in [false, true] {
+        let mut encoder = openai::StreamEncoder::with_limit("m".into(), 4096);
+        if container {
+            encoder
+                .push(&ordered_event(
+                    0,
+                    PartDelta::ResponsesItemStart(ResponsesItemStart::Message { id: "a".into() }),
+                ))
+                .unwrap();
+            encoder
+                .push(&ordered_event(
+                    1,
+                    PartDelta::ResponsesItemStart(ResponsesItemStart::Message { id: "b".into() }),
+                ))
+                .unwrap();
+        } else {
+            encoder
+                .push(&ordered_event(0, PartDelta::Start(StreamPartKind::Text)))
+                .unwrap();
+        }
+        encoder
+            .push(&ordered_event(1, PartDelta::Start(StreamPartKind::Text)))
+            .unwrap();
+        assert!(
+            encoder
+                .push(&ordered_event(1, PartDelta::Text("later".into())))
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn chat_rejects_mixed_position_domains_in_both_directions() {
+    use nyro_llm::ir::StreamPartKind;
+    let native =
+        openai::decode_chat_event(&chunk(json!({"content":"native"})).to_string()).unwrap();
+    let explicit = ordered_event(0, PartDelta::Start(StreamPartKind::Text));
+    for (first, second) in [(&native, &explicit), (&explicit, &native)] {
+        let mut encoder = openai::StreamEncoder::with_limit("m".into(), 4096);
+        encoder.push(first).unwrap();
+        assert!(encoder.push(second).is_err());
+    }
+}
+
+#[test]
+fn chat_rejects_reopening_or_appending_to_completed_container() {
+    use nyro_llm::ir::{ResponsesItemStart, StreamPartKind};
+    use nyro_protocol::openai::responses::ItemStatus;
+    for reopen in [false, true] {
+        let mut encoder = openai::StreamEncoder::with_limit("m".into(), 4096);
+        encoder
+            .push(&ordered_event(
+                0,
+                PartDelta::ResponsesItemStart(ResponsesItemStart::Message { id: "a".into() }),
+            ))
+            .unwrap();
+        encoder
+            .push(&ordered_event(
+                0,
+                PartDelta::ResponsesItemEnd(ItemStatus::Completed),
+            ))
+            .unwrap();
+        let delta = if reopen {
+            PartDelta::ResponsesItemStart(ResponsesItemStart::Message { id: "a".into() })
+        } else {
+            PartDelta::Start(StreamPartKind::Text)
+        };
+        assert!(encoder.push(&ordered_event(0, delta)).is_err());
+    }
 }

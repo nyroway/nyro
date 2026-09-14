@@ -1,4 +1,5 @@
 //! Gemini Chat conversion. Unsupported native extensions fail rather than disappear.
+mod ordered;
 mod thinking;
 use super::CodecError;
 use crate::ir::*;
@@ -141,7 +142,6 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
         };
         let mut m = message(role.clone());
         let mut parts = vec![];
-        let mut calls = vec![];
         for p in c.parts {
             check_part(&p)?;
             if thinking::annotated(&p) && role != Role::Assistant {
@@ -149,11 +149,6 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
             }
             let metadata = thinking::call_metadata(&p);
             if p.text.is_some() || (p.function_call.is_none() && p.thought_signature.is_some()) {
-                if !calls.is_empty() {
-                    return Err(bad(
-                        "text or signature after function calls cannot be represented",
-                    ));
-                }
                 parts.push(thinking::text(p));
             } else if let Some(blob) = p.inline_data {
                 if role != Role::User
@@ -189,7 +184,13 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
                     return Err(bad("duplicate tool call id"));
                 }
                 pending.push((id.clone(), c.name.clone()));
-                calls.push(call(c, id, metadata)?);
+                if !parts.is_empty() {
+                    m.items
+                        .push(MessageItem::Content(Content::Parts(std::mem::take(
+                            &mut parts,
+                        ))));
+                }
+                m.items.push(MessageItem::ToolCall(call(c, id, metadata)?));
             } else if let Some(r) = p.function_response {
                 if role != Role::User || !r.response.is_object() {
                     return Err(bad("invalid function response"));
@@ -225,9 +226,6 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
         }
         if !parts.is_empty() {
             m.items.push(MessageItem::Content(Content::Parts(parts)));
-        }
-        if !calls.is_empty() {
-            m.items.extend(calls.into_iter().map(MessageItem::ToolCall));
         }
         if !m.items.is_empty() {
             messages.push(m);
@@ -306,7 +304,7 @@ pub fn decode_chat(value: Value, model: &str, streaming: bool) -> Result<ChatReq
             ..Default::default()
         }),
     };
-    super::openai::encode_chat(&thinking::portable(&r)?)?;
+    super::openai::validate_portable_chat(&thinking::portable(&r)?)?;
     if r.generation.n.is_some_and(|n| n != 1) {
         return Err(bad("only one Gemini candidate is supported"));
     }
@@ -425,7 +423,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
     if r.responses_reasoning.is_some() || r.responses_include_encrypted {
         return Err(bad("Gemini cannot represent Responses reasoning controls"));
     }
-    super::openai::encode_chat(&thinking::portable(r)?)?;
+    super::openai::validate_portable_chat(&thinking::portable(r)?)?;
     let mut options = (*r.openai).clone();
     options.tools = None;
     options.tool_choice = None;
@@ -459,8 +457,9 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         {
             return Err(bad("unsupported message metadata"));
         }
-        let mut parts = content_parts(m.content(), m.role == Role::User)?;
         if m.role == Role::Tool {
+            super::validate_message_items(&m.items)?;
+            let parts = content_parts(m.content(), false)?;
             if parts.len() > 1 {
                 return Err(bad(
                     "multiple tool result text parts cannot be represented in Gemini",
@@ -496,22 +495,27 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             }
             continue;
         }
-        for ToolCall::Function {
-            id,
-            function,
-            gemini,
-            ..
-        } in m.tool_calls()
-        {
-            let part = thinking::wire_call(id, function, gemini.as_ref())?;
-            let wire_id = part.function_call.as_ref().unwrap().id.clone();
-            if pending
-                .insert(id.clone(), (function.name.clone(), wire_id))
-                .is_some()
+        let mut parts = vec![];
+        for item in &m.items {
+            if let Some(content) = item.as_content() {
+                parts.extend(content_parts(Some(content), m.role == Role::User)?);
+            } else if let Some(ToolCall::Function {
+                id,
+                function,
+                gemini,
+                ..
+            }) = item.as_tool_call()
             {
-                return Err(bad("duplicate function call"));
+                let part = thinking::wire_call(id, function, gemini.as_ref())?;
+                let wire_id = part.function_call.as_ref().unwrap().id.clone();
+                if pending
+                    .insert(id.clone(), (function.name.clone(), wire_id))
+                    .is_some()
+                {
+                    return Err(bad("duplicate function call"));
+                }
+                parts.push(part);
             }
-            parts.push(part);
         }
         match m.role {
             Role::System => {
@@ -716,6 +720,29 @@ fn native_usage(u: &Usage) -> Result<w::Usage, CodecError> {
             .and_then(|d| d.reasoning_tokens),
     })
 }
+fn flush_response_parts(items: &mut Vec<MessageItem>, parts: &mut Vec<ContentPart>) {
+    if parts.is_empty() {
+        return;
+    }
+    let parts = std::mem::take(parts);
+    if parts
+        .iter()
+        .any(|part| matches!(part, ContentPart::GeminiText(_)))
+    {
+        items.push(MessageItem::Content(Content::Parts(parts)));
+    } else {
+        let text: String = parts
+            .into_iter()
+            .filter_map(|part| match part {
+                ContentPart::Text { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect();
+        if !text.is_empty() {
+            items.push(MessageItem::Content(Content::Text(text)));
+        }
+    }
+}
 pub fn decode_chat_response(v: Value) -> Result<ChatResponse, CodecError> {
     let w: w::Response = serde_json::from_value(v)?;
     let cs = w.candidates.ok_or_else(|| bad("missing candidates"))?;
@@ -725,7 +752,8 @@ pub fn decode_chat_response(v: Value) -> Result<ChatResponse, CodecError> {
     let mut choices = vec![];
     for c in cs {
         let mut parts = vec![];
-        let mut calls = vec![];
+        let mut items = vec![];
+        let mut tools = 0;
         if let Some(content) = c.content {
             if content.role.as_deref().is_some_and(|r| r != "model") {
                 return Err(bad("invalid response role"));
@@ -735,53 +763,31 @@ pub fn decode_chat_response(v: Value) -> Result<ChatResponse, CodecError> {
                 let metadata = thinking::call_metadata(&p);
                 if p.text.is_some() || (p.function_call.is_none() && p.thought_signature.is_some())
                 {
-                    if !calls.is_empty() {
-                        return Err(bad(
-                            "text or signature after function calls cannot be represented",
-                        ));
-                    }
                     parts.push(thinking::text(p));
                 } else if let Some(c) = p.function_call {
                     let id =
                         c.id.clone()
-                            .unwrap_or_else(|| format!("gemini_call_{}", calls.len()));
-                    calls.push(call(c, id, metadata)?);
+                            .unwrap_or_else(|| format!("gemini_call_{tools}"));
+                    flush_response_parts(&mut items, &mut parts);
+                    items.push(MessageItem::ToolCall(call(c, id, metadata)?));
+                    tools += 1;
                 } else {
                     return Err(bad("unsupported model output part"));
                 }
             }
         }
+        flush_response_parts(&mut items, &mut parts);
         let finish = stop(
             c.finish_reason
                 .as_deref()
                 .ok_or_else(|| bad("missing finish reason"))?,
-            !calls.is_empty(),
+            tools != 0,
         )?;
         choices.push(Choice {
             index: c.index.unwrap_or(0),
             message: ResponseMessage {
                 role: Role::Assistant,
-                items: MessageItem::from_parts(
-                    if parts
-                        .iter()
-                        .any(|p| matches!(p, ContentPart::GeminiText(_)))
-                    {
-                        Some(Content::Parts(parts))
-                    } else {
-                        let text: String = parts
-                            .into_iter()
-                            .filter_map(|p| {
-                                if let ContentPart::Text { text, .. } = p {
-                                    Some(text)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        (!text.is_empty()).then_some(Content::Text(text))
-                    },
-                    (!calls.is_empty()).then_some(calls),
-                ),
+                items,
                 refusal: None,
                 audio: None,
             },
@@ -814,15 +820,19 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
         {
             return Err(bad("unsupported response payload"));
         }
-        let mut parts = content_parts(c.message.content(), false)?;
-        for ToolCall::Function {
-            id,
-            function,
-            gemini,
-            ..
-        } in c.message.tool_calls()
-        {
-            parts.push(thinking::wire_call(id, function, gemini.as_ref())?);
+        let mut parts = vec![];
+        for item in &c.message.items {
+            if let Some(content) = item.as_content() {
+                parts.extend(content_parts(Some(content), false)?);
+            } else if let Some(ToolCall::Function {
+                id,
+                function,
+                gemini,
+                ..
+            }) = item.as_tool_call()
+            {
+                parts.push(thinking::wire_call(id, function, gemini.as_ref())?);
+            }
         }
         candidates.push(w::Candidate {
             content: Some(w::Content {
@@ -928,11 +938,6 @@ impl StreamDecoder {
                     let payload = if p.text.is_some()
                         || (p.function_call.is_none() && p.thought_signature.is_some())
                     {
-                        if self.tools > 0 {
-                            return Err(bad(
-                                "text or signature after streamed tool calls is unsupported",
-                            ));
-                        }
                         match thinking::text(p) {
                             ContentPart::GeminiText(p) => PartDelta::GeminiText(p),
                             ContentPart::Text { text, .. } => PartDelta::Text(text),
@@ -966,13 +971,29 @@ impl StreamDecoder {
                     } else {
                         return Err(bad("unsupported model output part"));
                     };
-                    delta.events.push(PositionedDelta {
-                        position: StreamPosition {
-                            item: StreamItem::Ordered(self.parts),
-                            part: 0,
+                    let position = StreamPosition {
+                        item: StreamItem::Ordered(self.parts),
+                        part: 0,
+                    };
+                    let kind = if matches!(payload, PartDelta::ToolCall(_)) {
+                        StreamPartKind::ToolCall
+                    } else {
+                        StreamPartKind::Text
+                    };
+                    delta.events = vec![
+                        PositionedDelta {
+                            position,
+                            delta: PartDelta::Start(kind),
                         },
-                        delta: payload,
-                    });
+                        PositionedDelta {
+                            position,
+                            delta: payload,
+                        },
+                        PositionedDelta {
+                            position,
+                            delta: PartDelta::End,
+                        },
+                    ];
                     self.parts = self
                         .parts
                         .checked_add(1)
@@ -1002,7 +1023,7 @@ impl StreamDecoder {
         // Splitting must not multiply a large identity by an unbounded part count.
         let per_part = std::mem::size_of::<ChatChunk>()
             + std::mem::size_of::<StreamChoice>()
-            + std::mem::size_of::<PositionedDelta>()
+            + 3 * std::mem::size_of::<PositionedDelta>()
             + chunk.id.len()
             + chunk.model.len()
             + chunk.object.len();
@@ -1054,6 +1075,7 @@ enum PositionOwner {
     GeminiText,
 }
 pub struct StreamEncoder {
+    ordered: ordered::Encoder,
     pending_finish: Option<String>,
     model: String,
     calls: BTreeMap<u32, PendingCall>,
@@ -1070,6 +1092,7 @@ impl StreamEncoder {
     }
     pub fn with_limit(public_model: String, max_bytes: usize) -> Self {
         Self {
+            ordered: ordered::Encoder::new(max_bytes),
             model: public_model,
             pending_finish: None,
             calls: BTreeMap::new(),
@@ -1093,6 +1116,7 @@ impl StreamEncoder {
             return Err(bad("Gemini encoder already ended"));
         }
         let ChatEvent::Chunk(c) = event else {
+            self.ordered.finish()?;
             if !self.terminal || !self.calls.is_empty() {
                 return Err(bad("stream ended without completed candidate"));
             }
@@ -1156,6 +1180,9 @@ impl StreamEncoder {
             let mut parts = vec![];
             for event in &choice.delta.events {
                 super::validate_position(event)?;
+                if self.ordered.push(event, &mut parts)? {
+                    continue;
+                }
                 let owner = match &event.delta {
                     PartDelta::Text(_) => Some(PositionOwner::Text),
                     PartDelta::GeminiText(_) => Some(PositionOwner::GeminiText),
@@ -1275,6 +1302,7 @@ impl StreamEncoder {
                 .map(native_stop)
                 .transpose()?;
             if finish.is_some() {
+                self.ordered.finish()?;
                 for (_, call) in std::mem::take(&mut self.calls) {
                     parts.push(thinking::wire_call(
                         &call.id,

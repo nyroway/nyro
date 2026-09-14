@@ -63,7 +63,10 @@ pub(super) fn portable(r: &ChatRequest) -> Result<ChatRequest, CodecError> {
     portable.gemini_thinking = None;
     for m in &mut portable.messages {
         let assistant = m.role == Role::Assistant;
-        if let Some(Content::Parts(parts)) = m.content_mut() {
+        for item in &mut m.items {
+            let Some(Content::Parts(parts)) = item.as_content_mut() else {
+                continue;
+            };
             for part in parts {
                 if let ContentPart::GeminiText(t) = part {
                     if !assistant {

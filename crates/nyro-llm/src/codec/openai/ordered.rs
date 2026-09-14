@@ -35,10 +35,42 @@ pub(super) fn encode_message(mut value: Value) -> Result<Value, CodecError> {
     let mut calls = Vec::new();
     for item in items {
         match item {
-            MessageItem::Content(content) => {
+            MessageItem::Content(content) | MessageItem::ResponsesMessage { content, .. } => {
+                let content = match content {
+                    Content::Parts(parts) => {
+                        let mut body = Vec::new();
+                        let mut refusal: Option<String> = None;
+                        for part in parts {
+                            match part {
+                                ContentPart::Refusal { refusal: text } => {
+                                    refusal.get_or_insert_default().push_str(&text);
+                                }
+                                _ if refusal.is_some() => {
+                                    return Err(invalid(
+                                        "Chat cannot preserve content after refusal",
+                                    ));
+                                }
+                                part => body.push(part),
+                            }
+                        }
+                        if let Some(refusal) = refusal {
+                            if object.get("refusal").is_some_and(|value| !value.is_null()) {
+                                return Err(invalid("ambiguous refusal representations"));
+                            }
+                            object.insert("refusal".into(), Value::String(refusal));
+                            if body.is_empty() {
+                                continue;
+                            }
+                        }
+                        Content::Parts(body)
+                    }
+                    content => content,
+                };
                 object.insert("content".into(), serde_json::to_value(content)?);
             }
-            MessageItem::ToolCall(call) => calls.push(call),
+            MessageItem::ToolCall(call) | MessageItem::ResponsesToolCall { call, .. } => {
+                calls.push(call)
+            }
         }
     }
     if !calls.is_empty() {
@@ -93,6 +125,10 @@ pub(super) fn encode_delta(delta: &Delta) -> Result<Value, CodecError> {
     for event in &delta.events {
         super::super::validate_position(event)?;
         match &event.delta {
+            PartDelta::Start(_)
+            | PartDelta::End
+            | PartDelta::ResponsesItemStart(_)
+            | PartDelta::ResponsesItemEnd(_) => {}
             PartDelta::Text(text) => {
                 if matches!(event.position.item, StreamItem::Ordered(_))
                     && (saw_tool || saw_refusal)

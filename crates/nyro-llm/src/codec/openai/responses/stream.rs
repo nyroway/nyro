@@ -1,7 +1,7 @@
 //! Responses repeats full output at termination: retained snapshots share the frame bound.
 use super::*;
 use nyro_protocol::framing::Event;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 const DEFAULT_LIMIT: usize = 1024 * 1024;
 
 struct ItemState {
@@ -155,15 +155,6 @@ impl StreamDecoder {
                 self.started()?;
                 let index = e.output_index.ok_or_else(|| bad("missing output_index"))?;
                 let item = e.item.ok_or_else(|| bad("missing output item"))?;
-                if self
-                    .items
-                    .iter()
-                    .any(|s| !matches!(s.item, wire::OutputItem::FunctionCall { .. }) && !s.done)
-                {
-                    return Err(bad(
-                        "overlapping Responses message items cannot preserve output order",
-                    ));
-                }
                 if index != self.items.len()
                     || (!matches!(&item, wire::OutputItem::Reasoning(r) if r.status.is_none())
                         && item.status() != "in_progress")
@@ -175,12 +166,7 @@ impl StreamDecoder {
                 self.reserve(serde_json::to_vec(&item)?.len())?;
                 let tool_index = match &item {
                     wire::OutputItem::Reasoning(r) => {
-                        if !r.summary.is_empty()
-                            || self
-                                .items
-                                .iter()
-                                .any(|s| !matches!(s.item, wire::OutputItem::Reasoning(_)))
-                        {
+                        if !r.summary.is_empty() {
                             return Err(bad("unsupported initial reasoning content/output order"));
                         }
                         out.push(self.started()?.chunk(
@@ -196,19 +182,69 @@ impl StreamDecoder {
                         ));
                         None
                     }
-                    wire::OutputItem::Message { content, .. } => {
-                        if !content.is_empty() || self.items.iter().any(|i| i.tool_index.is_some())
-                        {
+                    wire::OutputItem::Message { id, content, .. } => {
+                        if !content.is_empty() {
                             return Err(bad("unsupported initial message content/output order"));
                         }
+                        out.push(self.started()?.chunk(
+                            positioned(
+                                index,
+                                0,
+                                PartDelta::ResponsesItemStart(ResponsesItemStart::Message {
+                                    id: id.clone(),
+                                }),
+                            )?,
+                            None,
+                            None,
+                        ));
                         None
                     }
                     wire::OutputItem::FunctionCall {
+                        id,
                         call_id,
                         name,
                         arguments,
                         ..
                     } => {
+                        let identity = self.started()?;
+                        out.reserve_exact(3);
+                        let each = std::mem::size_of::<ChatChunk>()
+                            + std::mem::size_of::<StreamChoice>()
+                            + std::mem::size_of::<PositionedDelta>()
+                            + identity.id.len()
+                            + identity.model.len()
+                            + "chat.completion.chunk".len();
+                        let expanded = each
+                            .saturating_mul(3)
+                            .saturating_add(
+                                out.capacity()
+                                    .saturating_mul(std::mem::size_of::<ChatEvent>()),
+                            )
+                            .saturating_add(id.len())
+                            .saturating_add(call_id.len())
+                            .saturating_add(name.len())
+                            .saturating_add(arguments.len());
+                        if expanded > self.max_bytes {
+                            return Err(bad(
+                                "Responses function start expansion exceeds byte limit",
+                            ));
+                        }
+                        out.push(self.started()?.chunk(
+                            positioned(
+                                index,
+                                0,
+                                PartDelta::ResponsesItemStart(ResponsesItemStart::FunctionCall {
+                                    id: id.clone(),
+                                }),
+                            )?,
+                            None,
+                            None,
+                        ));
+                        out.push(self.started()?.chunk(
+                            positioned(index, 0, PartDelta::Start(StreamPartKind::ToolCall))?,
+                            None,
+                            None,
+                        ));
                         if self.items.iter().any(|i|matches!(&i.item,wire::OutputItem::FunctionCall { call_id:id,.. } if id==call_id)) { return Err(bad("duplicate function call identity")); }
                         let index = u32::try_from(
                             self.items.iter().filter(|i| i.tool_index.is_some()).count(),
@@ -263,10 +299,7 @@ impl StreamDecoder {
                         let Some(wire::StreamPart::Summary(part)) = e.part else {
                             return Err(bad("missing summary part"));
                         };
-                        if index != item.summary.len()
-                            || !part.text().is_empty()
-                            || state.parts.last().is_some_and(|p| *p != 2)
-                        {
+                        if index != item.summary.len() || !part.text().is_empty() {
                             return Err(bad("invalid summary part start"));
                         }
                         item.summary.push(part);
@@ -321,7 +354,6 @@ impl StreamDecoder {
                     return Err(bad("missing/invalid content part"));
                 };
                 validate_part(&part)?;
-                if matches!(part,wire::OutputPart::OutputText { .. }) && self.items.iter().any(|s| matches!(&s.item,wire::OutputItem::Message { content,.. } if content.iter().any(|p| matches!(p,wire::OutputPart::Refusal { .. })))) { return Err(bad("text after refusal cannot be represented")); }
                 if !part_text(&part).is_empty() {
                     return Err(bad("initial Responses content part must be empty"));
                 }
@@ -330,13 +362,24 @@ impl StreamDecoder {
                 let wire::OutputItem::Message { content, .. } = &mut state.item else {
                     return Err(bad("content on function call"));
                 };
-                if e.content_index != Some(content.len())
-                    || state.parts.last().is_some_and(|phase| *phase != 2)
-                {
+                if e.content_index != Some(content.len()) {
                     return Err(bad("invalid content part lifecycle/index"));
                 }
+                let kind = match &part {
+                    wire::OutputPart::OutputText { .. } => StreamPartKind::Text,
+                    wire::OutputPart::Refusal { .. } => StreamPartKind::Refusal,
+                };
                 content.push(part);
                 state.parts.push(0);
+                out.push(self.started()?.chunk(
+                    positioned(
+                        e.output_index.unwrap(),
+                        e.content_index.unwrap(),
+                        PartDelta::Start(kind),
+                    )?,
+                    None,
+                    None,
+                ));
             }
             "response.output_text.delta" | "response.refusal.delta" => {
                 let delta = e.delta.ok_or_else(|| bad("missing content delta"))?;
@@ -411,6 +454,11 @@ impl StreamDecoder {
                     return Err(bad("content_part.done conflicts with lifecycle/content"));
                 }
                 state.parts[index] = 2;
+                out.push(self.started()?.chunk(
+                    positioned(e.output_index.unwrap(), index, PartDelta::End)?,
+                    None,
+                    None,
+                ));
             }
             "response.function_call_arguments.delta" => {
                 let delta = e.delta.ok_or_else(|| bad("missing argument delta"))?;
@@ -458,6 +506,11 @@ impl StreamDecoder {
                     return Err(bad("arguments done conflicts with deltas/identity"));
                 }
                 state.arguments_done = true;
+                out.push(self.started()?.chunk(
+                    positioned(e.output_index.unwrap(), 0, PartDelta::End)?,
+                    None,
+                    None,
+                ));
             }
             "response.output_item.done" => {
                 let item = e.item.ok_or_else(|| bad("missing output item"))?;
@@ -500,6 +553,16 @@ impl StreamDecoder {
                         None,
                         None,
                     ));
+                } else {
+                    out.push(self.started()?.chunk(
+                        positioned(
+                            e.output_index.unwrap(),
+                            0,
+                            PartDelta::ResponsesItemEnd(item_status(item.status())?),
+                        )?,
+                        None,
+                        None,
+                    ));
                 }
             }
             "response.completed" | "response.incomplete" => {
@@ -517,8 +580,10 @@ impl StreamDecoder {
                             wire::OutputItem::Reasoning(r) => {
                                 r.summary.len().saturating_mul(4).saturating_add(2)
                             }
-                            wire::OutputItem::Message { content, .. } => content.len(),
-                            wire::OutputItem::FunctionCall { .. } => 1,
+                            wire::OutputItem::Message { content, .. } => {
+                                content.len().saturating_mul(3).saturating_add(2)
+                            }
+                            wire::OutputItem::FunctionCall { .. } => 5,
                         })
                     });
                     let each = std::mem::size_of::<ChatEvent>()
@@ -551,58 +616,106 @@ impl StreamDecoder {
                     ));
                 }
                 if self.items.is_empty() {
-                    // Some compatible servers send only the terminal snapshot. Emit it once.
+                    // Some compatible servers send only the terminal snapshot. Emit all boundaries once.
                     let mut tool_index = 0;
                     for (output_index, item) in r.output.iter().enumerate() {
+                        let mut deltas = Vec::new();
                         match item {
                             wire::OutputItem::Reasoning(item) => {
                                 for (part_index, delta) in snapshot_deltas(item) {
-                                    out.push(self.started()?.chunk(
-                                        positioned(
-                                            output_index,
-                                            part_index,
-                                            PartDelta::ResponsesReasoning(delta),
-                                        )?,
-                                        None,
-                                        None,
-                                    ));
+                                    deltas.push(positioned(
+                                        output_index,
+                                        part_index,
+                                        PartDelta::ResponsesReasoning(delta),
+                                    )?);
                                 }
                             }
-                            wire::OutputItem::Message { content, .. } => {
+                            wire::OutputItem::Message {
+                                id,
+                                status,
+                                content,
+                                ..
+                            } => {
+                                deltas.push(positioned(
+                                    output_index,
+                                    0,
+                                    PartDelta::ResponsesItemStart(ResponsesItemStart::Message {
+                                        id: id.clone(),
+                                    }),
+                                )?);
                                 for (part_index, part) in content.iter().enumerate() {
-                                    out.push(self.started()?.chunk(
-                                        positioned(output_index, part_index, part_delta(part))?,
-                                        None,
-                                        None,
-                                    ));
+                                    let kind = match part {
+                                        wire::OutputPart::OutputText { .. } => StreamPartKind::Text,
+                                        wire::OutputPart::Refusal { .. } => StreamPartKind::Refusal,
+                                    };
+                                    deltas.push(positioned(
+                                        output_index,
+                                        part_index,
+                                        PartDelta::Start(kind),
+                                    )?);
+                                    deltas.push(positioned(
+                                        output_index,
+                                        part_index,
+                                        part_delta(part),
+                                    )?);
+                                    deltas.push(positioned(
+                                        output_index,
+                                        part_index,
+                                        PartDelta::End,
+                                    )?);
                                 }
+                                deltas.push(positioned(
+                                    output_index,
+                                    0,
+                                    PartDelta::ResponsesItemEnd(item_status(status)?),
+                                )?);
                             }
                             wire::OutputItem::FunctionCall {
+                                id,
+                                status,
                                 call_id,
                                 name,
                                 arguments,
-                                ..
                             } => {
-                                out.push(self.started()?.chunk(
-                                    positioned(
-                                        output_index,
-                                        0,
-                                        PartDelta::ToolCall(ToolCallDelta {
-                                            gemini: None,
-                                            index: tool_index,
-                                            id: Some(call_id.clone()),
-                                            r#type: Some(FunctionType::Function),
-                                            function: Some(FunctionDelta {
-                                                name: Some(name.clone()),
-                                                arguments: Some(arguments.clone()),
-                                            }),
+                                deltas.push(positioned(
+                                    output_index,
+                                    0,
+                                    PartDelta::ResponsesItemStart(
+                                        ResponsesItemStart::FunctionCall { id: id.clone() },
+                                    ),
+                                )?);
+                                deltas.push(positioned(
+                                    output_index,
+                                    0,
+                                    PartDelta::Start(StreamPartKind::ToolCall),
+                                )?);
+                                deltas.push(positioned(
+                                    output_index,
+                                    0,
+                                    PartDelta::ToolCall(ToolCallDelta {
+                                        gemini: None,
+                                        index: tool_index,
+                                        id: Some(call_id.clone()),
+                                        r#type: Some(FunctionType::Function),
+                                        function: Some(FunctionDelta {
+                                            name: Some(name.clone()),
+                                            arguments: Some(arguments.clone()),
                                         }),
-                                    )?,
-                                    None,
-                                    None,
-                                ));
-                                tool_index += 1;
+                                    }),
+                                )?);
+                                deltas.push(positioned(output_index, 0, PartDelta::End)?);
+                                deltas.push(positioned(
+                                    output_index,
+                                    0,
+                                    PartDelta::ResponsesItemEnd(item_status(status)?),
+                                )?);
+                                tool_index = tool_index
+                                    .checked_add(1)
+                                    .ok_or_else(|| bad("too many tool calls"))?;
                             }
+                        }
+                        for delta in deltas {
+                            out.push(self.started()?.chunk(delta, None, None));
                         }
                     }
                 } else if self.items.len() != r.output.len()
@@ -703,18 +816,41 @@ fn set_status(item: &mut wire::OutputItem, status: &str) {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutputKind {
+    Message,
+    FunctionCall,
+    Reasoning,
+}
+struct OutputPartState {
+    index: usize,
+    kind: StreamPartKind,
+    explicit: bool,
+    phase: u8,
+}
+struct OutputSource {
+    index: usize,
+    kind: OutputKind,
+    explicit: bool,
+    started: bool,
+    ended: bool,
+    parts: BTreeMap<u32, OutputPartState>,
+}
+struct PendingFrame {
+    kind: String,
+    fields: String,
+    index: usize,
+    added: bool,
+    cost: usize,
+}
 pub struct StreamEncoder {
     public_model: String,
     identity: Option<Identity>,
     items: Vec<wire::OutputItem>,
-    tools: BTreeMap<u32, usize>,
-    active_part: Option<(usize, usize)>,
-    positions: BTreeMap<StreamPosition, u8>,
-    tool_positions: BTreeMap<u32, StreamPosition>,
-    text_position: Option<StreamPosition>,
-    reasoning_position: Option<StreamItem>,
-    message_done: Option<usize>,
-    reasoning_active: Option<(usize, Vec<u8>)>,
+    sources: BTreeMap<StreamItem, OutputSource>,
+    tools: BTreeMap<u32, StreamPosition>,
+    emitted_items: usize,
+    pending_frames: VecDeque<PendingFrame>,
     finish: Option<String>,
     usage: Option<Usage>,
     sequence: u64,
@@ -732,14 +868,10 @@ impl StreamEncoder {
             public_model,
             identity: None,
             items: Vec::new(),
+            sources: BTreeMap::new(),
             tools: BTreeMap::new(),
-            active_part: None,
-            positions: BTreeMap::new(),
-            tool_positions: BTreeMap::new(),
-            text_position: None,
-            reasoning_position: None,
-            message_done: None,
-            reasoning_active: None,
+            emitted_items: 0,
+            pending_frames: VecDeque::new(),
             finish: None,
             usage: None,
             sequence: 0,
@@ -767,17 +899,64 @@ impl StreamEncoder {
             .ok_or_else(|| bad("Responses snapshot exceeds byte limit"))?;
         Ok(())
     }
-    fn emit(&mut self, kind: &str, mut v: Value, out: &mut String) -> Result<(), CodecError> {
-        v["type"] = json!(kind);
-        v["sequence_number"] = json!(self.sequence);
-        let data = serde_json::to_string(&v)?;
-        if data.len() > self.max_bytes {
-            return Err(bad("Responses frame exceeds byte limit"));
+    fn emit(&mut self, kind: &str, fields: Value, out: &mut String) -> Result<(), CodecError> {
+        let added = kind == "response.output_item.added";
+        if let Some(index) = fields.get("output_index").and_then(Value::as_u64) {
+            let index = usize::try_from(index).map_err(|_| bad("output index overflow"))?;
+            // A function's identity may follow its Start. Hold later items until
+            // the required output_item.added can be emitted for that function.
+            if index > self.emitted_items || (index == self.emitted_items && !added) {
+                let fields = serde_json::to_string(&fields)?;
+                let cost = fields.len() + kind.len() + 2 * std::mem::size_of::<PendingFrame>();
+                self.reserve(cost)?;
+                self.pending_frames.push_back(PendingFrame {
+                    kind: kind.into(),
+                    fields,
+                    index,
+                    added,
+                    cost,
+                });
+                return Ok(());
+            }
         }
+        self.emit_ready(kind, fields, out)?;
+        if added {
+            self.emitted_items += 1;
+        }
+        while let Some(index) = self.pending_frames.iter().position(|frame| {
+            frame.index < self.emitted_items || (frame.added && frame.index == self.emitted_items)
+        }) {
+            let frame = self.pending_frames.remove(index).unwrap();
+            self.retained -= frame.cost;
+            self.emit_ready(&frame.kind, serde_json::from_str(&frame.fields)?, out)?;
+            if frame.added {
+                self.emitted_items += 1;
+            }
+        }
+        Ok(())
+    }
+    fn emit_ready(
+        &mut self,
+        kind: &str,
+        mut fields: Value,
+        out: &mut String,
+    ) -> Result<(), CodecError> {
+        fields["type"] = json!(kind);
+        fields["sequence_number"] = json!(self.sequence);
         self.sequence = self
             .sequence
             .checked_add(1)
-            .ok_or_else(|| bad("Responses sequence overflow"))?;
+            .ok_or_else(|| bad("sequence overflow"))?;
+        let data = serde_json::to_string(&fields)?;
+        if data.len() > self.max_bytes
+            || out
+                .len()
+                .saturating_add(data.len())
+                .saturating_add(kind.len() + 16)
+                > self.max_bytes
+        {
+            return Err(bad("Responses encoded frame batch exceeds limit"));
+        }
         out.push_str("event: ");
         out.push_str(kind);
         out.push_str("\ndata: ");
@@ -789,7 +968,7 @@ impl StreamEncoder {
         let id = self
             .identity
             .as_ref()
-            .ok_or_else(|| bad("Responses stream has no identity"))?;
+            .ok_or_else(|| bad("missing stream identity"))?;
         envelope(
             &id.id,
             id.created,
@@ -799,166 +978,265 @@ impl StreamEncoder {
             self.usage.as_ref(),
         )
     }
-    fn close_part(&mut self, out: &mut String) -> Result<(), CodecError> {
-        if let Some((oi, ci)) = self.active_part.take() {
-            let wire::OutputItem::Message { id, content, .. } = &self.items[oi] else {
-                unreachable!()
-            };
-            let part = content[ci].clone();
-            let id = id.clone();
-            let (kind, key) = match part {
-                wire::OutputPart::OutputText { .. } => ("response.output_text.done", "text"),
-                wire::OutputPart::Refusal { .. } => ("response.refusal.done", "refusal"),
-            };
-            let mut v = json!({"item_id":id,"output_index":oi,"content_index":ci});
-            v[key] = json!(part_text(&part));
-            self.emit(kind, v, out)?;
+    fn new_source(
+        &mut self,
+        key: StreamItem,
+        kind: OutputKind,
+        id: Option<&str>,
+        explicit: bool,
+        out: &mut String,
+    ) -> Result<usize, CodecError> {
+        if self.sources.contains_key(&key) {
+            return Err(bad("duplicate output item start"));
+        }
+        if let StreamItem::Ordered(index) = key
+            && self
+                .sources
+                .keys()
+                .any(|key| matches!(key,StreamItem::Ordered(old) if *old>index))
+        {
+            return Err(bad("output item order regressed"));
+        }
+        let index = self.items.len();
+        let id = id.map(str::to_owned).unwrap_or_else(|| {
+            format!(
+                "{}_{}_{}",
+                if kind == OutputKind::Message {
+                    "msg"
+                } else {
+                    "fc"
+                },
+                self.identity.as_ref().unwrap().id,
+                index
+            )
+        });
+        nonempty(&id)?;
+        if self.items.iter().any(|item| item.id() == id) {
+            return Err(bad("duplicate output item id"));
+        }
+        let item = match kind {
+            OutputKind::Message => wire::OutputItem::Message {
+                id,
+                role: "assistant".into(),
+                status: "in_progress".into(),
+                content: Vec::new(),
+            },
+            OutputKind::FunctionCall => wire::OutputItem::FunctionCall {
+                id,
+                call_id: String::new(),
+                name: String::new(),
+                arguments: String::new(),
+                status: "in_progress".into(),
+            },
+            OutputKind::Reasoning => return Err(bad("reasoning requires a typed start")),
+        };
+        self.reserve(
+            std::mem::size_of::<OutputSource>()
+                + std::mem::size_of::<StreamItem>()
+                + 32
+                + serde_json::to_vec(&item)?.len(),
+        )?;
+        if kind == OutputKind::Message {
             self.emit(
-                "response.content_part.done",
-                json!({"item_id":id,"output_index":oi,"content_index":ci,"part":part}),
+                "response.output_item.added",
+                json!({"output_index":index,"item":item}),
+                out,
+            )?;
+        }
+        self.items.push(item);
+        self.sources.insert(
+            key,
+            OutputSource {
+                index,
+                kind,
+                explicit,
+                started: kind == OutputKind::Message,
+                ended: false,
+                parts: BTreeMap::new(),
+            },
+        );
+        Ok(index)
+    }
+    fn source(&self, key: StreamItem) -> Result<&OutputSource, CodecError> {
+        let source = self
+            .sources
+            .get(&key)
+            .ok_or_else(|| bad("unknown output item position"))?;
+        if source.ended {
+            return Err(bad("event after output item end"));
+        }
+        Ok(source)
+    }
+    fn start_part(
+        &mut self,
+        position: StreamPosition,
+        kind: StreamPartKind,
+        explicit: bool,
+        out: &mut String,
+    ) -> Result<(), CodecError> {
+        let output_kind = if kind == StreamPartKind::ToolCall {
+            OutputKind::FunctionCall
+        } else {
+            OutputKind::Message
+        };
+        if !self.sources.contains_key(&position.item) {
+            self.new_source(position.item, output_kind, None, false, out)?;
+        }
+        let source = self.source(position.item)?;
+        if source.kind != output_kind
+            || source.parts.contains_key(&position.part)
+            || (matches!(position.item, StreamItem::Ordered(_))
+                && position.part as usize != source.parts.len())
+        {
+            return Err(bad("invalid content part start/order/kind"));
+        }
+        let oi = source.index;
+        self.reserve(std::mem::size_of::<OutputPartState>() + std::mem::size_of::<u32>() + 32)?;
+        let ci = match &mut self.items[oi] {
+            wire::OutputItem::Message { content, .. } => {
+                let part = if kind == StreamPartKind::Refusal {
+                    wire::OutputPart::Refusal {
+                        refusal: String::new(),
+                    }
+                } else {
+                    wire::OutputPart::OutputText {
+                        text: String::new(),
+                        annotations: Vec::new(),
+                        logprobs: Vec::new(),
+                    }
+                };
+                let index = content.len();
+                content.push(part);
+                index
+            }
+            wire::OutputItem::FunctionCall { .. } => 0,
+            _ => return Err(bad("ordinary part inside reasoning item")),
+        };
+        self.sources.get_mut(&position.item).unwrap().parts.insert(
+            position.part,
+            OutputPartState {
+                index: ci,
+                kind,
+                explicit,
+                phase: 0,
+            },
+        );
+        if let wire::OutputItem::Message { id, content, .. } = &self.items[oi] {
+            self.emit(
+                "response.content_part.added",
+                json!({"output_index":oi,"item_id":id,"content_index":ci,"part":content[ci]}),
                 out,
             )?;
         }
         Ok(())
     }
-    fn text(&mut self, delta: &str, refusal: bool, out: &mut String) -> Result<(), CodecError> {
-        if !self.tools.is_empty() {
-            return Err(bad("text after function calls cannot be represented"));
+    fn text(
+        &mut self,
+        position: StreamPosition,
+        text: &str,
+        refusal: bool,
+        out: &mut String,
+    ) -> Result<(), CodecError> {
+        let kind = if refusal {
+            StreamPartKind::Refusal
+        } else {
+            StreamPartKind::Text
+        };
+        if !self
+            .sources
+            .get(&position.item)
+            .is_some_and(|s| s.parts.contains_key(&position.part))
+        {
+            if self.sources.get(&position.item).is_some_and(|s| s.explicit) {
+                return Err(bad("text without explicit part start"));
+            }
+            self.start_part(position, kind, false, out)?;
         }
-        if !refusal && self.items.iter().any(|i|matches!(i,wire::OutputItem::Message { content,.. } if content.iter().any(|p|matches!(p,wire::OutputPart::Refusal { .. })))) { return Err(bad("text after refusal cannot be represented")); }
-        self.reserve(delta.len())?;
-        let same=self.active_part.is_some_and(|(oi,ci)| matches!(&self.items[oi],wire::OutputItem::Message { content,.. } if matches!(&content[ci],wire::OutputPart::Refusal { .. })==refusal));
-        if !same {
-            self.close_part(out)?;
-            let oi = if let Some(i) = self
-                .items
-                .iter()
-                .position(|i| matches!(i, wire::OutputItem::Message { .. }))
-            {
-                i
-            } else {
-                let i = self.items.len();
-                let item = wire::OutputItem::Message {
-                    id: format!("msg_{}_{}", self.identity.as_ref().unwrap().id, i),
-                    role: "assistant".into(),
-                    status: "in_progress".into(),
-                    content: Vec::new(),
-                };
-                self.reserve(serde_json::to_vec(&item)?.len())?;
-                self.emit(
-                    "response.output_item.added",
-                    json!({"output_index":i,"item":item}),
-                    out,
-                )?;
-                self.items.push(item);
-                i
-            };
-            let part = if refusal {
-                wire::OutputPart::Refusal {
-                    refusal: String::new(),
-                }
-            } else {
-                wire::OutputPart::OutputText {
-                    text: String::new(),
-                    annotations: Vec::new(),
-                    logprobs: Vec::new(),
-                }
-            };
-            self.reserve(serde_json::to_vec(&part)?.len())?;
-            let wire::OutputItem::Message { id, content, .. } = &mut self.items[oi] else {
-                unreachable!()
-            };
-            let ci = content.len();
-            let id = id.clone();
-            content.push(part.clone());
-            self.emit(
-                "response.content_part.added",
-                json!({"output_index":oi,"content_index":ci,"item_id":id,"part":part}),
-                out,
-            )?;
-            self.active_part = Some((oi, ci));
+        let source = self.source(position.item)?;
+        let part = source
+            .parts
+            .get(&position.part)
+            .ok_or_else(|| bad("unknown text part"))?;
+        if source.kind != OutputKind::Message || part.kind != kind || part.phase != 0 {
+            return Err(bad("text outside active matching part"));
         }
-        let (oi, ci) = self.active_part.unwrap();
+        let (oi, ci) = (source.index, part.index);
+        self.reserve(text.len())?;
         let wire::OutputItem::Message { id, content, .. } = &mut self.items[oi] else {
             unreachable!()
         };
         match &mut content[ci] {
-            wire::OutputPart::OutputText { text, .. } => text.push_str(delta),
-            wire::OutputPart::Refusal { refusal } => refusal.push_str(delta),
+            wire::OutputPart::OutputText { text: value, .. } => value.push_str(text),
+            wire::OutputPart::Refusal { refusal: value } => value.push_str(text),
         }
-        let id = id.clone();
+        let fields = json!({"output_index":oi,"item_id":id,"content_index":ci,"delta":text});
         self.emit(
             if refusal {
                 "response.refusal.delta"
             } else {
                 "response.output_text.delta"
             },
-            json!({"item_id":id,"output_index":oi,"content_index":ci,"delta":delta}),
+            fields,
             out,
         )
     }
-    fn tool(&mut self, call: &ToolCallDelta, out: &mut String) -> Result<(), CodecError> {
-        self.close_part(out)?;
-        if self.message_done.is_none()
-            && let Some(oi) = self
-                .items
-                .iter()
-                .position(|i| matches!(i, wire::OutputItem::Message { .. }))
-        {
-            set_status(&mut self.items[oi], "completed");
-            self.emit(
-                "response.output_item.done",
-                json!({"output_index":oi,"item":self.items[oi]}),
-                out,
-            )?;
-            self.message_done = Some(oi);
+    fn tool(
+        &mut self,
+        position: StreamPosition,
+        call: &ToolCallDelta,
+        out: &mut String,
+    ) -> Result<(), CodecError> {
+        if call.gemini.is_some() {
+            return Err(bad("Responses cannot represent Gemini signatures"));
         }
-        let oi =
-            if let Some(index) = self.tools.get(&call.index) {
-                *index
-            } else {
+        if let Some(old) = self.tools.get(&call.index) {
+            if *old != position {
+                return Err(bad("tool call changed position"));
+            }
+        } else {
+            if self.tools.values().any(|p| *p == position) {
+                return Err(bad("tool position reused by another call"));
+            }
+            if matches!(position.item, StreamItem::OpenAiTool(_)) {
                 if call.index as usize != self.tools.len() {
-                    return Err(bad("noncontiguous canonical tool index"));
+                    return Err(bad("noncontiguous Chat tool index"));
                 }
-                let id = call
-                    .id
-                    .as_ref()
-                    .ok_or_else(|| bad("new function call requires call_id"))?;
-                let name = call
-                    .function
-                    .as_ref()
-                    .and_then(|f| f.name.as_ref())
-                    .ok_or_else(|| bad("new function call requires name"))?;
-                nonempty(id)?;
-                nonempty(name)?;
-                if self.items.iter().any(
-                    |i| matches!(i,wire::OutputItem::FunctionCall { call_id,.. } if call_id==id),
-                ) {
-                    return Err(bad("duplicate function call_id"));
+                if self
+                    .sources
+                    .get(&StreamItem::OpenAiMessage)
+                    .is_some_and(|s| !s.ended)
+                {
+                    self.close_implicit(StreamItem::OpenAiMessage, "completed", out)?;
                 }
-                let oi = self.items.len();
-                let item = wire::OutputItem::FunctionCall {
-                    id: format!("fc_{}_{}", self.identity.as_ref().unwrap().id, oi),
-                    call_id: id.clone(),
-                    name: name.clone(),
-                    arguments: String::new(),
-                    status: "in_progress".into(),
-                };
-                self.reserve(serde_json::to_vec(&item)?.len())?;
-                self.emit(
-                    "response.output_item.added",
-                    json!({"output_index":oi,"item":item}),
-                    out,
-                )?;
-                self.items.push(item);
-                self.tools.insert(call.index, oi);
-                oi
-            };
-        if let Some(arguments) = call.function.as_ref().and_then(|f| f.arguments.as_ref()) {
-            self.reserve(arguments.len())?;
+            }
+            self.reserve(std::mem::size_of::<(u32, StreamPosition)>() + 32)?;
+            self.tools.insert(call.index, position);
         }
+        if !self
+            .sources
+            .get(&position.item)
+            .is_some_and(|s| s.parts.contains_key(&position.part))
+        {
+            if self.sources.get(&position.item).is_some_and(|s| s.explicit) {
+                return Err(bad("tool delta without explicit argument start"));
+            }
+            self.start_part(position, StreamPartKind::ToolCall, false, out)?;
+        }
+        let source = self.source(position.item)?;
+        let part = source.parts.get(&position.part).unwrap();
+        if source.kind != OutputKind::FunctionCall || part.phase != 0 {
+            return Err(bad("arguments outside active function"));
+        }
+        let oi = source.index;
+        let first = !source.started;
+        self.reserve(
+            call.id.as_ref().map_or(0, String::len)
+                + call.function.as_ref().map_or(0, |f| {
+                    f.name.as_ref().map_or(0, String::len)
+                        + f.arguments.as_ref().map_or(0, String::len)
+                }),
+        )?;
         let wire::OutputItem::FunctionCall {
-            id,
             call_id,
             name,
             arguments,
@@ -967,237 +1245,324 @@ impl StreamEncoder {
         else {
             unreachable!()
         };
-        if call.id.as_ref().is_some_and(|s| s != call_id)
+        if first {
+            *call_id = call
+                .id
+                .clone()
+                .ok_or_else(|| bad("function start requires call_id"))?;
+            *name = call
+                .function
+                .as_ref()
+                .and_then(|f| f.name.clone())
+                .ok_or_else(|| bad("function start requires name"))?;
+            nonempty(call_id)?;
+            nonempty(name)?;
+        } else if call.id.as_ref().is_some_and(|id| id != call_id)
             || call
                 .function
                 .as_ref()
                 .and_then(|f| f.name.as_ref())
-                .is_some_and(|s| s != name)
+                .is_some_and(|n| n != name)
         {
-            return Err(bad("canonical function identity changed"));
+            return Err(bad("function identity changed"));
         }
-        let id = id.clone();
-        if let Some(delta) = call.function.as_ref().and_then(|f| f.arguments.as_ref()) {
+        let delta = call.function.as_ref().and_then(|f| f.arguments.as_deref());
+        if let Some(delta) = delta {
             arguments.push_str(delta);
+        }
+        if first {
+            let call_id = match &self.items[oi] {
+                wire::OutputItem::FunctionCall { call_id, .. } => call_id,
+                _ => unreachable!(),
+            };
+            if self.items.iter().enumerate().any(|(i,item)|i!=oi && matches!(item,wire::OutputItem::FunctionCall {call_id:old,..} if old==call_id)){return Err(bad("duplicate function call_id"));}
+            let mut initial = self.items[oi].clone();
+            if let wire::OutputItem::FunctionCall { arguments, .. } = &mut initial {
+                arguments.clear();
+            }
+            self.emit(
+                "response.output_item.added",
+                json!({"output_index":oi,"item":initial}),
+                out,
+            )?;
+            self.sources.get_mut(&position.item).unwrap().started = true;
+        }
+        if let Some(delta) = delta {
             self.emit(
                 "response.function_call_arguments.delta",
-                json!({"output_index":oi,"item_id":id,"delta":delta}),
+                json!({"output_index":oi,"item_id":self.items[oi].id(),"delta":delta}),
                 out,
             )?;
         }
         Ok(())
     }
+    fn end_part(
+        &mut self,
+        position: StreamPosition,
+        explicit_end: bool,
+        out: &mut String,
+    ) -> Result<(), CodecError> {
+        let source = self.source(position.item)?;
+        let part = source
+            .parts
+            .get(&position.part)
+            .ok_or_else(|| bad("part end without start"))?;
+        if part.phase != 0 || !source.started {
+            return Err(bad("part already ended or missing payload"));
+        }
+        let (oi, ci, kind) = (source.index, part.index, source.kind);
+        match &self.items[oi] {
+            wire::OutputItem::Message { id, content, .. } => {
+                let part = content[ci].clone();
+                let id = id.clone();
+                let (event, key) = match &part {
+                    wire::OutputPart::OutputText { .. } => ("response.output_text.done", "text"),
+                    wire::OutputPart::Refusal { .. } => ("response.refusal.done", "refusal"),
+                };
+                let mut fields = json!({"output_index":oi,"item_id":id,"content_index":ci});
+                fields[key] = json!(part_text(&part));
+                self.emit(event, fields, out)?;
+                self.emit(
+                    "response.content_part.done",
+                    json!({"output_index":oi,"item_id":id,"content_index":ci,"part":part}),
+                    out,
+                )?;
+            }
+            wire::OutputItem::FunctionCall {
+                id,
+                name,
+                arguments,
+                ..
+            } => self.emit(
+                "response.function_call_arguments.done",
+                json!({"output_index":oi,"item_id":id,"name":name,"arguments":arguments}),
+                out,
+            )?,
+            _ => return Err(bad("ordinary part end on reasoning item")),
+        }
+        self.sources
+            .get_mut(&position.item)
+            .unwrap()
+            .parts
+            .get_mut(&position.part)
+            .unwrap()
+            .phase = 2;
+        if explicit_end && !self.sources[&position.item].explicit {
+            self.end_item(position.item, "completed", out)?;
+        } else if kind == OutputKind::Reasoning {
+            return Err(bad("invalid part end"));
+        }
+        Ok(())
+    }
+    fn end_item(
+        &mut self,
+        key: StreamItem,
+        state: &str,
+        out: &mut String,
+    ) -> Result<(), CodecError> {
+        if !matches!(state, "completed" | "incomplete") {
+            return Err(bad("nonterminal output item end"));
+        }
+        let source = self.source(key)?;
+        if !source.started || source.parts.values().any(|p| p.phase != 2) {
+            return Err(bad("item ended before all parts"));
+        }
+        let oi = source.index;
+        set_status(&mut self.items[oi], state);
+        self.emit(
+            "response.output_item.done",
+            json!({"output_index":oi,"item":self.items[oi]}),
+            out,
+        )?;
+        self.sources.get_mut(&key).unwrap().ended = true;
+        Ok(())
+    }
+    fn close_implicit(
+        &mut self,
+        key: StreamItem,
+        state: &str,
+        out: &mut String,
+    ) -> Result<(), CodecError> {
+        let source = self.source(key)?;
+        if source.explicit
+            || source
+                .parts
+                .values()
+                .any(|part| part.explicit && part.phase != 2)
+        {
+            return Err(bad("missing explicit item/part end"));
+        }
+        let parts: Vec<_> = source
+            .parts
+            .iter()
+            .filter(|(_, p)| p.phase != 2)
+            .map(|(part, _)| *part)
+            .collect();
+        for part in parts {
+            self.end_part(StreamPosition { item: key, part }, false, out)?;
+        }
+        self.end_item(key, state, out)
+    }
     fn reasoning(
         &mut self,
+        position: StreamPosition,
         delta: &ResponsesReasoningDelta,
         out: &mut String,
     ) -> Result<(), CodecError> {
         use ResponsesReasoningDelta as D;
         if let D::Start { item } = delta {
             validate_reasoning(item, false)?;
-            if self.reasoning_active.is_some()
+            if position.part != 0
                 || !item.summary.is_empty()
                 || item
                     .status
                     .as_ref()
                     .is_some_and(|s| *s != wire::ItemStatus::InProgress)
-                || self
-                    .items
-                    .iter()
-                    .any(|i| !matches!(i, wire::OutputItem::Reasoning(_)) || i.id() == item.id)
+                || self.sources.contains_key(&position.item)
+                || self.items.iter().any(|old| old.id() == item.id)
             {
-                return Err(bad("invalid reasoning start/order/identity"));
+                return Err(bad("invalid reasoning start/identity"));
             }
+            if let StreamItem::Ordered(index) = position.item
+                && self
+                    .sources
+                    .keys()
+                    .any(|key| matches!(key,StreamItem::Ordered(old) if *old>index))
+            {
+                return Err(bad("reasoning item order regressed"));
+            }
+            self.reserve(
+                std::mem::size_of::<OutputSource>() + 32 + serde_json::to_vec(item)?.len(),
+            )?;
             let oi = self.items.len();
             let item = wire::OutputItem::Reasoning(item.clone());
-            self.reserve(serde_json::to_vec(&item)?.len())?;
             self.emit(
                 "response.output_item.added",
                 json!({"output_index":oi,"item":item}),
                 out,
             )?;
             self.items.push(item);
-            self.reasoning_active = Some((oi, Vec::new()));
+            self.sources.insert(
+                position.item,
+                OutputSource {
+                    index: oi,
+                    kind: OutputKind::Reasoning,
+                    explicit: true,
+                    started: true,
+                    ended: false,
+                    parts: BTreeMap::new(),
+                },
+            );
             return Ok(());
         }
-        let n = match delta {
-            D::SummaryStart => std::mem::size_of::<wire::SummaryPart>() + 1,
-            D::SummaryText { text } => text.len(),
-            D::Done { item } => item.encrypted_content.as_ref().map_or(0, String::len),
-            _ => 0,
-        };
-        self.reserve(n)?;
-        let (oi, phases) = self
-            .reasoning_active
-            .as_mut()
-            .ok_or_else(|| bad("reasoning delta outside active item"))?;
-        let oi = *oi;
-        let wire::OutputItem::Reasoning(item) = &mut self.items[oi] else {
-            unreachable!()
-        };
-        let si = item.summary.len().saturating_sub(1);
-        let mut fields = json!({"output_index":oi,"item_id":item.id,"summary_index":si});
-        let kind = match delta {
+        let source = self.source(position.item)?;
+        if source.kind != OutputKind::Reasoning {
+            return Err(bad("reasoning delta changed item"));
+        }
+        let oi = source.index;
+        match delta {
             D::SummaryStart => {
-                if phases.last().is_some_and(|p| *p != 2) {
-                    return Err(bad("overlapping summary parts"));
+                if source.parts.contains_key(&position.part)
+                    || (matches!(position.item, StreamItem::Ordered(_))
+                        && position.part as usize != source.parts.len())
+                {
+                    return Err(bad("invalid summary part index"));
                 }
-                fields["summary_index"] = json!(item.summary.len());
+                self.reserve(
+                    std::mem::size_of::<OutputPartState>()
+                        + 32
+                        + std::mem::size_of::<wire::SummaryPart>(),
+                )?;
+                let wire::OutputItem::Reasoning(item) = &mut self.items[oi] else {
+                    unreachable!()
+                };
                 let part = wire::SummaryPart::SummaryText {
                     text: String::new(),
                 };
-                fields["part"] = json!(part);
-                item.summary.push(part);
-                phases.push(0);
-                "response.reasoning_summary_part.added"
-            }
-            D::SummaryText { text } => {
-                if phases.last() != Some(&0) {
-                    return Err(bad("summary text outside active part"));
-                }
-                item.summary[si].text_mut().push_str(text);
-                fields["delta"] = json!(text);
-                "response.reasoning_summary_text.delta"
-            }
-            D::SummaryTextDone => {
-                if phases.last() != Some(&0) {
-                    return Err(bad("duplicate/missing summary text done"));
-                }
-                phases[si] = 1;
-                fields["text"] = json!(item.summary[si].text());
-                "response.reasoning_summary_text.done"
-            }
-            D::SummaryDone { incomplete } => {
-                if phases.last() != Some(&1) {
-                    return Err(bad("duplicate/missing summary part done"));
-                }
-                phases[si] = 2;
-                fields["part"] = json!(item.summary[si]);
-                if *incomplete {
-                    fields["status"] = json!("incomplete");
-                }
-                "response.reasoning_summary_part.done"
+                let si = item.summary.len();
+                item.summary.push(part.clone());
+                let fields =
+                    json!({"output_index":oi,"item_id":item.id,"summary_index":si,"part":part});
+                self.sources.get_mut(&position.item).unwrap().parts.insert(
+                    position.part,
+                    OutputPartState {
+                        index: si,
+                        kind: StreamPartKind::Text,
+                        explicit: true,
+                        phase: 0,
+                    },
+                );
+                self.emit("response.reasoning_summary_part.added", fields, out)
             }
             D::Done { item: final_item } => {
                 validate_reasoning(final_item, true)?;
-                if phases.iter().any(|p| *p != 2)
-                    || item.id != final_item.id
-                    || item.summary != final_item.summary
-                {
-                    return Err(bad("reasoning done conflicts with deltas/lifecycle"));
+                if position.part != 0 || source.parts.values().any(|p| p.phase != 2) {
+                    return Err(bad("unfinished reasoning summary"));
                 }
-                *item = final_item.clone();
-                fields = json!({"output_index":oi,"item":self.items[oi]});
-                self.reasoning_active = None;
-                "response.output_item.done"
-            }
-            D::Start { .. } => unreachable!(),
-        };
-        self.emit(kind, fields, out)
-    }
-    fn check_position(&mut self, event: &PositionedDelta) -> Result<(), CodecError> {
-        let position = event.position;
-        let kind = match &event.delta {
-            PartDelta::Text(_) => 0,
-            PartDelta::Refusal(_) => 1,
-            PartDelta::ToolCall(_) => 2,
-            PartDelta::ResponsesReasoning(_) => 3,
-            _ => return Err(bad("unsupported positioned event")),
-        };
-        if let StreamItem::Ordered(_) = position.item
-            && self.positions.iter().any(|(p, old)| {
-                p.item == position.item && if kind <= 1 { *old > 1 } else { *old != kind }
-            })
-        {
-            return Err(bad("stream item changed kind"));
-        }
-        if let Some(old) = self.positions.get(&position) {
-            if kind <= 1 && self.text_position.is_some_and(|p| p != position) {
-                return Err(bad("text returned to a closed position"));
-            }
-            if matches!(
-                event.delta,
-                PartDelta::ResponsesReasoning(ResponsesReasoningDelta::Start { .. })
-            ) {
-                return Err(bad("reasoning item position reused"));
-            }
-            if *old != kind {
-                return Err(bad("stream position changed kind"));
-            }
-        } else {
-            if let StreamItem::Ordered(item) = position.item
-                && self.positions.keys().any(|p| {
-                    matches!(p.item, StreamItem::Ordered(old) if old > item)
-                        || p.item == position.item && p.part > position.part
-                })
-            {
-                return Err(bad("new stream position goes backwards"));
-            }
-            self.reserve(std::mem::size_of::<(StreamPosition, u8)>() + 32)?;
-            self.positions.insert(position, kind);
-        }
-        match &event.delta {
-            PartDelta::ToolCall(call) => {
-                if let Some(old) = self.tool_positions.get(&call.index) {
-                    if *old != position {
-                        return Err(bad("tool call changed position"));
-                    }
-                } else {
-                    if self.tool_positions.values().any(|old| *old == position) {
-                        return Err(bad("stream position changed tool identity"));
-                    }
-                    self.reserve(std::mem::size_of::<(u32, StreamPosition)>() + 32)?;
-                    self.tool_positions.insert(call.index, position);
+                let wire::OutputItem::Reasoning(item) = &self.items[oi] else {
+                    unreachable!()
+                };
+                if item.id != final_item.id || item.summary != final_item.summary {
+                    return Err(bad("reasoning done conflicts with deltas"));
                 }
+                self.reserve(final_item.encrypted_content.as_ref().map_or(0, String::len))?;
+                self.items[oi] = wire::OutputItem::Reasoning(final_item.clone());
+                self.emit(
+                    "response.output_item.done",
+                    json!({"output_index":oi,"item":self.items[oi]}),
+                    out,
+                )?;
+                self.sources.get_mut(&position.item).unwrap().ended = true;
+                Ok(())
             }
-            PartDelta::ResponsesReasoning(delta) => {
-                use ResponsesReasoningDelta as D;
-                if matches!(delta, D::Start { .. }) {
-                    if position.part != 0 {
-                        return Err(bad("reasoning item start requires part zero"));
-                    }
-                    self.reasoning_position = Some(position.item);
-                } else {
-                    if self.reasoning_position != Some(position.item) {
-                        return Err(bad("reasoning item changed position"));
-                    }
-                    let (oi, _) = self
-                        .reasoning_active
-                        .as_ref()
-                        .ok_or_else(|| bad("reasoning outside item"))?;
-                    let wire::OutputItem::Reasoning(item) = &self.items[*oi] else {
-                        unreachable!()
-                    };
-                    let expected = match delta {
-                        D::SummaryStart => item.summary.len(),
-                        D::Done { .. } => 0,
-                        _ => item
-                            .summary
-                            .len()
-                            .checked_sub(1)
-                            .ok_or_else(|| bad("summary outside part"))?,
-                    };
-                    if usize::try_from(position.part).ok() != Some(expected) {
-                        return Err(bad("reasoning summary changed position"));
-                    }
+            _ => {
+                let part = source
+                    .parts
+                    .get(&position.part)
+                    .ok_or_else(|| bad("summary outside active part"))?;
+                let si = part.index;
+                let phase = part.phase;
+                if let D::SummaryText { text } = delta {
+                    self.reserve(text.len())?;
                 }
+                let wire::OutputItem::Reasoning(item) = &mut self.items[oi] else {
+                    unreachable!()
+                };
+                let mut fields = json!({"output_index":oi,"item_id":item.id,"summary_index":si});
+                let (event, next) = match delta {
+                    D::SummaryText { text } if phase == 0 => {
+                        item.summary[si].text_mut().push_str(text);
+                        fields["delta"] = json!(text);
+                        ("response.reasoning_summary_text.delta", 0)
+                    }
+                    D::SummaryTextDone if phase == 0 => {
+                        fields["text"] = json!(item.summary[si].text());
+                        ("response.reasoning_summary_text.done", 1)
+                    }
+                    D::SummaryDone { incomplete } if phase == 1 => {
+                        fields["part"] = json!(item.summary[si]);
+                        if *incomplete {
+                            fields["status"] = json!("incomplete");
+                        }
+                        ("response.reasoning_summary_part.done", 2)
+                    }
+                    _ => return Err(bad("invalid reasoning summary lifecycle")),
+                };
+                self.sources
+                    .get_mut(&position.item)
+                    .unwrap()
+                    .parts
+                    .get_mut(&position.part)
+                    .unwrap()
+                    .phase = next;
+                self.emit(event, fields, out)
             }
-            _ => {}
         }
-        Ok(())
     }
     fn push_inner(&mut self, event: &ChatEvent) -> Result<String, CodecError> {
         let mut out = String::new();
         match event {
             ChatEvent::Chunk(c) => {
-                if c.choices.iter().flat_map(|c| &c.delta.events).any(|e| {
-                    matches!(
-                        &e.delta,
-                        PartDelta::AnthropicThinking(_) | PartDelta::GeminiText(_)
-                    ) || matches!(&e.delta, PartDelta::ToolCall(t) if t.gemini.is_some())
-                }) {
-                    return Err(bad("Responses cannot represent vendor thinking"));
-                }
                 if c.system_fingerprint.is_some() {
                     return Err(bad("Responses cannot represent system_fingerprint"));
                 }
@@ -1243,56 +1608,63 @@ impl StreamEncoder {
                             .as_ref()
                             .is_some_and(|r| *r != Role::Assistant)
                     {
-                        return Err(bad(
-                            "invalid canonical Responses stream lifecycle/role/logprobs",
-                        ));
-                    }
-                    if choice
-                        .delta
-                        .events
-                        .iter()
-                        .any(|e| matches!(e.delta, PartDelta::ResponsesReasoning(_)))
-                        && (choice.delta.events.len() != 1 || choice.finish_reason.is_some())
-                    {
-                        return Err(bad("mixed reasoning and ordinary delta"));
+                        return Err(bad("invalid canonical stream lifecycle/role/logprobs"));
                     }
                     for event in &choice.delta.events {
                         crate::codec::validate_position(event)?;
-                        self.check_position(event)?;
+                        let position = event.position;
                         match &event.delta {
+                            PartDelta::ResponsesItemStart(start) => {
+                                if position.part != 0 {
+                                    return Err(bad("item start requires part zero"));
+                                }
+                                let (kind, id) = match start {
+                                    ResponsesItemStart::Message { id } => (OutputKind::Message, id),
+                                    ResponsesItemStart::FunctionCall { id } => {
+                                        (OutputKind::FunctionCall, id)
+                                    }
+                                };
+                                self.new_source(position.item, kind, Some(id), true, &mut out)?;
+                            }
+                            PartDelta::ResponsesItemEnd(state) => {
+                                if position.part != 0 || !self.source(position.item)?.explicit {
+                                    return Err(bad("unexpected explicit item end"));
+                                }
+                                self.end_item(position.item, state.as_str(), &mut out)?;
+                            }
+                            PartDelta::Start(kind) => {
+                                self.start_part(position, *kind, true, &mut out)?
+                            }
+                            PartDelta::End => self.end_part(position, true, &mut out)?,
+                            PartDelta::Text(text) => self.text(position, text, false, &mut out)?,
+                            PartDelta::Refusal(text) => {
+                                self.text(position, text, true, &mut out)?
+                            }
+                            PartDelta::ToolCall(call) => self.tool(position, call, &mut out)?,
                             PartDelta::ResponsesReasoning(delta) => {
-                                self.reasoning(delta, &mut out)?;
-                            }
-                            PartDelta::Text(text) | PartDelta::Refusal(text) => {
-                                if self.reasoning_active.is_some() {
-                                    return Err(bad("ordinary content inside reasoning item"));
-                                }
-                                if self.text_position.is_some_and(|p| p != event.position) {
-                                    self.close_part(&mut out)?;
-                                }
-                                self.text_position = Some(event.position);
-                                self.text(
-                                    text,
-                                    matches!(event.delta, PartDelta::Refusal(_)),
-                                    &mut out,
-                                )?;
-                            }
-                            PartDelta::ToolCall(call) => {
-                                if self.reasoning_active.is_some() {
-                                    return Err(bad("tool call inside reasoning item"));
-                                }
-                                self.tool(call, &mut out)?;
+                                self.reasoning(position, delta, &mut out)?
                             }
                             PartDelta::AnthropicThinking(_) | PartDelta::GeminiText(_) => {
                                 return Err(bad("Responses cannot represent vendor thinking"));
                             }
                         }
                     }
-                    if self.reasoning_active.is_some() && choice.finish_reason.is_some() {
-                        return Err(bad("finish inside reasoning item"));
-                    }
                     if let Some(finish) = &choice.finish_reason {
-                        status(finish)?;
+                        let (state, _) = status(finish)?;
+                        if state == "completed"
+                            && self.sources.values().any(|source| {
+                                source.ended && self.items[source.index].status() != "completed"
+                            })
+                        {
+                            return Err(bad("completed response contains incomplete item"));
+                        }
+                        if self.sources.values().any(|s| {
+                            !s.ended
+                                && (s.explicit
+                                    || s.parts.values().any(|p| p.explicit && p.phase != 2))
+                        }) {
+                            return Err(bad("finish before explicit output ended"));
+                        }
                         self.finish = Some(finish.clone());
                     }
                 }
@@ -1301,38 +1673,23 @@ impl StreamEncoder {
                 let finish = self
                     .finish
                     .clone()
-                    .ok_or_else(|| bad("canonical stream ended without finish reason"))?;
-                if self.reasoning_active.is_some() {
-                    return Err(bad("unfinished reasoning item"));
-                }
-                self.close_part(&mut out)?;
+                    .ok_or_else(|| bad("stream ended without finish reason"))?;
                 let (state, _) = status(&finish)?;
-                for oi in 0..self.items.len() {
-                    if self.message_done == Some(oi)
-                        || matches!(self.items[oi], wire::OutputItem::Reasoning(_))
-                    {
-                        continue;
-                    }
-                    if let wire::OutputItem::FunctionCall {
-                        id,
-                        name,
-                        arguments,
-                        ..
-                    } = &self.items[oi]
-                    {
-                        let v = json!({"output_index":oi,"item_id":id,"name":name,"arguments":arguments});
-                        self.emit("response.function_call_arguments.done", v, &mut out)?;
-                    }
-                    set_status(&mut self.items[oi], state);
-                    self.emit(
-                        "response.output_item.done",
-                        json!({"output_index":oi,"item":self.items[oi]}),
-                        &mut out,
-                    )?;
+                let mut pending: Vec<_> = self
+                    .sources
+                    .iter()
+                    .filter(|(_, s)| !s.ended)
+                    .map(|(key, s)| (s.index, *key))
+                    .collect();
+                pending.sort_by_key(|(index, _)| *index);
+                for (_, key) in pending {
+                    self.close_implicit(key, state, &mut out)?;
                 }
-                validate_items(&self.items, true)?;
                 if state == "completed" && self.items.iter().any(|i| i.status() != "completed") {
                     return Err(bad("completed response contains incomplete item"));
+                }
+                if !self.pending_frames.is_empty() || self.emitted_items != self.items.len() {
+                    return Err(bad("stream ended before output item identity"));
                 }
                 self.emit(
                     &format!("response.{state}"),

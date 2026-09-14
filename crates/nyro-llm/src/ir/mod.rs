@@ -448,6 +448,10 @@ pub enum StreamItem {
     deny_unknown_fields
 )]
 pub enum PartDelta {
+    Start(StreamPartKind),
+    End,
+    ResponsesItemStart(ResponsesItemStart),
+    ResponsesItemEnd(nyro_protocol::openai::responses::ItemStatus),
     Text(String),
     Refusal(String),
     ToolCall(ToolCallDelta),
@@ -455,6 +459,23 @@ pub enum PartDelta {
     ResponsesReasoning(ResponsesReasoningDelta),
     GeminiText(GeminiText),
 }
+/// Explicit leaf boundaries; OpenAI Chat slots do not synthesize these events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamPartKind {
+    Text,
+    Refusal,
+    ToolCall,
+}
+
+/// Container identity is distinct from the function call_id used by tool results.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ResponsesItemStart {
+    Message { id: String },
+    FunctionCall { id: String },
+}
+
 /// Explicit boundaries preserve signature-only and consecutive thinking blocks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
