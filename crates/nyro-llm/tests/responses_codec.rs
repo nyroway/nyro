@@ -75,7 +75,7 @@ fn function_result_preserves_strings_and_text_part_boundaries() {
             {"type":"function_call_output","call_id":"call1","output":output}
         ]}))
         .unwrap();
-        assert_eq!(request.messages[1].content.as_ref(), Some(&expected));
+        assert_eq!(request.messages[1].content(), Some(&expected));
         let encoded = encode_chat(&request).unwrap();
         assert_eq!(encoded["input"][1]["output"], output);
         assert_eq!(decode_chat(encoded).unwrap(), request);
@@ -138,7 +138,9 @@ fn function_result_rejects_non_input_text_parts_and_invalid_shapes() {
             {"role":"tool","tool_call_id":"call1","content":"result"}
         ]}))
         .unwrap();
-        request.messages[0].content = Some(serde_json::from_value(json!([part])).unwrap());
+        request.messages[0].items = vec![nyro_llm::ir::MessageItem::Content(
+            serde_json::from_value(json!([part])).unwrap(),
+        )];
         assert!(encode_chat(&request).is_err());
     }
 }
@@ -235,7 +237,7 @@ fn snapshot_only_stream_is_explicitly_decoded() {
             json!({"response":response(json!([message("hello")]),"completed")}),
         ))
         .unwrap();
-    assert!(events.iter().any(|e| matches!(e, ChatEvent::Chunk(c) if c.choices.iter().any(|x| x.delta.content.as_deref()==Some("hello")))));
+    assert!(events.iter().any(|e| matches!(e, ChatEvent::Chunk(c) if c.choices.iter().any(|x| x.delta.events.iter().any(|e| matches!(&e.delta, nyro_llm::ir::PartDelta::Text(s) if s == "hello"))))));
     assert!(events.last().unwrap().is_done());
     d.finish().unwrap();
 }
@@ -324,7 +326,13 @@ fn parallel_call_history_stays_one_assistant_turn_and_strict_defaults_are_explic
     let mut v = json!({"model":"m","input":[{"role":"assistant","content":"Looking up"},{"type":"function_call","call_id":"a","name":"a","arguments":"{}"},{"type":"function_call","call_id":"b","name":"b","arguments":"{}"},{"type":"function_call_output","call_id":"a","output":"A"},{"type":"function_call_output","call_id":"b","output":"B"}],"tools":[{"type":"function","name":"a","strict":false,"parameters":{"type":"object"}}]});
     let r = decode_chat(v.clone()).unwrap();
     assert_eq!(r.messages.len(), 3);
-    assert_eq!(r.messages[0].tool_calls.as_ref().unwrap().len(), 2);
+    assert_eq!(r.messages[0].tool_calls().count(), 2);
+    let serialized = serde_json::to_value(&r.messages[0]).unwrap();
+    assert!(serialized.get("content").is_none());
+    assert!(serialized.get("tool_calls").is_none());
+    assert_eq!(serialized["items"][0]["type"], "content");
+    assert_eq!(serialized["items"][1]["type"], "tool_call");
+    assert_eq!(serialized["items"][2]["type"], "tool_call");
     assert_eq!(
         serde_json::to_value(&r.openai.tools).unwrap()[0]["function"].get("strict"),
         None
@@ -345,7 +353,7 @@ fn response_echoes_normalize_and_refusal_uses_canonical_refusal_field() {
     let r = decode_chat_response(v).unwrap();
     assert!(r.service_tier.is_none());
     assert_eq!(r.choices[0].message.refusal.as_deref(), Some("No"));
-    assert!(r.choices[0].message.content.is_none());
+    assert!(r.choices[0].message.content().is_none());
 }
 #[test]
 fn rejects_contradictory_status_usage_and_output_order() {
@@ -430,7 +438,11 @@ fn stream_snapshots_identity_lifecycle_and_bounds_are_enforced() {
         for c in d.push(e).unwrap() {
             if let ChatEvent::Chunk(c) = c {
                 for choice in c.choices {
-                    content.push_str(choice.delta.content.as_deref().unwrap_or(""));
+                    for event in choice.delta.events {
+                        if let nyro_llm::ir::PartDelta::Text(text) = event.delta {
+                            content.push_str(&text);
+                        }
+                    }
                 }
             }
         }

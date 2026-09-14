@@ -21,6 +21,160 @@ fn request_roundtrip_and_tool_identity() {
     assert!(decode_chat(json!({"contents":[],"cachedContent":"x"}), "m", false).is_err());
 }
 #[test]
+fn static_messages_store_text_before_calls_in_ordered_items() {
+    let parts =
+        json!([{"text":"Checking"},{"functionCall":{"id":"call-1","name":"weather","args":{}}}]);
+    let request = decode_chat(
+        json!({"contents":[{"role":"model","parts":parts},{"role":"user","parts":[{"functionResponse":{"id":"call-1","name":"weather","response":{}}}]}]}),
+        "m",
+        false,
+    )
+    .unwrap();
+    let response = decode_chat_response(
+        json!({"candidates":[{"content":{"role":"model","parts":parts},"finishReason":"STOP"}]}),
+    )
+    .unwrap();
+    for message in [
+        serde_json::to_value(&request.messages[0]).unwrap(),
+        serde_json::to_value(&response.choices[0].message).unwrap(),
+    ] {
+        assert_eq!(message["items"][0]["type"], "content");
+        assert_eq!(message["items"][1]["type"], "tool_call");
+        assert!(message.get("content").is_none());
+        assert!(message.get("tool_calls").is_none());
+    }
+    assert_eq!(
+        encode_chat(&request).unwrap()["contents"][0]["parts"],
+        parts
+    );
+    assert_eq!(
+        encode_chat_response(&response).unwrap()["candidates"][0]["content"]["parts"],
+        parts
+    );
+}
+#[test]
+fn stream_parts_keep_receive_order_across_frames() {
+    let mut decoder = StreamDecoder::new();
+    let mut positions = Vec::new();
+    for parts in [
+        json!([{"text":"summary","thought":true},{"text":"answer"}]),
+        json!([{"functionCall":{"id":"a","name":"f","args":{}}}]),
+    ] {
+        for event in decoder
+            .push(&event(json!({"candidates":[{"content":{"parts":parts}}]})))
+            .unwrap()
+        {
+            let ChatEvent::Chunk(chunk) = event else {
+                panic!()
+            };
+            for event in chunk.choices.into_iter().flat_map(|c| c.delta.events) {
+                positions.push(event.position);
+            }
+        }
+    }
+    assert_eq!(
+        positions,
+        (0..3)
+            .map(|item| StreamPosition {
+                item: StreamItem::Ordered(item),
+                part: 0
+            })
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn many_small_stream_parts_do_not_accumulate_position_state() {
+    let mut decoder = StreamDecoder::with_limit(1024);
+    let mut encoder = StreamEncoder::with_limit("m".into(), 1024);
+    for _ in 0..256 {
+        for event in decoder
+            .push(&event(
+                json!({"candidates":[{"content":{"parts":[{"text":"x"}]}}]}),
+            ))
+            .unwrap()
+        {
+            assert!(encoder.push(&event).unwrap().contains("\"text\":\"x\""));
+        }
+    }
+    for event in decoder
+        .push(&event(json!({"candidates":[{"finishReason":"STOP"}]})))
+        .unwrap()
+    {
+        encoder.push(&event).unwrap();
+    }
+    for event in decoder.finish().unwrap() {
+        assert!(encoder.push(&event).unwrap().contains("STOP"));
+    }
+}
+
+#[test]
+fn stream_part_expansion_counts_heap_allocated_events() {
+    let frame = event(json!({"candidates":[{"content":{"parts":[{"text":""},{"text":""}]}}]}));
+    assert!(frame.data.len() < 1024);
+    assert!(StreamDecoder::with_limit(1024).push(&frame).is_err());
+}
+
+#[test]
+fn multi_event_encoder_batch_counts_structures_and_text_payloads() {
+    for texts in [vec![String::new(); 8], vec!["x".repeat(400); 2]] {
+        let delta = Delta {
+            role: None,
+            events: texts
+                .into_iter()
+                .enumerate()
+                .map(|(index, text)| PositionedDelta {
+                    position: StreamPosition {
+                        item: StreamItem::Ordered(index as u32),
+                        part: 0,
+                    },
+                    delta: PartDelta::Text(text),
+                })
+                .collect(),
+        };
+        assert!(
+            StreamEncoder::with_limit("m".into(), 1024)
+                .push(&chunk(delta, None))
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn encoder_rejects_position_reassignment_and_static_interleaving() {
+    let mut response = decode_chat_response(json!({"candidates":[{"content":{"parts":[{"text":"before"},{"functionCall":{"id":"a","name":"f","args":{}}}]},"finishReason":"STOP"}]})).unwrap();
+    response.choices[0].message.items.swap(0, 1);
+    assert!(encode_chat_response(&response).is_err());
+
+    let mut first = tool_delta("{", true);
+    first.events[0].position.item = StreamItem::Ordered(0);
+    let mut second = tool_delta("}", false);
+    second.events[0].position.item = StreamItem::Ordered(1);
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder.push(&chunk(first, None)).unwrap();
+    assert!(encoder.push(&chunk(second, None)).is_err());
+
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&chunk(
+            Delta {
+                role: None,
+                events: vec![PositionedDelta {
+                    position: StreamPosition {
+                        item: StreamItem::Ordered(0),
+                        part: 0,
+                    },
+                    delta: PartDelta::Text("before".into()),
+                }],
+            },
+            None,
+        ))
+        .unwrap();
+    let mut call = tool_delta("{}", true);
+    call.events[0].position.item = StreamItem::Ordered(0);
+    assert!(encoder.push(&chunk(call, None)).is_err());
+}
+#[test]
 fn response_and_stream_terminal() {
     let v = json!({"responseId":"r","modelVersion":"m","candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}});
     let r = decode_chat_response(v.clone()).unwrap();
@@ -63,16 +217,22 @@ fn chunk(delta: Delta, finish: Option<&str>) -> ChatEvent {
 }
 fn tool_delta(args: &str, first: bool) -> Delta {
     Delta {
-        tool_calls: Some(vec![ToolCallDelta {
-            gemini: None,
-            index: 0,
-            id: first.then(|| "id1".into()),
-            r#type: Some(FunctionType::Function),
-            function: Some(FunctionDelta {
-                name: first.then(|| "weather".into()),
-                arguments: Some(args.into()),
+        events: vec![PositionedDelta {
+            position: StreamPosition {
+                item: StreamItem::OpenAiTool(0),
+                part: 0,
+            },
+            delta: PartDelta::ToolCall(ToolCallDelta {
+                gemini: None,
+                index: 0,
+                id: first.then(|| "id1".into()),
+                r#type: Some(FunctionType::Function),
+                function: Some(FunctionDelta {
+                    name: first.then(|| "weather".into()),
+                    arguments: Some(args.into()),
+                }),
             }),
-        }]),
+        }],
         ..Default::default()
     }
 }
@@ -101,7 +261,9 @@ fn streamed_tool_fragments_roundtrip_and_limits() {
     let ChatEvent::Chunk(c) = &events[0] else {
         panic!()
     };
-    let t = &c.choices[0].delta.tool_calls.as_ref().unwrap()[0];
+    let PartDelta::ToolCall(t) = &c.choices[0].delta.events[0].delta else {
+        panic!()
+    };
     assert_eq!(t.id.as_deref(), Some("id1"));
     assert_eq!(
         t.function.as_ref().unwrap().arguments.as_deref(),
@@ -226,7 +388,7 @@ fn mixed_user_function_responses_preserve_part_order() {
         ]
     );
     assert_eq!(
-        r.messages[1].content,
+        r.messages[1].content().cloned(),
         Some(Content::Parts(vec![ContentPart::Text {
             anthropic_cache_control: None,
             prompt_cache_breakpoint: None,
@@ -235,11 +397,11 @@ fn mixed_user_function_responses_preserve_part_order() {
     );
     assert_eq!(r.messages[2].tool_call_id.as_deref(), Some("b"));
     assert_eq!(
-        r.messages[2].content,
+        r.messages[2].content().cloned(),
         Some(Content::Text(r#"{"value":2}"#.into()))
     );
     assert_eq!(
-        r.messages[3].content,
+        r.messages[3].content().cloned(),
         Some(Content::Parts(vec![ContentPart::Text {
             anthropic_cache_control: None,
             prompt_cache_breakpoint: None,
@@ -248,7 +410,7 @@ fn mixed_user_function_responses_preserve_part_order() {
     );
     assert_eq!(r.messages[4].tool_call_id.as_deref(), Some("a"));
     assert_eq!(
-        r.messages[5].content,
+        r.messages[5].content().cloned(),
         Some(Content::Parts(vec![ContentPart::Text {
             anthropic_cache_control: None,
             prompt_cache_breakpoint: None,
@@ -278,7 +440,7 @@ fn generated_history_call_ids_avoid_all_explicit_ids() {
         false,
     )
     .unwrap();
-    let calls = r.messages[0].tool_calls.as_ref().unwrap();
+    let calls: Vec<_> = r.messages[0].tool_calls().collect();
     let ToolCall::Function { id: generated, .. } = &calls[0];
     let ToolCall::Function { id: explicit, .. } = &calls[1];
     assert_ne!(generated, explicit);
@@ -352,7 +514,7 @@ fn encoder_rejects_incomplete_interrupted_or_invalid_result_batches() {
 #[test]
 fn result_text_blocks_are_not_silently_concatenated() {
     let mut r = result_history();
-    r.messages[1].content = Some(Content::Parts(vec![
+    *r.messages[1].content_mut().unwrap() = Content::Parts(vec![
         ContentPart::Text {
             anthropic_cache_control: None,
             prompt_cache_breakpoint: None,
@@ -363,7 +525,7 @@ fn result_text_blocks_are_not_silently_concatenated() {
             prompt_cache_breakpoint: None,
             text: "two".into(),
         },
-    ]));
+    ]);
     assert!(encode_chat(&r).is_err());
     for (parts, expected) in [
         (vec![], json!({"result":""})),
@@ -376,7 +538,7 @@ fn result_text_blocks_are_not_silently_concatenated() {
             json!({"result":"one"}),
         ),
     ] {
-        r.messages[1].content = Some(Content::Parts(parts));
+        *r.messages[1].content_mut().unwrap() = Content::Parts(parts);
         assert_eq!(
             encode_chat(&r).unwrap()["contents"][1]["parts"][0]["functionResponse"]["response"],
             expected
@@ -447,7 +609,13 @@ fn streamed_tool_then_text_is_rejected_without_reordering() {
     assert!(
         e.push(&chunk(
             Delta {
-                content: Some("after".into()),
+                events: vec![PositionedDelta {
+                    position: StreamPosition {
+                        item: StreamItem::OpenAiMessage,
+                        part: 0
+                    },
+                    delta: PartDelta::Text("after".into()),
+                }],
                 ..Default::default()
             },
             None

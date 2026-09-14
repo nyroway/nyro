@@ -138,7 +138,11 @@ fn streaming_preserves_boundaries_signatures_and_usage() {
                     nyro_llm::ir::ChatEvent::Chunk(c) => c
                         .choices
                         .first()
-                        .and_then(|c| c.delta.anthropic_thinking.clone()),
+                        .and_then(|c| c.delta.events.first())
+                        .filter(|e| {
+                            matches!(e.delta, nyro_llm::ir::PartDelta::AnthropicThinking(_))
+                        })
+                        .cloned(),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -146,7 +150,7 @@ fn streaming_preserves_boundaries_signatures_and_usage() {
         assert_eq!(thinking_events(&ir_events), thinking_events(&replay_events));
         assert_eq!(ir_events.last(), replay_events.last());
         for ir in &ir_events {
-            if matches!(ir, nyro_llm::ir::ChatEvent::Chunk(c) if c.choices.iter().any(|c| c.delta.anthropic_thinking.is_some()))
+            if matches!(ir, nyro_llm::ir::ChatEvent::Chunk(c) if c.choices.iter().any(|c| c.delta.events.iter().any(|e| matches!(e.delta, nyro_llm::ir::PartDelta::AnthropicThinking(_)))))
             {
                 assert!(openai::encode_chat_event(ir, "test").is_err());
                 assert!(
@@ -233,7 +237,17 @@ fn invalid_history_roles_order_and_output_are_rejected() {
 
 #[test]
 fn encoder_rejects_incomplete_mixed_or_unbounded_thinking_events() {
-    use nyro_llm::ir::{AnthropicThinkingDelta as T, ChatChunk, ChatEvent, Delta, StreamChoice};
+    use nyro_llm::ir::{
+        AnthropicThinkingDelta as T, ChatChunk, ChatEvent, Delta, PartDelta, PositionedDelta,
+        StreamChoice, StreamItem, StreamPosition,
+    };
+    let positioned = |delta| PositionedDelta {
+        position: StreamPosition {
+            item: StreamItem::Ordered(0),
+            part: 0,
+        },
+        delta,
+    };
     let chunk = |delta| {
         ChatEvent::Chunk(Box::new(ChatChunk {
             id: "msg_test".into(),
@@ -254,7 +268,7 @@ fn encoder_rejects_incomplete_mixed_or_unbounded_thinking_events() {
     };
     let thinking = |event| {
         chunk(Delta {
-            anthropic_thinking: Some(event),
+            events: vec![positioned(PartDelta::AnthropicThinking(event))],
             ..Default::default()
         })
     };
@@ -262,7 +276,7 @@ fn encoder_rejects_incomplete_mixed_or_unbounded_thinking_events() {
         thinking(T::Stop),
         thinking(T::Start),
         chunk(Delta {
-            content: Some("text".into()),
+            events: vec![positioned(PartDelta::Text("text".into()))],
             ..Default::default()
         }),
         thinking(T::Signature {
@@ -280,8 +294,10 @@ fn encoder_rejects_incomplete_mixed_or_unbounded_thinking_events() {
     encoder.push(&thinking(T::Start)).unwrap();
     assert!(encoder.push(&ChatEvent::Done).is_err());
     let mixed = chunk(Delta {
-        anthropic_thinking: Some(T::Start),
-        content: Some("text".into()),
+        events: vec![
+            positioned(PartDelta::AnthropicThinking(T::Start)),
+            positioned(PartDelta::Text("text".into())),
+        ],
         ..Default::default()
     });
     assert!(

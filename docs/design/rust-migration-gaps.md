@@ -1,6 +1,6 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，本轮在 `ff5369d3` 上收敛跨协议推理边界，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，本轮在 `a66951dd` 上迁移有序 IR 基础，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
 
 **新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
@@ -28,7 +28,7 @@
 |---|---|---|---|
 | G01 模型发现 | 已落地 | [旧模型列表](../../crates/nyro-core/src/proxy/handler.rs)的发现能力已由[新运行时](../../crates/nyro-llm/src/runtime.rs)承接；[模型列表测试](../../crates/nyro-llm/tests/models_runtime.rs)与[重载进程测试](../../tests/proxy_reload_smoke.py)覆盖过滤及代际变化。 | 按授权返回稳定排序的公开别名；匿名／绑定／无效／歧义凭证、空列表、成功／失败重载、密钥轮换和预算隔离已覆盖。无效密钥明确拒绝，不沿用旧公开列表回退；密钥到期仍由 G06 跟踪。 |
 | G02 同协议保真 | 部分 | [旧调度器](../../crates/nyro-core/src/proxy/dispatcher/mod.rs)按条件选择 Native 模式；[请求构建](../../crates/nyro-core/src/provider/common/pipeline.rs)和[非流式响应](../../crates/nyro-core/src/proxy/dispatcher/non_stream.rs)可跳过 IR 往返。[新运行时](../../crates/nyro-llm/src/runtime/native.rs)通过 Provider `native_chat: true` 保留匹配的 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 请求、JSON 响应及 SSE 扩展；默认仍严格转换。 | OpenAI Chat／无状态 Responses／Anthropic Messages 和单候选 Gemini 的别名路由、usage、凭证隔离、重试兼容筛选、有界解析及流终态已覆盖；多候选／独立工具提示词计量和完整客户端仍待验收；Responses 已补无状态原生 mock 验证。Gemini 原生保留上游 modelVersion。只保留 JSON 字段，不承诺字节或任意 Header 透传；跨协议原始请求仍须通过来源严格 codec。 |
-| G03 推理、缓存与媒体语义 | 部分 | [旧转换测试](../../crates/nyro-core/tests/protocol_conversion.rs)包含 thinking／签名、`reasoning_content`、think-tag 归一化和 Gemini `fileData`。新版已支持 Anthropic、Gemini generateContent、Responses 各自的严格推理配置、历史及 JSON／SSE 保留；本轮补齐 OpenAI Chat／Responses effort 双向映射与[边界回归](../../crates/nyro-llm/tests/reasoning_boundary_codec.rs)。厂商签名／加密状态不互换，旧标签自动抽取不迁入，兼容扩展交由匹配原生模式；具体范围见[代理指南](../standalone/rust-proxy_CN.md#推理转换与旧行为取舍)。用户图片、缓存用量、OpenAI 与 Anthropic 严格缓存控制／断点已有回归（第 15–22 节）。 | 当前推理转换取舍见第 23 节；交错输出、其余 Chat 媒体、未实现缓存／用量扩展及完整客户端验收继续推进。独立 Image/Audio/Video 操作另算范围，不将自动合成签名或丢弃推理当作兼容方案。 |
+| G03 推理、缓存与媒体语义 | 部分 | [旧转换测试](../../crates/nyro-core/tests/protocol_conversion.rs)包含 thinking／签名、`reasoning_content`、think-tag 归一化和 Gemini `fileData`。新版已支持 Anthropic、Gemini generateContent、Responses 各自的严格推理配置、历史及 JSON／SSE 保留；已补齐 OpenAI Chat／Responses effort 双向映射与[边界回归](../../crates/nyro-llm/tests/reasoning_boundary_codec.rs)。厂商签名／加密状态不互换，旧标签自动抽取不迁入，兼容扩展交由匹配原生模式；具体范围见[代理指南](../standalone/rust-proxy_CN.md#推理转换与旧行为取舍)。用户图片、缓存用量、OpenAI 与 Anthropic 严格缓存控制／断点已有回归（第 15–22 节）。 | 当前推理转换取舍见第 23 节；有序 IR 基础见第 24 节，交错输出、其余 Chat 媒体、未实现缓存／用量扩展及完整客户端验收继续推进。独立 Image/Audio/Video 操作另算范围，不将自动合成签名或丢弃推理当作兼容方案。 |
 | G04 工具历史与 Schema 处理 | 部分／待取舍 | 旧转换测试包含合成调用、重复 ID 修复、丢弃中间文本／孤立调用、Gemini Schema 裁剪。新 [Anthropic](../../crates/nyro-llm/tests/anthropic_codec.rs)／[Gemini](../../crates/nyro-llm/tests/gemini_codec.rs) encoder 保留完整结果批次及后续文本，拒绝缺失／重复／交错批次；Anthropic 显式错误、空结果、[Responses](../../crates/nyro-llm/tests/responses_codec.rs) 文本块数组及 Gemini ID／顺序已补充。多块结果到 Gemini、跨协议错误标志映射和媒体结果明确拒绝。[Schema 回归](../../crates/nyro-llm/tests/tool_schema_codec.rs)已覆盖 JSON Schema 对象保留、Gemini 计数／类型／嵌套方言转换及 strict 目标筛选；不裁剪引用或约束。完整客户端／厂商验收仍待后续。 | 回放并行调用、交错文本、工具结果和 Schema，保留合法客户端历史；不自动迁移虚构调用或丢内容的处理。区分有意拒绝和兼容回退。 |
 | G05 Provider 通道与凭证 | 部分 | 旧版有[厂商适配](../../crates/nyro-core/src/provider/mod.rs)、[账号认证 driver](../../crates/nyro-core/src/auth/drivers/mod.rs)和 Vertex 服务账号支持。新 Provider 配置只有协议 kind、可选 OpenAI API、URL 和可选静态 API Key。 | 迁移必要端点、Header 和凭证行为，不向 driver 传递 Gateway 或数据库实体。账号授权、刷新、持久化归控制面；driver 消费已解析凭证。详见下方清单。 |
 | G06 API Key 生命周期 | 部分 | [旧授权](../../crates/nyro-core/src/proxy/dispatcher/auth.rs)检查启用状态、过期时间和模型绑定。新 `ApiKey` 只有 `id`、`secret`；可以重载移除密钥，但没有到期自动失效。 | 对新准入执行到期检查；发布配置保留绑定及禁用语义，验证时间边界和重载；明确已准入请求保持原代际。模型发现与调用授权保持一致。 |
@@ -76,7 +76,7 @@
 | 4 | G10–G12：最小 `nyro serve`，先 SQLite 和一条管理到发布路径，再补 Postgres 等价与其余管理能力。 | 持久化 → 校验 → 发布 → 新请求使用快照；失败保留活动代际；重启／数据兼容；WebUI/API 与观测一致。可与兼容工作并行推进，单独完成不代表可发布替换。 |
 | 5 | G11/G13：部署、工具、发布切换。 | 文件／控制面等价，保留 CLI、录制客户端矩阵、支持平台构建、迁移／恢复说明全部过关后移除旧入口。 |
 
-步骤 1 已完成；步骤 2 已完成 16 份录制样本分类、OpenAI Chat／Anthropic Messages 原生增量及单候选 Gemini mock 验证，无状态 Responses 原生 mock 验证也已完成；PR #329 补充四种入口到 Anthropic 的完整并行工具结果历史转换，PR #330 补充工具错误、空／分块文本结果及 Gemini ID／批次语义，PR #331 补充函数 Schema 保留、转换和拒绝边界；PR #332 补充用户图片输入，PR #333 补充缓存用量计量，PR #334 补充按官方定义的缓存控制，PR #335 补充 OpenAI 文本／用户图片的严格断点转换，PR #336 补充 Anthropic 严格缓存控制，PR #337 补充 Anthropic 严格推理配置、历史及 JSON／SSE 签名回放，PR #339 补充 Gemini 严格推理配置、Part／函数签名及流式保留，PR #340 补充 Responses 严格推理；本轮补齐 OpenAI effort 映射并明确跨协议签名、兼容扩展与旧标签处理的取舍，交错输出、其余媒体／缓存和真实会话仍继续跟踪。原生保真和密钥限制语义仍是发布阻塞项；后续每一步可能需要多份聚焦 PR。
+步骤 1 已完成；步骤 2 已完成 16 份录制样本分类、OpenAI Chat／Anthropic Messages 原生增量及单候选 Gemini mock 验证，无状态 Responses 原生 mock 验证也已完成；PR #329 补充四种入口到 Anthropic 的完整并行工具结果历史转换，PR #330 补充工具错误、空／分块文本结果及 Gemini ID／批次语义，PR #331 补充函数 Schema 保留、转换和拒绝边界；PR #332 补充用户图片输入，PR #333 补充缓存用量计量，PR #334 补充按官方定义的缓存控制，PR #335 补充 OpenAI 文本／用户图片的严格断点转换，PR #336 补充 Anthropic 严格缓存控制，PR #337 补充 Anthropic 严格推理配置、历史及 JSON／SSE 签名回放，PR #339 补充 Gemini 严格推理配置、Part／函数签名及流式保留，PR #340 补充 Responses 严格推理；PR #341–#342 补齐 OpenAI effort 映射并明确跨协议签名、兼容扩展与旧标签处理的取舍；本轮迁移有序消息项及流式位置，未开放交错输出，交错输出、其余媒体／缓存和真实会话仍继续跟踪。原生保真和密钥限制语义仍是发布阻塞项；后续每一步可能需要多份聚焦 PR。
 
 复用[现有录制 fixture](../../tests/e2e/fixtures)和[旧回放矩阵](../../tests/e2e/proxy/test_protocol_matrix.py)作为输入，不能把它们当作新代理已通过的证据。旧 harness 依赖旧配置／工具流程，部分断言仅检查文本锚点／字段名；新断言必须核对有效内容顺序、工具 ID／参数、用量、凭证隔离和终态。端到端认证需记录客户端版本，本地 mock 不代表当前 SDK／厂商兼容。
 
@@ -457,3 +457,16 @@ G03 仍为部分完成：跨协议推理映射、原始 reasoning_text、工具�
 388 项 Rust 测试（新增 9 项）、受影响 crate 的 Clippy、非桌面 workspace 检查、构建及五组代理进程回归通过。16 份原生录制精确回放与严格／显式 false 分类保持通过；格式、diff 和 131 个文档相对链接检查通过。代码与文档独立审查未发现可操作问题。验证仅使用本地 mock 与现有录制样本，不代表真实厂商／完整客户端认证。
 
 G03 仍为部分完成：工具调用后的交错顺序、原始 reasoning_text、其余媒体与缓存／用量扩展及完整客户端会话继续跟踪。本轮不新增 crate、依赖或内核职责，不使用真实厂商密钥。整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。
+
+
+## 24. G03／G04 有序 IR 基础
+
+基于 `a66951dd`，将 `Message`／`ResponseMessage` 的正文与工具调用迁移到唯一的 `items: Vec<MessageItem>`，保留 `Content` 的原有嵌套类型。`Delta` 改为 `events: Vec<PositionedDelta>`，各协议 encoder 逐事件消费并校验位置归属。OpenAI Chat 使用消息／工具字段槽位及原工具索引，Anthropic 使用源块索引，Responses 使用 output 与 content／summary 坐标，Gemini 使用收到的 Part 序号；不按调用首次出现顺序重编号，不将签名从所属节点剥离。
+
+本轮是四阶段中的基础 PR：所有现有 codec 迁移，原支持范围继续受校验约束；静态多正文组、工具后正文／推理及既有不可表达排列继续拒绝。普通块 start／end 的完整生命周期、Responses 完整 item 元数据以及新交错排列尚未实现。后续依次补齐 Anthropic、Gemini 和 Responses 的协议增量，每一步覆盖历史、JSON 和 SSE，不把表示能力等同于外部支持完成。工具结果批次、媒体结果、原始 reasoning_text 和完整客户端验收仍分别跟踪。
+
+正文位置使用固定大小状态或复用已受限的协议 item 状态；工具增量位置随现有有界调用缓冲持有。用量仍在 `ChatChunk` 中，Gemini／Responses 展开时已知用量置于首个 chunk，转换失败后的结算仍由原运行时负责。[基础回归](../../crates/nyro-llm/tests/ordered_ir_codec.rs)与各协议回归覆盖有序项、源坐标、索引不重排及错误归属。
+
+406 项 Rust 测试（新增 18 项）、受影响 crate 的 Clippy、非桌面 workspace 检查、构建及五组代理进程回归通过。16 份原生录制精确回放与严格／显式 false 分类保持通过；格式、diff 和 136 个文档相对链接检查通过。独立审查发现的空工具列表角色校验、已关闭正文位置复用、新事件向量的批次与堆分配预算问题均以回归复现后修复，复查无剩余问题。仅使用本地 mock 与现有录制样本，不代表真实厂商／完整客户端验收。
+
+直接引用 `nyro-llm` 的 Rust 调用方需要迁移字段和枚举匹配，见[代理指南](../standalone/rust-proxy_CN.md#rust-调用方的有序-ir-迁移)。本轮不新增 crate、依赖、内核职责，不移除旧入口，不使用真实厂商密钥。整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。

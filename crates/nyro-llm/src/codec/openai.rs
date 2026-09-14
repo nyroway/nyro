@@ -1,6 +1,7 @@
 //! Explicit OpenAI wire ↔ typed workload conversion; unsupported fields are rejected.
 pub use super::CodecError;
 pub(crate) mod cache;
+mod ordered;
 pub mod responses;
 use crate::ir::*;
 use nyro_protocol::openai::{chat, embedding, stream};
@@ -22,6 +23,14 @@ fn model(value: &str) -> Result<(), CodecError> {
 }
 pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
     let wire: chat::Request = serde_json::from_value(value)?;
+    // Check field presence before an empty array is normalized into no items.
+    if wire
+        .messages
+        .iter()
+        .any(|m| m.role != chat::Role::Assistant && m.tool_calls.is_some())
+    {
+        return Err(invalid("tool calls require assistant role"));
+    }
     let request = ChatRequest {
         responses_reasoning: None,
         responses_include_encrypted: false,
@@ -29,7 +38,14 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
         anthropic_thinking: None,
         anthropic_cache_control: None,
         model: wire.model,
-        messages: convert(wire.messages)?,
+        messages: wire
+            .messages
+            .into_iter()
+            .map(|m| {
+                ordered::decode_message(serde_json::to_value(m)?)
+                    .and_then(|v| Ok(serde_json::from_value(v)?))
+            })
+            .collect::<Result<_, CodecError>>()?,
         stream: wire.stream,
         generation: Generation {
             temperature: wire.temperature,
@@ -95,7 +111,8 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
         }
     }
     for message in &request.messages {
-        if let Some(Content::Parts(parts)) = &message.content {
+        super::validate_message_items(&message.items)?;
+        if let Some(Content::Parts(parts)) = message.content() {
             for part in parts {
                 if let ContentPart::ImageUrl { image_url, .. } = part {
                     if message.role != Role::User {
@@ -114,8 +131,8 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
         if message.role == Role::Tool && message.tool_call_id.as_deref().is_none_or(str::is_empty) {
             return Err(invalid("tool messages require tool_call_id"));
         }
-        if message.content.is_none()
-            && message.tool_calls.as_ref().is_none_or(Vec::is_empty)
+        if message.content().is_none()
+            && message.tool_calls().next().is_none()
             && message.refusal.is_none()
             && message.audio.is_none()
         {
@@ -123,7 +140,7 @@ pub(super) fn validate_chat(request: &ChatRequest) -> Result<(), CodecError> {
                 "message requires content, tool calls, refusal or audio",
             ));
         }
-        if message.tool_calls.is_some() && message.role != Role::Assistant {
+        if message.tool_calls().next().is_some() && message.role != Role::Assistant {
             return Err(invalid("tool calls require assistant role"));
         }
     }
@@ -185,7 +202,14 @@ pub fn encode_chat(request: &ChatRequest) -> Result<Value, CodecError> {
     }
     let wire = chat::Request {
         model: request.model.clone(),
-        messages: convert(&request.messages)?,
+        messages: request
+            .messages
+            .iter()
+            .map(|m| {
+                ordered::encode_message(serde_json::to_value(m)?)
+                    .and_then(|v| Ok(serde_json::from_value(v)?))
+            })
+            .collect::<Result<_, CodecError>>()?,
         stream: request.stream,
         temperature: request.generation.temperature,
         max_tokens: request.generation.max_tokens,
@@ -243,7 +267,8 @@ pub fn encode_embedding(request: &EmbeddingRequest) -> Result<Value, CodecError>
 }
 pub(super) fn validate_output_breakpoints(response: &ChatResponse) -> Result<(), CodecError> {
     for choice in &response.choices {
-        if choice.message.tool_calls.iter().flatten().any(|c| {
+        super::validate_message_items(&choice.message.items)?;
+        if choice.message.tool_calls().any(|c| {
             matches!(
                 c,
                 ToolCall::Function {
@@ -254,7 +279,7 @@ pub(super) fn validate_output_breakpoints(response: &ChatResponse) -> Result<(),
         }) {
             return Err(invalid("cache control is not generated output"));
         }
-        if let Some(Content::Parts(parts)) = &choice.message.content
+        if let Some(Content::Parts(parts)) = choice.message.content()
             && parts.iter().any(|p| {
                 matches!(
                     p,
@@ -294,7 +319,11 @@ pub fn decode_chat_response(value: Value) -> Result<ChatResponse, CodecError> {
         return Err(invalid("response messages require assistant role"));
     }
     let usage = wire.usage.take().map(cache::decode).transpose()?;
-    let mut response: ChatResponse = convert(wire)?;
+    let mut value = serde_json::to_value(wire)?;
+    for choice in value["choices"].as_array_mut().unwrap() {
+        choice["message"] = ordered::decode_message(choice["message"].take())?;
+    }
+    let mut response: ChatResponse = serde_json::from_value(value)?;
     response.usage = usage;
     validate_output_breakpoints(&response)?;
     Ok(response)
@@ -303,7 +332,11 @@ pub fn encode_chat_response(response: &ChatResponse) -> Result<Value, CodecError
     validate_output_breakpoints(response)?;
     let mut plain = response.clone();
     let usage = plain.usage.take().as_ref().map(cache::encode).transpose()?;
-    let mut wire: chat::Response = convert(plain)?;
+    let mut value = serde_json::to_value(plain)?;
+    for choice in value["choices"].as_array_mut().unwrap() {
+        choice["message"] = ordered::encode_message(choice["message"].take())?;
+    }
+    let mut wire: chat::Response = serde_json::from_value(value)?;
     wire.usage = usage;
     Ok(serde_json::to_value(wire)?)
 }
@@ -327,7 +360,11 @@ pub fn decode_chat_event(data: &str) -> Result<ChatEvent, CodecError> {
         return Err(invalid("expected chat.completion.chunk object"));
     }
     let usage = wire.usage.take().map(cache::decode).transpose()?;
-    let mut chunk: ChatChunk = convert(wire)?;
+    let mut value = serde_json::to_value(wire)?;
+    for choice in value["choices"].as_array_mut().unwrap() {
+        choice["delta"] = serde_json::to_value(ordered::decode_delta(choice["delta"].take())?)?;
+    }
+    let mut chunk: ChatChunk = serde_json::from_value(value)?;
     chunk.usage = usage;
     Ok(ChatEvent::Chunk(Box::new(chunk)))
 }
@@ -337,7 +374,16 @@ pub fn encode_chat_event(event: &ChatEvent, public_model: &str) -> Result<String
         ChatEvent::Chunk(chunk) => {
             let mut plain = (**chunk).clone();
             let usage = plain.usage.take().as_ref().map(cache::encode).transpose()?;
-            let mut wire: stream::Chunk = convert(plain)?;
+            let mut value = serde_json::to_value(&plain)?;
+            for (choice, typed) in value["choices"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .zip(&plain.choices)
+            {
+                choice["delta"] = ordered::encode_delta(&typed.delta)?;
+            }
+            let mut wire: stream::Chunk = serde_json::from_value(value)?;
             wire.usage = usage;
             wire.model = public_model.into();
             Ok(format!("data: {}\n\n", serde_json::to_string(&wire)?))

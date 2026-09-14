@@ -480,3 +480,11 @@ LLM 运行时以 `INFO` 级别输出结构化 `tracing` 事件：每次已发出
 cargo build -p nyro
 python3 tests/proxy_smoke.py
 ```
+
+## Rust 调用方的有序 IR 迁移
+
+Rust `nyro-llm` API 现在通过 `Message.items` 和 `ResponseMessage.items` 的有序 `Vec<MessageItem>` 存储消息正文。`MessageItem::Content(Content)` 保留原有文本／内容块表示，`MessageItem::ToolCall(ToolCall)` 保留调用元数据。直接调用方需替换原 `content`／`tool_calls` 字段；`content()`、`tool_calls()` 借用视图不存储第二份数据，也不重新决定顺序。
+
+`Delta` 改为 `role` 和 `events: Vec<PositionedDelta>`，事件携带类型化 `PartDelta` 与 item／part 位置。OpenAI Chat 使用稳定的正文／工具字段槽位，保留原工具索引，不声称不同字段之间存在总顺序；其他 decoder 保留源块／item 坐标或收到的 Gemini Part 序号。用量和流式结束信息仍由原外层字段承载。
+
+本轮调整表示方式，未扩大交错输出支持。严格 codec 继续拒绝工具调用后的不支持内容及其他已说明的顺序，包括直接构造的多正文组／交错 IR。普通块完整 start／end 事件、Responses 完整 item 元数据及各协议交错支持留待后续增量。JSON 配置与厂商 wire 字段名不变。严格 Chat 转换将空 `tool_calls` 数组归一化为省略字段；非 assistant 请求消息携带该字段时，即使为空仍拒绝。匹配的原生模式保留原始数组。回归：[有序 IR codec](../../crates/nyro-llm/tests/ordered_ir_codec.rs)。

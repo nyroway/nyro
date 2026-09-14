@@ -33,14 +33,16 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
         let mut calls = vec![];
         let flush = |out: &mut Vec<Value>, parts: &mut Vec<Value>, calls: &mut Vec<Value>| {
             if !parts.is_empty() || !calls.is_empty() {
-                let mut v = json!({"role":m.role});
+                let mut items = vec![];
                 if !parts.is_empty() {
-                    v["content"] = json!(std::mem::take(parts));
+                    items.push(json!({"type":"content","value":std::mem::take(parts)}));
                 }
-                if !calls.is_empty() {
-                    v["tool_calls"] = json!(std::mem::take(calls));
-                }
-                out.push(v);
+                items.extend(
+                    std::mem::take(calls)
+                        .into_iter()
+                        .map(|call| json!({"type":"tool_call","value":call})),
+                );
+                out.push(json!({"role":m.role,"items":items}));
             }
         };
         let content = blocks(m.content);
@@ -146,7 +148,7 @@ fn decode_messages(messages: Vec<wire::Message>) -> Result<Vec<Value>, CodecErro
                                 .collect::<Result<Vec<_>, _>>()?
                         ),
                     };
-                    out.push(annotated(json!({"role":"tool","tool_call_id":tool_use_id,"content":content,"tool_error":is_error.unwrap_or(false)}), cache_control));
+                    out.push(annotated(json!({"role":"tool","tool_call_id":tool_use_id,"items":[{"type":"content","value":content}],"tool_error":is_error.unwrap_or(false)}), cache_control));
                 }
             }
         }
@@ -186,7 +188,7 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                     .collect::<Result<Vec<_>, _>>()?
             ),
         };
-        messages.push(json!({"role":"system","content":content}));
+        messages.push(json!({"role":"system","items":[{"type":"content","value":content}]}));
     }
     messages.extend(decode_messages(r.messages)?);
     let tools = r.tools.map(|tools| {
@@ -253,7 +255,7 @@ fn validate_thinking(r: &ChatRequest) -> Result<(), CodecError> {
         return Err(bad("thinking budget must be at least 1024 tokens"));
     }
     for m in &r.messages {
-        if let Some(Content::Parts(parts)) = &m.content {
+        if let Some(Content::Parts(parts)) = m.content() {
             for part in parts {
                 match part {
                     ContentPart::AnthropicThinking { signature, .. }
@@ -274,7 +276,7 @@ fn validate_thinking(r: &ChatRequest) -> Result<(), CodecError> {
     Ok(())
 }
 
-fn content_parts(c: &Option<Content>, images: bool) -> Result<Vec<Value>, CodecError> {
+fn content_parts(c: Option<&Content>, images: bool) -> Result<Vec<Value>, CodecError> {
     match c {
         None => Ok(vec![]),
         Some(Content::Text(t)) => Ok(vec![json!({"type":"text","text":t})]),
@@ -326,10 +328,8 @@ fn content_parts(c: &Option<Content>, images: bool) -> Result<Vec<Value>, CodecE
             .collect(),
     }
 }
-fn call_blocks(calls: &Option<Vec<ToolCall>>) -> Result<Vec<Value>, CodecError> {
+fn call_blocks<'a>(calls: impl Iterator<Item = &'a ToolCall>) -> Result<Vec<Value>, CodecError> {
     calls
-        .iter()
-        .flatten()
         .map(|t| {
             let ToolCall::Function {
                 gemini,
@@ -372,7 +372,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         }
         message.tool_error = false;
         message.anthropic_cache_control = None;
-        if let Some(Content::Parts(parts)) = &mut message.content {
+        if let Some(Content::Parts(parts)) = message.content_mut() {
             parts.retain(|part| {
                 !matches!(
                     part,
@@ -397,7 +397,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         for ToolCall::Function {
             anthropic_cache_control,
             ..
-        } in message.tool_calls.iter_mut().flatten()
+        } in message.tool_calls_mut()
         {
             *anthropic_cache_control = None;
         }
@@ -459,11 +459,14 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         if m.name.is_some() || m.refusal.is_some() || m.audio.is_some() {
             return Err(bad("unsupported message option"));
         }
-        let mut content = content_parts(&m.content, m.role == Role::User)?;
-        content.extend(call_blocks(&m.tool_calls)?);
+        let mut content = content_parts(m.content(), m.role == Role::User)?;
+        content.extend(call_blocks(m.tool_calls())?);
         match m.role {
             Role::System | Role::Developer => {
-                if !messages.is_empty() || m.tool_calls.is_some() || m.tool_call_id.is_some() {
+                if !messages.is_empty()
+                    || m.tool_calls().next().is_some()
+                    || m.tool_call_id.is_some()
+                {
                     return Err(bad("system instructions must precede conversation"));
                 }
                 system.extend(content)
@@ -493,7 +496,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
                 if m.tool_call_id.is_some() {
                     return Err(bad("unexpected tool_call_id"));
                 }
-                for ToolCall::Function { id, .. } in m.tool_calls.iter().flatten() {
+                for ToolCall::Function { id, .. } in m.tool_calls() {
                     if !pending.insert(id.as_str()) {
                         return Err(bad("duplicate tool call id in a batch"));
                     }
@@ -621,20 +624,14 @@ pub fn decode_chat_response(v: Value) -> Result<ChatResponse, CodecError> {
             )?)?),
         }])?
     };
-    let mut content = vec![];
-    let mut tools = vec![];
-    for m in messages {
-        if let Some(p) = m.get("content") {
-            content.extend(p.as_array().unwrap().clone())
-        }
-        if let Some(t) = m.get("tool_calls") {
-            tools.extend(t.as_array().unwrap().clone())
-        }
+    let mut items: Vec<Value> = messages
+        .into_iter()
+        .flat_map(|m| m["items"].as_array().unwrap().clone())
+        .collect();
+    if items.first().is_none_or(|item| item["type"] != "content") {
+        items.insert(0, json!({"type":"content","value":[]}));
     }
-    let mut message = json!({"role":"assistant","content":content});
-    if !tools.is_empty() {
-        message["tool_calls"] = json!(tools)
-    }
+    let message = json!({"role":"assistant","items":items});
     let reason = stop_in(
         r.stop_reason
             .as_deref()
@@ -663,8 +660,8 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     {
         return Err(bad("unsupported response fields"));
     }
-    let mut content = content_parts(&c.message.content, false)?;
-    content.extend(call_blocks(&c.message.tool_calls)?);
+    let mut content = content_parts(c.message.content(), false)?;
+    content.extend(call_blocks(c.message.tool_calls())?);
     let u = r
         .usage
         .as_ref()
@@ -734,11 +731,20 @@ impl ThinkingState {
         Ok(())
     }
 }
-fn thinking_delta(delta: AnthropicThinkingDelta) -> Delta {
+fn block_delta(index: u32, delta: PartDelta) -> Delta {
     Delta {
-        anthropic_thinking: Some(delta),
-        ..Default::default()
+        role: None,
+        events: vec![PositionedDelta {
+            position: StreamPosition {
+                item: StreamItem::Ordered(index),
+                part: 0,
+            },
+            delta,
+        }],
     }
+}
+fn thinking_delta(index: u32, delta: AnthropicThinkingDelta) -> Delta {
+    block_delta(index, PartDelta::AnthropicThinking(delta))
 }
 pub struct StreamDecoder {
     limit: usize,
@@ -851,13 +857,13 @@ impl StreamDecoder {
                     .next
                     .checked_add(1)
                     .ok_or_else(|| bad("block index overflow"))?;
-                let mut delta = Delta::default();
+                let delta;
                 let content = match content_block {
                     wire::OutputBlock::Text { text } => {
                         if self.tools != 0 {
                             return Err(bad("text after tool calls cannot be represented"));
                         }
-                        delta.content = Some(text);
+                        delta = block_delta(index, PartDelta::Text(text));
                         ActiveContent::Text
                     }
                     wire::OutputBlock::Thinking {
@@ -871,7 +877,7 @@ impl StreamDecoder {
                         }
                         let start = AnthropicThinkingDelta::Start;
                         let state = ThinkingState::start(&start, self.limit)?;
-                        delta = thinking_delta(start);
+                        delta = thinking_delta(index, start);
                         ActiveContent::Thinking(state)
                     }
                     wire::OutputBlock::RedactedThinking { data } => {
@@ -880,7 +886,7 @@ impl StreamDecoder {
                         }
                         let start = AnthropicThinkingDelta::Redacted { data };
                         let state = ThinkingState::start(&start, self.limit)?;
-                        delta = thinking_delta(start);
+                        delta = thinking_delta(index, start);
                         ActiveContent::Thinking(state)
                     }
                     wire::OutputBlock::ToolUse { id, name, input } => {
@@ -895,16 +901,19 @@ impl StreamDecoder {
                             .tools
                             .checked_add(1)
                             .ok_or_else(|| bad("tool index overflow"))?;
-                        delta.tool_calls = Some(vec![ToolCallDelta {
-                            gemini: None,
-                            index: i,
-                            id: Some(id),
-                            r#type: Some(FunctionType::Function),
-                            function: Some(FunctionDelta {
-                                name: Some(name),
-                                arguments: None,
+                        delta = block_delta(
+                            index,
+                            PartDelta::ToolCall(ToolCallDelta {
+                                gemini: None,
+                                index: i,
+                                id: Some(id),
+                                r#type: Some(FunctionType::Function),
+                                function: Some(FunctionDelta {
+                                    name: Some(name),
+                                    arguments: None,
+                                }),
                             }),
-                        }]);
+                        );
                         ActiveContent::Tool(i, String::new())
                     }
                 };
@@ -920,10 +929,9 @@ impl StreamDecoder {
                     return Err(bad("delta index mismatch"));
                 }
                 let delta = match (delta, &mut active.content) {
-                    (wire::Delta::TextDelta { text }, ActiveContent::Text) => Delta {
-                        content: Some(text),
-                        ..Default::default()
-                    },
+                    (wire::Delta::TextDelta { text }, ActiveContent::Text) => {
+                        block_delta(index, PartDelta::Text(text))
+                    }
                     (
                         wire::Delta::InputJsonDelta { partial_json },
                         ActiveContent::Tool(i, args),
@@ -932,8 +940,9 @@ impl StreamDecoder {
                             return Err(bad("tool JSON exceeds limit"));
                         }
                         args.push_str(&partial_json);
-                        Delta {
-                            tool_calls: Some(vec![ToolCallDelta {
+                        block_delta(
+                            index,
+                            PartDelta::ToolCall(ToolCallDelta {
                                 gemini: None,
                                 index: *i,
                                 id: None,
@@ -942,19 +951,18 @@ impl StreamDecoder {
                                     name: None,
                                     arguments: Some(partial_json),
                                 }),
-                            }]),
-                            ..Default::default()
-                        }
+                            }),
+                        )
                     }
                     (wire::Delta::ThinkingDelta { thinking }, ActiveContent::Thinking(state)) => {
                         let delta = AnthropicThinkingDelta::Thinking { thinking };
                         state.advance(&delta, self.limit)?;
-                        thinking_delta(delta)
+                        thinking_delta(index, delta)
                     }
                     (wire::Delta::SignatureDelta { signature }, ActiveContent::Thinking(state)) => {
                         let delta = AnthropicThinkingDelta::Signature { signature };
                         state.advance(&delta, self.limit)?;
-                        thinking_delta(delta)
+                        thinking_delta(index, delta)
                     }
                     _ => return Err(bad("delta type mismatch")),
                 };
@@ -971,8 +979,9 @@ impl StreamDecoder {
                 if let ActiveContent::Tool(i, args) = a.content {
                     if args.is_empty() {
                         out.push(self.chunk(
-                            Delta {
-                                tool_calls: Some(vec![ToolCallDelta {
+                            block_delta(
+                                index,
+                                PartDelta::ToolCall(ToolCallDelta {
                                     gemini: None,
                                     index: i,
                                     id: None,
@@ -981,9 +990,8 @@ impl StreamDecoder {
                                         name: None,
                                         arguments: Some("{}".into()),
                                     }),
-                                }]),
-                                ..Default::default()
-                            },
+                                }),
+                            ),
                             None,
                             false,
                         )?)
@@ -996,7 +1004,7 @@ impl StreamDecoder {
                 } else if let ActiveContent::Thinking(mut state) = a.content {
                     state.advance(&AnthropicThinkingDelta::Stop, self.limit)?;
                     out.push(self.chunk(
-                        thinking_delta(AnthropicThinkingDelta::Stop),
+                        thinking_delta(index, AnthropicThinkingDelta::Stop),
                         None,
                         false,
                     )?);
@@ -1059,6 +1067,7 @@ fn frame(kind: &str, mut value: Value) -> String {
 }
 #[derive(Default)]
 struct PendingTool {
+    position: Option<StreamPosition>,
     id: String,
     name: String,
     args: String,
@@ -1071,8 +1080,10 @@ pub struct StreamEncoder {
     ended: bool,
     finished: Option<String>,
     text_open: bool,
+    text_position: Option<StreamPosition>,
+    last_content_position: Option<StreamPosition>,
     next_index: u32,
-    thinking: Option<ThinkingState>,
+    thinking: Option<(StreamPosition, ThinkingState)>,
     tools: std::collections::BTreeMap<u32, PendingTool>,
     usage: Option<Usage>,
 }
@@ -1089,11 +1100,185 @@ impl StreamEncoder {
             ended: false,
             finished: None,
             text_open: false,
+            text_position: None,
+            last_content_position: None,
             next_index: 0,
             thinking: None,
             tools: Default::default(),
             usage: None,
         }
+    }
+    fn close_text(&mut self, output: &mut String) -> Result<(), CodecError> {
+        if self.text_open {
+            output.push_str(&frame(
+                "content_block_stop",
+                json!({"index":self.next_index}),
+            ));
+            self.next_index = self
+                .next_index
+                .checked_add(1)
+                .ok_or_else(|| bad("block index overflow"))?;
+            self.text_open = false;
+            self.text_position = None;
+        }
+        Ok(())
+    }
+    fn start_content(&mut self, position: StreamPosition) -> Result<(), CodecError> {
+        if self
+            .last_content_position
+            .is_some_and(|last| match (last.item, position.item) {
+                (StreamItem::Ordered(a), StreamItem::Ordered(b)) => {
+                    (b, position.part) <= (a, last.part)
+                }
+                _ => last == position,
+            })
+        {
+            return Err(bad("reused or out of order content position"));
+        }
+        self.last_content_position = Some(position);
+        Ok(())
+    }
+    fn part(&mut self, event: &PositionedDelta, output: &mut String) -> Result<(), CodecError> {
+        super::validate_position(event)?;
+        let position = event.position;
+        match &event.delta {
+            PartDelta::AnthropicThinking(delta) => {
+                if !self.tools.is_empty() {
+                    return Err(bad("thinking after tool calls cannot be represented"));
+                }
+                match delta {
+                    AnthropicThinkingDelta::Start | AnthropicThinkingDelta::Redacted { .. } => {
+                        if self.thinking.is_some() {
+                            return Err(bad("overlapping thinking blocks"));
+                        }
+                        self.start_content(position)?;
+                        let state = ThinkingState::start(delta, self.limit)?;
+                        self.close_text(output)?;
+                        let block = match delta {
+                            AnthropicThinkingDelta::Redacted { data } => {
+                                json!({"type":"redacted_thinking","data":data})
+                            }
+                            _ => json!({"type":"thinking","thinking":"","signature":""}),
+                        };
+                        output.push_str(&frame(
+                            "content_block_start",
+                            json!({"index":self.next_index,"content_block":block}),
+                        ));
+                        self.thinking = Some((position, state));
+                    }
+                    _ => {
+                        let (active, state) = self
+                            .thinking
+                            .as_mut()
+                            .ok_or_else(|| bad("thinking delta without block"))?;
+                        if *active != position {
+                            return Err(bad("thinking delta position mismatch"));
+                        }
+                        state.advance(delta, self.limit)?;
+                        match delta {
+                            AnthropicThinkingDelta::Thinking { thinking } => output.push_str(&frame("content_block_delta", json!({"index":self.next_index,"delta":{"type":"thinking_delta","thinking":thinking}}))),
+                            AnthropicThinkingDelta::Signature { signature } => output.push_str(&frame("content_block_delta", json!({"index":self.next_index,"delta":{"type":"signature_delta","signature":signature}}))),
+                            AnthropicThinkingDelta::Stop => {
+                                output.push_str(&frame("content_block_stop", json!({"index":self.next_index})));
+                                self.next_index = self.next_index.checked_add(1).ok_or_else(|| bad("block index overflow"))?;
+                                self.thinking = None;
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            PartDelta::Text(text) => {
+                if self.thinking.is_some() || text.len() > self.limit || !self.tools.is_empty() {
+                    return Err(bad(
+                        "invalid text within thinking, after tools, or over limit",
+                    ));
+                }
+                if self.text_position != Some(position) {
+                    self.start_content(position)?;
+                    self.close_text(output)?;
+                }
+                if !self.text_open {
+                    output.push_str(&frame(
+                        "content_block_start",
+                        json!({"index":self.next_index,"content_block":{"type":"text","text":""}}),
+                    ));
+                    self.text_open = true;
+                    self.text_position = Some(position);
+                }
+                output.push_str(&frame(
+                    "content_block_delta",
+                    json!({"index":self.next_index,"delta":{"type":"text_delta","text":text}}),
+                ));
+            }
+            PartDelta::ToolCall(t) => {
+                if self.thinking.is_some() || t.gemini.is_some() {
+                    return Err(bad("unsupported tool metadata or tool within thinking"));
+                }
+                if self
+                    .last_content_position
+                    .is_some_and(|last| match (last.item, position.item) {
+                        (StreamItem::Ordered(content), StreamItem::Ordered(tool)) => {
+                            tool <= content
+                        }
+                        _ => last == position,
+                    })
+                    || self
+                        .tools
+                        .iter()
+                        .any(|(index, tool)| *index != t.index && tool.position == Some(position))
+                {
+                    return Err(bad("tool position belongs to another item"));
+                }
+                let additional =
+                    t.id.as_ref()
+                        .map_or(0, String::len)
+                        .saturating_add(
+                            t.function
+                                .as_ref()
+                                .and_then(|f| f.name.as_ref())
+                                .map_or(0, String::len),
+                        )
+                        .saturating_add(
+                            t.function
+                                .as_ref()
+                                .and_then(|f| f.arguments.as_ref())
+                                .map_or(0, String::len),
+                        )
+                        .saturating_add(if self.tools.contains_key(&t.index) {
+                            0
+                        } else {
+                            std::mem::size_of::<StreamPosition>()
+                        });
+                if self.bytes.saturating_add(additional) > self.limit
+                    || (!self.tools.contains_key(&t.index) && self.tools.len() >= self.limit / 32)
+                {
+                    return Err(bad("tool accumulation exceeds limit"));
+                }
+                let item = self.tools.entry(t.index).or_default();
+                if item.position.is_some_and(|p| p != position) {
+                    return Err(bad("tool delta position mismatch"));
+                }
+                item.position = Some(position);
+                self.bytes = self.bytes.saturating_add(additional);
+                if let Some(id) = &t.id {
+                    if !item.id.is_empty() {
+                        return Err(bad("repeated tool id"));
+                    }
+                    item.id.push_str(id);
+                }
+                if let Some(f) = &t.function {
+                    if let Some(n) = &f.name {
+                        item.name.push_str(n);
+                    }
+                    if let Some(a) = &f.arguments {
+                        item.args.push_str(a);
+                    }
+                }
+            }
+            _ => return Err(bad("unsupported Anthropic stream part")),
+        }
+        Ok(())
     }
     pub fn push(&mut self, event: &ChatEvent) -> Result<String, CodecError> {
         if self.ended {
@@ -1114,14 +1299,6 @@ impl StreamEncoder {
                     || c.choices.first().is_some_and(|c| {
                         c.index != 0
                             || c.logprobs.is_some()
-                            || c.delta.refusal.is_some()
-                            || c.delta.gemini_text.is_some()
-                            || c.delta.responses_reasoning.is_some()
-                            || c.delta
-                                .tool_calls
-                                .iter()
-                                .flatten()
-                                .any(|t| t.gemini.is_some())
                             || c.delta.role.as_ref().is_some_and(|r| *r != Role::Assistant)
                     })
                 {
@@ -1131,6 +1308,25 @@ impl StreamEncoder {
                     let next = cache::encode(u)?;
                     if let Some(previous) = &self.usage {
                         cache::progress(&cache::encode(previous)?, &next)?;
+                    }
+                }
+                // Bound each batch before constructing frames; text is not retained across chunks.
+                for choice in &c.choices {
+                    let events = &choice.delta.events;
+                    let text_bytes = events.iter().fold(0usize, |bytes, event| {
+                        bytes.saturating_add(match &event.delta {
+                            PartDelta::Text(text) => text.len(),
+                            _ => 0,
+                        })
+                    });
+                    if text_bytes > self.limit
+                        || (events.len() > 1
+                            && events
+                                .len()
+                                .saturating_mul(std::mem::size_of::<PositionedDelta>())
+                                > self.limit)
+                    {
+                        return Err(bad("stream event batch exceeds limit"));
                     }
                 }
                 let mut output = String::new();
@@ -1152,137 +1348,26 @@ impl StreamEncoder {
                     self.usage = Some(u.clone())
                 }
                 for choice in &c.choices {
-                    let d = &choice.delta;
                     if self.finished.is_some()
-                        && (d.content.is_some()
-                            || d.anthropic_thinking.is_some()
-                            || d.tool_calls.is_some()
-                            || choice.finish_reason.is_some())
+                        && (!choice.delta.events.is_empty() || choice.finish_reason.is_some())
                     {
                         return Err(bad("content after finish reason"));
                     }
-                    if let Some(delta) = &d.anthropic_thinking {
-                        if d.content.is_some()
-                            || d.tool_calls.is_some()
-                            || choice.finish_reason.is_some()
-                            || !self.tools.is_empty()
-                        {
-                            return Err(bad(
-                                "thinking delta must be separate and precede tool calls",
-                            ));
-                        }
-                        match delta {
-                            AnthropicThinkingDelta::Start
-                            | AnthropicThinkingDelta::Redacted { .. } => {
-                                if self.thinking.is_some() {
-                                    return Err(bad("overlapping thinking blocks"));
-                                }
-                                let state = ThinkingState::start(delta, self.limit)?;
-                                if self.text_open {
-                                    output.push_str(&frame(
-                                        "content_block_stop",
-                                        json!({"index":self.next_index}),
-                                    ));
-                                    self.next_index = self
-                                        .next_index
-                                        .checked_add(1)
-                                        .ok_or_else(|| bad("block index overflow"))?;
-                                    self.text_open = false;
-                                }
-                                let block = match delta {
-                                    AnthropicThinkingDelta::Redacted { data } => {
-                                        json!({"type":"redacted_thinking","data":data})
-                                    }
-                                    _ => json!({"type":"thinking","thinking":"","signature":""}),
-                                };
-                                output.push_str(&frame(
-                                    "content_block_start",
-                                    json!({"index":self.next_index,"content_block":block}),
-                                ));
-                                self.thinking = Some(state);
-                            }
-                            _ => {
-                                let state = self
-                                    .thinking
-                                    .as_mut()
-                                    .ok_or_else(|| bad("thinking delta without block"))?;
-                                state.advance(delta, self.limit)?;
-                                match delta {
-                                    AnthropicThinkingDelta::Thinking { thinking } => output.push_str(&frame("content_block_delta", json!({"index":self.next_index,"delta":{"type":"thinking_delta","thinking":thinking}}))),
-                                    AnthropicThinkingDelta::Signature { signature } => output.push_str(&frame("content_block_delta", json!({"index":self.next_index,"delta":{"type":"signature_delta","signature":signature}}))),
-                                    AnthropicThinkingDelta::Stop => {
-                                        output.push_str(&frame("content_block_stop", json!({"index":self.next_index})));
-                                        self.next_index = self.next_index.checked_add(1).ok_or_else(|| bad("block index overflow"))?;
-                                        self.thinking = None;
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            }
-                        }
-                    }
-                    if self.thinking.is_some()
-                        && (d.content.is_some()
-                            || d.tool_calls.is_some()
-                            || choice.finish_reason.is_some())
+                    // Keep the existing separate thinking-event contract during the IR migration.
+                    if choice
+                        .delta
+                        .events
+                        .iter()
+                        .any(|event| matches!(event.delta, PartDelta::AnthropicThinking(_)))
+                        && (choice.delta.events.len() != 1 || choice.finish_reason.is_some())
                     {
-                        return Err(bad("content or finish within thinking block"));
+                        return Err(bad("thinking delta must be separate"));
                     }
-                    if let Some(text) = &d.content {
-                        if text.len() > self.limit || !self.tools.is_empty() {
-                            return Err(bad("text exceeds limit or follows buffered tools"));
-                        }
-                        if !self.text_open {
-                            output.push_str(&frame(
-                                "content_block_start",
-                                json!({"index":self.next_index,"content_block":{"type":"text","text":""}}),
-                            ));
-                            self.text_open = true;
-                        }
-                        output.push_str(&frame(
-                            "content_block_delta",
-                            json!({"index":self.next_index,"delta":{"type":"text_delta","text":text}}),
-                        ));
+                    for event in &choice.delta.events {
+                        self.part(event, &mut output)?;
                     }
-                    for t in d.tool_calls.iter().flatten() {
-                        let additional =
-                            t.id.as_ref()
-                                .map_or(0, String::len)
-                                .saturating_add(
-                                    t.function
-                                        .as_ref()
-                                        .and_then(|f| f.name.as_ref())
-                                        .map_or(0, String::len),
-                                )
-                                .saturating_add(
-                                    t.function
-                                        .as_ref()
-                                        .and_then(|f| f.arguments.as_ref())
-                                        .map_or(0, String::len),
-                                );
-                        if self.bytes.saturating_add(additional) > self.limit
-                            || (!self.tools.contains_key(&t.index)
-                                && self.tools.len() >= self.limit / 32)
-                        {
-                            return Err(bad("tool accumulation exceeds limit"));
-                        }
-                        let item = self.tools.entry(t.index).or_default();
-                        if let Some(id) = &t.id {
-                            if !item.id.is_empty() {
-                                return Err(bad("repeated tool id"));
-                            }
-                            self.bytes = self.bytes.saturating_add(id.len());
-                            item.id.push_str(id)
-                        }
-                        if let Some(f) = &t.function {
-                            if let Some(n) = &f.name {
-                                self.bytes = self.bytes.saturating_add(n.len());
-                                item.name.push_str(n)
-                            }
-                            if let Some(a) = &f.arguments {
-                                self.bytes = self.bytes.saturating_add(a.len());
-                                item.args.push_str(a)
-                            }
-                        }
+                    if self.thinking.is_some() && choice.finish_reason.is_some() {
+                        return Err(bad("finish within thinking block"));
                     }
                     if let Some(reason) = &choice.finish_reason {
                         self.finished = Some(stop_out(reason)?.into())

@@ -184,7 +184,13 @@ impl StreamDecoder {
                             return Err(bad("unsupported initial reasoning content/output order"));
                         }
                         out.push(self.started()?.chunk(
-                            reasoning_delta(ResponsesReasoningDelta::Start { item: r.clone() }),
+                            positioned(
+                                e.output_index.unwrap(),
+                                0,
+                                PartDelta::ResponsesReasoning(ResponsesReasoningDelta::Start {
+                                    item: r.clone(),
+                                }),
+                            )?,
                             None,
                             None,
                         ));
@@ -209,8 +215,10 @@ impl StreamDecoder {
                         )
                         .map_err(|_| bad("too many tool calls"))?;
                         out.push(self.started()?.chunk(
-                            Delta {
-                                tool_calls: Some(vec![ToolCallDelta {
+                            positioned(
+                                e.output_index.unwrap(),
+                                0,
+                                PartDelta::ToolCall(ToolCallDelta {
                                     gemini: None,
                                     index,
                                     id: Some(call_id.clone()),
@@ -219,9 +227,8 @@ impl StreamDecoder {
                                         name: Some(name.clone()),
                                         arguments: Some(arguments.clone()),
                                     }),
-                                }]),
-                                ..Default::default()
-                            },
+                                }),
+                            )?,
                             None,
                             None,
                         ));
@@ -299,7 +306,15 @@ impl StreamDecoder {
                         }
                     }
                 };
-                out.push(self.started()?.chunk(reasoning_delta(delta), None, None));
+                out.push(self.started()?.chunk(
+                    positioned(
+                        e.output_index.unwrap(),
+                        index,
+                        PartDelta::ResponsesReasoning(delta),
+                    )?,
+                    None,
+                    None,
+                ));
             }
             "response.content_part.added" => {
                 let Some(wire::StreamPart::Output(part)) = e.part else {
@@ -344,19 +359,13 @@ impl StreamDecoder {
                         if e.r#type == "response.output_text.delta" =>
                     {
                         text.push_str(&delta);
-                        Delta {
-                            content: Some(delta),
-                            ..Default::default()
-                        }
+                        positioned(e.output_index.unwrap(), index, PartDelta::Text(delta))?
                     }
                     wire::OutputPart::Refusal { refusal }
                         if e.r#type == "response.refusal.delta" =>
                     {
                         refusal.push_str(&delta);
-                        Delta {
-                            refusal: Some(delta),
-                            ..Default::default()
-                        }
+                        positioned(e.output_index.unwrap(), index, PartDelta::Refusal(delta))?
                     }
                     _ => return Err(bad("content delta kind mismatch")),
                 };
@@ -416,8 +425,10 @@ impl StreamDecoder {
                 arguments.push_str(&delta);
                 let index = state.tool_index.unwrap();
                 out.push(self.started()?.chunk(
-                    Delta {
-                        tool_calls: Some(vec![ToolCallDelta {
+                    positioned(
+                        e.output_index.unwrap(),
+                        0,
+                        PartDelta::ToolCall(ToolCallDelta {
                             gemini: None,
                             index,
                             id: None,
@@ -426,9 +437,8 @@ impl StreamDecoder {
                                 name: None,
                                 arguments: Some(delta),
                             }),
-                        }]),
-                        ..Default::default()
-                    },
+                        }),
+                    )?,
                     None,
                     None,
                 ));
@@ -482,7 +492,11 @@ impl StreamDecoder {
                 state.done = true;
                 if let Some(item) = reasoning {
                     out.push(self.started()?.chunk(
-                        reasoning_delta(ResponsesReasoningDelta::Done { item }),
+                        positioned(
+                            e.output_index.unwrap(),
+                            0,
+                            PartDelta::ResponsesReasoning(ResponsesReasoningDelta::Done { item }),
+                        )?,
                         None,
                         None,
                     ));
@@ -510,6 +524,7 @@ impl StreamDecoder {
                     let each = std::mem::size_of::<ChatEvent>()
                         + std::mem::size_of::<ChatChunk>()
                         + std::mem::size_of::<StreamChoice>()
+                        + std::mem::size_of::<PositionedDelta>()
                         + std::mem::size_of::<ResponsesReasoningDelta>()
                         + r.id.len()
                         + r.model.len();
@@ -538,20 +553,28 @@ impl StreamDecoder {
                 if self.items.is_empty() {
                     // Some compatible servers send only the terminal snapshot. Emit it once.
                     let mut tool_index = 0;
-                    for item in &r.output {
+                    for (output_index, item) in r.output.iter().enumerate() {
                         match item {
                             wire::OutputItem::Reasoning(item) => {
-                                for delta in snapshot_deltas(item) {
+                                for (part_index, delta) in snapshot_deltas(item) {
                                     out.push(self.started()?.chunk(
-                                        reasoning_delta(delta),
+                                        positioned(
+                                            output_index,
+                                            part_index,
+                                            PartDelta::ResponsesReasoning(delta),
+                                        )?,
                                         None,
                                         None,
                                     ));
                                 }
                             }
                             wire::OutputItem::Message { content, .. } => {
-                                for part in content {
-                                    out.push(self.started()?.chunk(part_delta(part), None, None));
+                                for (part_index, part) in content.iter().enumerate() {
+                                    out.push(self.started()?.chunk(
+                                        positioned(output_index, part_index, part_delta(part))?,
+                                        None,
+                                        None,
+                                    ));
                                 }
                             }
                             wire::OutputItem::FunctionCall {
@@ -561,8 +584,10 @@ impl StreamDecoder {
                                 ..
                             } => {
                                 out.push(self.started()?.chunk(
-                                    Delta {
-                                        tool_calls: Some(vec![ToolCallDelta {
+                                    positioned(
+                                        output_index,
+                                        0,
+                                        PartDelta::ToolCall(ToolCallDelta {
                                             gemini: None,
                                             index: tool_index,
                                             id: Some(call_id.clone()),
@@ -571,9 +596,8 @@ impl StreamDecoder {
                                                 name: Some(name.clone()),
                                                 arguments: Some(arguments.clone()),
                                             }),
-                                        }]),
-                                        ..Default::default()
-                                    },
+                                        }),
+                                    )?,
                                     None,
                                     None,
                                 ));
@@ -645,17 +669,25 @@ fn part_text(part: &wire::OutputPart) -> &str {
         wire::OutputPart::Refusal { refusal } => refusal,
     }
 }
-fn part_delta(part: &wire::OutputPart) -> Delta {
+fn part_delta(part: &wire::OutputPart) -> PartDelta {
     match part {
-        wire::OutputPart::OutputText { text, .. } => Delta {
-            content: Some(text.clone()),
-            ..Default::default()
-        },
-        wire::OutputPart::Refusal { refusal } => Delta {
-            refusal: Some(refusal.clone()),
-            ..Default::default()
-        },
+        wire::OutputPart::OutputText { text, .. } => PartDelta::Text(text.clone()),
+        wire::OutputPart::Refusal { refusal } => PartDelta::Refusal(refusal.clone()),
     }
+}
+fn positioned(item: usize, part: usize, delta: PartDelta) -> Result<Delta, CodecError> {
+    Ok(Delta {
+        role: None,
+        events: vec![PositionedDelta {
+            position: StreamPosition {
+                item: StreamItem::Ordered(
+                    u32::try_from(item).map_err(|_| bad("output index overflow"))?,
+                ),
+                part: u32::try_from(part).map_err(|_| bad("part index overflow"))?,
+            },
+            delta,
+        }],
+    })
 }
 fn set_status(item: &mut wire::OutputItem, status: &str) {
     match item {
@@ -677,6 +709,10 @@ pub struct StreamEncoder {
     items: Vec<wire::OutputItem>,
     tools: BTreeMap<u32, usize>,
     active_part: Option<(usize, usize)>,
+    positions: BTreeMap<StreamPosition, u8>,
+    tool_positions: BTreeMap<u32, StreamPosition>,
+    text_position: Option<StreamPosition>,
+    reasoning_position: Option<StreamItem>,
     message_done: Option<usize>,
     reasoning_active: Option<(usize, Vec<u8>)>,
     finish: Option<String>,
@@ -698,6 +734,10 @@ impl StreamEncoder {
             items: Vec::new(),
             tools: BTreeMap::new(),
             active_part: None,
+            positions: BTreeMap::new(),
+            tool_positions: BTreeMap::new(),
+            text_position: None,
+            reasoning_position: None,
             message_done: None,
             reasoning_active: None,
             finish: None,
@@ -1055,18 +1095,106 @@ impl StreamEncoder {
         };
         self.emit(kind, fields, out)
     }
+    fn check_position(&mut self, event: &PositionedDelta) -> Result<(), CodecError> {
+        let position = event.position;
+        let kind = match &event.delta {
+            PartDelta::Text(_) => 0,
+            PartDelta::Refusal(_) => 1,
+            PartDelta::ToolCall(_) => 2,
+            PartDelta::ResponsesReasoning(_) => 3,
+            _ => return Err(bad("unsupported positioned event")),
+        };
+        if let StreamItem::Ordered(_) = position.item
+            && self.positions.iter().any(|(p, old)| {
+                p.item == position.item && if kind <= 1 { *old > 1 } else { *old != kind }
+            })
+        {
+            return Err(bad("stream item changed kind"));
+        }
+        if let Some(old) = self.positions.get(&position) {
+            if kind <= 1 && self.text_position.is_some_and(|p| p != position) {
+                return Err(bad("text returned to a closed position"));
+            }
+            if matches!(
+                event.delta,
+                PartDelta::ResponsesReasoning(ResponsesReasoningDelta::Start { .. })
+            ) {
+                return Err(bad("reasoning item position reused"));
+            }
+            if *old != kind {
+                return Err(bad("stream position changed kind"));
+            }
+        } else {
+            if let StreamItem::Ordered(item) = position.item
+                && self.positions.keys().any(|p| {
+                    matches!(p.item, StreamItem::Ordered(old) if old > item)
+                        || p.item == position.item && p.part > position.part
+                })
+            {
+                return Err(bad("new stream position goes backwards"));
+            }
+            self.reserve(std::mem::size_of::<(StreamPosition, u8)>() + 32)?;
+            self.positions.insert(position, kind);
+        }
+        match &event.delta {
+            PartDelta::ToolCall(call) => {
+                if let Some(old) = self.tool_positions.get(&call.index) {
+                    if *old != position {
+                        return Err(bad("tool call changed position"));
+                    }
+                } else {
+                    if self.tool_positions.values().any(|old| *old == position) {
+                        return Err(bad("stream position changed tool identity"));
+                    }
+                    self.reserve(std::mem::size_of::<(u32, StreamPosition)>() + 32)?;
+                    self.tool_positions.insert(call.index, position);
+                }
+            }
+            PartDelta::ResponsesReasoning(delta) => {
+                use ResponsesReasoningDelta as D;
+                if matches!(delta, D::Start { .. }) {
+                    if position.part != 0 {
+                        return Err(bad("reasoning item start requires part zero"));
+                    }
+                    self.reasoning_position = Some(position.item);
+                } else {
+                    if self.reasoning_position != Some(position.item) {
+                        return Err(bad("reasoning item changed position"));
+                    }
+                    let (oi, _) = self
+                        .reasoning_active
+                        .as_ref()
+                        .ok_or_else(|| bad("reasoning outside item"))?;
+                    let wire::OutputItem::Reasoning(item) = &self.items[*oi] else {
+                        unreachable!()
+                    };
+                    let expected = match delta {
+                        D::SummaryStart => item.summary.len(),
+                        D::Done { .. } => 0,
+                        _ => item
+                            .summary
+                            .len()
+                            .checked_sub(1)
+                            .ok_or_else(|| bad("summary outside part"))?,
+                    };
+                    if usize::try_from(position.part).ok() != Some(expected) {
+                        return Err(bad("reasoning summary changed position"));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
     fn push_inner(&mut self, event: &ChatEvent) -> Result<String, CodecError> {
         let mut out = String::new();
         match event {
             ChatEvent::Chunk(c) => {
-                if c.choices.iter().any(|c| {
-                    c.delta.anthropic_thinking.is_some()
-                        || c.delta.gemini_text.is_some()
-                        || c.delta
-                            .tool_calls
-                            .iter()
-                            .flatten()
-                            .any(|t| t.gemini.is_some())
+                if c.choices.iter().flat_map(|c| &c.delta.events).any(|e| {
+                    matches!(
+                        &e.delta,
+                        PartDelta::AnthropicThinking(_) | PartDelta::GeminiText(_)
+                    ) || matches!(&e.delta, PartDelta::ToolCall(t) if t.gemini.is_some())
                 }) {
                     return Err(bad("Responses cannot represent vendor thinking"));
                 }
@@ -1119,32 +1247,49 @@ impl StreamEncoder {
                             "invalid canonical Responses stream lifecycle/role/logprobs",
                         ));
                     }
-                    if let Some(delta) = &choice.delta.responses_reasoning {
-                        if choice.delta.content.is_some()
-                            || choice.delta.refusal.is_some()
-                            || choice.delta.tool_calls.is_some()
-                            || choice.finish_reason.is_some()
-                        {
-                            return Err(bad("mixed reasoning and ordinary delta"));
-                        }
-                        self.reasoning(delta, &mut out)?;
-                    }
-                    if self.reasoning_active.is_some()
-                        && (choice.delta.content.is_some()
-                            || choice.delta.refusal.is_some()
-                            || choice.delta.tool_calls.is_some()
-                            || choice.finish_reason.is_some())
+                    if choice
+                        .delta
+                        .events
+                        .iter()
+                        .any(|e| matches!(e.delta, PartDelta::ResponsesReasoning(_)))
+                        && (choice.delta.events.len() != 1 || choice.finish_reason.is_some())
                     {
-                        return Err(bad("ordinary content/finish inside reasoning item"));
+                        return Err(bad("mixed reasoning and ordinary delta"));
                     }
-                    if let Some(text) = &choice.delta.content {
-                        self.text(text, false, &mut out)?;
+                    for event in &choice.delta.events {
+                        crate::codec::validate_position(event)?;
+                        self.check_position(event)?;
+                        match &event.delta {
+                            PartDelta::ResponsesReasoning(delta) => {
+                                self.reasoning(delta, &mut out)?;
+                            }
+                            PartDelta::Text(text) | PartDelta::Refusal(text) => {
+                                if self.reasoning_active.is_some() {
+                                    return Err(bad("ordinary content inside reasoning item"));
+                                }
+                                if self.text_position.is_some_and(|p| p != event.position) {
+                                    self.close_part(&mut out)?;
+                                }
+                                self.text_position = Some(event.position);
+                                self.text(
+                                    text,
+                                    matches!(event.delta, PartDelta::Refusal(_)),
+                                    &mut out,
+                                )?;
+                            }
+                            PartDelta::ToolCall(call) => {
+                                if self.reasoning_active.is_some() {
+                                    return Err(bad("tool call inside reasoning item"));
+                                }
+                                self.tool(call, &mut out)?;
+                            }
+                            PartDelta::AnthropicThinking(_) | PartDelta::GeminiText(_) => {
+                                return Err(bad("Responses cannot represent vendor thinking"));
+                            }
+                        }
                     }
-                    if let Some(refusal) = &choice.delta.refusal {
-                        self.text(refusal, true, &mut out)?;
-                    }
-                    for call in choice.delta.tool_calls.iter().flatten() {
-                        self.tool(call, &mut out)?;
+                    if self.reasoning_active.is_some() && choice.finish_reason.is_some() {
+                        return Err(bad("finish inside reasoning item"));
                     }
                     if let Some(finish) = &choice.finish_reason {
                         status(finish)?;
@@ -1262,13 +1407,7 @@ fn validate_event_fields(v: &Value) -> Result<(), CodecError> {
     Ok(())
 }
 
-fn reasoning_delta(delta: ResponsesReasoningDelta) -> Delta {
-    Delta {
-        responses_reasoning: Some(delta),
-        ..Default::default()
-    }
-}
-fn snapshot_deltas(item: &wire::ReasoningItem) -> Vec<ResponsesReasoningDelta> {
+fn snapshot_deltas(item: &wire::ReasoningItem) -> Vec<(usize, ResponsesReasoningDelta)> {
     let start = wire::ReasoningItem {
         id: item.id.clone(),
         summary: Vec::new(),
@@ -1276,17 +1415,21 @@ fn snapshot_deltas(item: &wire::ReasoningItem) -> Vec<ResponsesReasoningDelta> {
         status: Some(wire::ItemStatus::InProgress),
         content: item.content.clone(),
     };
-    let mut out = vec![ResponsesReasoningDelta::Start { item: start }];
-    for part in &item.summary {
-        out.extend([
-            ResponsesReasoningDelta::SummaryStart,
-            ResponsesReasoningDelta::SummaryText {
-                text: part.text().into(),
-            },
-            ResponsesReasoningDelta::SummaryTextDone,
-            ResponsesReasoningDelta::SummaryDone { incomplete: false },
-        ]);
+    let mut out = vec![(0, ResponsesReasoningDelta::Start { item: start })];
+    for (index, part) in item.summary.iter().enumerate() {
+        out.extend(
+            [
+                ResponsesReasoningDelta::SummaryStart,
+                ResponsesReasoningDelta::SummaryText {
+                    text: part.text().into(),
+                },
+                ResponsesReasoningDelta::SummaryTextDone,
+                ResponsesReasoningDelta::SummaryDone { incomplete: false },
+            ]
+            .into_iter()
+            .map(|delta| (index, delta)),
+        );
     }
-    out.push(ResponsesReasoningDelta::Done { item: item.clone() });
+    out.push((0, ResponsesReasoningDelta::Done { item: item.clone() }));
     out
 }

@@ -62,10 +62,11 @@ pub(super) fn portable(r: &ChatRequest) -> Result<ChatRequest, CodecError> {
     let mut portable = r.clone();
     portable.gemini_thinking = None;
     for m in &mut portable.messages {
-        if let Some(Content::Parts(parts)) = &mut m.content {
+        let assistant = m.role == Role::Assistant;
+        if let Some(Content::Parts(parts)) = m.content_mut() {
             for part in parts {
                 if let ContentPart::GeminiText(t) = part {
-                    if m.role != Role::Assistant {
+                    if !assistant {
                         return Err(bad("Gemini thinking parts require assistant role"));
                     }
                     wire_text(t)?;
@@ -77,7 +78,7 @@ pub(super) fn portable(r: &ChatRequest) -> Result<ChatRequest, CodecError> {
                 }
             }
         }
-        for ToolCall::Function { gemini, .. } in m.tool_calls.iter_mut().flatten() {
+        for ToolCall::Function { gemini, .. } in m.tool_calls_mut() {
             *gemini = None;
         }
     }

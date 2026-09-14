@@ -3,6 +3,8 @@ use nyro_protocol::openai::chat::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+mod message;
+pub use message::MessageItem;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Workload {
@@ -109,10 +111,8 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anthropic_cache_control: Option<nyro_protocol::anthropic::CacheControl>,
     pub role: Role,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content: Option<Content>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<MessageItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     /// Explicit tool execution failure. Only meaningful for tool-result messages.
@@ -336,10 +336,8 @@ pub struct Choice {
 #[serde(deny_unknown_fields)]
 pub struct ResponseMessage {
     pub role: Role,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content: Option<Content>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<MessageItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -408,19 +406,54 @@ pub struct StreamChoice {
 #[serde(deny_unknown_fields)]
 pub struct Delta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub responses_reasoning: Option<ResponsesReasoningDelta>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gemini_text: Option<GeminiText>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub anthropic_thinking: Option<AnthropicThinkingDelta>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refusal: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCallDelta>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<PositionedDelta>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PositionedDelta {
+    pub position: StreamPosition,
+    pub delta: PartDelta,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamPosition {
+    pub item: StreamItem,
+    pub part: u32,
+}
+
+/// Ordered source items and Chat field slots are different coordinate systems.
+/// Derived ordering is for map keys only, never for sorting output events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    content = "index",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum StreamItem {
+    Ordered(u32),
+    OpenAiMessage,
+    OpenAiTool(u32),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum PartDelta {
+    Text(String),
+    Refusal(String),
+    ToolCall(ToolCallDelta),
+    AnthropicThinking(AnthropicThinkingDelta),
+    ResponsesReasoning(ResponsesReasoningDelta),
+    GeminiText(GeminiText),
 }
 /// Explicit boundaries preserve signature-only and consecutive thinking blocks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

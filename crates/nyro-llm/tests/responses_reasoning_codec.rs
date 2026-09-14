@@ -2,7 +2,7 @@ use nyro_llm::codec::{
     anthropic, gemini,
     openai::{self, responses as r},
 };
-use nyro_llm::ir::ChatEvent;
+use nyro_llm::ir::{ChatEvent, PartDelta, StreamItem};
 use nyro_protocol::framing::{Decoder, Event};
 use serde_json::{Value, json};
 
@@ -260,7 +260,7 @@ fn cross_protocol_stream_encoders_reject_reasoning_before_emitting_it() {
     let mut rejected = false;
     for frame in frames() {
         for e in d.push(&frame).unwrap() {
-            if matches!(&e,ChatEvent::Chunk(c) if c.choices.iter().any(|c|c.delta.responses_reasoning.is_some()))
+            if matches!(&e,ChatEvent::Chunk(c) if c.choices.iter().any(|c|c.delta.events.iter().any(|e| matches!(e.delta, PartDelta::ResponsesReasoning(_)))))
             {
                 assert!(openai::encode_chat_event(&e, "m").is_err());
                 assert!(anthropic::StreamEncoder::new("m".into()).push(&e).is_err());
@@ -283,6 +283,18 @@ fn reasoning_then_message_then_function_stream_retains_item_order() {
             json!({"response":response(json!([reasoning(),message(),call]))}),
         ))
         .unwrap();
+    let positions: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            ChatEvent::Chunk(c) => Some(c.choices.iter().flat_map(|c| &c.delta.events)),
+            ChatEvent::Done => None,
+        })
+        .flatten()
+        .map(|e| e.position.item)
+        .collect();
+    assert!(positions.contains(&StreamItem::Ordered(0)));
+    assert!(positions.contains(&StreamItem::Ordered(1)));
+    assert!(positions.contains(&StreamItem::Ordered(2)));
     let mut output = String::new();
     for event in events {
         output.push_str(&e.push(&event).unwrap());
@@ -367,6 +379,19 @@ fn reasoning_state_and_terminal_expansion_are_bounded() {
     }
     assert!(rejected);
 }
+
+#[test]
+fn terminal_snapshot_budget_includes_positioned_event_allocations() {
+    let frame = event(
+        0,
+        "response.completed",
+        json!({"response":response(json!([
+            {"type":"reasoning","id":"rs_original","summary":[],"encrypted_content":"opaque-final"}
+        ]))}),
+    );
+    assert!(frame.data.len() < 3200);
+    assert!(r::StreamDecoder::with_limit(3200).push(&frame).is_err());
+}
 #[test]
 fn completed_json_cannot_contain_incomplete_reasoning_items() {
     let mut item = reasoning();
@@ -378,4 +403,46 @@ fn completed_json_cannot_contain_incomplete_reasoning_items() {
     assert!(r::encode_chat_response(&ir).is_ok());
     ir.choices[0].finish_reason = Some("stop".into());
     assert!(r::encode_chat_response(&ir).is_err());
+}
+
+#[test]
+fn reasoning_positions_preserve_summary_indices_and_reject_retargeting() {
+    let mut decoder = r::StreamDecoder::new();
+    let mut encoder = r::StreamEncoder::new("m".into());
+    for frame in frames() {
+        let source: Value = serde_json::from_str(&frame.data).unwrap();
+        for mut event in decoder.push(&frame).unwrap() {
+            if let ChatEvent::Chunk(chunk) = &mut event {
+                for choice in &mut chunk.choices {
+                    for part in &mut choice.delta.events {
+                        assert_eq!(part.position.item, StreamItem::Ordered(0));
+                        if let Some(index) = source["summary_index"].as_u64() {
+                            assert_eq!(u64::from(part.position.part), index);
+                        }
+                        if matches!(
+                            part.delta,
+                            PartDelta::ResponsesReasoning(
+                                nyro_llm::ir::ResponsesReasoningDelta::SummaryText { .. }
+                            )
+                        ) {
+                            part.position.part += 1;
+                            assert!(encoder.push(&event).is_err());
+                            assert!(encoder.push(&ChatEvent::Done).is_err());
+                            return;
+                        }
+                    }
+                }
+            }
+            encoder.push(&event).unwrap();
+        }
+    }
+    panic!("missing summary delta");
+}
+
+#[test]
+fn ordered_history_is_validated_before_reasoning_projection() {
+    let body = json!({"model":"m","input":[reasoning(),{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}]});
+    let mut request = r::decode_chat(body).unwrap();
+    request.messages[0].items.swap(0, 1);
+    assert!(r::encode_chat(&request).is_err());
 }
