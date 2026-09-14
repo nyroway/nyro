@@ -141,7 +141,7 @@ fn think_tags_remain_literal_text_across_json_protocol_conversion() {
             anthropic::decode_chat_response(anthropic::encode_chat_response(&ir).unwrap()).unwrap(),
             gemini::decode_chat_response(gemini::encode_chat_response(&ir).unwrap()).unwrap(),
         ] {
-            let content = back.choices[0].message.content.as_ref().unwrap();
+            let content = back.choices[0].message.content().unwrap();
             let actual = match content {
                 Content::Text(s) => s.clone(),
                 Content::Parts(p) => p

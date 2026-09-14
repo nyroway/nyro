@@ -117,8 +117,7 @@ fn direct_ir_output_cannot_emit_anthropic_input_controls() {
         body.pointer_mut(location).unwrap()["cache_control"] = json!({"type":"ephemeral"});
         let input = anthropic::decode_chat(body).unwrap();
         let mut response = openai::decode_chat_response(json!({"id":"r","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"finish_reason":"stop"}]})).unwrap();
-        response.choices[0].message.content = input.messages[2].content.clone();
-        response.choices[0].message.tool_calls = input.messages[2].tool_calls.clone();
+        response.choices[0].message.items = input.messages[2].items.clone();
         for encoded in [
             openai::encode_chat_response(&response),
             openai::responses::encode_chat_response(&response),

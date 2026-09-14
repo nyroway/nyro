@@ -1,6 +1,227 @@
-use nyro_llm::{codec::anthropic::*, ir::ChatEvent};
+use nyro_llm::{
+    codec::anthropic::*,
+    ir::{ChatEvent, PartDelta, PositionedDelta, StreamItem, StreamPosition},
+};
 use nyro_protocol::framing::Event;
 use serde_json::{Value, json};
+
+#[test]
+fn static_ir_uses_ordered_items_and_keeps_the_existing_subset() {
+    let content = json!([
+        {"type":"text","text":"checking"},
+        {"type":"tool_use","id":"t","name":"f","input":{}}
+    ]);
+    let request = decode_chat(json!({"model":"m","max_tokens":4,"messages":[
+        {"role":"assistant","content":content},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}
+    ]}))
+    .unwrap();
+    let mut value = serde_json::to_value(&request).unwrap();
+    let message = &value["messages"][0];
+    assert_eq!(message["items"][0]["type"], "content");
+    assert_eq!(message["items"][1]["type"], "tool_call");
+    assert!(message.get("content").is_none());
+    assert!(message.get("tool_calls").is_none());
+    assert_eq!(
+        encode_chat(&request).unwrap()["messages"][0]["content"],
+        content
+    );
+    value["messages"][0]["items"]
+        .as_array_mut()
+        .unwrap()
+        .swap(0, 1);
+    let interleaved = serde_json::from_value(value).unwrap();
+    assert!(encode_chat(&interleaved).is_err());
+
+    let response = decode_chat_response(json!({"id":"r","type":"message","role":"assistant","model":"m","content":content,"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}})).unwrap();
+    let mut value = serde_json::to_value(&response).unwrap();
+    assert_eq!(
+        value["choices"][0]["message"]["items"][1]["type"],
+        "tool_call"
+    );
+    assert_eq!(encode_chat_response(&response).unwrap()["content"], content);
+    value["choices"][0]["message"]["items"]
+        .as_array_mut()
+        .unwrap()
+        .swap(0, 1);
+    assert!(encode_chat_response(&serde_json::from_value(value).unwrap()).is_err());
+}
+
+#[test]
+fn decoder_positions_identify_the_original_anthropic_blocks() {
+    let mut decoder = StreamDecoder::new();
+    decoder.push(&event(json!({"type":"message_start","message":{"id":"r","type":"message","role":"assistant","model":"m","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}))).unwrap();
+    for index in 0..2 {
+        let events = decoder.push(&event(json!({"type":"content_block_start","index":index,"content_block":{"type":"text","text":"part"}}))).unwrap();
+        let ChatEvent::Chunk(chunk) = &events[0] else {
+            panic!("expected chunk")
+        };
+        let delta = serde_json::to_value(&chunk.choices[0].delta).unwrap();
+        assert_eq!(
+            delta["events"][0]["position"],
+            json!({"item":{"type":"ordered","index":index},"part":0})
+        );
+        assert!(delta.get("content").is_none());
+        decoder
+            .push(&event(json!({"type":"content_block_stop","index":index})))
+            .unwrap();
+    }
+}
+
+#[test]
+fn encoder_checks_position_ownership_without_reordering_events() {
+    use nyro_llm::{codec::openai, ir::AnthropicThinkingDelta};
+    let base = openai::decode_chat_event(&json!({"id":"r","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{}}]}).to_string()).unwrap();
+    let chunk = |events| {
+        let ChatEvent::Chunk(mut c) = base.clone() else {
+            unreachable!()
+        };
+        c.choices[0].delta.events = events;
+        ChatEvent::Chunk(c)
+    };
+    let positioned = |item, delta| PositionedDelta {
+        position: StreamPosition {
+            item: StreamItem::Ordered(item),
+            part: 0,
+        },
+        delta,
+    };
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&chunk(vec![positioned(
+            0,
+            PartDelta::AnthropicThinking(AnthropicThinkingDelta::Start),
+        )]))
+        .unwrap();
+    assert!(
+        encoder
+            .push(&chunk(vec![positioned(
+                1,
+                PartDelta::AnthropicThinking(AnthropicThinkingDelta::Signature {
+                    signature: "signed".into()
+                })
+            )]))
+            .is_err()
+    );
+
+    let tool = nyro_llm::ir::ToolCallDelta {
+        gemini: None,
+        index: 0,
+        id: Some("t".into()),
+        r#type: Some(nyro_llm::ir::FunctionType::Function),
+        function: Some(nyro_llm::ir::FunctionDelta {
+            name: Some("f".into()),
+            arguments: Some("{}".into()),
+        }),
+    };
+    let mut encoder = StreamEncoder::new("m".into());
+    encoder
+        .push(&chunk(vec![positioned(
+            0,
+            PartDelta::ToolCall(tool.clone()),
+        )]))
+        .unwrap();
+    let mut tail = tool.clone();
+    tail.id = None;
+    tail.function = None;
+    assert!(
+        encoder
+            .push(&chunk(vec![positioned(1, PartDelta::ToolCall(tail))]))
+            .is_err()
+    );
+    let mut encoder = StreamEncoder::new("m".into());
+    assert!(
+        encoder
+            .push(&chunk(vec![
+                positioned(0, PartDelta::ToolCall(tool)),
+                positioned(1, PartDelta::Text("after".into()))
+            ]))
+            .is_err()
+    );
+
+    let mut encoder = StreamEncoder::new("m".into());
+    let output = encoder
+        .push(&chunk(vec![
+            positioned(0, PartDelta::Text("one".into())),
+            positioned(1, PartDelta::Text("two".into())),
+        ]))
+        .unwrap();
+    assert_eq!(output.matches("event: content_block_start\n").count(), 2);
+    assert!(output.find("one").unwrap() < output.find("two").unwrap());
+    assert!(
+        encoder
+            .push(&chunk(vec![positioned(
+                0,
+                PartDelta::Text("reopened".into())
+            )]))
+            .is_err()
+    );
+}
+fn parts_chunk(events: Vec<PositionedDelta>) -> ChatEvent {
+    let ChatEvent::Chunk(mut chunk) = nyro_llm::codec::openai::decode_chat_event(&json!({"id":"r","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{}}]}).to_string()).unwrap() else { unreachable!() };
+    chunk.choices[0].delta.events = events;
+    ChatEvent::Chunk(chunk)
+}
+
+fn text_part(item: u32, part: u32, text: String) -> PositionedDelta {
+    PositionedDelta {
+        position: StreamPosition {
+            item: StreamItem::Ordered(item),
+            part,
+        },
+        delta: PartDelta::Text(text),
+    }
+}
+
+#[test]
+fn tools_cannot_reuse_an_earlier_content_item_or_another_part_of_it() {
+    for content in [
+        vec![text_part(0, 0, "a".into()), text_part(1, 0, "b".into())],
+        vec![text_part(0, 1, "a".into())],
+    ] {
+        let mut encoder = StreamEncoder::new("m".into());
+        encoder.push(&parts_chunk(content)).unwrap();
+        let tool = PositionedDelta {
+            position: StreamPosition {
+                item: StreamItem::Ordered(0),
+                part: 0,
+            },
+            delta: PartDelta::ToolCall(nyro_llm::ir::ToolCallDelta {
+                index: 0,
+                id: Some("t".into()),
+                r#type: Some(nyro_llm::ir::FunctionType::Function),
+                function: Some(nyro_llm::ir::FunctionDelta {
+                    name: Some("f".into()),
+                    arguments: Some("{}".into()),
+                }),
+                gemini: None,
+            }),
+        };
+        assert!(encoder.push(&parts_chunk(vec![tool])).is_err());
+    }
+}
+
+#[test]
+fn text_batch_is_bounded_without_accumulating_text_across_chunks() {
+    let mut encoder = StreamEncoder::with_limit("m".into(), 1024);
+    let single = parts_chunk(vec![text_part(0, 0, "x".repeat(1024))]);
+    for _ in 0..3 {
+        encoder.push(&single).unwrap();
+    }
+    let mut encoder = StreamEncoder::with_limit("m".into(), 1024);
+    assert!(
+        encoder
+            .push(&parts_chunk(vec![text_part(0, 0, "x".repeat(600)); 3]))
+            .is_err()
+    );
+    let mut encoder = StreamEncoder::with_limit("m".into(), 1024);
+    assert!(
+        encoder
+            .push(&parts_chunk(vec![text_part(0, 0, String::new()); 1024]))
+            .is_err()
+    );
+}
+
 fn event(value: Value) -> Event {
     Event {
         event: value["type"].as_str().map(str::to_owned),
@@ -67,7 +288,13 @@ fn response_and_stream_encoding_preserve_usage() {
         choices: vec![nyro_llm::ir::StreamChoice {
             index: 0,
             delta: nyro_llm::ir::Delta {
-                content: Some("hello".into()),
+                events: vec![PositionedDelta {
+                    position: StreamPosition {
+                        item: StreamItem::OpenAiMessage,
+                        part: 0,
+                    },
+                    delta: PartDelta::Text("hello".into()),
+                }],
                 ..Default::default()
             },
             finish_reason: Some("stop".into()),
@@ -161,8 +388,8 @@ fn parallel_tool_encoder_validates_fragmented_arguments() {
             Some("tool_calls"),
         ),
     ] {
-        let chunk:ChatChunk=serde_json::from_value(json!({"id":"m","object":"chat.completion.chunk","created":0,"model":"c","choices":[{"index":0,"delta":{"tool_calls":tools},"finish_reason":finish}],"usage":if finish.is_some(){serde_json::to_value(&response.usage).unwrap()}else{Value::Null}})).unwrap();
-        sse.push_str(&encoder.push(&ChatEvent::Chunk(Box::new(chunk))).unwrap());
+        let chunk = openai::decode_chat_event(&json!({"id":"m","object":"chat.completion.chunk","created":0,"model":"c","choices":[{"index":0,"delta":{"tool_calls":tools},"finish_reason":finish}],"usage":if finish.is_some(){serde_json::to_value(&response.usage).unwrap()}else{Value::Null}}).to_string()).unwrap();
+        sse.push_str(&encoder.push(&chunk).unwrap());
     }
     sse.push_str(&encoder.push(&ChatEvent::Done).unwrap());
     let mut framing = nyro_protocol::framing::Decoder::new(4096);

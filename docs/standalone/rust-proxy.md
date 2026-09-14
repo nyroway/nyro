@@ -480,3 +480,11 @@ Contributors can exercise the root process, probes, authentication, Chat, Embedd
 cargo build -p nyro
 python3 tests/proxy_smoke.py
 ```
+
+## Ordered IR migration for Rust callers
+
+The Rust `nyro-llm` API now stores message bodies in `Message.items` and `ResponseMessage.items`, an ordered `Vec<MessageItem>`. `MessageItem::Content(Content)` retains the existing text/parts representation; `MessageItem::ToolCall(ToolCall)` retains call metadata. Direct callers must replace the old `content`/`tool_calls` fields. Borrowed `content()` and `tool_calls()` views do not store another copy or establish order.
+
+`Delta` now contains `role` and `events: Vec<PositionedDelta>`. Each event carries a typed `PartDelta` and an item/part position. OpenAI Chat uses stable message/tool field slots, preserving the original tool index; it does not claim a total order between fields. Other decoders retain their block/item coordinates or received Gemini Part sequence. Usage and stream completion remain in their existing envelope fields.
+
+This is a representation change, not expanded interleaving support. Strict codecs still reject unsupported content after calls and other documented ordering constraints, including directly constructed IR with multiple or interleaved content groups. Ordinary block start/end events, full Responses item metadata and protocol-specific interleaving remain follow-up work. JSON configuration and vendor wire field names are unchanged. Strict Chat conversion normalizes an empty `tool_calls` array to an omitted field; non-assistant request messages still reject that field even when empty. Matching native mode preserves the original array. Regression: [ordered IR codecs](../../crates/nyro-llm/tests/ordered_ir_codec.rs).

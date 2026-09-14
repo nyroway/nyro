@@ -81,12 +81,11 @@ fn sse_preserves_signed_parts_and_trailing_usage_until_eof() {
             for e in decoder.push(&event(frame.clone())).unwrap() {
                 if let nyro_llm::ir::ChatEvent::Chunk(c) = &e
                     && c.choices.iter().any(|c| {
-                        c.delta.gemini_text.is_some()
-                            || c.delta
-                                .tool_calls
-                                .iter()
-                                .flatten()
-                                .any(|c| c.gemini.is_some())
+                        c.delta.events.iter().any(|e| {
+                            matches!(&e.delta, nyro_llm::ir::PartDelta::GeminiText(_))
+                                || matches!(&e.delta,
+                            nyro_llm::ir::PartDelta::ToolCall(c) if c.gemini.is_some())
+                        })
                     })
                 {
                     assert!(openai::encode_chat_event(&e, "m").is_err());

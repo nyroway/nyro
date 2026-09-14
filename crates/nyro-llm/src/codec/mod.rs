@@ -15,6 +15,42 @@ impl From<serde_json::Error> for CodecError {
 pub mod anthropic;
 pub mod gemini;
 
+/// The foundation migrates storage, not the accepted ordered-output subset.
+fn validate_message_items(items: &[crate::ir::MessageItem]) -> Result<(), CodecError> {
+    for (index, item) in items.iter().enumerate() {
+        if matches!(item, crate::ir::MessageItem::Content(_)) && index != 0 {
+            return Err(CodecError(
+                "multiple or interleaved content groups are not supported".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate field slots without inventing an order between OpenAI Chat fields.
+fn validate_position(event: &crate::ir::PositionedDelta) -> Result<(), CodecError> {
+    use crate::ir::{PartDelta as D, StreamItem as I};
+    let valid = match (&event.position.item, &event.delta) {
+        (I::OpenAiMessage, D::Text(_)) => event.position.part == 0,
+        (I::OpenAiMessage, D::Refusal(_)) => event.position.part == 1,
+        (I::OpenAiTool(index), D::ToolCall(call)) => {
+            event.position.part == 0 && *index == call.index
+        }
+        (I::Ordered(_), D::ToolCall(_) | D::GeminiText(_) | D::AnthropicThinking(_)) => {
+            event.position.part == 0
+        }
+        (I::Ordered(_), _) => true,
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(CodecError(
+            "stream position does not match its payload".into(),
+        ))
+    }
+}
+
 /// Wire API selection is independent of workload and provider credentials.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ChatFormat {

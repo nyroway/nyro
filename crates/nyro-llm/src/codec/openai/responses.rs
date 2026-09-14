@@ -11,8 +11,7 @@ fn message(role: Role, content: Option<Content>) -> Message {
     Message {
         anthropic_cache_control: None,
         role,
-        content,
-        tool_calls: None,
+        items: MessageItem::from_parts(content, None),
         tool_call_id: None,
         tool_error: false,
         name: None,
@@ -158,14 +157,13 @@ pub fn decode_chat(value: Value) -> Result<ChatRequest, CodecError> {
                         messages
                             .last_mut()
                             .unwrap()
-                            .tool_calls
-                            .get_or_insert_with(Vec::new)
-                            .push(ToolCall::Function {
+                            .items
+                            .push(MessageItem::ToolCall(ToolCall::Function {
                                 gemini: None,
                                 anthropic_cache_control: None,
                                 id: call_id,
                                 function: FunctionCall { name, arguments },
-                            });
+                            }));
                     }
                     wire::InputItem::Item(wire::HistoryItem::FunctionCallOutput {
                         call_id,
@@ -336,13 +334,17 @@ fn content_parts(
     }
 }
 pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
+    super::validate_chat(r)?;
     let reasoning = super::reasoning_config(r)?;
     let mut portable = r.clone();
     portable.responses_reasoning = None;
     portable.responses_include_encrypted = false;
     for m in &mut portable.messages {
-        let (_, content) = split_reasoning(m.content.as_ref(), m.role == Role::Assistant)?;
-        m.content = content;
+        let (_, content) = split_reasoning(m.content(), m.role == Role::Assistant)?;
+        m.items.retain(|i| !matches!(i, MessageItem::Content(_)));
+        if let Some(content) = content {
+            m.items.insert(0, MessageItem::Content(content));
+        }
     }
     super::encode_chat(&portable)?;
     let g = &r.generation;
@@ -379,7 +381,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             return Err(bad("unsupported Responses message metadata"));
         }
         if m.role == Role::Tool {
-            let output = match &m.content {
+            let output = match m.content() {
                 Some(Content::Text(s)) => json!(s),
                 Some(content @ Content::Parts(_)) => {
                     json!(content_parts(content, false, false, true)?)
@@ -394,7 +396,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
             );
             continue;
         }
-        let (reasoning, content) = split_reasoning(m.content.as_ref(), m.role == Role::Assistant)?;
+        let (reasoning, content) = split_reasoning(m.content(), m.role == Role::Assistant)?;
         input.extend(
             reasoning
                 .into_iter()
@@ -417,7 +419,7 @@ pub fn encode_chat(r: &ChatRequest) -> Result<Value, CodecError> {
         if !parts.is_empty() {
             input.push(json!({"type":"message","role":m.role,"content":parts}));
         }
-        for ToolCall::Function { id, function, .. } in m.tool_calls.iter().flatten() {
+        for ToolCall::Function { id, function, .. } in m.tool_calls() {
             nonempty(id)?;
             nonempty(&function.name)?;
             input.push(json!({"type":"function_call","call_id":id,"name":function.name,"arguments":function.arguments}));
@@ -790,8 +792,7 @@ fn decode_response(r: wire::Response) -> Result<ChatResponse, CodecError> {
             index: 0,
             message: ResponseMessage {
                 role: Role::Assistant,
-                content,
-                tool_calls: (!calls.is_empty()).then_some(calls),
+                items: MessageItem::from_parts(content, (!calls.is_empty()).then_some(calls)),
                 refusal: saw_refusal.then_some(refusal),
                 audio: None,
             },
@@ -846,7 +847,7 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
     {
         return Err(bad("unsupported Responses response role/audio/logprobs"));
     }
-    let (reasoning, content) = split_reasoning(m.content.as_ref(), true)?;
+    let (reasoning, content) = split_reasoning(m.content(), true)?;
     let mut output: Vec<Value> = reasoning
         .into_iter()
         .map(|r| json!(wire::OutputItem::Reasoning(r)))
@@ -875,7 +876,7 @@ pub fn encode_chat_response(r: &ChatResponse) -> Result<Value, CodecError> {
             gemini,
             ..
         },
-    ) in m.tool_calls.iter().flatten().enumerate()
+    ) in m.tool_calls().enumerate()
     {
         if gemini.is_some() {
             return Err(bad("Responses cannot represent Gemini call signatures"));

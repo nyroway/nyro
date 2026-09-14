@@ -119,7 +119,7 @@ fn input_markers_cannot_leak_into_generated_output() {
         json!({"model":"m","messages":[{"role":"assistant","content":[text("history")]}]}),
     )
     .unwrap();
-    response.choices[0].message.content = input.messages[0].content.clone();
+    response.choices[0].message.items = input.messages[0].items.clone();
     for encoded in [
         openai::encode_chat_response(&response),
         openai::responses::encode_chat_response(&response),
