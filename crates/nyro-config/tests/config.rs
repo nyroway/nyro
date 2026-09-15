@@ -14,6 +14,7 @@ fn valid_config() -> Config {
     Config {
         server: ServerConfig::default(),
         llm: LlmConfig {
+            subject_limits: BTreeMap::new(),
             providers: BTreeMap::from([(
                 "openai".into(),
                 Provider {
@@ -641,4 +642,32 @@ fn api_key_lifecycle_rejects_malformed_fields_without_disclosing_values() {
             .to_string();
         assert!(!error.contains("client-secret") && !error.contains("private-invalid-time"));
     }
+}
+
+#[test]
+fn subject_request_policy_references_existing_subject_and_affects_fingerprint() {
+    let original = valid_config();
+    let mut value = serde_json::to_value(&original).unwrap();
+    value["llm"]["subject_limits"] = serde_json::json!({"deploy":{"rpm":2,"rpd":10}});
+    let mut configured: Config = serde_json::from_value(value.clone()).unwrap();
+    configured.validate().unwrap();
+    assert_ne!(
+        configured.fingerprint().unwrap(),
+        original.fingerprint().unwrap()
+    );
+    configured.security.api_keys[0].enabled = false;
+    configured.security.api_keys[0].expires_at = Some(0);
+    configured.validate().unwrap();
+    value["llm"]["subject_limits"] = serde_json::json!({"unknown":{"rpm":2}});
+    let unknown: Config = serde_json::from_value(value).unwrap();
+    assert!(unknown.validate().is_err());
+    let mut omitted = serde_json::to_value(&original).unwrap();
+    omitted["llm"]["subject_limits"] = serde_json::json!({});
+    assert_eq!(
+        serde_json::from_value::<Config>(omitted)
+            .unwrap()
+            .fingerprint()
+            .unwrap(),
+        original.fingerprint().unwrap()
+    );
 }

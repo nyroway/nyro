@@ -10,11 +10,11 @@ use std::{
 /// A shared token bucket. Clones consume the same capacity.
 #[derive(Clone, Debug)]
 pub struct RateLimit {
-    bucket: Arc<Mutex<Bucket>>,
+    pub(crate) bucket: Arc<Mutex<Bucket>>,
 }
 
 #[derive(Debug)]
-struct Bucket {
+pub(crate) struct Bucket {
     requests: u32,
     period_ns: u128,
     capacity: u128,
@@ -83,7 +83,7 @@ impl RateLimit {
 }
 
 impl Bucket {
-    fn try_acquire(&mut self, now: Instant) -> Result<(), RateExceeded> {
+    pub(crate) fn try_acquire(&mut self, now: Instant) -> Result<(), RateExceeded> {
         let elapsed = now.saturating_duration_since(self.updated_at).as_nanos();
         let refill = elapsed.saturating_mul(u128::from(self.requests));
         self.credit = self.credit.saturating_add(refill).min(self.capacity);

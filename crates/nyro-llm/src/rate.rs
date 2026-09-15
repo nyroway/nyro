@@ -49,7 +49,7 @@ impl RateRegistry {
 
 pub(crate) struct BoundRate {
     policy: RateConfig,
-    limit: RateLimit,
+    pub(crate) limit: RateLimit,
 }
 
 impl BoundRate {

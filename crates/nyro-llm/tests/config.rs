@@ -84,6 +84,7 @@ fn rate_policy_defaults_to_one_burst_and_omission_disables_it() {
 
 fn valid_config() -> Config {
     Config {
+        subject_limits: BTreeMap::new(),
         providers: BTreeMap::from([(
             "openai".into(),
             Provider {

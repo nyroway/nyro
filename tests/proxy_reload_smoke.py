@@ -329,6 +329,57 @@ def main():
                 stream_connection = None
                 reload_config(updated, "applied")
 
+                # Subject windows cross model aliases and survive credential/lifecycle edits.
+                # A distinct identity keeps this budget independent from earlier smoke requests.
+                limited = copy.deepcopy(updated)
+                limited["security"]["api_keys"].append({"id": "windowed", "secret": "window-secret-old"})
+                limited["llm"]["subject_limits"] = {"windowed": {"rpm": 2, "rpd": 2}}
+                limited["llm"]["models"]["public-added"]["subjects"].append("windowed")
+                reload_config(limited, "applied")
+                assert chat("public", "window-secret-old")[0] == 200
+                rotated = copy.deepcopy(limited)
+                rotated["security"]["api_keys"][-1]["secret"] = "window-secret-new"
+                reload_config(rotated, "applied")
+                assert chat("public", "window-secret-old")[0] == 401
+                assert chat("public-added", "window-secret-new")[0] == 200
+
+                def window_denied():
+                    calls_before = len(Upstream.calls)
+                    for name in ["public", "public-added"]:
+                        connection, response = connect("/v1/chat/completions", {
+                            "model": name, "messages": [{"role": "user", "content": "Hello"}]},
+                            "window-secret-new")
+                        try:
+                            assert response.status == 429
+                            assert 86340 < int(response.getheader("Retry-After")) <= 86400
+                            assert json.loads(response.read())["error"]["code"] == "rate_limit_exceeded"
+                        finally:
+                            connection.close()
+                    assert len(Upstream.calls) == calls_before
+
+                window_denied()
+                assert chat("public", "client-secret-new")[0] == 200
+                assert chat("public", None)[0] == 200
+                window_generation = reload_config(rotated, "unchanged")
+                for field, value, reason in [("rpm", 3, "candidate_rejected"),
+                                             ("rpd", 0, "invalid_config")]:
+                    changed_window = copy.deepcopy(rotated)
+                    changed_window["llm"]["subject_limits"]["windowed"][field] = value
+                    reload_config(changed_window, "rejected", reason)
+                    window_denied()
+                assert reload_config(rotated, "unchanged") == window_generation
+                disabled_window = copy.deepcopy(rotated)
+                disabled_window["security"]["api_keys"][-1]["enabled"] = False
+                reload_config(disabled_window, "applied")
+                assert chat("public", "window-secret-new")[0] == 401
+                reload_config(rotated, "applied")
+                window_denied()
+                # Remove subject, grants and rule, then add them back: history stays retained.
+                reload_config(updated, "applied")
+                assert chat("public", "window-secret-new")[0] == 401
+                reload_config(rotated, "applied")
+                window_denied()
+
                 # A special file must not leave a blocking open alive during shutdown.
                 config.unlink()
                 os.mkfifo(config)
@@ -354,7 +405,7 @@ def main():
                     assert 'usage_state="not_attempted"' in line and "quota_charged_tokens=0" in line, line
                 reload_logs = "\n".join(reload_events())
                 for secret in ["client-secret-old", "client-secret-new", "upstream-secret-old",
-                               "upstream-secret-new", "private-invalid-provider-marker",
+                               "upstream-secret-new", "window-secret-old", "window-secret-new", "private-invalid-provider-marker",
                                "private-malformed-marker", str(config)]:
                     assert secret not in reload_logs, f"reload log leaked {secret}"
                 assert "fingerprint" not in reload_logs
@@ -370,7 +421,7 @@ def main():
         upstream.server_close()
     print("proxy reload smoke passed: SIGHUP, atomic replacement, deduplication, rejection, "
           "auth/routes, model discovery, key disable/expiry/renewal, SSE retention, "
-          "rate/quota/health reuse, redacted logs, FIFO rejection, SIGTERM")
+          "subject RPM/RPD retention, rate/quota/health reuse, redacted logs, FIFO rejection, SIGTERM")
 
 
 if __name__ == "__main__":

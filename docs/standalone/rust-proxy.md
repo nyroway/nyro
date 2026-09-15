@@ -80,7 +80,7 @@ The signal handler is registered before readiness. Each reload reads the origina
 
 A reload validates the whole file, checks settings that require restart, then compares the effective configuration fingerprint. Equivalent configurations skip candidate construction and keep the same generation. Valid changes build a candidate and publish it atomically: new requests use the new generation, while in-flight requests retain their original routing, credentials, response limits and deadline through body cleanup. Removing a model or rotating a key does not revoke already admitted work. Failed reads, validation, candidate construction or activation leave the current generation serving traffic. Shutdown cancels pending reload activation before kernel cleanup; reload publication uses a ten-second deadline.
 
-`server.listen` and `limit.concurrency` require restart. Other supported request settings, routes, providers and credentials can reload. Unchanged rate/quota policies retain their counters; changing active rate policies or live/consumed quota policies still rejects the candidate as documented below. Health state is reused only for unchanged backend identities. Reload does not clear process-local budgets or force old streams to finish.
+`server.listen` and `limit.concurrency` require restart. Other supported request settings, routes, providers and credentials can reload. Unchanged model rate, subject-window and quota policies retain their counters. Changing active model rate rules, active/unexpired subject-window rules or live/consumed quota rules rejects the candidate as documented below. Health state is reused only for unchanged backend identities. Reload does not clear process-local budgets or force old streams to finish.
 
 `nyro::reload` events report `outcome=applied` or `unchanged` with a numeric generation ID. Rejection events use `outcome=rejected` and a safe reason:
 
@@ -89,7 +89,7 @@ A reload validates the whole file, checks settings that require restart, then co
 | `read_failed` | Restore a readable configuration file |
 | `invalid_config` | Correct YAML, unknown fields, references or invalid values |
 | `restart_required` | Restore the listener/concurrency settings, or restart to change them |
-| `candidate_rejected` | Check active rate/quota policy changes and runtime construction constraints |
+| `candidate_rejected` | Check active model rate, active/unexpired subject-window or live/consumed quota policy changes and runtime construction constraints |
 | `activation_failed` / `interrupted` | Check shutdown/deadline conditions before retrying |
 
 Reload logs exclude configuration contents, file paths, fingerprints and detailed error chains. A rejected file is not rewritten; correct it and send another signal. Regression: `cargo test -p nyro reload::tests` and `python3 tests/proxy_reload_smoke.py` after building the root binary.
@@ -199,6 +199,32 @@ Excess requests receive a sanitized `429` in their native error format and an in
 The root composition shares rate state across configuration generations. An unchanged public-model rule retains its balance when routes, provider credentials, or other settings change. Changing a rule while its old binding is active rejects candidate construction; restart the process to change its parameters. Removing/disabling a rule lets existing generations finish with their binding, which is released after its last owner drops. A fresh binding or process restart starts with the configured burst capacity; no rate state is persisted. Use SIGHUP on Unix to reload other supported file changes.
 
 The reusable primitive is `nyro_limit::rate::RateLimit`. It accepts counts, a `Duration`, and burst capacity, and returns either admission or a retry delay. It contains no LLM, authentication, HTTP, kernel, or database types; the application owns scope mapping and rejection formatting. Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test rate_runtime`.
+
+## Subject request windows
+
+Configure rolling request limits under `llm.subject_limits`, keyed by an existing `security.api_keys[].id`. Merge this fragment into the same `llm` mapping as `providers` and `models`:
+
+```yaml
+llm:
+  subject_limits:
+    deploy:
+      rpm: 60
+      rpd: 1000
+```
+
+At least one of `rpm` or `rpd` is required. Each supplied value is a positive `u32`; zero, explicit `null`, an empty policy, unknown fields, blank IDs and unknown subjects reject configuration. Omitting a subject's policy disables its request windows. Disabled or expired keys remain valid policy references. Limits are LLM policy, separate from authentication fields on an API key.
+
+RPM counts admissions in the preceding 60 seconds; RPD counts admissions in the preceding 24 hours, with an admission expiring at exactly its window duration. RPD does not reset at midnight. These are exact rolling counts using a monotonic clock, so wall-clock adjustments do not refill them. Each window allows its full count immediately when empty. Add a model token bucket when you also need to smooth bursts.
+
+All configured LLM model aliases, supported APIs, workloads, and strict/native paths share the window for that authenticated subject. Different subjects have independent windows. Rotating a secret while preserving its ID preserves the budget; choosing a new ID creates a different subject. Anonymous calls have no subject window and remain subject to the model bucket. Supplied credentials must still authenticate, and an authenticated caller uses its subject windows even on an anonymous model. Model discovery does not consume request limits.
+
+At the existing request-rate admission step, Nyro checks the subject's windows and the model bucket atomically: rejection charges none of these request rules. A native `429` releases concurrency immediately without calling upstream. `Retry-After` rounds up to seconds and reports the longest blocked subject window, or the bucket delay when all subject windows permit admission. It is advisory; after that wait a different rule or caller may still prevent admission. Validation, authentication, authorization, concurrency rejection, incompatible-backend preparation and cancellation/deadline checks before this step consume nothing. Once admitted, a logical request counts once across all retries; upstream errors, no healthy backend, later token-quota rejection, cancellation and body/stream loss do not refund it.
+
+The root proxy shares histories through `runtime::SharedResources` across reloads and overlapping generations. Rotation, disable/re-enable, expiry/renewal and subject/policy removal/re-addition preserve unexpired admissions for the same ID. Removing a policy stops counting new requests against it; it does not erase prior history. A live binding or unexpired history rejects a candidate that changes its window parameters. Restart to change an established rule immediately; inactive histories with all admissions expired are reclaimed on a subsequent policy bind. Failed candidates do not reset active budgets or retain unused bindings indefinitely. An in-flight request keeps its original generation's policies.
+
+Counters are process-local and reset on restart; replicas do not coordinate them. TPM/TPD token windows and persistent counters remain unimplemented. Historical log counts are not imported: this counts logical admissions, not log completions. The shared primitive `nyro_limit::request::RequestLimit` accepts `(count, Duration)` windows and an optional `RateLimit` for atomic composition. `nyro_llm::subject_limit::SubjectLimitRegistry` supplies subject scope. Neither introduces HTTP, LLM or database types into `nyro-limit`, or responsibilities into the kernel. Rust callers constructing `config::Config` must supply `subject_limits` (an empty map preserves prior behavior); callers constructing every `SharedResources` field must also supply its registry or use `..Default::default()`.
+
+Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test rate_runtime`; the root reload smoke covers rotation, rejected changes, disable/re-enable and removal/re-addition.
 
 ## Token quota
 

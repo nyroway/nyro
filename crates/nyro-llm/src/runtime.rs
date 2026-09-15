@@ -24,6 +24,7 @@ use crate::{
     quota::{BoundQuota, QuotaRegistry},
     rate::{BoundRate, RateRegistry},
     router,
+    subject_limit::{BoundSubjectLimit, SubjectLimitRegistry},
 };
 
 mod endpoint;
@@ -38,6 +39,7 @@ pub struct SharedResources {
     pub health: Arc<HealthRegistry>,
     pub rates: Arc<RateRegistry>,
     pub quotas: Arc<QuotaRegistry>,
+    pub subject_limits: Arc<SubjectLimitRegistry>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -73,6 +75,7 @@ pub struct Runtime {
     health: BTreeMap<String, BTreeMap<String, Arc<BackendHealth>>>,
     rates: BTreeMap<String, Arc<BoundRate>>,
     quotas: BTreeMap<String, Arc<BoundQuota>>,
+    subject_limits: BTreeMap<String, Arc<BoundSubjectLimit>>,
 }
 
 impl Runtime {
@@ -117,6 +120,7 @@ impl Runtime {
             health,
             rates,
             quotas,
+            subject_limits,
         } = resources;
         config.validate().map_err(|_| BuildError)?;
         if options.request_timeout.is_zero()
@@ -187,7 +191,17 @@ impl Runtime {
                     .map(|policy| quotas.bind(id, policy).map(|quota| (id.clone(), quota)))
             })
             .collect::<Result<_, _>>()?;
+        let subject_limits = config
+            .subject_limits
+            .iter()
+            .map(|(id, policy)| {
+                subject_limits
+                    .bind(id, policy)
+                    .map(|bound| (id.clone(), bound))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Self {
+            subject_limits,
             quotas,
             rates,
             health,
@@ -421,11 +435,12 @@ impl Runtime {
         if !model.workloads.contains(&workload) {
             return Err(Failure::invalid("Model does not support this workload"));
         }
-        match self.authenticate(endpoint.kind, &parts.headers)? {
+        let identity = self.authenticate(endpoint.kind, &parts.headers)?;
+        match &identity {
             Some(identity) => {
                 if !model.allow_anonymous {
                     self.authorizer
-                        .authorize(&identity, "invoke", &public_model)
+                        .authorize(identity, "invoke", &public_model)
                         .map_err(|_| {
                             Failure::new(
                                 StatusCode::FORBIDDEN,
@@ -453,9 +468,18 @@ impl Runtime {
         if Instant::now() >= deadline {
             return Err(Failure::timeout());
         }
-        if let Some(rate) = self.rates.get(&public_model)
-            && let Err(exceeded) = rate.try_acquire()
-        {
+        let model_rate = self.rates.get(&public_model);
+        let subject_limit = identity
+            .as_ref()
+            .and_then(|identity| self.subject_limits.get(&identity.id));
+        let admission = if let Some(subject_limit) = subject_limit {
+            subject_limit
+                .limit
+                .try_acquire(model_rate.map(|rate| &rate.limit))
+        } else {
+            model_rate.map_or(Ok(()), |rate| rate.try_acquire())
+        };
+        if let Err(exceeded) = admission {
             // Rate admission rejects synchronously; its error body must not occupy an in-flight slot.
             drop(exchange.permit.take());
             return Err(Failure::rate(exceeded.retry_after));

@@ -94,6 +94,8 @@ pub enum ConfigError {
     MissingSubjects { model: String },
     #[error("model `{model}` references unknown subject `{subject}`")]
     UnknownSubject { model: String, subject: String },
+    #[error("request limits reference unknown subject `{subject}`")]
+    UnknownLimitedSubject { subject: String },
     #[error("could not serialize effective configuration")]
     Fingerprint,
 }
@@ -153,6 +155,13 @@ impl Config {
             .iter()
             .map(|key| key.id.as_str())
             .collect();
+        for subject in self.llm.subject_limits.keys() {
+            if !subjects.contains(subject.as_str()) {
+                return Err(ConfigError::UnknownLimitedSubject {
+                    subject: subject.clone(),
+                });
+            }
+        }
         for (model_id, model) in &self.llm.models {
             if !model.allow_anonymous && model.subjects.is_empty() {
                 return Err(ConfigError::MissingSubjects {
