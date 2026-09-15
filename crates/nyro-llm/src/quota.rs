@@ -1,7 +1,10 @@
 //! Cumulative model token accounting shared across runtime generations.
 
 use crate::{EmbeddingUsage, Usage, codec::CodecError, config::QuotaConfig, runtime::BuildError};
-use nyro_limit::quota::{Quota, QuotaError, QuotaSnapshot, Reservation};
+use nyro_limit::{
+    quota::{Quota, QuotaError, QuotaSnapshot, Reservation},
+    window::WindowReservation,
+};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -56,23 +59,54 @@ impl QuotaRegistry {
 }
 
 pub(crate) struct BoundQuota {
-    policy: QuotaConfig,
-    quota: Quota,
+    pub(crate) policy: QuotaConfig,
+    pub(crate) quota: Quota,
 }
 impl BoundQuota {
     pub(crate) fn reserve(&self) -> Result<AttemptQuota, QuotaError> {
-        Ok(AttemptQuota {
-            reservation: Some(self.quota.reserve(self.policy.reserve_tokens)?),
-            observed: None,
-        })
+        Ok(AttemptQuota::cumulative(
+            self.quota.reserve(self.policy.reserve_tokens)?,
+        ))
+    }
+}
+
+enum TokenReservation {
+    Cumulative(Reservation),
+    Window(WindowReservation),
+}
+impl TokenReservation {
+    fn amount(&self) -> u64 {
+        match self {
+            Self::Cumulative(r) => r.amount(),
+            Self::Window(r) => r.amount(),
+        }
+    }
+    fn settle(self, actual: u64) {
+        match self {
+            Self::Cumulative(r) => r.settle(actual),
+            Self::Window(r) => r.settle(actual),
+        }
     }
 }
 
 pub(crate) struct AttemptQuota {
-    reservation: Option<Reservation>,
+    reservation: Option<TokenReservation>,
     observed: Option<u64>,
 }
 impl AttemptQuota {
+    pub(crate) fn cumulative(reservation: Reservation) -> Self {
+        Self {
+            reservation: Some(TokenReservation::Cumulative(reservation)),
+            observed: None,
+        }
+    }
+    pub(crate) fn window(reservation: WindowReservation) -> Self {
+        Self {
+            reservation: Some(TokenReservation::Window(reservation)),
+            observed: None,
+        }
+    }
+
     pub(crate) fn observe(&mut self, usage: &Usage) -> Result<(), CodecError> {
         if usage.prompt_tokens.checked_add(usage.completion_tokens) != Some(usage.total_tokens) {
             return Err(CodecError("invalid token usage total".into()));
@@ -115,7 +149,7 @@ impl AttemptQuota {
     fn fallback(&self) -> u64 {
         self.reservation
             .as_ref()
-            .map_or(0, Reservation::amount)
+            .map_or(0, TokenReservation::amount)
             .max(self.observed.unwrap_or(0))
     }
 

@@ -6,7 +6,7 @@ use thiserror::Error;
 /// A cumulative budget with no refill or reset. Clones share one balance.
 #[derive(Clone, Debug)]
 pub struct Quota {
-    state: Arc<Mutex<QuotaSnapshot>>,
+    pub(crate) state: Arc<Mutex<QuotaSnapshot>>,
 }
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -50,10 +50,18 @@ impl Quota {
 
     /// Reserve positive units if settled usage plus pending units leaves room.
     pub fn reserve(&self, amount: u64) -> Result<Reservation, QuotaError> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        self.reserve_locked(amount, &mut state)
+    }
+
+    pub(crate) fn reserve_locked(
+        &self,
+        amount: u64,
+        state: &mut QuotaSnapshot,
+    ) -> Result<Reservation, QuotaError> {
         if amount == 0 {
             return Err(QuotaError::Invalid);
         }
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.used + u128::from(state.reserved) + u128::from(amount) > u128::from(state.limit) {
             return Err(QuotaError::Exceeded);
         }

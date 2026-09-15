@@ -380,6 +380,74 @@ def main():
                 reload_config(rotated, "applied")
                 window_denied()
 
+                # A pending token reservation survives rotation and generation retirement;
+                # a completed stream replaces it with actual usage before later admissions.
+                token_config = copy.deepcopy(rotated)
+                token_config["security"]["api_keys"].append({"id": "tokened", "secret": "token-secret-old"})
+                token_config["llm"]["subject_limits"]["tokened"] = {
+                    "tpm": 10, "tpd": 10, "reserve_tokens": 6}
+                reload_config(token_config, "applied")
+                Upstream.stream_started.clear()
+                Upstream.release_stream.clear()
+                stream_connection, stream_response = connect("/v1/chat/completions", {
+                    "model": "public", "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True}, "token-secret-old")
+                assert stream_response.status == 200 and Upstream.stream_started.wait(2)
+                first_event = b""
+                while not first_event.endswith(b"\n\n"):
+                    line = stream_response.readline()
+                    assert line, "token window stream closed before first event"
+                    first_event += line
+                token_rotated = copy.deepcopy(token_config)
+                token_rotated["security"]["api_keys"][-1]["secret"] = "token-secret-new"
+                token_generation = reload_config(token_rotated, "applied")
+                assert chat("public", "token-secret-old")[0] == 401
+
+                def token_denied(pending):
+                    calls_before = len(Upstream.calls)
+                    connection, response = connect("/v1/chat/completions", {
+                        "model": "public", "messages": [{"role": "user", "content": "Hello"}]},
+                        "token-secret-new")
+                    try:
+                        assert response.status == 429
+                        if pending:
+                            assert response.getheader("Retry-After") is None
+                        else:
+                            assert 86340 < int(response.getheader("Retry-After")) <= 86400
+                        assert json.loads(response.read())["error"]["code"] == "rate_limit_exceeded"
+                    finally:
+                        connection.close()
+                    assert len(Upstream.calls) == calls_before
+
+                token_denied(True)
+                for field, value in [("tpm", 20), ("tpd", 20), ("reserve_tokens", 7)]:
+                    changed_token = copy.deepcopy(token_rotated)
+                    changed_token["llm"]["subject_limits"]["tokened"][field] = value
+                    reload_config(changed_token, "rejected", "candidate_rejected")
+                    token_denied(True)
+                assert reload_config(token_rotated, "unchanged") == token_generation
+                disabled_token = copy.deepcopy(token_rotated)
+                disabled_token["security"]["api_keys"][-1]["enabled"] = False
+                reload_config(disabled_token, "applied")
+                assert chat("public", "token-secret-new")[0] == 401
+                reload_config(token_rotated, "applied")
+                token_denied(True)
+                reload_config(rotated, "applied")  # Remove subject while its stream is in flight.
+                reload_config(token_rotated, "applied")
+                token_denied(True)
+                Upstream.release_stream.set()
+                remaining = stream_response.read()
+                assert b"old-finish" in remaining and remaining.endswith(b"data: [DONE]\n\n")
+                stream_connection.close()
+                stream_connection = None
+                # Actual usage is 2, so refunding the 6-unit reservation admits two more calls.
+                assert chat("public", "token-secret-new")[0] == 200
+                assert chat("public", "token-secret-new")[0] == 200
+                token_denied(False)
+                reload_config(rotated, "applied")
+                reload_config(token_rotated, "applied")
+                token_denied(False)
+
                 # A special file must not leave a blocking open alive during shutdown.
                 config.unlink()
                 os.mkfifo(config)
@@ -405,7 +473,7 @@ def main():
                     assert 'usage_state="not_attempted"' in line and "quota_charged_tokens=0" in line, line
                 reload_logs = "\n".join(reload_events())
                 for secret in ["client-secret-old", "client-secret-new", "upstream-secret-old",
-                               "upstream-secret-new", "window-secret-old", "window-secret-new", "private-invalid-provider-marker",
+                               "upstream-secret-new", "window-secret-old", "window-secret-new", "token-secret-old", "token-secret-new", "private-invalid-provider-marker",
                                "private-malformed-marker", str(config)]:
                     assert secret not in reload_logs, f"reload log leaked {secret}"
                 assert "fingerprint" not in reload_logs
@@ -421,7 +489,7 @@ def main():
         upstream.server_close()
     print("proxy reload smoke passed: SIGHUP, atomic replacement, deduplication, rejection, "
           "auth/routes, model discovery, key disable/expiry/renewal, SSE retention, "
-          "subject RPM/RPD retention, rate/quota/health reuse, redacted logs, FIFO rejection, SIGTERM")
+          "subject RPM/RPD and TPM/TPD retention, rate/quota/health reuse, redacted logs, FIFO rejection, SIGTERM")
 
 
 if __name__ == "__main__":

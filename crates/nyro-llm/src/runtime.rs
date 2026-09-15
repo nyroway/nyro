@@ -473,9 +473,7 @@ impl Runtime {
             .as_ref()
             .and_then(|identity| self.subject_limits.get(&identity.id));
         let admission = if let Some(subject_limit) = subject_limit {
-            subject_limit
-                .limit
-                .try_acquire(model_rate.map(|rate| &rate.limit))
+            subject_limit.admit_request(model_rate.map(|rate| &rate.limit))
         } else {
             model_rate.map_or(Ok(()), |rate| rate.try_acquire())
         };
@@ -523,25 +521,36 @@ impl Runtime {
                 },
                 None => None,
             };
-            let quota = match self.quotas.get(&public_model) {
-                Some(bound) => match bound.reserve() {
-                    Ok(reservation) => Some(reservation),
-                    Err(_) => {
-                        drop(exchange.permit.take());
-                        return Err(Failure::new(
-                            StatusCode::TOO_MANY_REQUESTS,
-                            "quota_exceeded",
-                            "Token quota cannot admit another attempt",
-                        ));
+            let (quota, token_window) = match crate::subject_limit::reserve_attempt(
+                self.quotas.get(&public_model).map(AsRef::as_ref),
+                subject_limit.map(AsRef::as_ref),
+            ) {
+                Ok(budgets) => budgets,
+                Err(error) => {
+                    drop(exchange.permit.take());
+                    if let nyro_limit::window::WindowQuotaError::Exceeded { retry_after } = error {
+                        return Err(Failure {
+                            retry_after,
+                            ..Failure::new(
+                                StatusCode::TOO_MANY_REQUESTS,
+                                "rate_limit_exceeded",
+                                "Token rate limit reached",
+                            )
+                        });
                     }
-                },
-                None => None,
+                    return Err(Failure::new(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "quota_exceeded",
+                        "Token quota cannot admit another attempt",
+                    ));
+                }
             };
             let mut attempt = Some(exchange.observation.attempt(
                 &selected.backend.id,
                 &selected.backend.provider,
                 observation::protocol(selected.provider.format, workload),
                 quota,
+                token_window,
             ));
             let response = match selected
                 .provider

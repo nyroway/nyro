@@ -212,7 +212,7 @@ llm:
       rpd: 1000
 ```
 
-At least one of `rpm` or `rpd` is required. Each supplied value is a positive `u32`; zero, explicit `null`, an empty policy, unknown fields, blank IDs and unknown subjects reject configuration. Omitting a subject's policy disables its request windows. Disabled or expired keys remain valid policy references. Limits are LLM policy, separate from authentication fields on an API key.
+A request-only policy requires `rpm` or `rpd`; a token-only policy is also valid (see below). Each supplied request count is a positive `u32`; zero, explicit `null`, an empty policy, unknown fields, blank IDs and unknown subjects reject configuration. Omitting a subject's policy disables its request windows. Disabled or expired keys remain valid policy references. Limits are LLM policy, separate from authentication fields on an API key.
 
 RPM counts admissions in the preceding 60 seconds; RPD counts admissions in the preceding 24 hours, with an admission expiring at exactly its window duration. RPD does not reset at midnight. These are exact rolling counts using a monotonic clock, so wall-clock adjustments do not refill them. Each window allows its full count immediately when empty. Add a model token bucket when you also need to smooth bursts.
 
@@ -222,9 +222,40 @@ At the existing request-rate admission step, Nyro checks the subject's windows a
 
 The root proxy shares histories through `runtime::SharedResources` across reloads and overlapping generations. Rotation, disable/re-enable, expiry/renewal and subject/policy removal/re-addition preserve unexpired admissions for the same ID. Removing a policy stops counting new requests against it; it does not erase prior history. A live binding or unexpired history rejects a candidate that changes its window parameters. Restart to change an established rule immediately; inactive histories with all admissions expired are reclaimed on a subsequent policy bind. Failed candidates do not reset active budgets or retain unused bindings indefinitely. An in-flight request keeps its original generation's policies.
 
-Counters are process-local and reset on restart; replicas do not coordinate them. TPM/TPD token windows and persistent counters remain unimplemented. Historical log counts are not imported: this counts logical admissions, not log completions. The shared primitive `nyro_limit::request::RequestLimit` accepts `(count, Duration)` windows and an optional `RateLimit` for atomic composition. `nyro_llm::subject_limit::SubjectLimitRegistry` supplies subject scope. Neither introduces HTTP, LLM or database types into `nyro-limit`, or responsibilities into the kernel. Rust callers constructing `config::Config` must supply `subject_limits` (an empty map preserves prior behavior); callers constructing every `SharedResources` field must also supply its registry or use `..Default::default()`.
+Counters are process-local and reset on restart; replicas do not coordinate them. TPM/TPD are configured separately below; persistent counters remain unimplemented. Historical log counts are not imported: this counts logical admissions, not log completions. The shared primitive `nyro_limit::request::RequestLimit` accepts `(count, Duration)` windows and an optional `RateLimit` for atomic composition. `nyro_llm::subject_limit::SubjectLimitRegistry` supplies subject scope. Neither introduces HTTP, LLM or database types into `nyro-limit`, or responsibilities into the kernel. Rust callers constructing `config::Config` must supply `subject_limits` (an empty map preserves prior behavior); callers constructing every `SharedResources` field must also supply its registry or use `..Default::default()`.
 
 Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test rate_runtime`; the root reload smoke covers rotation, rejected changes, disable/re-enable and removal/re-addition.
+
+## Subject token windows
+
+The same `llm.subject_limits` policy can enable TPM/TPD, with or without RPM/RPD:
+
+```yaml
+llm:
+  subject_limits:
+    deploy:
+      tpm: 100000
+      tpd: 1000000
+      reserve_tokens: 4096
+```
+
+`tpm` and `tpd` are optional positive `u64` limits for normalized input plus output tokens. Configuring either requires a positive `reserve_tokens` no greater than every configured token limit. A reservation without a token window, zero, explicit `null`, invalid types and unknown fields reject configuration. Request limits and token limits may coexist; at least one of `rpm`, `rpd`, `tpm` or `tpd` must be configured. Model `quota.reserve_tokens` and subject `reserve_tokens` are separate settings and may differ. Rust `SubjectLimitConfig` literals must provide the new `tpm`, `tpd` and `reserve_tokens` fields; use `None` for existing request-only policies.
+
+Nyro reserves subject tokens immediately before each selected upstream attempt, after logical request-rate admission and backend health selection. All subject token windows and an optional cumulative model quota reserve atomically; rejection leaves both token budgets unchanged, sends no new upstream request and releases concurrency. Already admitted RPM/RPD/model-rate units remain charged. Each retry needs its own token reservation, while its logical request still counts once. A request with no eligible healthy backend has no token reservation.
+
+Pending reservations count against every token window until settled or released. They do not expire while a long request or SSE stream is running. On validated upstream protocol completion, actual usage replaces the reservation, including explicit zero or usage above the reserve. Each positive settlement enters the rolling windows at its settlement time and expires exactly 60 seconds (TPM) or 24 hours (TPD) later. There is no midnight reset. This deliberately measures settled attempt usage plus all pending reservations; it does not pretend to know when each upstream token was generated. A stream that crosses a minute boundary keeps its pending units and starts the settled-usage window when it finishes.
+
+Known connection-establishment failures release both reservations. HTTP errors, transport/protocol failures, cancellation, deadline, truncation and response-body/future drop settle the greater of that budget's reservation and the highest valid observed usage. Complete responses without usage use the same fallback. Model and subject budgets each apply their own reserve, so unknown outcomes can charge different amounts. Complete usage settles each budget to the same actual amount without adding the two together. Cumulative stream snapshots replace prior values rather than accumulating them; invalid/decreasing snapshots cannot reduce an existing charge. Successful protocol completion is final: subsequent downstream delivery loss does not settle twice.
+
+The reservation is an operator-selected provision, not a trusted upper bound on vendor consumption. Actual usage may exceed a window limit; Nyro records the debt and blocks later reservations until enough settled usage expires. It does not truncate an admitted stream merely because observed usage exceeds its reserve. Unknown outcomes can be overcounted. These windows control admission using reported or fallback usage, not a hard cap on actual upstream token generation.
+
+Subject token rejection uses the native `429` format (`rate_limit_exceeded` for OpenAI APIs). When settled usage can expire to make room, `Retry-After` is the longest wait needed across blocked windows, rounded up to seconds; it may need several settlement records to expire. When pending units alone prevent admission, the header is omitted because their completion time is unknown. A later retry may still be blocked by new traffic or settlements. Cumulative model quota rejection retains `quota_exceeded` with no retry header. Anthropic uses `rate_limit_error`; Gemini uses `RESOURCE_EXHAUSTED`.
+
+Subject scope and lifecycle match request windows: all model aliases, supported APIs/workloads and strict/native paths share the authenticated subject's state. Anonymous calls have no subject token budget, and supplying a valid credential on an anonymous model still applies its policy. Reload, secret rotation, disable/re-enable, expiry/renewal and removal/re-addition retain pending tokens and unexpired settled usage. Any active binding, pending receipt or unexpired request/token history prevents changing that subject's policy parameters, including adding a token rule to an active request-only policy; the candidate is rejected. Restart to change such a policy immediately. An inactive policy is reclaimable on a later bind once both request history and token usage are empty and no reservation remains. Failed candidates cannot reset active counters.
+
+`nyro_limit::window::WindowQuota` is a generic unit budget, with no LLM, authentication, HTTP, storage or kernel types. `SubjectLimitRegistry::token_snapshots` reports configured token windows in TPM-then-TPD order. Request/attempt logs expose `token_window_charged_tokens` separately from `quota_charged_tokens` and reported `total_tokens`; attempt `token_window_outcome` distinguishes `actual`, `fallback`, `released` and `disabled`. A subject charge is counted once even when both TPM and TPD are enabled. Counters remain process-local, reset on restart and are not imported from legacy logs. Persistence and multi-replica coordination remain deferred.
+
+Regression: `cargo test -p nyro-limit`, `cargo test -p nyro-llm --test quota_runtime --test observation_runtime`, and the root reload smoke after building `nyro`.
 
 ## Token quota
 
