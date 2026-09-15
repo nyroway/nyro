@@ -58,7 +58,7 @@ class Upstream(BaseHTTPRequestHandler):
             self.wfile.write(first)
             self.wfile.flush()
             self.stream_started.set()
-            if not self.release_stream.wait(20):
+            if not self.release_stream.wait(40):
                 return
             self.wfile.write(last)
         else:
@@ -274,6 +274,61 @@ def main():
                 models(["public", "public-added"], "limited-secret")
                 assert chat("public-failover", "client-secret-new")[0] == 200
                 assert sum(payload["model"] == "temporary-error" for _, payload in Upstream.calls) == failures_before
+                # Lifecycle edits retain subject bindings and take effect for new
+                # admissions; an admitted SSE body survives expiry and disabling.
+                inactive = copy.deepcopy(updated)
+                inactive["security"]["api_keys"][1]["enabled"] = False
+                disabled_generation = reload_config(inactive, "applied")
+                calls_before = len(Upstream.calls)
+                assert request("/v1/models", key="limited-secret")[0] == 401
+                assert chat("public-added", "limited-secret")[0] == 401
+                assert chat("public", "limited-secret")[0] == 401  # No anonymous fallback.
+                assert len(Upstream.calls) == calls_before
+                assert reload_config(inactive, "unchanged") == disabled_generation
+                invalid_lifecycle = copy.deepcopy(inactive)
+                invalid_lifecycle["security"]["api_keys"][1]["enabled"] = "true"
+                reload_config(invalid_lifecycle, "rejected", "invalid_config")
+                assert chat("public-added", "limited-secret")[0] == 401
+
+                expiring = copy.deepcopy(updated)
+                expires_at = int(time.time()) + 10
+                expiring["security"]["api_keys"][1]["expires_at"] = expires_at
+                assert reload_config(expiring, "applied") > disabled_generation
+                models(["public", "public-added"], "limited-secret")
+                Upstream.stream_started.clear()
+                Upstream.release_stream.clear()
+                stream_connection, stream_response = connect("/v1/chat/completions", {
+                    "model": "public-added", "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True}, "limited-secret")
+                assert stream_response.status == 200 and Upstream.stream_started.wait(2)
+                first_event = b""
+                while not first_event.endswith(b"\n\n"):
+                    line = stream_response.readline()
+                    assert line, "stream closed before expiry test"
+                    first_event += line
+                assert b"old-start" in first_event
+                # Expiration is a wall-clock admission check, not a reload timer.
+                expiry_deadline = time.monotonic() + 15
+                while time.time() < expires_at:
+                    assert time.monotonic() < expiry_deadline, "wall clock did not reach key expiry"
+                    time.sleep(0.02)
+                calls_before = len(Upstream.calls)
+                assert request("/v1/models", key="limited-secret")[0] == 401
+                assert chat("public-added", "limited-secret")[0] == 401
+                assert len(Upstream.calls) == calls_before
+                assert reload_config(expiring, "unchanged") is not None
+                assert reload_config(updated, "applied") is not None  # Remove expiry; same binding.
+                models(["public", "public-added"], "limited-secret")
+                assert chat("public-added", "limited-secret")[0] == 200
+                reload_config(inactive, "applied")
+                assert chat("public-added", "limited-secret")[0] == 401
+                Upstream.release_stream.set()
+                remaining = stream_response.read()
+                assert b"old-finish" in remaining and remaining.endswith(b"data: [DONE]\n\n")
+                stream_connection.close()
+                stream_connection = None
+                reload_config(updated, "applied")
+
                 # A special file must not leave a blocking open alive during shutdown.
                 config.unlink()
                 os.mkfifo(config)
@@ -314,7 +369,8 @@ def main():
         upstream.shutdown()
         upstream.server_close()
     print("proxy reload smoke passed: SIGHUP, atomic replacement, deduplication, rejection, "
-          "auth/routes, model discovery, SSE retention, rate/quota/health reuse, redacted logs, FIFO rejection, SIGTERM")
+          "auth/routes, model discovery, key disable/expiry/renewal, SSE retention, "
+          "rate/quota/health reuse, redacted logs, FIFO rejection, SIGTERM")
 
 
 if __name__ == "__main__":

@@ -25,6 +25,31 @@ curl http://127.0.0.1:19530/v1/chat/completions \
 
 当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。默认情况下，未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。下文的 OpenAI Chat/Responses、Anthropic Messages 和 Gemini generateContent 原生模式可显式开启，在匹配的端点之间保留厂商 JSON 字段。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在类型化响应及 OpenAI／Anthropic 原生响应中恢复公开模型名；Gemini 原生响应保留 `modelVersion` 作为上游版本信息。
 
+## API Key 生命周期
+
+`security.api_keys` 支持可选的 `enabled` 和 `expires_at`：
+
+```yaml
+security:
+  api_keys:
+    - id: deploy
+      secret: replace-with-client-secret
+      enabled: true
+      expires_at: 1893456000
+```
+
+`enabled` 省略时为 `true`；`false` 禁止新的认证。`expires_at` 是 UTC Unix 秒时间戳（非负整数，示例为 2030-01-01 00:00:00 UTC），省略或 `null` 表示不过期；`0` 表示已过期。它不是毫秒、持续时间或日期字符串。时间达到 `expires_at` 即失效，无需 SIGHUP 或后台定时任务。字段类型错误会拒绝整份配置，禁用或过期的密钥仍参与 ID／secret 重复校验并保留模型 `subjects` 绑定。
+
+模型发现、四种 Chat API、Embedding 以及匹配原生模式使用同一认证规则。提供禁用或过期密钥返回通用 `401`，即使模型允许匿名访问，也不会将无效凭证回退为匿名；这类认证失败不访问上游或消耗并发、rate、quota。省略凭证时仍遵循模型的匿名设置。
+
+修改 `enabled`、设置／延长／移除 `expires_at` 后需要发布配置（文件模式使用 SIGHUP）。这些值参与配置指纹，而当前时间不参与；相同文件即使已经过期，重载也保持 `unchanged`。禁用、续期和移除到期时间保留原主体与模型绑定，失败重载保留活动配置。
+
+请求进入时选定配置代际，读取请求体后在认证时检查当前系统时间。重载前已进入的慢上传仍使用原代际的密钥设置，但如果读取期间超过该设置的到期时间，会在认证时拒绝。认证并准入后的请求（包括 SSE）不因后续到期或重载禁用而中断，继续遵循原有期限、取消和代际清理契约。时间检查使用系统墙钟；回拨后按新的时间重新判断，不维护永久过期标记。对于带到期时间的密钥，时间早于 Unix epoch 时拒绝认证。
+
+Rust 调用方构造 `nyro_security::ApiKey` 时需补充 `enabled: true` 与 `expires_at: None`（或所需值）。`ApiKeys::authenticate()` 使用系统时间，`authenticate_at(secret, SystemTime)` 支持由调用方提供时间；每次新操作均需认证，不应将返回的 `Identity` 当作会自动更新的密钥状态。安全包不依赖 LLM、HTTP、数据库或内核；`ApiKeys` 认证表不保存明文 secret。
+
+验证：`cargo test -p nyro-security -p nyro-config`、`cargo test -p nyro-llm --test responses_runtime api_key_lifecycle`，以及构建根二进制后执行 `python3 tests/proxy_reload_smoke.py`。
+
 ## 查询可见模型
 
 `GET /v1/models` 按别名升序返回调用方可见的已配置公开模型别名：

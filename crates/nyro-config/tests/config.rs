@@ -48,6 +48,8 @@ fn valid_config() -> Config {
             api_keys: vec![ApiKey {
                 id: "deploy".into(),
                 secret: "client-secret".into(),
+                enabled: true,
+                expires_at: None,
             }],
         },
         limit: LimitConfig::default(),
@@ -139,6 +141,8 @@ fn validation_reuses_credential_rules_and_enforces_model_subjects() {
     config.security.api_keys.push(ApiKey {
         id: "deploy".into(),
         secret: "other-secret".into(),
+        enabled: true,
+        expires_at: None,
     });
     assert!(config.validate().is_err());
 
@@ -177,6 +181,8 @@ fn validation_rejects_blank_ids_and_non_bearer_secrets_with_a_generic_error() {
         config.security.api_keys[0] = ApiKey {
             id: id.into(),
             secret: secret.into(),
+            enabled: true,
+            expires_at: None,
         };
 
         let error = config.validate().unwrap_err().to_string();
@@ -217,6 +223,8 @@ fn fingerprint_is_canonical_and_excludes_listen_address() {
     first.security.api_keys.push(ApiKey {
         id: "ops".into(),
         secret: "second-client-secret".into(),
+        enabled: true,
+        expires_at: None,
     });
     let mut equivalent = first.clone();
     equivalent.server.listen = "0.0.0.0:8080".parse::<SocketAddr>().unwrap();
@@ -576,5 +584,61 @@ fn yaml_rejects_invalid_quota_policy_values() {
             .is_err(),
             "{policy}"
         );
+    }
+}
+
+#[test]
+fn api_key_lifecycle_defaults_and_changes_have_stable_fingerprints() {
+    use serde_json::json;
+    let mut value = serde_json::to_value(valid_config()).unwrap();
+    value["security"]["api_keys"][0] = json!({"id":"deploy","secret":"client-secret"});
+    let original = Config::from_yaml(&value.to_string()).unwrap();
+    value["security"]["api_keys"][0]["enabled"] = json!(true);
+    value["security"]["api_keys"][0]["expires_at"] = json!(null);
+    let explicit = Config::from_yaml(&value.to_string()).unwrap();
+    assert_eq!(
+        original.fingerprint().unwrap(),
+        explicit.fingerprint().unwrap()
+    );
+    value["security"]["api_keys"][0]["enabled"] = json!(false);
+    let disabled = Config::from_yaml(&value.to_string()).unwrap();
+    assert_ne!(
+        original.fingerprint().unwrap(),
+        disabled.fingerprint().unwrap()
+    );
+    value["security"]["api_keys"][0]["enabled"] = json!(true);
+    value["security"]["api_keys"][0]["expires_at"] = json!(0);
+    let expired = Config::from_yaml(&value.to_string()).unwrap();
+    assert_ne!(
+        original.fingerprint().unwrap(),
+        expired.fingerprint().unwrap()
+    );
+    assert_eq!(
+        expired.llm.models["chat"].subjects,
+        original.llm.models["chat"].subjects
+    );
+    value["security"]["api_keys"][0]["expires_at"] = json!(u64::MAX);
+    let later = Config::from_yaml(&value.to_string()).unwrap();
+    assert_ne!(expired.fingerprint().unwrap(), later.fingerprint().unwrap());
+}
+
+#[test]
+fn api_key_lifecycle_rejects_malformed_fields_without_disclosing_values() {
+    use serde_json::json;
+    for (field, invalid) in [
+        ("enabled", json!(null)),
+        ("enabled", json!("false")),
+        ("enabled", json!(0)),
+        ("expires_at", json!(-1)),
+        ("expires_at", json!(1.5)),
+        ("expires_at", json!("private-invalid-time")),
+        ("expires_at", json!(true)),
+    ] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["security"]["api_keys"][0][field] = invalid;
+        let error = Config::from_yaml(&value.to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("client-secret") && !error.contains("private-invalid-time"));
     }
 }

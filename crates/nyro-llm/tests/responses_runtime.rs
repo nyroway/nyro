@@ -20,6 +20,8 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[path = "responses_runtime/api_key_lifecycle.rs"]
+mod api_key_lifecycle;
 #[path = "responses_runtime/multiturn.rs"]
 mod multiturn;
 
@@ -431,6 +433,8 @@ async fn chat_rejects_interleaved_output_and_settles_observed_usage_once() {
                     ApiKeys::new(vec![ApiKey {
                         id: "alice".into(),
                         secret: "client-secret".into(),
+                        enabled: true,
+                        expires_at: None,
                     }])
                     .unwrap(),
                 ),
@@ -808,6 +812,8 @@ fn runtime_with_native(
             ApiKeys::new(vec![ApiKey {
                 id: "alice".into(),
                 secret: "client-secret".into(),
+                enabled: true,
+                expires_at: None,
             }])
             .unwrap(),
         ),
@@ -2429,6 +2435,8 @@ async fn cache_write_usage_settles_once_even_when_chat_stream_usage_is_hidden() 
                     ApiKeys::new(vec![ApiKey {
                         id: "alice".into(),
                         secret: "client-secret".into(),
+                        enabled: true,
+                        expires_at: None,
                     }])
                     .unwrap(),
                 ),
@@ -2593,6 +2601,8 @@ async fn breakpoint_retries_skip_incompatible_backends_without_losing_markers() 
             ApiKeys::new(vec![ApiKey {
                 id: "alice".into(),
                 secret: "client-secret".into(),
+                enabled: true,
+                expires_at: None,
             }])
             .unwrap(),
         ),

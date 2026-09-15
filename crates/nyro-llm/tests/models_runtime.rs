@@ -40,6 +40,8 @@ fn runtime(config: config::Config, limit: ConcurrencyLimit) -> Runtime {
             .map(|id| ApiKey {
                 id: id.into(),
                 secret: format!("{id}-secret"),
+                enabled: true,
+                expires_at: None,
             })
             .collect(),
     )

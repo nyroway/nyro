@@ -25,6 +25,31 @@ curl http://127.0.0.1:19530/v1/chat/completions \
 
 The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. By default, unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. The opt-in OpenAI Chat/Responses, Anthropic Messages and Gemini generateContent native modes below preserve vendor JSON fields on matching endpoints. Model names are public aliases: Nyro replaces them with the selected backend's `upstream_model` on the upstream request and restores the public name in typed responses and OpenAI/Anthropic native responses. Gemini native responses preserve `modelVersion` as upstream version metadata.
 
+## API key lifecycle
+
+`security.api_keys` accepts optional `enabled` and `expires_at` fields:
+
+```yaml
+security:
+  api_keys:
+    - id: deploy
+      secret: replace-with-client-secret
+      enabled: true
+      expires_at: 1893456000
+```
+
+`enabled` defaults to `true`; `false` prevents new authentication. `expires_at` is a UTC Unix timestamp in whole seconds (a nonnegative integer; the example is 2030-01-01 00:00:00 UTC). Omission or `null` means no expiry; `0` is already expired. It is not milliseconds, a duration or a date string. The key becomes invalid at `expires_at`, without SIGHUP or a background timer. Invalid field types reject the entire configuration. Disabled or expired keys still participate in duplicate ID/secret validation and retain model `subjects` bindings.
+
+Model discovery, all four Chat APIs, Embedding and matching native mode share this authentication rule. A supplied disabled or expired key returns a generic `401`, including on anonymous models; invalid credentials do not fall back to anonymous access. These authentication failures neither dispatch upstream nor consume concurrency, rate or quota. Omitting credentials still follows the model's anonymous-access setting.
+
+Changing `enabled` or setting, extending or removing `expires_at` requires publishing the configuration (SIGHUP in file mode). These values enter the configuration fingerprint; current time does not. Reloading an identical file remains `unchanged` even after expiry. Disabling, renewing or removing expiry preserves the subject and model bindings; failed reloads retain the active configuration.
+
+A request selects its configuration generation on entry and checks the current system time at authentication, after reading the request body. A slow upload that entered before a reload retains the old generation's key settings, but is rejected if that key expires while its body is being read. Once authenticated and admitted, requests (including SSE) continue through later expiry or reload-based disabling, subject to the existing deadline, cancellation and generation cleanup contracts. Checks use the system wall clock; a clock rollback is evaluated afresh rather than setting a permanent expired flag. Expiring keys fail authentication when the supplied time precedes the Unix epoch.
+
+Rust callers constructing `nyro_security::ApiKey` must supply `enabled: true` and `expires_at: None` (or their desired values). `ApiKeys::authenticate()` uses system time; `authenticate_at(secret, SystemTime)` accepts a caller-supplied time. Authenticate every new operation rather than caching the returned `Identity` as a live key status. The security crate has no LLM, HTTP, database or kernel dependency. The `ApiKeys` registry retains no plaintext secret.
+
+Validation: `cargo test -p nyro-security -p nyro-config`, `cargo test -p nyro-llm --test responses_runtime api_key_lifecycle`, and, after building the root binary, `python3 tests/proxy_reload_smoke.py`.
+
 ## List available models
 
 `GET /v1/models` lists the configured public model aliases visible to the caller, in ascending alias order:

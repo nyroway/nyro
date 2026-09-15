@@ -203,10 +203,14 @@ fn keys() -> Arc<ApiKeys> {
             ApiKey {
                 id: "alice".into(),
                 secret: "client-secret".into(),
+                enabled: true,
+                expires_at: None,
             },
             ApiKey {
                 id: "bob".into(),
                 secret: "bob-secret".into(),
+                enabled: true,
+                expires_at: None,
             },
         ])
         .unwrap(),

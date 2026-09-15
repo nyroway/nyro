@@ -110,10 +110,14 @@ fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Ru
         ApiKey {
             id: "alice".into(),
             secret: "client-secret".into(),
+            enabled: true,
+            expires_at: None,
         },
         ApiKey {
             id: "bob".into(),
             secret: "other-secret".into(),
+            enabled: true,
+            expires_at: None,
         },
     ])
     .unwrap();
