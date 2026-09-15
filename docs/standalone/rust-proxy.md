@@ -493,6 +493,14 @@ cargo build -p nyro
 python3 tests/proxy_smoke.py
 ```
 
+## Local multi-turn tool session regression
+
+Run `cargo test -p nyro-llm --test responses_runtime multiturn` for the [session matrix](../../crates/nyro-llm/tests/responses_runtime/multiturn.rs). It appends the actual client-visible JSON or assembled SSE output to the next request: two parallel tool calls, results returned in reverse order, another tool call, then a final answer. Coverage includes strict text conversion among all four APIs, Anthropic/Responses image-result conversion, Gemini image results within the same protocol, and proprietary reasoning combined with images in each of those three protocols. All four APIs also have matching native-mode cases. Each successful session makes three requests, using all JSON, all SSE, or either alternating pattern.
+
+Assertions check the subsequent upstream history for content order, call IDs/arguments, result images and Gemini named references, signatures/encrypted reasoning, model aliases, credential isolation, per-turn usage and concurrency permit release. Missing, duplicate or unknown second-turn results are rejected for Anthropic/Gemini destinations that require complete batches. Incompatible image or reasoning history never dispatches; corrected history or the original protocol can still continue.
+
+The matrix uses local HTTP mocks and a test client, without executing real tools, SDKs or vendor calls or verifying signature authenticity. It provides multi-turn composition regression, not complete client compatibility certification. Versioned real clients, vendor sessions and remaining unsupported semantics still need separate acceptance.
+
 ## Ordered IR migration for Rust callers
 
 The Rust `nyro-llm` API now stores message bodies in `Message.items` and `ResponseMessage.items`, an ordered `Vec<MessageItem>`. `MessageItem::Content(Content)` retains the existing text/parts representation; `MessageItem::ToolCall(ToolCall)` retains call metadata. `ResponsesMessage` and `ResponsesToolCall` additionally retain optional source container IDs/statuses, independently of function `call_id`; borrowed accessors recognize both generic and Responses variants. Direct callers must replace the old `content`/`tool_calls` fields. Borrowed `content()` and `tool_calls()` views do not store another copy or establish order.

@@ -20,6 +20,9 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[path = "responses_runtime/multiturn.rs"]
+mod multiturn;
+
 const FORMATS: [&str; 4] = ["openai", "anthropic", "gemini", "responses"];
 
 fn interleaved_response(format: &str) -> Value {
@@ -50,10 +53,44 @@ fn interleaved_response(format: &str) -> Value {
 
 // Independent wire fixtures, never encoded from the IR under test.
 fn interleaved_frames(format: &str) -> String {
-    let response = interleaved_response(format);
+    response_frames(format, &interleaved_response(format))
+}
+
+fn response_frames(format: &str, response: &Value) -> String {
     let mut events = Vec::new();
     match format {
         "gemini" => return format!("data: {response}\n\n"),
+        "openai" => {
+            let message = &response["choices"][0]["message"];
+            let chunk = |delta: Value, finish: Value| json!({"id":response["id"],"object":"chat.completion.chunk","created":1,"model":response["model"],"choices":[{"index":0,"delta":delta,"finish_reason":finish}]});
+            events.push(chunk(
+                json!({"role":"assistant","content":message["content"]}),
+                Value::Null,
+            ));
+            for (index, call) in message["tool_calls"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                let args = call["function"]["arguments"].as_str().unwrap();
+                events.push(chunk(json!({"tool_calls":[{"index":index,"id":call["id"],"type":"function","function":{"name":call["function"]["name"],"arguments":""}}]}), Value::Null));
+                for fragment in ["{", &args[1..]] {
+                    events.push(chunk(
+                        json!({"tool_calls":[{"index":index,"function":{"arguments":fragment}}]}),
+                        Value::Null,
+                    ));
+                }
+            }
+            let mut terminal = chunk(json!({}), response["choices"][0]["finish_reason"].clone());
+            terminal["usage"] = response["usage"].clone();
+            events.push(terminal);
+            return events
+                .iter()
+                .map(|event| format!("data: {event}\n\n"))
+                .collect::<String>()
+                + "data: [DONE]\n\n";
+        }
         "anthropic" => {
             let mut initial = response.clone();
             initial["content"] = json!([]);
@@ -61,6 +98,17 @@ fn interleaved_frames(format: &str) -> String {
             events.push(json!({"type":"message_start","message":initial}));
             for (index, block) in response["content"].as_array().unwrap().iter().enumerate() {
                 let mut start = block.clone();
+                if block["type"] == "thinking" {
+                    start["thinking"] = json!("");
+                    start["signature"] = json!("");
+                    events.extend([
+                        json!({"type":"content_block_start","index":index,"content_block":start}),
+                        json!({"type":"content_block_delta","index":index,"delta":{"type":"thinking_delta","thinking":block["thinking"]}}),
+                        json!({"type":"content_block_delta","index":index,"delta":{"type":"signature_delta","signature":block["signature"]}}),
+                        json!({"type":"content_block_stop","index":index}),
+                    ]);
+                    continue;
+                }
                 let delta = if block["type"] == "text" {
                     start["text"] = json!("");
                     json!({"type":"text_delta","text":block["text"]})
@@ -75,7 +123,7 @@ fn interleaved_frames(format: &str) -> String {
                 ]);
             }
             events.extend([
-                json!({"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}),
+                json!({"type":"message_delta","delta":{"stop_reason":response["stop_reason"],"stop_sequence":null},"usage":response["usage"]}),
                 json!({"type":"message_stop"}),
             ]);
         }
@@ -87,6 +135,23 @@ fn interleaved_frames(format: &str) -> String {
             events.push(json!({"type":"response.created","response":initial}));
             for (index, item) in response["output"].as_array().unwrap().iter().enumerate() {
                 let mut start = item.clone();
+                if item["type"] == "reasoning" {
+                    start["summary"] = json!([]);
+                    start["encrypted_content"] = json!("opaque-partial");
+                    events.push(json!({"type":"response.output_item.added","output_index":index,"item":start}));
+                    for (summary_index, part) in
+                        item["summary"].as_array().unwrap().iter().enumerate()
+                    {
+                        events.extend([
+                            json!({"type":"response.reasoning_summary_part.added","output_index":index,"item_id":item["id"],"summary_index":summary_index,"part":{"type":"summary_text","text":""}}),
+                            json!({"type":"response.reasoning_summary_text.delta","output_index":index,"item_id":item["id"],"summary_index":summary_index,"delta":part["text"]}),
+                            json!({"type":"response.reasoning_summary_text.done","output_index":index,"item_id":item["id"],"summary_index":summary_index,"text":part["text"]}),
+                            json!({"type":"response.reasoning_summary_part.done","output_index":index,"item_id":item["id"],"summary_index":summary_index,"part":part}),
+                        ]);
+                    }
+                    events.push(json!({"type":"response.output_item.done","output_index":index,"item":item}));
+                    continue;
+                }
                 start["status"] = json!("in_progress");
                 if item["type"] == "message" {
                     start["content"] = json!([]);
@@ -719,9 +784,22 @@ async fn upstream(format: &'static str, mode: &'static str) -> Fixture {
     Fixture { base, calls, task }
 }
 fn runtime(fixture: &Fixture, format: &str, limit: ConcurrencyLimit, options: Options) -> Runtime {
+    runtime_with_native(fixture, format, limit, options, false)
+}
+
+fn runtime_with_native(
+    fixture: &Fixture,
+    format: &str,
+    limit: ConcurrencyLimit,
+    options: Options,
+    native: bool,
+) -> Runtime {
     let mut provider = json!({"kind":if format == "responses" { "openai" } else { format },"base_url":format!("{}/{}",fixture.base,if format=="gemini"{"v1beta"}else{"v1"}),"api_key":"upstream-secret"});
     if format == "responses" {
         provider["api"] = json!("responses");
+    }
+    if native {
+        provider["native_chat"] = json!(true);
     }
     let config: Config = serde_json::from_value(json!({"providers":{"upstream":provider},"models":{"public":{"provider":"upstream","upstream_model":"internal","workloads":["chat"],"subjects":["alice"]}}})).unwrap();
     Runtime::new(
@@ -1055,6 +1133,11 @@ fn snapshot(format: &str, value: &Value) -> Value {
 }
 
 fn stream_snapshot(format: &str, bytes: &[u8]) -> Value {
+    snapshot(format, &stream_response(format, bytes))
+}
+
+// Assemble client-visible wire history without using the codecs under test.
+fn stream_response(format: &str, bytes: &[u8]) -> Value {
     let events = sse_values(bytes);
     if format == "responses" {
         assert!(!String::from_utf8_lossy(bytes).contains("[DONE]"));
@@ -1080,6 +1163,23 @@ fn stream_snapshot(format: &str, bytes: &[u8]) -> Value {
             }
         }
         for (index, item) in output.as_array().unwrap().iter().enumerate() {
+            if item["type"] == "reasoning" {
+                for (summary_index, summary) in
+                    item["summary"].as_array().unwrap().iter().enumerate()
+                {
+                    let deltas: String = events
+                        .iter()
+                        .filter(|e| {
+                            e["type"] == "response.reasoning_summary_text.delta"
+                                && e["output_index"] == index
+                                && e["summary_index"] == summary_index
+                        })
+                        .map(|e| e["delta"].as_str().unwrap())
+                        .collect();
+                    assert_eq!(deltas, summary["text"].as_str().unwrap());
+                }
+                continue;
+            }
             let tool = item["type"] == "function_call";
             let delta_type = if tool {
                 "response.function_call_arguments.delta"
@@ -1100,18 +1200,20 @@ fn stream_snapshot(format: &str, bytes: &[u8]) -> Value {
                 }
             );
         }
-        return snapshot(format, &terminal["response"]);
+        return terminal["response"].clone();
     }
-    let mut value = response(format);
-    value["usage"] = Value::Null;
-    value["usageMetadata"] = Value::Null;
+    let mut value = match format {
+        "openai" => json!({"choices":[{"index":0,"message":{"role":null}}]}),
+        "gemini" => json!({"candidates":[{"index":0,"content":{"role":null}}]}),
+        "anthropic" => Value::Null,
+        _ => unreachable!(),
+    };
     match format {
         "openai" => {
             value["choices"][0]["finish_reason"] = Value::Null;
             assert!(String::from_utf8_lossy(bytes).ends_with("data: [DONE]\n\n"));
-            let mut text = String::new();
-            let mut call = json!({"id":"","type":"function","function":{"name":"","arguments":""}});
-            let mut arguments = String::new();
+            let mut text = None::<String>;
+            let mut calls = BTreeMap::<u64, Value>::new();
             for event in &events {
                 value["model"] = event["model"].clone();
                 if event["usage"].is_object() {
@@ -1121,15 +1223,18 @@ fn stream_snapshot(format: &str, bytes: &[u8]) -> Value {
                     if choice["finish_reason"].is_string() {
                         value["choices"][0]["finish_reason"] = choice["finish_reason"].clone();
                     }
+                    if choice["delta"]["role"].is_string() {
+                        value["choices"][0]["message"]["role"] = choice["delta"]["role"].clone();
+                    }
                     if let Some(s) = choice["delta"]["content"].as_str() {
-                        text.push_str(s);
+                        text.get_or_insert_with(String::new).push_str(s);
                     }
                     for delta in choice["delta"]["tool_calls"]
                         .as_array()
                         .into_iter()
                         .flatten()
                     {
-                        assert_eq!(delta["index"], 0);
+                        let call = calls.entry(delta["index"].as_u64().unwrap()).or_insert_with(|| json!({"id":"","type":"function","function":{"name":"","arguments":""}}));
                         if delta["id"].is_string() {
                             call["id"] = delta["id"].clone();
                         }
@@ -1137,15 +1242,17 @@ fn stream_snapshot(format: &str, bytes: &[u8]) -> Value {
                             call["function"]["name"] = delta["function"]["name"].clone();
                         }
                         if let Some(s) = delta["function"]["arguments"].as_str() {
-                            arguments.push_str(s);
+                            let arguments =
+                                call["function"]["arguments"].as_str().unwrap().to_owned() + s;
+                            call["function"]["arguments"] = json!(arguments);
                         }
                     }
                 }
             }
             value["choices"][0]["message"]["content"] = json!(text);
-            if !arguments.is_empty() {
-                call["function"]["arguments"] = json!(arguments);
-                value["choices"][0]["message"]["tool_calls"] = json!([call]);
+            if !calls.is_empty() {
+                value["choices"][0]["message"]["tool_calls"] =
+                    json!(calls.into_values().collect::<Vec<_>>());
             }
         }
         "anthropic" => {
@@ -1153,7 +1260,22 @@ fn stream_snapshot(format: &str, bytes: &[u8]) -> Value {
             assert_eq!(events.last().unwrap()["type"], "message_stop");
             let mut blocks: Vec<Value> = Vec::new();
             let mut arguments = String::new();
+            let mut active = None;
             for event in &events {
+                match event["type"].as_str().unwrap() {
+                    "content_block_start" => {
+                        let index = event["index"].as_u64().unwrap();
+                        assert_eq!(index as usize, blocks.len());
+                        assert!(active.replace(index).is_none());
+                    }
+                    "content_block_delta" => {
+                        assert_eq!(active, Some(event["index"].as_u64().unwrap()))
+                    }
+                    "content_block_stop" => {
+                        assert_eq!(active.take(), Some(event["index"].as_u64().unwrap()))
+                    }
+                    _ => {}
+                }
                 match event["type"].as_str().unwrap() {
                     "content_block_start" => blocks.push(event["content_block"].clone()),
                     "content_block_delta" if event["delta"]["type"] == "text_delta" => {
@@ -1162,8 +1284,21 @@ fn stream_snapshot(format: &str, bytes: &[u8]) -> Value {
                             + event["delta"]["text"].as_str().unwrap();
                         block["text"] = json!(text);
                     }
-                    "content_block_delta" => {
+                    "content_block_delta" if event["delta"]["type"] == "input_json_delta" => {
                         arguments.push_str(event["delta"]["partial_json"].as_str().unwrap())
+                    }
+                    "content_block_delta" => {
+                        let key = match event["delta"]["type"].as_str().unwrap() {
+                            "thinking_delta" => "thinking",
+                            "signature_delta" => "signature",
+                            other => panic!("unexpected delta {other}"),
+                        };
+                        assert_eq!(event["index"], blocks.len() - 1);
+                        let block = blocks.last_mut().unwrap();
+                        block[key] = json!(
+                            block[key].as_str().unwrap().to_owned()
+                                + event["delta"][key].as_str().unwrap()
+                        );
                     }
                     "content_block_stop" if !arguments.is_empty() => {
                         blocks.last_mut().unwrap()["input"] =
@@ -1180,12 +1315,17 @@ fn stream_snapshot(format: &str, bytes: &[u8]) -> Value {
                     _ => {}
                 }
             }
+            assert!(active.is_none());
             value["content"] = json!(blocks);
         }
         _ => {
             value["candidates"][0]["finishReason"] = Value::Null;
             let mut parts: Vec<Value> = Vec::new();
             for event in events {
+                if event["candidates"][0]["content"]["role"].is_string() {
+                    value["candidates"][0]["content"]["role"] =
+                        event["candidates"][0]["content"]["role"].clone();
+                }
                 parts.extend(
                     event["candidates"][0]["content"]["parts"]
                         .as_array()
@@ -1205,7 +1345,7 @@ fn stream_snapshot(format: &str, bytes: &[u8]) -> Value {
             value["candidates"][0]["content"]["parts"] = json!(parts);
         }
     }
-    snapshot(format, &value)
+    value
 }
 
 #[tokio::test]
