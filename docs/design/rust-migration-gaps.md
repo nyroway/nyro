@@ -1,6 +1,6 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，本轮在 `e92b52e6` 上补齐 G06 文件代理密钥生命周期，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，本轮在 `91f6e5aa` 上补齐 G07 主体 RPM／RPD 请求窗口，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
 
 **新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
@@ -15,10 +15,10 @@
 | 生命周期与代际 | [内核](../../crates/nyro-kernel/README_CN.md)、[装配](../../src/bootstrap.rs)和[重载](../../src/reload.rs)：候选激活、失败清理、lease 和退役；Unix 显式 SIGHUP 重载。没有远程配置来源。 |
 | 类型化工作负载 | [IR](../../crates/nyro-llm/src/ir/mod.rs)：`Request`/`Response` 配对 Chat 和 Embedding，其他工作负载未实现。 |
 | 协议执行 | [矩阵测试](../../crates/nyro-llm/tests/protocol_matrix.rs)覆盖三种 Chat 格式，[Responses 运行时测试](../../crates/nyro-llm/tests/responses_runtime.rs)补充 Responses 组合。覆盖已支持的文本、函数和流，不代表任意厂商字段兼容。 |
-| 准入 | [安全包](../../crates/nyro-security/src/lib.rs)、[rate 运行时](../../crates/nyro-llm/tests/rate_runtime.rs)和[quota 运行时](../../crates/nyro-llm/tests/quota_runtime.rs)：凭证认证、模型授权、进程并发、按模型 rate 和累计 token 预留。旧契约差异见 G06–G07。 |
+| 准入 | [安全包](../../crates/nyro-security/src/lib.rs)、[rate 运行时](../../crates/nyro-llm/tests/rate_runtime.rs)和[quota 运行时](../../crates/nyro-llm/tests/quota_runtime.rs)：凭证认证、模型授权、进程并发、按模型 rate、主体 RPM／RPD 窗口和累计 token 预留。旧契约差异见 G06–G07。 |
 | 路由与健康 | [路由测试](../../crates/nyro-llm/tests/routing_runtime.rs)和[故障转移测试](../../crates/nyro-llm/tests/failover_runtime.rs)：优先级／权重选择、有界尝试、被动健康检查，尚不覆盖旧版全部四种策略。 |
 | 交付与观测 | [响应体所有权](../../src/http/body.rs)、[观测](../../crates/nyro-llm/tests/observation_runtime.rs)和[进程测试](../../tests/proxy_smoke.py)：期限、取消、SSE 终止、请求／尝试关联日志及清理。没有持久化请求查询服务。 |
-| 共享状态重载 | [重载进程测试](../../tests/proxy_reload_smoke.py)：去重、拒绝变更、持有 SSE 时轮换凭证／路由、rate/quota/health 复用、FIFO 拒绝及退出。监听／并发和既有策略变更限制仍存在。 |
+| 共享状态重载 | [重载进程测试](../../tests/proxy_reload_smoke.py)：去重、拒绝变更、持有 SSE 时轮换凭证／路由、rate/quota/health 复用、主体请求窗口保留、FIFO 拒绝及退出。监听／并发和既有策略变更限制仍存在。 |
 
 ## 2. 替换旧入口前的数据面差异
 
@@ -32,7 +32,7 @@
 | G04 工具历史与 Schema 处理 | 部分／待取舍 | 旧转换测试包含合成调用、重复 ID 修复、丢弃中间文本／孤立调用、Gemini Schema 裁剪。新 [Anthropic](../../crates/nyro-llm/tests/anthropic_codec.rs)／[Gemini](../../crates/nyro-llm/tests/gemini_codec.rs) encoder 保留完整结果批次及后续文本，拒绝缺失／重复／交错批次；Anthropic 显式错误、空结果、[Responses](../../crates/nyro-llm/tests/responses_codec.rs) 文本块数组及 Gemini ID／顺序已补充。多块文本结果到 Gemini、跨协议错误标志映射和非图片媒体结果明确拒绝；图片结果新增支持范围见第 26 节。[Schema 回归](../../crates/nyro-llm/tests/tool_schema_codec.rs)已覆盖 JSON Schema 对象保留、Gemini 计数／类型／嵌套方言转换及 strict 目标筛选；不裁剪引用或约束。完整客户端／厂商验收仍待后续。 | 回放并行调用、交错文本、工具结果和 Schema，保留合法客户端历史；不自动迁移虚构调用或丢内容的处理。区分有意拒绝和兼容回退。 |
 | G05 Provider 通道与凭证 | 部分 | 旧版有[厂商适配](../../crates/nyro-core/src/provider/mod.rs)、[账号认证 driver](../../crates/nyro-core/src/auth/drivers/mod.rs)和 Vertex 服务账号支持。新 Provider 配置只有协议 kind、可选 OpenAI API、URL 和可选静态 API Key。 | 迁移必要端点、Header 和凭证行为，不向 driver 传递 Gateway 或数据库实体。账号授权、刷新、持久化归控制面；driver 消费已解析凭证。详见下方清单。 |
 | G06 API Key 生命周期 | 文件代理已落地 | [安全包](../../crates/nyro-security/src/lib.rs)新增默认启用状态与可选 Unix 秒到期时间，所有入口共用认证时检查；禁用／到期返回通用 `401`，无匿名回退。主体绑定、重复校验和配置指纹保留生命周期语义。 | 精确到期边界、慢上传、所有入口在准入前拒绝、禁用／到期／续期重载与已准入 SSE 保留见第 28 节。控制面管理、旧数据到新快照的发布仍由 G10–G11 跟踪，不据此宣布产品迁移完成。 |
-| G07 限制作用域与持久化 | 部分 | 旧授权按 API Key 查询 Minute/Day 窗口的请求／token 数（`rpm/rpd/tpm/tpd`）。新 rate 是模型级 token bucket；quota 是模型级、累计、进程内 token 额度。 | 明确主体／模型作用域、窗口／重置、尝试与完成的计量、重启行为；测试同一密钥跨模型、多密钥共享模型。显式迁移策略含义，不静默将 RPM 转成不同桶规则或将 TPM 转成累计额度；也不复制旧日志查询准入的竞争问题。 |
+| G07 限制作用域与持久化 | 部分 | 旧授权按 API Key 查询 Minute/Day 窗口的请求／token 数（`rpm/rpd/tpm/tpd`）。新 rate 是模型级 token bucket；已补主体级 RPM／RPD 滚动请求窗口及组合原子准入，计数与重载边界见第 29 节。quota 仍是模型级、累计、进程内 token 额度。 | 主体 TPM／TPD、持久化和多副本一致性仍待推进；请求窗口不按日志完成计数，重启清零。显式迁移策略含义，不静默将 RPM 转成不同桶规则或将 TPM 转成累计额度；也不复制旧日志查询准入的竞争问题。 |
 | G08 均衡与重试策略 | 部分／待取舍 | [旧 selector](../../crates/nyro-core/src/router/selector.rs)支持 weighted、priority、cooldown、latency。新版组合优先级和权重，没有 cooldown/latency 选择策略，健康和重试配置也不同。 | 映射保留的旧策略和默认值，包括禁用 backend 和全部不健康场景；保留必要策略或记录已接受的替代方案。被动健康检查的冷却期不是旧 cooldown 选择策略。保留新版重试和流提交安全边界。 |
 | G09 HTTP 与网络配置 | 部分／待取舍 | [旧 router](../../crates/nyro-core/src/proxy/server.rs)有 CORS、`/health` 和 `/` 别名、100 MiB JSON 限制；[旧客户端构建](../../crates/nyro-core/src/lib.rs)支持 `use_proxy`、`proxy_url`、`proxy_force_http1`。新根入口有 `/healthz`、`/readyz`、可配置边界，无 CORS，driver 禁用代理和重定向。 | 核对已部署浏览器来源、探针、请求大小和显式出口代理需求，为保留项提供受限配置；说明有意变化的默认值、Header、query、错误行为。不为模仿旧默认值而恢复环境代理或宽泛 CORS。 |
 
@@ -518,3 +518,18 @@ G03／G04 仍为部分完成：非图片结果媒体、厂商文件引用、原�
 验证：`cargo test -p nyro-security -p nyro-protocol -p nyro-llm -p nyro-config -p nyro --offline` 全量 473 项通过；随后新增慢上传测试，2 项生命周期 HTTP 专项复验通过，共验证 474 项不同 Rust 测试。受影响 crate 的 Clippy（all-targets、拒绝 warning）、非桌面 workspace 检查、根二进制构建及扩展后的重载进程回归通过；格式、diff 与 149 个文档相对链接检查通过。配置新字段和禁用凭证用例先在旧行为下失败，再通过实现。独立审查未发现生产代码问题；已将进程到期准备余量增至 10 秒、上游流等待预算增至 40 秒，并给墙钟等待增加单调时间上限，复查无剩余问题。测试只使用本地 mock 与临时密钥字符串。
 
 G06 的文件代理数据面部分已落地。管理界面／数据库密钥编辑、旧数据时间格式转换和配置发布属于 G10–G11；G02–G05、G07–G13 的其余差异继续跟踪。本轮不移除旧入口、不使用真实厂商密钥；整体迁移完成后删除本文，不归档。`docs/superpowers/` 继续忽略。
+
+
+## 29. G07 主体请求窗口与组合准入
+
+基于 `91f6e5aa`（PR #347），在同一个 PR 中补齐主体作用域、RPM／RPD 请求窗口、与模型 token bucket 的原子组合及计数／重载规则。配置为 `llm.subject_limits.<主体 ID>.rpm/rpd`，引用已有 API Key ID，至少一项正 `u32`；省略禁用对应窗口，零／null／空策略／未知字段或主体拒绝。密钥生命周期仍归 `nyro-security`，限制策略没有进入密钥实体。
+
+[`nyro-limit/request`](../../crates/nyro-limit/src/request.rs) 使用单调时钟和准入时间队列实现最近 60 秒／24 小时滚动窗口，达到边界的记录过期，日窗口不在午夜清零。各窗口及可选模型桶在固定锁序下原子准入；拒绝不扣减任何请求规则，原生协议 `429` 带建议性的 `Retry-After`，立即释放并发许可且不调用上游。一次逻辑请求跨重试只计一次；准入后的上游错误、无健康 backend、quota 拒绝、取消与响应丢失不退款，准入前拒绝与模型发现不计数。
+
+主体跨模型别名、协议和工作负载共享；不同主体相互独立。匿名请求没有主体窗口，认证调用匿名模型仍受主体规则约束。[LLM 注册表](../../crates/nyro-llm/src/subject_limit.rs)通过 `SharedResources` 跨代际保留活跃或未过期历史，轮换 secret、禁用／重新启用、到期／续期、移除／加回同一 ID 不清零。有活跃绑定或未过期历史时修改窗口参数拒绝候选；不活跃且历史过期后在后续绑定时回收。失败候选不重置现役预算，未使用的候选绑定不永久占住规则。
+
+[HTTP 回归](../../crates/nyro-llm/tests/rate_runtime/subject_limits.rs)覆盖作用域、四种 Chat API／Embedding、匹配原生 Chat、发现隔离、组合拒绝、代际与部分构建失败；原有 rate 回归分别对模型桶和主体窗口运行，覆盖准入前拒绝、重试、健康、取消／超时及 SSE 丢失。[进程回归](../../tests/proxy_reload_smoke.py)增加实际 SIGHUP 轮换、窗口参数拒绝、禁用／重新启用与移除／加回计数保留。
+
+验证：`cargo test -p nyro-limit -p nyro-security -p nyro-protocol -p nyro-llm -p nyro-config -p nyro --offline` 全量 506 项通过；随后补充部分候选构建回滚和后续 quota 拒绝计数，6 项主体专项通过，共验证 508 项不同 Rust 测试。受影响 crate 的 Clippy（all-targets、拒绝 warning）、非桌面 workspace 检查、根二进制构建及扩展后的重载进程回归通过；格式、diff 与 154 个文档相对路径检查通过。配置接受、未知主体拒绝和 HTTP 限速先验证旧行为失败，再通过实现；并发组合准入与窗口精确边界由原语测试覆盖。独立审查未发现生产代码问题，已补充建议的部分候选失败测试及重载排查文档。验证仅使用本地 mock 与临时测试密钥字符串。
+
+G07 仍为部分完成：主体 TPM／TPD 的 token 预留／结算窗口、持久化、多副本协调与旧数据发布未实现；不把累计模型 quota 当成 TPM，不从历史日志导入准入计数。进程重启清零；立即修改已建立的窗口规则需重启。本轮不新增 crate、依赖、数据库 schema 或内核职责，不移除旧入口。整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。

@@ -394,250 +394,322 @@ async fn retry_after_rounds_fractional_seconds_up() {
 
 #[tokio::test]
 async fn auth_invalid_requests_and_concurrency_denials_do_not_consume_rate() {
-    let upstream = upstream(Reply::Good).await;
-    let mut config = configuration(&[&upstream], 1);
-    config
-        .models
-        .get_mut("public")
-        .unwrap()
-        .subjects
-        .remove("bob");
-    let limit = ConcurrencyLimit::new(1).unwrap();
-    let runtime = runtime(config, &limit, Options::default());
-    for (body, credential, status) in [
-        (chat("public", false), None, 401),
-        (chat("public", false), Some("wrong-secret"), 401),
-        (chat("public", false), Some("bob-secret"), 403),
-        (
-            json!({"model":"public","messages":false}),
-            Some("alice-secret"),
-            400,
-        ),
-        (chat("missing", false), Some("alice-secret"), 404),
-    ] {
+    for subject_window in [false, true] {
+        let upstream = upstream(Reply::Good).await;
+        let mut config = admission_configuration(&[&upstream], 1, subject_window);
+        config
+            .models
+            .get_mut("public")
+            .unwrap()
+            .subjects
+            .remove("bob");
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let runtime = runtime(config, &limit, Options::default());
+        for (body, credential, status) in [
+            (chat("public", false), None, 401),
+            (chat("public", false), Some("wrong-secret"), 401),
+            (chat("public", false), Some("bob-secret"), 403),
+            (
+                json!({"model":"public","messages":false}),
+                Some("alice-secret"),
+                400,
+            ),
+            (chat("missing", false), Some("alice-secret"), 404),
+        ] {
+            let response = runtime
+                .handle(
+                    request("/v1/chat/completions", body, credential),
+                    CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(response.status().as_u16(), status);
+            assert!(!response.headers().contains_key("retry-after"));
+            consume(response).await;
+        }
+        let permit = limit.try_acquire().unwrap();
+        let denied = invoke(&runtime).await;
+        assert_eq!(
+            consume(denied).await["error"]["code"],
+            "concurrency_limit_exceeded"
+        );
+        drop(permit);
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
         let response = runtime
             .handle(
-                request("/v1/chat/completions", body, credential),
-                CancellationToken::new(),
+                request(
+                    "/v1/chat/completions",
+                    chat("public", false),
+                    Some("alice-secret"),
+                ),
+                cancelled,
             )
             .await;
-        assert_eq!(response.status().as_u16(), status);
-        assert!(!response.headers().contains_key("retry-after"));
-        consume(response).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        drop(response);
+        assert_eq!(upstream.count(), 0);
+        assert_eq!(invoke(&runtime).await.status(), StatusCode::OK);
+        assert_rate(invoke(&runtime).await).await;
+        assert_eq!(upstream.count(), 1);
     }
-    let permit = limit.try_acquire().unwrap();
-    let denied = invoke(&runtime).await;
-    assert_eq!(
-        consume(denied).await["error"]["code"],
-        "concurrency_limit_exceeded"
-    );
-    drop(permit);
-    let cancelled = CancellationToken::new();
-    cancelled.cancel();
-    let response = runtime
-        .handle(
-            request(
-                "/v1/chat/completions",
-                chat("public", false),
-                Some("alice-secret"),
-            ),
-            cancelled,
-        )
-        .await;
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    drop(response);
-    assert_eq!(upstream.count(), 0);
-    assert_eq!(invoke(&runtime).await.status(), StatusCode::OK);
-    assert_rate(invoke(&runtime).await).await;
-    assert_eq!(upstream.count(), 1);
 }
 
 #[tokio::test]
 async fn request_body_timeout_before_admission_does_not_consume_rate() {
-    let upstream = upstream(Reply::Good).await;
-    let limit = ConcurrencyLimit::new(1).unwrap();
-    let runtime = runtime(
-        configuration(&[&upstream], 1),
-        &limit,
-        Options {
-            request_timeout: Duration::from_millis(500),
-            ..Options::default()
-        },
-    );
-    let pending_body =
-        Body::from_stream(futures::stream::pending::<Result<Vec<u8>, std::io::Error>>());
-    let pending = Request::builder()
-        .method("POST")
-        .uri("/v1/chat/completions")
-        .header("content-type", "application/json")
-        .header("authorization", "Bearer alice-secret")
-        .body(pending_body)
-        .unwrap();
-    let response = runtime.handle(pending, CancellationToken::new()).await;
-    assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
-    assert!(!response.headers().contains_key("retry-after"));
-    assert_eq!(limit.available(), 1);
-    assert_eq!(upstream.count(), 0);
-    assert_eq!(consume(response).await["error"]["code"], "request_timeout");
+    for subject_window in [false, true] {
+        let upstream = upstream(Reply::Good).await;
+        let limit = ConcurrencyLimit::new(1).unwrap();
+        let runtime = runtime(
+            admission_configuration(&[&upstream], 1, subject_window),
+            &limit,
+            Options {
+                request_timeout: Duration::from_millis(500),
+                ..Options::default()
+            },
+        );
+        let pending_body =
+            Body::from_stream(futures::stream::pending::<Result<Vec<u8>, std::io::Error>>());
+        let pending = Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer alice-secret")
+            .body(pending_body)
+            .unwrap();
+        let response = runtime.handle(pending, CancellationToken::new()).await;
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert!(!response.headers().contains_key("retry-after"));
+        assert_eq!(limit.available(), 1);
+        assert_eq!(upstream.count(), 0);
+        assert_eq!(consume(response).await["error"]["code"], "request_timeout");
 
-    let response = invoke(&runtime).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    consume(response).await;
-    assert_rate(invoke(&runtime).await).await;
-    assert_eq!(limit.available(), 1);
-    assert_eq!(upstream.count(), 1);
+        let response = invoke(&runtime).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        consume(response).await;
+        assert_rate(invoke(&runtime).await).await;
+        assert_eq!(limit.available(), 1);
+        assert_eq!(upstream.count(), 1);
+    }
 }
 
 #[tokio::test]
 async fn incompatible_backend_preparation_does_not_consume_rate() {
-    let upstream = upstream(Reply::Good).await;
-    let mut config = configuration(&[&upstream], 1);
-    config.providers.get_mut("p0").unwrap().kind = nyro_llm::config::ProviderKind::Anthropic;
-    config.models.get_mut("public").unwrap().workloads = vec![nyro_llm::Workload::Chat];
-    let runtime = runtime(
-        config,
-        &ConcurrencyLimit::new(1).unwrap(),
-        Options::default(),
-    );
-    let mut incompatible = chat("public", false);
-    incompatible["frequency_penalty"] = json!(1);
-    let rejected = runtime
-        .handle(
-            request("/v1/chat/completions", incompatible, Some("alice-secret")),
-            CancellationToken::new(),
-        )
-        .await;
-    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        consume(rejected).await["error"]["message"],
-        "Request cannot be represented by any enabled backend"
-    );
-    assert_eq!(upstream.count(), 0);
-    assert_eq!(invoke(&runtime).await.status(), StatusCode::OK);
-    assert_rate(invoke(&runtime).await).await;
-    assert_eq!(upstream.count(), 1);
+    for subject_window in [false, true] {
+        let upstream = upstream(Reply::Good).await;
+        let mut config = admission_configuration(&[&upstream], 1, subject_window);
+        config.providers.get_mut("p0").unwrap().kind = nyro_llm::config::ProviderKind::Anthropic;
+        config.models.get_mut("public").unwrap().workloads = vec![nyro_llm::Workload::Chat];
+        let runtime = runtime(
+            config,
+            &ConcurrencyLimit::new(1).unwrap(),
+            Options::default(),
+        );
+        let mut incompatible = chat("public", false);
+        incompatible["frequency_penalty"] = json!(1);
+        let rejected = runtime
+            .handle(
+                request("/v1/chat/completions", incompatible, Some("alice-secret")),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            consume(rejected).await["error"]["message"],
+            "Request cannot be represented by any enabled backend"
+        );
+        assert_eq!(upstream.count(), 0);
+        assert_eq!(invoke(&runtime).await.status(), StatusCode::OK);
+        assert_rate(invoke(&runtime).await).await;
+        assert_eq!(upstream.count(), 1);
+    }
 }
 
 #[tokio::test]
 async fn retries_cost_one_token_and_failed_calls_are_not_refunded() {
-    let first = upstream(Reply::Status(429)).await;
-    let backup = upstream(Reply::Good).await;
-    let config = configuration(&[&first, &backup], 2);
-    let runtime = runtime(
-        config,
-        &ConcurrencyLimit::new(1).unwrap(),
-        Options::default(),
-    );
-    assert_eq!(invoke(&runtime).await.status(), StatusCode::OK);
-    assert_eq!((first.count(), backup.count()), (1, 1));
-    *backup.reply.lock().unwrap() = Reply::Status(502);
-    let response = invoke(&runtime).await;
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    assert!(!response.headers().contains_key("retry-after"));
-    consume(response).await;
-    assert_rate(invoke(&runtime).await).await;
-    assert_eq!((first.count(), backup.count()), (2, 2));
+    for subject_window in [false, true] {
+        let first = upstream(Reply::Status(429)).await;
+        let backup = upstream(Reply::Good).await;
+        let config = admission_configuration(&[&first, &backup], 2, subject_window);
+        let runtime = runtime(
+            config,
+            &ConcurrencyLimit::new(1).unwrap(),
+            Options::default(),
+        );
+        assert_eq!(invoke(&runtime).await.status(), StatusCode::OK);
+        assert_eq!((first.count(), backup.count()), (1, 1));
+        *backup.reply.lock().unwrap() = Reply::Status(502);
+        let response = invoke(&runtime).await;
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert!(!response.headers().contains_key("retry-after"));
+        consume(response).await;
+        assert_rate(invoke(&runtime).await).await;
+        assert_eq!((first.count(), backup.count()), (2, 2));
+    }
 }
 
 #[tokio::test]
 async fn health_blocked_logical_calls_still_consume_one_token() {
-    let upstream = upstream(Reply::Status(503)).await;
-    let mut config = configuration(&[&upstream], 2);
-    config.models.get_mut("public").unwrap().health = Some(nyro_llm::config::HealthConfig {
-        failure_threshold: 1,
-        cooldown_ms: 60000,
-    });
-    let runtime = runtime(
-        config,
-        &ConcurrencyLimit::new(1).unwrap(),
-        Options::default(),
-    );
-    for _ in 0..2 {
-        assert_eq!(
-            invoke(&runtime).await.status(),
-            StatusCode::SERVICE_UNAVAILABLE
+    for subject_window in [false, true] {
+        let upstream = upstream(Reply::Status(503)).await;
+        let mut config = admission_configuration(&[&upstream], 2, subject_window);
+        config.models.get_mut("public").unwrap().health = Some(nyro_llm::config::HealthConfig {
+            failure_threshold: 1,
+            cooldown_ms: 60000,
+        });
+        let runtime = runtime(
+            config,
+            &ConcurrencyLimit::new(1).unwrap(),
+            Options::default(),
         );
+        for _ in 0..2 {
+            assert_eq!(
+                invoke(&runtime).await.status(),
+                StatusCode::SERVICE_UNAVAILABLE
+            );
+        }
+        assert_eq!(
+            upstream.count(),
+            1,
+            "second admission finds every backend unhealthy"
+        );
+        assert_rate(invoke(&runtime).await).await;
+        assert_eq!(upstream.count(), 1);
     }
-    assert_eq!(
-        upstream.count(),
-        1,
-        "second admission finds every backend unhealthy"
-    );
-    assert_rate(invoke(&runtime).await).await;
-    assert_eq!(upstream.count(), 1);
 }
 
 #[tokio::test]
 async fn cancellation_and_dropped_future_after_dispatch_never_refund_rate() {
-    for cancel in [false, true] {
-        let upstream = upstream(Reply::Slow).await;
-        let limit = ConcurrencyLimit::new(1).unwrap();
-        let runtime = runtime(configuration(&[&upstream], 1), &limit, Options::default());
-        let token = CancellationToken::new();
-        let mut pending = Box::pin(runtime.handle(
-            request(
-                "/v1/chat/completions",
-                chat("public", false),
-                Some("alice-secret"),
-            ),
-            token.clone(),
-        ));
-        tokio::select! {
-            _ = &mut pending => panic!("upstream must wait for headers"),
-            _ = upstream.wait_for_call() => {}
+    for subject_window in [false, true] {
+        for cancel in [false, true] {
+            let upstream = upstream(Reply::Slow).await;
+            let limit = ConcurrencyLimit::new(1).unwrap();
+            let runtime = runtime(
+                admission_configuration(&[&upstream], 1, subject_window),
+                &limit,
+                Options::default(),
+            );
+            let token = CancellationToken::new();
+            let mut pending = Box::pin(runtime.handle(
+                request(
+                    "/v1/chat/completions",
+                    chat("public", false),
+                    Some("alice-secret"),
+                ),
+                token.clone(),
+            ));
+            tokio::select! {
+                _ = &mut pending => panic!("upstream must wait for headers"),
+                _ = upstream.wait_for_call() => {}
+            }
+            if cancel {
+                token.cancel();
+                assert_eq!(pending.await.status(), StatusCode::SERVICE_UNAVAILABLE);
+            } else {
+                drop(pending);
+            }
+            assert_eq!(limit.available(), 1);
+            assert_rate(invoke(&runtime).await).await;
+            assert_eq!(upstream.count(), 1);
         }
-        if cancel {
-            token.cancel();
-            assert_eq!(pending.await.status(), StatusCode::SERVICE_UNAVAILABLE);
-        } else {
-            drop(pending);
-        }
-        assert_eq!(limit.available(), 1);
-        assert_rate(invoke(&runtime).await).await;
-        assert_eq!(upstream.count(), 1);
     }
 }
 
 #[tokio::test]
 async fn stream_drop_cancel_and_deadline_never_refund_admitted_rate() {
-    for termination in ["drop", "cancel", "deadline"] {
-        let upstream = upstream(Reply::HangingStream).await;
-        let limit = ConcurrencyLimit::new(1).unwrap();
-        let runtime = runtime(
-            configuration(&[&upstream], 1),
-            &limit,
-            Options {
-                request_timeout: if termination == "deadline" {
-                    Duration::from_millis(300)
-                } else {
-                    Duration::from_secs(5)
+    for subject_window in [false, true] {
+        for termination in ["drop", "cancel", "deadline"] {
+            let upstream = upstream(Reply::HangingStream).await;
+            let limit = ConcurrencyLimit::new(1).unwrap();
+            let runtime = runtime(
+                admission_configuration(&[&upstream], 1, subject_window),
+                &limit,
+                Options {
+                    request_timeout: if termination == "deadline" {
+                        Duration::from_millis(300)
+                    } else {
+                        Duration::from_secs(5)
+                    },
+                    ..Options::default()
                 },
-                ..Options::default()
-            },
-        );
-        let token = CancellationToken::new();
-        let response = runtime
-            .handle(
-                request(
-                    "/v1/chat/completions",
-                    chat("public", true),
-                    Some("alice-secret"),
-                ),
-                token.clone(),
-            )
-            .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(limit.available(), 0);
-        if termination == "drop" {
-            drop(response);
-        } else {
-            if termination == "cancel" {
-                token.cancel();
+            );
+            let token = CancellationToken::new();
+            let response = runtime
+                .handle(
+                    request(
+                        "/v1/chat/completions",
+                        chat("public", true),
+                        Some("alice-secret"),
+                    ),
+                    token.clone(),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(limit.available(), 0);
+            if termination == "drop" {
+                drop(response);
+            } else {
+                if termination == "cancel" {
+                    token.cancel();
+                }
+                assert!(to_bytes(response.into_body(), 16384).await.is_err());
             }
-            assert!(to_bytes(response.into_body(), 16384).await.is_err());
+            assert_eq!(limit.available(), 1);
+            assert_rate(invoke(&runtime).await).await;
+            assert_eq!(upstream.count(), 1);
         }
-        assert_eq!(limit.available(), 1);
-        assert_rate(invoke(&runtime).await).await;
-        assert_eq!(upstream.count(), 1);
     }
+}
+
+#[test]
+fn subject_request_limit_configuration_is_accepted() {
+    for policy in [
+        json!({"rpm": 2}),
+        json!({"rpd": 3}),
+        json!({"rpm": 2, "rpd": 3}),
+    ] {
+        let config = serde_json::from_value::<Config>(json!({
+            "providers":{"p":{"kind":"openai","base_url":"http://127.0.0.1:1/v1"}},
+            "models":{"public":{"provider":"p","upstream_model":"private","workloads":["chat"]}},
+            "subject_limits":{"alice":policy}
+        }));
+        assert!(config.is_ok(), "{config:?}");
+        config.unwrap().validate().unwrap();
+    }
+}
+
+#[test]
+fn subject_request_limits_reject_empty_zero_null_and_unknown_policy_fields() {
+    for policy in [
+        json!({}),
+        json!({"rpm":0}),
+        json!({"rpd":0}),
+        json!({"rpm":null}),
+        json!({"rpd":null,"rpm":1}),
+        json!({"rpm":-1}),
+        json!({"rpm":1.5}),
+        json!({"rpm":4294967296_u64}),
+        json!({"rpm":1,"burst":2}),
+    ] {
+        let parsed = serde_json::from_value::<Config>(json!({
+            "providers":{"p":{"kind":"openai","base_url":"http://127.0.0.1:1/v1"}},
+            "models":{"public":{"provider":"p","upstream_model":"private","workloads":["chat"]}},
+            "subject_limits":{"alice":policy}
+        }));
+        assert!(
+            parsed.is_err() || parsed.unwrap().validate().is_err(),
+            "{policy}"
+        );
+    }
+}
+
+#[path = "rate_runtime/subject_limits.rs"]
+mod subject_limits;
+
+fn admission_configuration(upstreams: &[&Upstream], count: u32, subject_window: bool) -> Config {
+    let mut config = configuration(upstreams, count);
+    if subject_window {
+        config.models.get_mut("public").unwrap().rate = None;
+        config.subject_limits = serde_json::from_value(json!({"alice":{"rpm":count}})).unwrap();
+    }
+    config
 }

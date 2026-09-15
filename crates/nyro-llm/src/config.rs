@@ -12,6 +12,8 @@ use thiserror::Error;
 pub struct Config {
     pub providers: BTreeMap<String, Provider>,
     pub models: BTreeMap<String, Model>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub subject_limits: BTreeMap<String, SubjectLimitConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -111,6 +113,36 @@ pub struct RateConfig {
     pub burst: u32,
 }
 
+/// Rolling request counts shared by one authenticated subject across LLM models.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubjectLimitConfig {
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rpm: Option<u32>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rpd: Option<u32>,
+}
+
+impl SubjectLimitConfig {
+    pub(crate) fn windows(&self) -> impl Iterator<Item = (u32, Duration)> {
+        [(self.rpm, 60), (self.rpd, 86400)]
+            .into_iter()
+            .filter_map(|(count, seconds)| count.map(|count| (count, Duration::from_secs(seconds))))
+    }
+
+    pub(crate) fn valid(&self) -> bool {
+        (self.rpm.is_some() || self.rpd.is_some()) && self.windows().all(|(count, _)| count > 0)
+    }
+}
+
 /// Process-local cumulative token budget and provision reserved per upstream attempt.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -197,6 +229,10 @@ impl<'de> Deserialize<'de> for Model {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error(
+        "subject `{subject}` request limits require a nonempty ID and at least one positive rpm/rpd bound"
+    )]
+    InvalidSubjectLimit { subject: String },
     #[error("LLM configuration must define at least one provider")]
     NoProviders,
     #[error("LLM configuration must define at least one model")]
@@ -250,6 +286,14 @@ impl Config {
         }
         if self.models.is_empty() {
             return Err(ConfigError::NoModels);
+        }
+
+        for (id, policy) in &self.subject_limits {
+            if id.trim().is_empty() || !policy.valid() {
+                return Err(ConfigError::InvalidSubjectLimit {
+                    subject: id.clone(),
+                });
+            }
         }
 
         for (id, provider) in &self.providers {

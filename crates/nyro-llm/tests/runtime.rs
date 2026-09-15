@@ -76,6 +76,7 @@ use futures::StreamExt;
 
 fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Runtime {
     let config = config::Config {
+        subject_limits: BTreeMap::new(),
         providers: BTreeMap::from([(
             "upstream".into(),
             config::Provider {
