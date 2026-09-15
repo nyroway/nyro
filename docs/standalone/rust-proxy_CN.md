@@ -212,7 +212,7 @@ llm:
       rpd: 1000
 ```
 
-至少配置 `rpm` 或 `rpd` 中的一项；提供的值必须是正 `u32`。零、显式 `null`、空策略、未知字段、空白 ID 和未知主体均拒绝配置。省略某主体的策略表示不启用其请求窗口。禁用或已过期的密钥仍可作为合法策略引用。限制属于 LLM 策略，与 API Key 上的认证字段分开。
+仅请求窗口策略至少配置 `rpm` 或 `rpd` 一项；也允许仅配置下文的 token 窗口。提供的请求次数必须是正 `u32`。零、显式 `null`、空策略、未知字段、空白 ID 和未知主体均拒绝配置。省略某主体的策略表示不启用其请求窗口。禁用或已过期的密钥仍可作为合法策略引用。限制属于 LLM 策略，与 API Key 上的认证字段分开。
 
 RPM 统计最近 60 秒内的准入，RPD 统计最近 24 小时内的准入；记录达到对应窗口时长时立即过期，RPD 不在午夜清零。窗口按单调时钟精确计数，调整墙钟不会补充预算。空窗口允许立即用完全部次数；如需平滑突发，可同时配置模型令牌桶。
 
@@ -222,9 +222,40 @@ RPM 统计最近 60 秒内的准入，RPD 统计最近 24 小时内的准入；�
 
 根代理通过 `runtime::SharedResources` 在重载和重叠代际之间共享历史。轮换、禁用／重新启用、到期／续期以及主体／策略移除后重新加入，均保留同一 ID 尚未过期的准入记录。移除策略会停止新请求的对应计数，但不删除历史。规则仍有活跃绑定或未过期历史时，修改窗口参数会拒绝候选；需要立即修改已建立的规则时重启进程。没有活跃绑定且全部记录过期后，在后续策略绑定时回收。失败候选不会重置现役预算，也不会永久占住未使用的绑定。在途请求继续使用其原代际策略。
 
-计数只在当前进程内有效，重启清零，多副本不协调。TPM／TPD token 窗口和持久化计数尚未实现，也不导入旧日志计数：这里统计逻辑准入，不统计日志完成。共享原语 `nyro_limit::request::RequestLimit` 接收 `(count, Duration)` 窗口，可与 `RateLimit` 原子组合；`nyro_llm::subject_limit::SubjectLimitRegistry` 负责主体作用域。不向 `nyro-limit` 引入 HTTP、LLM 或数据库类型，不增加内核职责。Rust 调用方构造 `config::Config` 时需提供 `subject_limits`，空映射保留原行为；逐字段构造 `SharedResources` 时也需提供该注册表，或使用 `..Default::default()`。
+计数只在当前进程内有效，重启清零，多副本不协调。TPM／TPD 按下文单独配置，持久化计数尚未实现，也不导入旧日志计数：这里统计逻辑准入，不统计日志完成。共享原语 `nyro_limit::request::RequestLimit` 接收 `(count, Duration)` 窗口，可与 `RateLimit` 原子组合；`nyro_llm::subject_limit::SubjectLimitRegistry` 负责主体作用域。不向 `nyro-limit` 引入 HTTP、LLM 或数据库类型，不增加内核职责。Rust 调用方构造 `config::Config` 时需提供 `subject_limits`，空映射保留原行为；逐字段构造 `SharedResources` 时也需提供该注册表，或使用 `..Default::default()`。
 
 回归：`cargo test -p nyro-limit` 和 `cargo test -p nyro-llm --test rate_runtime`；根代理重载冒烟覆盖轮换、拒绝变更、禁用／重新启用及移除后重新加入。
+
+## 主体 token 窗口
+
+同一份 `llm.subject_limits` 策略可以配置 TPM／TPD，也可以与 RPM／RPD 同时启用：
+
+```yaml
+llm:
+  subject_limits:
+    deploy:
+      tpm: 100000
+      tpd: 1000000
+      reserve_tokens: 4096
+```
+
+`tpm` 和 `tpd` 是可选的正 `u64`，限制归一化后的输入加输出 token。配置任一项时必须提供正 `reserve_tokens`，且不超过每个已配置的 token 窗口上限。没有 token 窗口却配置预留量、零、显式 `null`、错误类型和未知字段均拒绝。请求和 token 规则可以共存，但 `rpm`、`rpd`、`tpm`、`tpd` 至少启用一项。模型 `quota.reserve_tokens` 与主体 `reserve_tokens` 是独立设置，可以不同。Rust `SubjectLimitConfig` 字面量需提供新增的 `tpm`、`tpd`、`reserve_tokens` 字段，原请求窗口策略设为 `None`。
+
+Nyro 在逻辑请求频率准入和 backend 健康选择之后，为每次选定的上游尝试预留主体 token。所有主体 token 窗口与可选的模型累计 quota 原子预留；拒绝不改变两类 token 预算，不发起新的上游请求，并立即释放并发许可。此前已准入的 RPM／RPD／模型 rate 次数仍然保留。每次重试都需要新的 token 预留，但逻辑请求只计一次；没有可用健康 backend 时不预留 token。
+
+在途预留持续占用每个 token 窗口，直到结算或释放，长请求或 SSE 跨窗口时不会过期。上游协议完整终止并通过校验后，以实际用量替换预留，接受明确的零及超过预留的用量。每笔正结算从结算时刻进入滚动窗口，分别在 60 秒（TPM）或 24 小时（TPD）后准确过期，不在午夜重置。这一规则统计已结算尝试用量加全部在途预留，不假定知道上游每个 token 的生成时刻。跨过一分钟的流仍占用预留，结束时才开始已结算用量的窗口时长。
+
+明确的连接建立失败会释放两类预留。HTTP 错误、传输／协议失败、取消、超时、截断以及响应体／处理 future 丢弃，均按各预算自身预留与已知最高有效用量的较大值结算；完整响应缺少用量时也采用该回退。模型和主体分别使用自己的预留量，因此未知结果可能扣减不同数值；完整用量则分别结算为相同实际值，不将两者相加。流式累计快照替换旧值，不逐帧累加；无效／递减快照不能降低已有扣费。协议成功完成后结算已确定，后续下游交付失败不重复结算。
+
+预留量由运维配置，不是厂商真实消耗的可信上界。实际用量可超过窗口限制，Nyro 会记录欠额并阻止后续预留，直到足够的已结算用量过期；不会仅因观测用量超过预留就截断已准入流。未知结果可能被高估。因此窗口按报告用量或回退值控制准入，不承诺真实上游 token 生成的硬上限。
+
+主体 token 拒绝使用原生协议 `429`，OpenAI API 的错误码为 `rate_limit_exceeded`。如果已结算用量过期后能腾出空间，`Retry-After` 取各阻塞窗口所需等待的最大值并向上取整为秒，可能需要多笔结算记录过期；若仅在途预留就已阻塞新尝试，因为完成时间未知，不返回该 Header。重试时仍可能受新流量或后续结算影响。模型累计 quota 拒绝沿用 `quota_exceeded`，不返回等待时间；Anthropic 使用 `rate_limit_error`，Gemini 使用 `RESOURCE_EXHAUSTED`。
+
+主体作用域与生命周期沿用请求窗口规则：同一认证主体跨模型别名、已支持 API／工作负载及严格／原生路径共享状态。匿名请求没有主体 token 预算，认证用户访问匿名模型仍受主体策略限制。重载、轮换 secret、禁用／重新启用、到期／续期、移除／重新加入均保留在途预留及未过期结算。存在活跃绑定、在途凭据或未过期请求／token 历史时，修改该主体策略参数会拒绝候选，包括为活跃的仅请求窗口策略新增 token 规则；需要立即修改时重启。没有活跃绑定、请求与 token 历史均已清空且没有预留时，后续绑定可以回收旧策略。失败候选不能重置现役计数。
+
+`nyro_limit::window::WindowQuota` 按通用单位计量，不依赖 LLM、认证、HTTP、存储或内核类型。`SubjectLimitRegistry::token_snapshots` 按 TPM、TPD 顺序返回已配置窗口。请求／尝试日志通过 `token_window_charged_tokens` 单独记录主体扣费，与 `quota_charged_tokens` 和上游报告的 `total_tokens` 分开；尝试字段 `token_window_outcome` 区分 `actual`、`fallback`、`released`、`disabled`。同时启用 TPM 与 TPD 时，主体扣费只在日志计一次。计数仍为进程内状态，重启清零，不导入旧日志；持久化和多副本协调继续后续推进。
+
+回归：`cargo test -p nyro-limit`、`cargo test -p nyro-llm --test quota_runtime --test observation_runtime`，以及构建 `nyro` 后运行根代理重载冒烟。
 
 ## Token 额度
 

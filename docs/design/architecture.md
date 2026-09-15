@@ -4,7 +4,7 @@
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、按授权过滤的模型发现、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级／加权选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、主体 RPM／RPD 滚动窗口、累计 token 额度、请求／尝试关联用量观测、Unix SIGHUP 文件配置重载和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、按授权过滤的模型发现、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级／加权选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、主体 RPM／RPD 与 TPM／TPD 滚动窗口、累计 token 额度、请求／尝试关联用量观测、Unix SIGHUP 文件配置重载和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
 
 ## 1. 产品定位与范围
 
@@ -120,6 +120,7 @@ nyro/
 │   │   │   ├── lib.rs
 │   │   │   ├── rate.rs
 │   │   │   ├── request.rs           # 滚动请求窗口与组合准入
+│   │   │   ├── window.rs            # 滚动用量预留与结算
 │   │   │   ├── quota.rs
 │   │   │   ├── concurrency.rs
 │   │   │   ├── store.rs             # 限制能力所需的原子状态操作
@@ -534,7 +535,9 @@ OpenAI Chat／Responses 共用 `nyro_protocol::openai::ReasoningEffort`；旧 `o
 
 缓存计量属于 LLM 协议语义：`Usage.prompt_tokens` 包含普通输入、缓存读取和缓存写入，读取细分复用 `prompt_tokens_details.cached_tokens`，写入细分由可选的类型化 `Usage.cache_creation` 表达，TTL 明细是写入子集，不重复计数。可选写入明细使用 `Box<CacheCreationUsage>`，避免增大普通响应；直接构造 `Usage` 的消费者需提供该字段，无写入时设为 `None`。转换和校验由 `nyro-llm` codec 负责，wire 字段归 `nyro-protocol`；不引入通用 JSON 扩展袋、新 crate 或内核职责。无 TTL 明细的写入计数可在 OpenAI Chat／Responses／Anthropic 间映射，TTL 明细仅由 Anthropic 严格输出保留，Gemini 拒绝非零写入；原生路径保留原始 JSON，观测和 quota 使用经过校验的总量。请求缓存控制的当前子集见上文，跨协议策略映射及金额计费仍是独立待办。
 
-主体请求限制由 `llm.subject_limits.<主体 ID>.rpm/rpd` 配置，绑定已有认证主体，在模型别名、API、工作负载和严格／原生路径间共享。`nyro-limit/request` 提供单调时钟滚动窗口，与模型令牌桶原子准入；请求规则拒绝不部分扣费。准入按逻辑请求计一次，重试不重复，后续失败或取消不退款。`nyro-llm/subject_limit` 保留活跃和未过期历史，轮换、禁用／重新启用及移除／重新加入不清零；参数冲突拒绝候选，闲置过期状态可回收。匿名请求只有模型级限制，认证调用匿名模型仍受主体限制。请求窗口使用最近 60 秒／24 小时，不是午夜重置；token 窗口与持久化继续由 G07 跟踪。配置与具体边界见[代理指南](../standalone/rust-proxy_CN.md#主体请求窗口)。
+主体请求限制由 `llm.subject_limits.<主体 ID>.rpm/rpd` 配置，绑定已有认证主体，在模型别名、API、工作负载和严格／原生路径间共享。`nyro-limit/request` 提供单调时钟滚动窗口，与模型令牌桶原子准入；请求规则拒绝不部分扣费。准入按逻辑请求计一次，重试不重复，后续失败或取消不退款。`nyro-llm/subject_limit` 保留活跃和未过期历史，轮换、禁用／重新启用及移除／重新加入不清零；参数冲突拒绝候选，闲置过期状态可回收。匿名请求只有模型级限制，认证调用匿名模型仍受主体限制。请求窗口使用最近 60 秒／24 小时，不是午夜重置；主体 token 窗口已按下文实现，持久化与多副本协调继续由 G07 跟踪。配置与具体边界见[代理指南](../standalone/rust-proxy_CN.md#主体请求窗口)。
+
+主体 `tpm/tpd/reserve_tokens` 使用 `nyro-limit/window::WindowQuota`，按通用单位处理滚动已结算用量及不随时间过期的在途预留。LLM 每次上游尝试与模型累计 quota 原子预留，逻辑请求次数仍按原步骤计一次；协议完成后按实际用量结算，连接建立失败释放，未知／失败结果分别按各预算预留与有效用量的较大值扣费。正结算从结算时刻保留 60 秒／24 小时，长流跨窗不提前释放预留，超额如实记账阻止后续准入；不承诺真实上游消耗硬上限。复用现有用量校验与终态清理，观测独立记录主体和模型扣费，避免叠加成报告用量。代际注册表同时保留请求、token 历史及在途预留，活跃或未清空策略的参数变更拒绝候选。配置、等待 Header 和 Rust 调用方字段迁移见[代理指南](../standalone/rust-proxy_CN.md#主体-token-窗口)。
 
 根程序通过 `nyro_llm::runtime::SharedResources` 显式共享健康、模型 rate、主体请求窗口和 quota 注册表。quota 已消耗及在途账本在模型移除／加回后继续保留；有活跃绑定或已消费余额时修改规则会拒绝候选构建，避免配置变更清零。进程重启会重置进程内状态。quota 超限返回原生协议 `429`，不带 `Retry-After` 并立即释放并发许可；其之前的 rate 准入不退款。计量、协议映射和资源组合均未进入 `nyro-kernel`。
 
@@ -577,7 +580,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 | 阶段 | 当前进度 | 差异跟踪 |
 |---|---|---|
 | 内核、代际、文件配置 | 基础机制已落地；SIGHUP 重载已有回归 | 后续能力必须保持生命周期与清理约束 |
-| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；G04 已补充 Anthropic／Gemini 完整工具结果批次、显式错误状态边界、文本结果块与 Gemini ID／顺序校验；函数 Schema 已补充 JSON 约束保留、Gemini 方言转换与 strict 目标边界；G03 已补充用户图片输入及目标限制、缓存读取转换与 Anthropic 缓存写入／TTL 计量边界、OpenAI 当前缓存选项／兼容 retention 及原生缓存放置回归；有序 IR 已支持 Anthropic／Gemini／Responses 历史、JSON 和 SSE 交错顺序，以及各自专有推理的同协议保留，Chat 不可表达顺序明确拒绝；工具结果图片已支持 Anthropic／Responses 保序互转与 Gemini 对象／媒体的同协议保留；本地三轮工具会话矩阵覆盖严格转换、匹配原生模式及图片／专有推理组合，真实客户端与厂商验收仍待完成；G06 文件代理已支持密钥禁用、认证时到期检查和代际重载；G07 已支持主体 RPM／RPD 滚动窗口、与模型桶原子准入及跨代际历史保留，token 窗口与持久化仍待完成；整体兼容对齐未完成 | G02–G09 |
+| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；G04 已补充 Anthropic／Gemini 完整工具结果批次、显式错误状态边界、文本结果块与 Gemini ID／顺序校验；函数 Schema 已补充 JSON 约束保留、Gemini 方言转换与 strict 目标边界；G03 已补充用户图片输入及目标限制、缓存读取转换与 Anthropic 缓存写入／TTL 计量边界、OpenAI 当前缓存选项／兼容 retention 及原生缓存放置回归；有序 IR 已支持 Anthropic／Gemini／Responses 历史、JSON 和 SSE 交错顺序，以及各自专有推理的同协议保留，Chat 不可表达顺序明确拒绝；工具结果图片已支持 Anthropic／Responses 保序互转与 Gemini 对象／媒体的同协议保留；本地三轮工具会话矩阵覆盖严格转换、匹配原生模式及图片／专有推理组合，真实客户端与厂商验收仍待完成；G06 文件代理已支持密钥禁用、认证时到期检查和代际重载；G07 已支持主体 RPM／RPD 和 TPM／TPD 滚动窗口、请求规则原子准入、主体／模型 token 预算原子预留与跨代际状态保留，持久化和多副本协调仍待完成；整体兼容对齐未完成 | G02–G09 |
 | 控制面、存储、管理与持久化观测 | 尚未接入新架构 | G10–G12 |
 | 工具、部署和旧入口切换 | 尚未完成切换验收 | G11、G13 |
 

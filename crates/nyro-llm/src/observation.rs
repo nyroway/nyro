@@ -44,6 +44,7 @@ struct Totals {
     output: u128,
     total: u128,
     quota: u128,
+    token_window: u128,
     known: u32,
     complete: u32,
     invalid: bool,
@@ -92,6 +93,7 @@ impl RequestObservation {
         provider: &str,
         protocol: &'static str,
         quota: Option<AttemptQuota>,
+        token_window: Option<AttemptQuota>,
     ) -> AttemptObservation {
         self.attempts += 1;
         self.backend = backend.to_owned();
@@ -107,6 +109,7 @@ impl RequestObservation {
             deadline: self.deadline,
             totals: self.totals.clone(),
             quota,
+            token_window,
             usage: None,
             invalid_usage: false,
             status: 0,
@@ -146,7 +149,8 @@ impl Drop for RequestObservation {
             attempts = self.attempts, status = self.status, outcome, delivery_outcome = delivery,
             error_code = self.error_code, duration_ms = self.started.elapsed().as_millis() as u64,
             input_tokens = totals.input, output_tokens = totals.output, total_tokens = totals.total,
-            usage_state, quota_charged_tokens = totals.quota, "LLM request finished");
+            usage_state, quota_charged_tokens = totals.quota,
+            token_window_charged_tokens = totals.token_window, "LLM request finished");
     }
 }
 
@@ -169,6 +173,7 @@ pub(crate) struct AttemptObservation {
     deadline: Instant,
     totals: Arc<Mutex<Totals>>,
     quota: Option<AttemptQuota>,
+    token_window: Option<AttemptQuota>,
     usage: Option<Tokens>,
     invalid_usage: bool,
     pub status: u16,
@@ -187,7 +192,10 @@ impl AttemptObservation {
             },
             valid,
         );
-        if let Some(quota) = self.quota.as_mut() {
+        for quota in [&mut self.quota, &mut self.token_window]
+            .into_iter()
+            .flatten()
+        {
             quota.observe(usage)?;
         }
         Ok(())
@@ -202,7 +210,10 @@ impl AttemptObservation {
             },
             usage.prompt_tokens == usage.total_tokens,
         );
-        if let Some(quota) = self.quota.as_mut() {
+        for quota in [&mut self.quota, &mut self.token_window]
+            .into_iter()
+            .flatten()
+        {
             quota.observe_embedding(usage)?;
         }
         Ok(())
@@ -234,7 +245,7 @@ impl AttemptObservation {
             return;
         }
         self.finished = true;
-        let (charged, quota_outcome) = match self.quota.take() {
+        let settle = |quota: Option<AttemptQuota>| match quota {
             Some(quota) if outcome == "complete" => (
                 Some(quota.complete()),
                 if self.usage.is_some() {
@@ -247,6 +258,8 @@ impl AttemptObservation {
             Some(quota) => (Some(quota.abandon()), "fallback"),
             None => (None, "disabled"),
         };
+        let (charged, quota_outcome) = settle(self.quota.take());
+        let (window_charged, token_window_outcome) = settle(self.token_window.take());
         let usage_state = if self.invalid_usage {
             "invalid"
         } else if self.usage.is_none() {
@@ -267,6 +280,7 @@ impl AttemptObservation {
             totals.complete += u32::from(usage_state == "complete");
             totals.invalid |= self.invalid_usage;
             totals.quota += u128::from(charged.unwrap_or(0));
+            totals.token_window += u128::from(window_charged.unwrap_or(0));
         }
         tracing::info!(target: "nyro::attempt",
             request_id = %self.request_id, attempt = self.number, model = %self.model,
@@ -275,7 +289,8 @@ impl AttemptObservation {
             duration_ms = self.started.elapsed().as_millis() as u64, usage_state,
             input_tokens = self.usage.map(|u| u.input), output_tokens = self.usage.map(|u| u.output),
             total_tokens = self.usage.map(|u| u.total), quota_charged_tokens = charged,
-            quota_outcome, "LLM upstream attempt finished");
+            quota_outcome, token_window_charged_tokens = window_charged,
+            token_window_outcome, "LLM upstream attempt finished");
     }
 }
 

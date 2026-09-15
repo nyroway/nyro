@@ -808,3 +808,74 @@ async fn broken_transport_after_headers_is_not_a_protocol_error() {
         assert_eq!(events.request().get("outcome"), "error");
     }
 }
+
+#[tokio::test]
+async fn subject_window_charges_are_separate_from_model_quota_and_reported_usage() {
+    for model_quota in [None, Some(100)] {
+        for reported in [Value::Null, usage()] {
+            let events = Events::default();
+            let _guard = tracing::subscriber::set_default(
+                tracing_subscriber::registry().with(events.clone()),
+            );
+            let upstream = upstream(Reply::Json(answer(reported.clone()))).await;
+            let mut config = config(&[&upstream], model_quota);
+            config.subject_limits =
+                serde_json::from_value(json!({"alice":{"tpm":100,"tpd":1000,"reserve_tokens":17}}))
+                    .unwrap();
+            let runtime = Runtime::new(
+                config,
+                Arc::new(
+                    ApiKeys::new(vec![nyro_security::ApiKey {
+                        id: "alice".into(),
+                        secret: "client-secret".into(),
+                        enabled: true,
+                        expires_at: None,
+                    }])
+                    .unwrap(),
+                ),
+                ConcurrencyLimit::new(1).unwrap(),
+                Options::default(),
+            )
+            .unwrap();
+            let mut input = request(false);
+            input
+                .headers_mut()
+                .insert("authorization", "Bearer client-secret".parse().unwrap());
+            let response = runtime.handle(input, CancellationToken::new()).await;
+            assert_eq!(response.status(), 200);
+            consume(response).await;
+            let summary = events.request();
+            let window = if reported.is_null() { 17 } else { 5 };
+            let model = if model_quota.is_none() {
+                0
+            } else if reported.is_null() {
+                10
+            } else {
+                5
+            };
+            assert_eq!(summary.number("token_window_charged_tokens"), window);
+            assert_eq!(summary.number("quota_charged_tokens"), model);
+            assert_eq!(
+                summary.number("total_tokens"),
+                if reported.is_null() { 0 } else { 5 }
+            );
+            let attempts = events.target("nyro::attempt");
+            assert_eq!(attempts.len(), 1);
+            assert_eq!(attempts[0].number("token_window_charged_tokens"), window);
+            assert_eq!(
+                attempts[0].get("token_window_outcome"),
+                if reported.is_null() {
+                    "fallback"
+                } else {
+                    "actual"
+                }
+            );
+            if model_quota.is_none() {
+                assert_eq!(attempts[0].get("quota_outcome"), "disabled");
+                assert!(!attempts[0].fields.contains_key("quota_charged_tokens"));
+            } else {
+                assert_eq!(attempts[0].number("quota_charged_tokens"), model);
+            }
+        }
+    }
+}

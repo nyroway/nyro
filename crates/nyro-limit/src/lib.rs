@@ -3,6 +3,7 @@
 pub mod quota;
 pub mod rate;
 pub mod request;
+pub mod window;
 
 use std::sync::Arc;
 use thiserror::Error;

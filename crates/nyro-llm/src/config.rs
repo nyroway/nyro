@@ -113,7 +113,7 @@ pub struct RateConfig {
     pub burst: u32,
 }
 
-/// Rolling request counts shared by one authenticated subject across LLM models.
+/// Rolling request/token budgets shared by one authenticated subject across LLM models.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubjectLimitConfig {
@@ -129,6 +129,24 @@ pub struct SubjectLimitConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub rpd: Option<u32>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tpm: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tpd: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reserve_tokens: Option<u64>,
 }
 
 impl SubjectLimitConfig {
@@ -138,8 +156,24 @@ impl SubjectLimitConfig {
             .filter_map(|(count, seconds)| count.map(|count| (count, Duration::from_secs(seconds))))
     }
 
+    pub(crate) fn token_windows(&self) -> impl Iterator<Item = (u64, Duration)> {
+        [(self.tpm, 60), (self.tpd, 86400)]
+            .into_iter()
+            .filter_map(|(count, seconds)| count.map(|count| (count, Duration::from_secs(seconds))))
+    }
+
     pub(crate) fn valid(&self) -> bool {
-        (self.rpm.is_some() || self.rpd.is_some()) && self.windows().all(|(count, _)| count > 0)
+        let requests = self.rpm.is_some() || self.rpd.is_some();
+        let tokens = self.tpm.is_some() || self.tpd.is_some();
+        (requests || tokens)
+            && self.windows().all(|(count, _)| count > 0)
+            && match (tokens, self.reserve_tokens) {
+                (true, Some(reserve)) => {
+                    reserve > 0 && self.token_windows().all(|(limit, _)| reserve <= limit)
+                }
+                (false, None) => true,
+                _ => false,
+            }
     }
 }
 
@@ -230,7 +264,7 @@ impl<'de> Deserialize<'de> for Model {
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error(
-        "subject `{subject}` request limits require a nonempty ID and at least one positive rpm/rpd bound"
+        "subject `{subject}` limits require a nonempty ID, positive bounds, and a valid token reservation"
     )]
     InvalidSubjectLimit { subject: String },
     #[error("LLM configuration must define at least one provider")]

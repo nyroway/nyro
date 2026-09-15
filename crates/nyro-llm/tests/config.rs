@@ -487,3 +487,41 @@ fn rate_policy_accepts_large_bounds_and_burst_independent_of_refill_count() {
             .unwrap();
     }
 }
+
+#[test]
+fn subject_token_windows_accept_standalone_and_combined_request_rules() {
+    for policy in [
+        serde_json::json!({"tpm":100,"reserve_tokens":10}),
+        serde_json::json!({"tpd":1000,"reserve_tokens":10}),
+        serde_json::json!({"rpm":2,"rpd":10,"tpm":100,"tpd":1000,"reserve_tokens":10}),
+    ] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["subject_limits"] = serde_json::json!({"alice":policy});
+        let parsed = serde_json::from_value::<Config>(value);
+        assert!(parsed.is_ok(), "{parsed:?}");
+        parsed.unwrap().validate().unwrap();
+    }
+}
+
+#[test]
+fn subject_token_windows_reject_invalid_or_unusable_reservations() {
+    for policy in [
+        serde_json::json!({"tpm":0,"reserve_tokens":1}),
+        serde_json::json!({"tpm":100}),
+        serde_json::json!({"tpd":100,"reserve_tokens":0}),
+        serde_json::json!({"tpm":100,"tpd":5,"reserve_tokens":10}),
+        serde_json::json!({"tpm":5,"tpd":100,"reserve_tokens":10}),
+        serde_json::json!({"rpm":2,"reserve_tokens":10}),
+        serde_json::json!({"tpm":null,"reserve_tokens":1}),
+        serde_json::json!({"tpd":100,"reserve_tokens":null}),
+        serde_json::json!({"tpd":-1,"reserve_tokens":1}),
+    ] {
+        let mut value = serde_json::to_value(valid_config()).unwrap();
+        value["subject_limits"] = serde_json::json!({"alice":policy});
+        let parsed = serde_json::from_value::<Config>(value);
+        assert!(
+            parsed.is_err() || parsed.unwrap().validate().is_err(),
+            "{policy}"
+        );
+    }
+}
