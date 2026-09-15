@@ -104,6 +104,8 @@ fn runtime(config: Value, limit: &ConcurrencyLimit, options: Options) -> Runtime
             ApiKeys::new(vec![ApiKey {
                 id: "alice".into(),
                 secret: "client-secret".into(),
+                enabled: true,
+                expires_at: None,
             }])
             .unwrap(),
         ),

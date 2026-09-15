@@ -574,7 +574,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 | 阶段 | 当前进度 | 差异跟踪 |
 |---|---|---|
 | 内核、代际、文件配置 | 基础机制已落地；SIGHUP 重载已有回归 | 后续能力必须保持生命周期与清理约束 |
-| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；G04 已补充 Anthropic／Gemini 完整工具结果批次、显式错误状态边界、文本结果块与 Gemini ID／顺序校验；函数 Schema 已补充 JSON 约束保留、Gemini 方言转换与 strict 目标边界；G03 已补充用户图片输入及目标限制、缓存读取转换与 Anthropic 缓存写入／TTL 计量边界、OpenAI 当前缓存选项／兼容 retention 及原生缓存放置回归；有序 IR 已支持 Anthropic／Gemini／Responses 历史、JSON 和 SSE 交错顺序，以及各自专有推理的同协议保留，Chat 不可表达顺序明确拒绝；工具结果图片已支持 Anthropic／Responses 保序互转与 Gemini 对象／媒体的同协议保留；本地三轮工具会话矩阵覆盖严格转换、匹配原生模式及图片／专有推理组合，真实客户端与厂商验收仍待完成；整体兼容对齐未完成 | G02–G09 |
+| LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；G04 已补充 Anthropic／Gemini 完整工具结果批次、显式错误状态边界、文本结果块与 Gemini ID／顺序校验；函数 Schema 已补充 JSON 约束保留、Gemini 方言转换与 strict 目标边界；G03 已补充用户图片输入及目标限制、缓存读取转换与 Anthropic 缓存写入／TTL 计量边界、OpenAI 当前缓存选项／兼容 retention 及原生缓存放置回归；有序 IR 已支持 Anthropic／Gemini／Responses 历史、JSON 和 SSE 交错顺序，以及各自专有推理的同协议保留，Chat 不可表达顺序明确拒绝；工具结果图片已支持 Anthropic／Responses 保序互转与 Gemini 对象／媒体的同协议保留；本地三轮工具会话矩阵覆盖严格转换、匹配原生模式及图片／专有推理组合，真实客户端与厂商验收仍待完成；G06 文件代理已支持密钥禁用、认证时到期检查和代际重载；整体兼容对齐未完成 | G02–G09 |
 | 控制面、存储、管理与持久化观测 | 尚未接入新架构 | G10–G12 |
 | 工具、部署和旧入口切换 | 尚未完成切换验收 | G11、G13 |
 

@@ -204,10 +204,14 @@ fn runtime(
                 ApiKey {
                     id: "alice".into(),
                     secret: "alice-secret".into(),
+                    enabled: true,
+                    expires_at: None,
                 },
                 ApiKey {
                     id: "bob".into(),
                     secret: "bob-secret".into(),
+                    enabled: true,
+                    expires_at: None,
                 },
             ])
             .unwrap(),

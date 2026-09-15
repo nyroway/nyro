@@ -112,6 +112,8 @@ fn runtime_with_resources(
             ApiKeys::new(vec![ApiKey {
                 id: "alice".into(),
                 secret: "client-secret".into(),
+                enabled: true,
+                expires_at: None,
             }])
             .unwrap(),
         ),
