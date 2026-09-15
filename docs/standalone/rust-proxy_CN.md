@@ -493,6 +493,14 @@ cargo build -p nyro
 python3 tests/proxy_smoke.py
 ```
 
+## 本地多轮工具会话回归
+
+运行 `cargo test -p nyro-llm --test responses_runtime multiturn`，验证[会话矩阵](../../crates/nyro-llm/tests/responses_runtime/multiturn.rs)。测试将客户端实际收到的 JSON 或重组后的 SSE 回填到下一轮请求，连续执行“并行调用两个工具 → 反序返回结果 → 再调用一个工具 → 最终回答”。覆盖全部四种 API 的严格文本转换、Anthropic／Responses 图片结果互转、Gemini 图片结果同协议保留，以及三种协议的专有推理与图片组合；四种 API 另有匹配原生模式回归。每条成功会话包含三次请求，并分别使用全 JSON、全 SSE 和两种交替模式。
+
+断言检查后续上游历史中的内容顺序、调用 ID／参数、结果图片与 Gemini 命名引用、签名／加密推理、模型别名、凭证隔离、每轮用量和并发许可释放。第二轮缺失／重复／未知结果在要求完整批次的 Anthropic／Gemini 目标前拒绝；图片或专有推理不能表达的目标不发送请求，修正历史或使用原协议后仍可继续。
+
+该矩阵使用本地 HTTP mock 和测试内客户端，不调用真实工具、SDK 或厂商，也不验证厂商签名真实性。它补充多轮组合回归，不代表完整客户端兼容认证；真实客户端版本、厂商会话及其余未支持语义继续单独验收。
+
 ## Rust 调用方的有序 IR 迁移
 
 Rust `nyro-llm` API 现在通过 `Message.items` 和 `ResponseMessage.items` 的有序 `Vec<MessageItem>` 存储消息正文。`MessageItem::Content(Content)` 保留原有文本／内容块表示，`MessageItem::ToolCall(ToolCall)` 保留调用元数据。`ResponsesMessage`／`ResponsesToolCall` 另行保留可选的源容器 ID／状态，与函数 `call_id` 分开；借用视图识别普通变体和 Responses 变体。直接调用方需替换原 `content`／`tool_calls` 字段；`content()`、`tool_calls()` 借用视图不存储第二份数据，也不重新决定顺序。
