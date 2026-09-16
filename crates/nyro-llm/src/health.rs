@@ -156,6 +156,7 @@ mod tests {
                 priority: 0,
             },
             Provider {
+                transport: Default::default(),
                 native_chat: false,
                 kind: ProviderKind::Openai,
                 api: None,
@@ -292,7 +293,7 @@ mod tests {
         let reused = registry.backend("chat", &weighted, &equivalent, &policy);
         assert!(Arc::ptr_eq(&first, &reused));
         assert!(!reused.available_at(now));
-        for change in 0..10 {
+        for change in 0..12 {
             let mut backend = backend.clone();
             let mut provider = provider.clone();
             let mut policy = policy.clone();
@@ -308,6 +309,8 @@ mod tests {
                 7 => provider.api_key = Some("changed-secret".into()),
                 8 => policy.failure_threshold = 1,
                 9 => provider.native_chat = true,
+                10 => provider.transport.proxy_url = Some("http://proxy.test:8080".into()),
+                11 => provider.transport.http1_only = true,
                 _ => unreachable!(),
             }
             let changed = registry.backend(model, &backend, &provider, &policy);

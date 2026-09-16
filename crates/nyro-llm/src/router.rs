@@ -410,7 +410,7 @@ mod tests {
             reused.choose(Strategy::LeastRecent, &[("a", 100), ("b", 100)]),
             Some(1)
         );
-        for change in 0..8 {
+        for change in 0..10 {
             let mut config = config.clone();
             let model = config.models.get_mut("public").unwrap();
             let provider = config.providers.get_mut("p").unwrap();
@@ -424,6 +424,8 @@ mod tests {
                 5 => provider.native_chat = true,
                 6 => provider.api = Some(crate::config::OpenAiApi::Responses),
                 7 => provider.kind = crate::config::ProviderKind::Anthropic,
+                8 => provider.transport.proxy_url = Some("http://proxy.test:8080".into()),
+                9 => provider.transport.http1_only = true,
                 _ => unreachable!(),
             }
             let bound = registry.bind(public, model, &config.providers);

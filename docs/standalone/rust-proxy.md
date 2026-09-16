@@ -25,6 +25,39 @@ curl http://127.0.0.1:19530/v1/chat/completions \
 
 The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. By default, unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. The opt-in OpenAI Chat/Responses, Anthropic Messages and Gemini generateContent native modes below preserve vendor JSON fields on matching endpoints. Model names are public aliases: Nyro replaces them with the selected backend's `upstream_model` on the upstream request and restores the public name in typed responses and OpenAI/Anthropic native responses. Gemini native responses preserve `modelVersion` as upstream version metadata.
 
+## Provider network transport
+
+Each Provider can configure its own egress proxy and HTTP version:
+
+```yaml
+llm:
+  providers:
+    example:
+      kind: openai
+      base_url: https://api.example.com/v1
+      transport:
+        proxy_url: http://127.0.0.1:7890
+        http1_only: true
+```
+
+Omitting `transport`, using `{}`, or setting only `http1_only: false` keeps direct connections and normal HTTP version negotiation. `http1_only: true` restricts upstream connections to HTTP/1 independently of whether a proxy is configured. All protocol kinds and native modes use these settings. Rust callers constructing `Provider` must supply `transport: Default::default()` or their chosen `Transport`.
+
+`proxy_url` accepts an explicit HTTP or HTTPS proxy URL with a host, an optional nonzero port, and no path other than `/`, query or fragment. SOCKS, implicit schemes, literal whitespace, unknown fields, wrong types and explicit null values are rejected. Optional URL user information supplies proxy Basic authentication; percent-encode reserved characters in credentials (for example, `p%40ss` for `p@ss`). Configuration serialization contains these credentials; Debug output, gateway error responses and Nyro events redact the proxy address and credentials. No environment-variable expansion is performed.
+
+Both direct and explicit-proxy connections ignore automatic environment/system proxies, including `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` bypass rules. An HTTP target uses proxy forwarding; an HTTPS target uses CONNECT and normal upstream TLS verification. An `https://` proxy URL also encrypts the connection to the proxy. Caller credentials are never forwarded. Provider credentials authenticate the upstream; proxy credentials authenticate the forwarding request or CONNECT, and are not added to the tunneled upstream request. An HTTP forwarding proxy necessarily sees the HTTP upstream request.
+
+Proxy failure does not silently switch that Provider to direct access. Existing configured backend failover remains available within the runtime's attempt budget. Redirects and automatic Reqwest retries remain disabled, and the same logical-request deadline covers connection setup, all attempts and response delivery.
+
+These settings support SIGHUP reload. Changing the proxy address, proxy credentials or HTTP mode resets the affected backend's health and routing history; model rate, subject windows and quota retain their existing state. New requests use the new client while admitted SSE streams finish on their original generation. Invalid settings reject the candidate and retain the active generation. Omitted/empty/default transport settings have the same fingerprint. Proxy URL spelling is retained in the fingerprint, so equivalent spellings can publish a new generation; history identity uses the normalized URL and remains shared when its effective binding is unchanged.
+
+## HTTP deployment migration
+
+The file proxy has no CORS layer or origin allowlist setting. Browser cross-origin access requires a separate deployment decision; legacy wildcard/Tauri defaults are not imported. Use `GET /healthz` for liveness and `/readyz` for whether the Host accepts new generation leases; check the status code, as their bodies are empty. Legacy `/health` and `/` aliases return `404`. Readiness does not test Provider availability or a database.
+
+The defaults remain `server.max_body_bytes: 1048576` (1 MiB), `max_response_bytes: 16777216` (16 MiB), `max_frame_bytes: 1048576` (1 MiB), and `request_timeout_ms: 120000`. Set explicit values when migrating deployments that need the legacy 100 MiB request limit or a longer deadline; the deadline covers the whole logical request, not just one upstream call. Query credentials remain rejected; use the documented protocol-specific credential headers.
+
+Local regression: build with `cargo build -p nyro`, then run `python3 tests/proxy_network_smoke.py`. It covers HTTP/HTTPS proxies, CONNECT authentication, HTTP/1 ALPN, environment isolation, redirects, deadlines, probes/CORS and reload with an active stream and consumed quota. The checked-in TLS key is a public test fixture; only the test child process trusts its certificate.
+
 ## API key lifecycle
 
 `security.api_keys` accepts optional `enabled` and `expires_at` fields:

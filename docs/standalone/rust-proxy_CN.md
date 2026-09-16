@@ -25,6 +25,39 @@ curl http://127.0.0.1:19530/v1/chat/completions \
 
 当前入口实现 OpenAI Chat/Embedding、无状态 Responses、Anthropic Messages 和 Gemini generateContent 的强类型子集。Chat 支持四种已支持 Chat API 格式之间的文本、函数调用／结果及 SSE 转换，不承诺完整兼容各厂商 API。默认情况下，未知或尚未支持的请求字段会返回 `400`，不会原样转发；尚未支持的上游响应语义会在流开始前返回 `502`，如果出现在首帧校验后的 SSE 中则终止该流。下文的 OpenAI Chat/Responses、Anthropic Messages 和 Gemini generateContent 原生模式可显式开启，在匹配的端点之间保留厂商 JSON 字段。配置中的模型名是公开别名：Nyro 向上游发送所选 backend 的 `upstream_model`，并在类型化响应及 OpenAI／Anthropic 原生响应中恢复公开模型名；Gemini 原生响应保留 `modelVersion` 作为上游版本信息。
 
+## Provider 网络传输
+
+每个 Provider 可以独立设置出口代理和 HTTP 版本：
+
+```yaml
+llm:
+  providers:
+    example:
+      kind: openai
+      base_url: https://api.example.com/v1
+      transport:
+        proxy_url: http://127.0.0.1:7890
+        http1_only: true
+```
+
+省略 `transport`、配置 `{}` 或仅设置 `http1_only: false`，均保持直连及正常 HTTP 版本协商。`http1_only: true` 将上游连接限制为 HTTP/1，与是否配置代理无关。所有协议 kind 和原生模式共用这些设置。Rust 调用方构造 `Provider` 时需要提供 `transport: Default::default()` 或所需的 `Transport`。
+
+`proxy_url` 只接受显式 HTTP／HTTPS 代理 URL，必须有主机，可选端口必须非零；路径只能为空或 `/`，不能含 query 或 fragment。SOCKS、隐式协议、字面空白、未知字段、错误类型和显式 null 均拒绝。可在 URL 用户信息中提供代理 Basic 认证，凭证中的保留字符需要百分号编码，例如 `p@ss` 写成 `p%40ss`。配置序列化包含这些凭证；Debug、网关错误响应和 Nyro 事件会隐藏代理地址与凭证。配置不会展开环境变量。
+
+直连和显式代理均忽略自动系统／环境代理，包括 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 及 `NO_PROXY` 旁路规则。HTTP 目标使用转发代理，HTTPS 目标通过 CONNECT 建立隧道并正常校验上游 TLS；`https://` 代理 URL 还会加密到代理的连接。调用方凭证不会转发。Provider 凭证用于上游认证，代理凭证用于转发请求或 CONNECT，不加入隧道内的上游请求；HTTP 转发代理必然能看到 HTTP 上游请求。
+
+代理失败不会静默改为同一 Provider 直连。既有其他 backend 故障转移仍服从 runtime 的尝试预算。重定向和 Reqwest 自动重试继续关闭，连接建立、所有尝试和响应交付共用同一逻辑请求期限。
+
+这些设置支持 SIGHUP 重载。代理地址、代理凭证或 HTTP 模式变化会重建受影响 backend 的健康与路由历史；模型 rate、主体窗口和 quota 按原规则保留。新请求使用新客户端，已准入 SSE 使用原代际完成。无效配置拒绝候选并保留活动代际。省略、空对象和默认 transport 的配置指纹一致；代理 URL 的文本写法仍进入指纹，因此等价写法可能发布新代际，但历史身份使用归一化 URL，有效绑定未变时仍复用历史。
+
+## HTTP 部署迁移
+
+文件代理没有 CORS 层或来源白名单配置。浏览器跨域访问需要单独确定部署方案，不导入旧通配符／Tauri 默认值。存活检查使用 `GET /healthz`，是否接受新代际 lease 使用 `/readyz`；两者正文为空，应检查状态码。旧 `/health` 和 `/` 别名返回 `404`。就绪探针不检查 Provider 可用性或数据库。
+
+默认值继续为 `server.max_body_bytes: 1048576`（1 MiB）、`max_response_bytes: 16777216`（16 MiB）、`max_frame_bytes: 1048576`（1 MiB）和 `request_timeout_ms: 120000`。迁移中需要旧 100 MiB 请求上限或更长期限的部署应显式设置；期限覆盖整个逻辑请求，不仅是单次上游调用。查询参数凭证继续拒绝，改用各协议文档规定的凭证 Header。
+
+本地回归：先执行 `cargo build -p nyro`，再执行 `python3 tests/proxy_network_smoke.py`。覆盖 HTTP／HTTPS 代理、CONNECT 认证、HTTP/1 ALPN、环境隔离、重定向、期限、探针／CORS，以及持有旧流和已消耗额度时的重载。提交的 TLS 密钥是公开测试 fixture，仅测试子进程信任对应证书。
+
 ## API Key 生命周期
 
 `security.api_keys` 支持可选的 `enabled` 和 `expires_at`：
