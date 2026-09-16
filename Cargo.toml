@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Nyro AI Gateway server"
 
 [dependencies]
+nyro-control = { path = "crates/nyro-control" }
 nyro-kernel = { path = "crates/nyro-kernel" }
 nyro-config = { path = "crates/nyro-config" }
 nyro-llm = { path = "crates/nyro-llm" }
@@ -15,6 +16,7 @@ nyro-limit = { path = "crates/nyro-limit" }
 tokio.workspace = true
 tokio-util = { version = "0.7", features = ["rt"] }
 axum.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -24,12 +26,14 @@ futures = "0.3"
 http-body = "1"
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"
 async-trait.workspace = true
 tower = { version = "0.5", features = ["util"] }
 
 [workspace]
 resolver = "2"
-members = ["crates/nyro-protocol", "crates/nyro-security", "crates/nyro-limit", "crates/nyro-llm", "crates/nyro-config", "crates/nyro-kernel", "crates/nyro-core", "crates/nyro-tools", "src-tauri", "src-server"]
+members = ["crates/nyro-control", "crates/nyro-protocol", "crates/nyro-security", "crates/nyro-limit", "crates/nyro-llm", "crates/nyro-config", "crates/nyro-kernel", "crates/nyro-core", "crates/nyro-tools", "src-tauri", "src-server"]
 
 [workspace.package]
 version = "1.8.3"
