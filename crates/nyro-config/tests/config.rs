@@ -28,6 +28,7 @@ fn valid_config() -> Config {
             models: BTreeMap::from([(
                 "chat".into(),
                 Model {
+                    strategy: Default::default(),
                     max_attempts: 1,
                     health: None,
                     rate: None,
@@ -670,4 +671,42 @@ fn subject_request_policy_references_existing_subject_and_affects_fingerprint() 
             .unwrap(),
         original.fingerprint().unwrap()
     );
+}
+
+#[test]
+fn strategy_fingerprint_normalizes_default_and_preserves_selection_semantics() {
+    let base = "      provider: p\n      upstream_model: u";
+    let omitted = Config::from_yaml(&yaml_with_routing(base)).unwrap();
+    let weighted = Config::from_yaml(&yaml_with_routing(&format!(
+        "{base}\n      strategy: weighted"
+    )))
+    .unwrap();
+    assert_eq!(
+        omitted.fingerprint().unwrap(),
+        weighted.fingerprint().unwrap()
+    );
+    let recent = Config::from_yaml(&yaml_with_routing(&format!(
+        "{base}\n      strategy: least_recent"
+    )))
+    .unwrap();
+    let latency = Config::from_yaml(&yaml_with_routing(&format!(
+        "{base}\n      strategy: latency"
+    )))
+    .unwrap();
+    assert_ne!(
+        weighted.fingerprint().unwrap(),
+        recent.fingerprint().unwrap()
+    );
+    assert_ne!(
+        recent.fingerprint().unwrap(),
+        latency.fingerprint().unwrap()
+    );
+    for invalid in ["null", "cooldown", "priority", "{}"] {
+        assert!(
+            Config::from_yaml(&yaml_with_routing(&format!(
+                "{base}\n      strategy: {invalid}"
+            )))
+            .is_err()
+        );
+    }
 }

@@ -98,6 +98,7 @@ fn valid_config() -> Config {
         models: BTreeMap::from([(
             "chat".into(),
             Model {
+                strategy: Default::default(),
                 max_attempts: 1,
                 health: None,
                 rate: None,

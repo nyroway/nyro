@@ -1,6 +1,6 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，本轮在 `02c75a3f` 上补齐主体 TPM／TPD 预留与结算，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，G07 主体 TPM／TPD 预留与结算已由 PR #349 合并，本轮在 `5916a045` 上补齐 G08 可选选择策略并明确路由、健康和重试迁移契约，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
 
 **新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
@@ -16,7 +16,7 @@
 | 类型化工作负载 | [IR](../../crates/nyro-llm/src/ir/mod.rs)：`Request`/`Response` 配对 Chat 和 Embedding，其他工作负载未实现。 |
 | 协议执行 | [矩阵测试](../../crates/nyro-llm/tests/protocol_matrix.rs)覆盖三种 Chat 格式，[Responses 运行时测试](../../crates/nyro-llm/tests/responses_runtime.rs)补充 Responses 组合。覆盖已支持的文本、函数和流，不代表任意厂商字段兼容。 |
 | 准入 | [安全包](../../crates/nyro-security/src/lib.rs)、[rate 运行时](../../crates/nyro-llm/tests/rate_runtime.rs)和[quota 运行时](../../crates/nyro-llm/tests/quota_runtime.rs)：凭证认证、模型授权、进程并发、按模型 rate、主体 RPM／RPD 和 TPM／TPD 窗口、累计 token 预留。旧契约差异见 G06–G07。 |
-| 路由与健康 | [路由测试](../../crates/nyro-llm/tests/routing_runtime.rs)和[故障转移测试](../../crates/nyro-llm/tests/failover_runtime.rs)：优先级／权重选择、有界尝试、被动健康检查，尚不覆盖旧版全部四种策略。 |
+| 路由与健康 | [路由测试](../../crates/nyro-llm/tests/routing_runtime.rs)和[故障转移测试](../../crates/nyro-llm/tests/failover_runtime.rs)：优先级内 weighted／least_recent／latency 选择、有界尝试、被动健康检查；旧策略映射和有意变化见第 31 节。 |
 | 交付与观测 | [响应体所有权](../../src/http/body.rs)、[观测](../../crates/nyro-llm/tests/observation_runtime.rs)和[进程测试](../../tests/proxy_smoke.py)：期限、取消、SSE 终止、请求／尝试关联日志及清理。没有持久化请求查询服务。 |
 | 共享状态重载 | [重载进程测试](../../tests/proxy_reload_smoke.py)：去重、拒绝变更、持有 SSE 时轮换凭证／路由、rate/quota/health 复用、主体请求窗口保留、FIFO 拒绝及退出。监听／并发和既有策略变更限制仍存在。 |
 
@@ -33,7 +33,7 @@
 | G05 Provider 通道与凭证 | 部分 | 旧版有[厂商适配](../../crates/nyro-core/src/provider/mod.rs)、[账号认证 driver](../../crates/nyro-core/src/auth/drivers/mod.rs)和 Vertex 服务账号支持。新 Provider 配置只有协议 kind、可选 OpenAI API、URL 和可选静态 API Key。 | 迁移必要端点、Header 和凭证行为，不向 driver 传递 Gateway 或数据库实体。账号授权、刷新、持久化归控制面；driver 消费已解析凭证。详见下方清单。 |
 | G06 API Key 生命周期 | 文件代理已落地 | [安全包](../../crates/nyro-security/src/lib.rs)新增默认启用状态与可选 Unix 秒到期时间，所有入口共用认证时检查；禁用／到期返回通用 `401`，无匿名回退。主体绑定、重复校验和配置指纹保留生命周期语义。 | 精确到期边界、慢上传、所有入口在准入前拒绝、禁用／到期／续期重载与已准入 SSE 保留见第 28 节。控制面管理、旧数据到新快照的发布仍由 G10–G11 跟踪，不据此宣布产品迁移完成。 |
 | G07 限制作用域与持久化 | 部分 | 旧授权按 API Key 查询 Minute/Day 窗口的请求／token 数（`rpm/rpd/tpm/tpd`）。新 rate 是模型级 token bucket；已补主体级 RPM／RPD 请求窗口、TPM／TPD 用量预留／结算与组合原子准入；请求边界见第 29 节，token 边界见第 30 节。quota 仍是模型级累计额度。 | 持久化、多副本一致性和旧数据发布仍待推进；请求按逻辑准入，token 按尝试结算加在途预留计量，重启清零。显式迁移策略含义，不静默将 RPM 转成不同桶规则或将 TPM 转成累计额度；也不复制旧日志查询准入的竞争问题。 |
-| G08 均衡与重试策略 | 部分／待取舍 | [旧 selector](../../crates/nyro-core/src/router/selector.rs)支持 weighted、priority、cooldown、latency。新版组合优先级和权重，没有 cooldown/latency 选择策略，健康和重试配置也不同。 | 映射保留的旧策略和默认值，包括禁用 backend 和全部不健康场景；保留必要策略或记录已接受的替代方案。被动健康检查的冷却期不是旧 cooldown 选择策略。保留新版重试和流提交安全边界。 |
+| G08 均衡与重试策略 | 文件代理已落地 | [新运行时](../../crates/nyro-llm/src/runtime.rs)支持最小可用优先级内 weighted（默认）、least_recent 和 latency，按有效 backend 绑定跨代际保留历史。第 31 节记录旧策略映射、采样与重载契约及回归。 | 已接受用每次发起顺序替代旧 cooldown、用单次 2xx 响应头耗时替代旧混合 latency；保留新版重试／2xx 提交安全边界。旧 weighted 统一优先级，确定顺序用不同 priority，显式配置健康与尝试预算；控制面配置发布和旧数据导入仍由 G10–G11 跟踪。 |
 | G09 HTTP 与网络配置 | 部分／待取舍 | [旧 router](../../crates/nyro-core/src/proxy/server.rs)有 CORS、`/health` 和 `/` 别名、100 MiB JSON 限制；[旧客户端构建](../../crates/nyro-core/src/lib.rs)支持 `use_proxy`、`proxy_url`、`proxy_force_http1`。新根入口有 `/healthz`、`/readyz`、可配置边界，无 CORS，driver 禁用代理和重定向。 | 核对已部署浏览器来源、探针、请求大小和显式出口代理需求，为保留项提供受限配置；说明有意变化的默认值、Header、query、错误行为。不为模仿旧默认值而恢复环境代理或宽泛 CORS。 |
 
 ### Provider 清单
@@ -548,3 +548,65 @@ G06 的文件代理数据面部分已落地。管理界面／数据库密钥编�
 验证：`cargo test -p nyro-limit -p nyro-security -p nyro-protocol -p nyro-llm -p nyro-config -p nyro --offline` 全量 529 项通过；独立审查后补充四种主体窗口同时启用时的请求计数回归，1 项专项通过，共验证 530 项不同 Rust 测试。受影响 crate 的 Clippy（all-targets、拒绝 warning）、最后新增测试目标的 Clippy、非桌面 workspace 检查、根二进制构建和扩展后的重载进程回归通过；格式、diff 与 159 个文档相对路径检查通过。配置接受测试先验证旧行为失败；修正复用客户端默认匿名的前提后，临时跳过主体 token 准入的变异使认证 HTTP 测试在期望用量处失败，随后逐字恢复运行时代码并通过预算／观测回归。独立审查未发现生产代码缺陷，建议的 token-only、仅剩预留时的策略保留、双窗口最长等待和混合规则先后顺序均已补回归，历史进度表述也已修正。测试只使用本地 mock 与临时字符串密钥。
 
 G07 仍为部分完成：持久化、多副本协调、旧数据导入和控制面发布继续跟踪，不从旧请求日志猜测在途或已结算状态。当前进程重启清零，活跃／未清空规则需要立即修改时重启。本轮不新增 crate、依赖、数据库 schema 或内核职责，不下线旧入口。整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。
+
+
+## 31. G08 路由、健康与重试契约核对
+
+基于 `5916a045`（PR #349）核对[旧选择器](../../crates/nyro-core/src/router/selector.rs)、[旧调度器](../../crates/nyro-core/src/proxy/dispatcher/mod.rs)、[旧健康注册表](../../crates/nyro-core/src/router/health.rs)，以及[新运行时](../../crates/nyro-llm/src/runtime.rs)、[新健康注册表](../../crates/nyro-llm/src/health.rs)和[配置定义](../../crates/nyro-llm/src/config.rs)。先核对旧行为，再按已接受方案新增可选选择策略；以下对照表保留旧实现证据，并列出最终迁移契约。
+
+### 选择策略与配置映射
+
+| 项目 | 旧实现 | 新版现状与迁移要求 |
+|---|---|---|
+| 默认 weighted | 仅保留正权重目标，按权重生成不重复尝试顺序；不读取 priority。未知 balance 字符串也回退到 weighted。 | 每次从健康且兼容的最小 priority 中按权重选择，单请求不重复 backend ID。迁移旧 weighted 时将所有 priority 统一为 `0`，保留正权重比例；不能直接复制差异化 priority。新配置使用 `strategy`，严格拒绝未知字段，没有 balance 字段。 |
+| priority | priority 升序，同级保留传入顺序，不使用权重；文件内关于同级随机的注释不代表实现。 | priority 升序，同级按权重随机。若需要确定的尝试顺序，为 backend 分配不同 priority；配置列表顺序不参与指纹，不能依赖它表达顺序。旧有符号 priority 可按相对顺序映射到从 `0` 起的非负层级，同级是否随机需明确。 |
+| cooldown | 按最近成功调度距今时间降序，间隔最多计 60 秒，未使用目标视为 60 秒；并列保留传入顺序。失败不更新，选择时也不预占。 | 接受以 `least_recent` 替代：按每次实际发起顺序选择，同级并列按权重，不保留成功才更新与 60 秒截断。它不是故障冷却；`health.cooldown_ms` 无法替代。 |
+| latency | 成功调度后更新 EMA，alpha 为 `0.2`；无样本按 `0` 排最前，并列保留传入顺序。 | 接受以新 `latency` 替代：单次发送到 2xx 响应头的 EMA，另有 5% 探索。旧样本从整个 dispatch 起点计时，包含前置处理及此前尝试；JSON 包含响应体处理，SSE 只到流式响应返回，不能当作统一上游耗时或首 token 延迟。 |
+| 禁用目标 | 只有 weighted 过滤 `weight <= 0`；其余三个策略仍可能选择这些目标。 | 所有请求统一排除 `weight: 0`，负权重拒绝；全部权重为零时启动失败。迁移需明确旧零权重目标是否应继续启用。禁用目标仍接受配置与协议引用校验。 |
+| 状态作用域 | cooldown／latency 使用进程全局表，以 `provider_id:model` 为键；不同公开模型共享样本。 | 新选择历史和健康状态均按公开模型和有效 backend 绑定隔离，由 LLM 显式拥有；路由历史不依赖健康策略，均不进入内核。 |
+
+### 健康、重试与响应提交
+
+| 项目 | 旧实现 | 新版现状与迁移要求 |
+|---|---|---|
+| 尝试预算 | 顺序遍历候选，遇可重试失败继续，没有模型级总尝试数配置。 | `max_attempts` 默认 `1`，包含首次发送。若需要多个目标故障转移，显式配置上限；跳过不兼容、禁用或不健康目标不计尝试。 |
+| HTTP 重试 | 调度响应状态 `408/429/500/502/503/529` 允许换目标；该状态可能由本地处理生成。 | 仅上游 `429/500/502/503/504/529` 或明确建连失败允许换目标；`408` 和发送结果不明的传输错误不重试。不要为旧列表放宽重复执行边界。 |
+| 成功响应提交 | 调度返回 `<400` 即记录成功；成功上游响应经转换变成可重试错误时仍可能换目标。 | 上游 2xx 已提交 backend，即使首帧之前解析失败也不换目标。SSE 完整协议终态才恢复健康；首个有效帧仅允许开始交付。 |
+| 默认健康策略 | Gateway 总是创建注册表，阈值 `3`，恢复等待 `30` 秒；返回错误状态都会记失败。 | 省略 `health` 则关闭；`health: {}` 启用阈值 `3`、冷却 `30000` 毫秒。显式迁移该设置，数值相同不代表错误计数相同：非瞬时 HTTP 状态、取消、丢弃及整体期限保持中性。 |
+| 冷却后恢复 | 时间到后并发请求均可通过健康检查。 | 时间到后仅一个请求持有恢复探测，其余使用其他候选或得到 `503`；取消释放探测资格但不宣告恢复。 |
+| 全部不健康 | 全部跳过、没有此前响应时，调度器返回 `502`。 | 首次尝试前全部健康阻塞返回 `503`；已有尝试失败时返回最后一个脱敏错误。请求窗口已在此前准入计数，尚未发送的尝试不预留 token。 |
+| 代际与绑定 | 健康键同样为 `provider_id:model`，不区分公开模型或同名目标的凭证／地址变化。 | 地址、API、凭证、原生模式、上游模型、backend ID 或健康策略变化会获得新绑定；仅权重／优先级变化保留健康状态。由根组合层显式共享注册表，退役绑定随持有者释放，重启清空。 |
+
+### 已落地范围与采样契约
+
+在现有 `nyro-llm` 增加模型级 `strategy: weighted | least_recent | latency`；省略与显式 weighted 的配置指纹相同，策略变化会发布新代际，列表重排仍不改变指纹。拒绝 null、未知名称和旧 cooldown／priority 别名。全部策略统一执行协议兼容、零权重禁用、健康、优先级筛选；新策略的权重只处理最终并列。
+
+`least_recent` 在健康探测认领、token 预算准入成功后记录每次发起，选择到记录受模型范围内的短锁保护，不跨网络 await；失败、取消不回退发起顺序，预算拒绝不更新。没有 60 秒截断，不等待响应成功后才轮转。
+
+`latency` 只采单次发送到收到 2xx 响应头的耗时，新样本占 EMA 的 20%；不混入前置准入、以前尝试、JSON 正文或 SSE 帧消费。样本在正文校验前记录，后续正文无效也不撤销；健康成功仍独立要求完整有效响应。非 2xx、建连失败、响应头前取消／期限耗尽没有延迟样本。每个从未尝试的目标先获一次机会，有成功样本后通常选最快者，5% 概率探索最久未发起的可用目标；没有成功样本且已有在途尝试的目标不参与这次探索。如果所有候选都没有成功样本，则依次按最少在途尝试、最久未发起、权重选择。失败目标不能因一直无成功样本而持续抢占正常目标；探索不承诺固定次数内重新采样。
+
+根组合层通过 `SharedResources.routing` 复用历史；三种策略都记录发起和响应头，策略切换可使用已有样本。历史与健康共用有效 backend 身份定义，但不共享健康策略或成功判定。权重、优先级、选择／健康策略变化保留历史；身份、地址、凭证等绑定变化重置。不同公开模型隔离，已移除绑定在最后持有者释放后回收；无持有者后再加回与进程重启均重新采样。不新增 crate、依赖、数据库 schema 或内核职责，不下线旧入口。控制面配置发布／旧数据导入仍待 G10–G11。
+
+完整用户契约和旧配置迁移说明见[中文代理指南](../standalone/rust-proxy_CN.md)及[英文代理指南](../standalone/rust-proxy.md)。整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。
+
+### 本轮验证
+
+新增[策略 HTTP 回归](../../crates/nyro-llm/tests/failover_runtime/strategies.rs)、router 单元测试及配置指纹测试，覆盖并发在途分配、按权重处理并列、初始采样／失败重采样／探索、EMA、响应头与 JSON／SSE 首帧耗时分离、健康故障转移、预算拒绝不改变历史、策略／权重／顺序重载、凭证变化隔离和退役回收。[SIGHUP 进程回归](../../tests/proxy_reload_smoke.py)补充旧 SSE 持有期间切换策略、历史复用、等价重排、非法策略拒绝与绑定变化。
+
+配置、并发路由、延迟选择回归分别先在缺少实现时失败，再通过实现。原有健康／重试／响应提交测试继续保留；没有真实厂商请求。
+
+实际执行：
+
+```sh
+cargo test -p nyro-llm -p nyro-config -p nyro --offline
+cargo test -p nyro-llm --test responses_runtime api_key_lifecycle::expiry_is_checked_after_a_slow_request_body_arrives --offline -- --exact
+cargo test -p nyro-llm --test responses_runtime --test responses_tool_images --test routing_runtime --test runtime --test tool_image_boundary_codec --test tool_schema_codec --offline -- --test-threads=4
+cargo test -p nyro-llm --test failover_runtime strategies --offline
+cargo test -p nyro-llm -p nyro-config --doc --offline
+cargo clippy -p nyro-llm -p nyro-config -p nyro --all-targets --offline -- -D warnings
+cargo clippy -p nyro-llm --test failover_runtime --offline -- -D warnings
+cargo build -p nyro --offline
+python3 tests/proxy_reload_smoke.py
+```
+
+首轮全量测试在既有慢上传到期用例的前置条件失败：运行时构建及请求启动已超过预设的 5 秒到期窗口，尚未进入要验证的到期后鉴权行为。该用例单独复跑通过，所在 Responses 组以 4 个线程复跑全部通过，并补完首轮被中断的后续组；没有修改鉴权实现或该测试。最终覆盖 **505 项不同的 Rust 测试**，Clippy、根构建、扩展 SIGHUP 进程回归及格式检查通过；169 个本地文档链接路径有效。独立代码及文档／进程测试审查未发现待修复问题。
