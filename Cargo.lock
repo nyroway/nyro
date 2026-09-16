@@ -2893,11 +2893,14 @@ dependencies = [
  "futures",
  "http-body",
  "nyro-config",
+ "nyro-control",
  "nyro-kernel",
  "nyro-limit",
  "nyro-llm",
  "nyro-security",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tower",
@@ -2918,6 +2921,19 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nyro-control"
+version = "1.8.3"
+dependencies = [
+ "nyro-config",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，G07 主体 TPM／TPD 预留与结算已由 PR #349 合并，G08 可选选择策略与路由／健康／重试迁移契约已由 PR #350 合并，本轮在 `bffcee58` 上完成 G09 文件代理出口配置与 HTTP 迁移契约，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，G07 主体 TPM／TPD 预留与结算已由 PR #349 合并，G08 可选选择策略与路由／健康／重试迁移契约已由 PR #350 合并，G09 文件代理出口配置与 HTTP 迁移契约已由 PR #351 合并，本轮推进 G10 最小 SQLite 控制面闭环，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)和[服务指南](../standalone/rust-serve_CN.md)说明当前支持范围。
 
 **新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
@@ -12,7 +12,7 @@
 
 | 能力 | 当前证据与边界 |
 |---|---|
-| 生命周期与代际 | [内核](../../crates/nyro-kernel/README_CN.md)、[装配](../../src/bootstrap.rs)和[重载](../../src/reload.rs)：候选激活、失败清理、lease 和退役；Unix 显式 SIGHUP 重载。没有远程配置来源。 |
+| 生命周期与代际 | [内核](../../crates/nyro-kernel/README_CN.md)、[装配](../../src/bootstrap.rs)和[重载](../../src/reload.rs)：候选激活、失败清理、lease 和退役；文件模式 Unix 显式 SIGHUP 重载；serve 模式由独立回环管理 API 发布 SQLite 快照，没有远程分发。 |
 | 类型化工作负载 | [IR](../../crates/nyro-llm/src/ir/mod.rs)：`Request`/`Response` 配对 Chat 和 Embedding，其他工作负载未实现。 |
 | 协议执行 | [矩阵测试](../../crates/nyro-llm/tests/protocol_matrix.rs)覆盖三种 Chat 格式，[Responses 运行时测试](../../crates/nyro-llm/tests/responses_runtime.rs)补充 Responses 组合。覆盖已支持的文本、函数和流，不代表任意厂商字段兼容。 |
 | 准入 | [安全包](../../crates/nyro-security/src/lib.rs)、[rate 运行时](../../crates/nyro-llm/tests/rate_runtime.rs)和[quota 运行时](../../crates/nyro-llm/tests/quota_runtime.rs)：凭证认证、模型授权、进程并发、按模型 rate、主体 RPM／RPD 和 TPM／TPD 窗口、累计 token 预留。旧契约差异见 G06–G07。 |
@@ -53,7 +53,7 @@
 
 | ID | 剩余工作 | 归属与验收 |
 |---|---|---|
-| G10 控制面与存储 | 根 [CLI](../../src/main.rs)只有 `proxy`；旧[管理服务](../../crates/nyro-core/src/admin/mod.rs)、[HTTP API](../../src-server/src/admin_routes.rs)、仓储和 WebUI 仍使用旧 Gateway。 | 实现 `nyro serve` 时引入 `nyro-control`：Provider／模型／密钥／设置管理、SQLite/Postgres 事务与 schema／数据兼容、配置校验发布、管理认证和 WebUI。发布失败不能默默将已编辑数据宣称为活动配置；数据库访问不进入内核和请求执行。 |
+| G10 控制面与存储 | 部分完成：根 [serve](../../src/serve.rs) 与 [nyro-control](../../crates/nyro-control/src/lib.rs) 实现专用 SQLite 完整草稿、管理认证、版本冲突、显式发布与重启恢复；第 33 节说明持久化／活动边界。旧管理服务、仓储与 WebUI 仍使用旧 Gateway。 | 继续补实体管理、Postgres 等价、旧数据兼容与 WebUI。当前拒绝旧库，配置含明文凭证，单进程独占；不持久化额度或观测，不支持分布式发布。已提交发布但激活未完成必须报告 pending，不能当作编辑拒绝或已生效。 |
 | G11 配置与部署兼容 | [旧 standalone YAML](../../src-server/src/yaml_config.rs)不同于 `nyro-config`；[旧 Server](../../src-server/src/main.rs)有 all/proxy/admin 模式及数据库 epoch 轮询；SIGHUP 只是本地文件来源。 | 提供明确的格式／CLI 迁移说明或工具，证明文件／控制面支持的等价快照行为一致。若保留分离或多副本部署，落实配置交付、就绪和恢复契约；本地 SIGHUP 不等价替代。 |
 | G12 持久化观测与统计 | 旧[日志存储契约](../../crates/nyro-core/src/storage/traits.rs)及管理 API 提供日志／统计；新版只有有界结构化事件。 | 消费新请求／尝试语义建立历史查询和统计，明确保留周期、脱敏及可选正文记录；不隐式恢复旧正文日志。缺失用量、输出交付和 quota 扣费分别处理。 |
 | G13 工具与发布 | [Tools CLI](../../crates/nyro-tools/src/main.rs)仍有 proxy/record/replay/print-scenarios/dump-schema；[Makefile](../../Makefile)、[CI](../../.github/workflows/ci.yml)、[Server 发布](../../.github/workflows/release-server.yml)仍构建旧产物。 | 保留命令迁入 `nyro tool`，验证支持平台的安装、构建、升级，切换发布产物，再移除 Tauri、旧 Server/Tools 和无消费者代码；保留 schema 生成与数据迁移约束。 |
@@ -73,7 +73,7 @@
 | 1（已完成） | G01：在现有 LLM 运行时内补充带授权过滤的 `GET /v1/models`，根程序继续持有代际 lease，不新增 crate。 | 仅公开别名；稳定排序；匿名／绑定／无效／歧义凭证；空集合；成功重载后更新，失败重载后保持；不调用上游或扣 quota。使用现有严格凭证处理，不默默复制旧无效密钥回退。 |
 | 2（进行中） | G02–G04：分类旧录制 fixture，按协议逐步补兼容。 | 每个输入标明保留、明确不支持或回退；同协议和跨协议预期分开。先补旧客户端需要的原生字段、推理／工具历史，再补媒体／缓存；验证 JSON、SSE、错误／截断响应和取消。 |
 | 3 | G05–G09：补保留的凭证、策略和网络差异。 | 到期与主体窗口测试、路由／配置迁移用例、特殊通道 URL/Header/token 轮换 mock 测试。账号登录／刷新持久化结合步骤 4，不隐式弱化策略。 |
-| 4 | G10–G12：最小 `nyro serve`，先 SQLite 和一条管理到发布路径，再补 Postgres 等价与其余管理能力。 | 持久化 → 校验 → 发布 → 新请求使用快照；失败保留活动代际；重启／数据兼容；WebUI/API 与观测一致。可与兼容工作并行推进，单独完成不代表可发布替换。 |
+| 4（部分完成） | G10–G12：已交付最小 `nyro serve` 的 SQLite 管理到发布路径，继续补 Postgres 等价与其余管理能力。 | 持久化 → 校验 → 发布 → 新请求使用快照；失败保留活动代际；重启／数据兼容；WebUI/API 与观测一致。可与兼容工作并行推进，单独完成不代表可发布替换。 |
 | 5 | G11/G13：部署、工具、发布切换。 | 文件／控制面等价，保留 CLI、录制客户端矩阵、支持平台构建、迁移／恢复说明全部过关后移除旧入口。 |
 
 步骤 1 已完成；步骤 2 已完成 16 份录制样本分类、OpenAI Chat／Anthropic Messages 原生增量及单候选 Gemini mock 验证，无状态 Responses 原生 mock 验证也已完成；PR #329 补充四种入口到 Anthropic 的完整并行工具结果历史转换，PR #330 补充工具错误、空／分块文本结果及 Gemini ID／批次语义，PR #331 补充函数 Schema 保留、转换和拒绝边界；PR #332 补充用户图片输入，PR #333 补充缓存用量计量，PR #334 补充按官方定义的缓存控制，PR #335 补充 OpenAI 文本／用户图片的严格断点转换，PR #336 补充 Anthropic 严格缓存控制，PR #337 补充 Anthropic 严格推理配置、历史及 JSON／SSE 签名回放，PR #339 补充 Gemini 严格推理配置、Part／函数签名及流式保留，PR #340 补充 Responses 严格推理；PR #341–#342 补齐 OpenAI effort 映射并明确跨协议签名、兼容扩展与旧标签处理的取舍；PR #343 迁移有序消息项及流式位置，PR #344 补齐三协议交错输出；PR #345 补齐工具结果图片子集；PR #346 补充本地三轮工具会话回归（第 27 节）；本轮先交付步骤 3 中范围集中的 G06（第 28 节），步骤 2 的其余媒体／缓存和真实客户端／厂商会话仍继续跟踪。原生保真和密钥限制语义仍是发布阻塞项；后续每一步可能需要多份聚焦 PR。
@@ -672,3 +672,36 @@ cargo fmt --all -- --check
 ```
 
 **508 项 Rust 测试通过，零失败**；Clippy、根构建、新网络进程回归、既有重载回归和格式检查通过。177 个本地文档链接路径有效，`git diff --check` 通过。独立代码与文档审查未发现待修复问题。首轮 TLS mock 因测试证书误用 `CA:TRUE` 被正常校验拒绝，改为带 `serverAuth` 的 `CA:FALSE` 端点证书后网络回归通过，没有放宽生产 TLS 校验。没有真实厂商请求、数据库迁移或旧入口下线。
+
+
+## 33. G10 最小 SQLite 控制面闭环
+
+在 PR #351 的文件代理基础上新增 [`nyro-control`](../../crates/nyro-control/src/lib.rs) 和根 [`serve`](../../src/serve.rs)。控制包仅拥有类型化快照与 SQLite 存储；根 [`control`](../../src/control.rs) 负责 HTTP、管理认证、版本协调及 Host 发布。数据库实体不进入 kernel 或 LLM 请求执行，也不新建通用数据库框架。
+
+专用 SQLite v1 只保存一行完整草稿与已发布快照；schema 定义见[数据库文档](../database/schema.md)。`--config` 仅为新库提供种子，已有库拒绝再次传入；重启读取已发布版本，保留但不激活草稿。单进程独占，拒绝旧库与外部 schema，没有数据导入。新 Unix 文件使用 `0600`，数据库、备份与导出内容均需按明文凭证保护。旧表及 PostgreSQL/MySQL 参考 schema 继续服务旧入口。
+
+管理监听默认 `127.0.0.1:19531`，仅接受回环地址，与配置中的数据监听分开。独立令牌文件提供 Bearer 认证。`GET /admin/config` 返回含明文密钥的完整草稿及已发布／活动版本，并标记 `no-store`；`PUT` 以 `expected_revision` 比较保存完整有效配置，`POST /admin/config/publish` 以当前 `revision` 显式发布，冲突返回 `409`。
+
+发布先校验进程设置并构建候选，再持久化发布目标，最后激活 Host。提交前失败保留旧目标和活动代际；提交后激活中断报告 `202 pending`，重启恢复已提交目标，不宣称跨资源原子提交。接受后的管理操作由服务持有，客户端断连后仍可能完成，调用方需用 GET 核对。重复发布等价配置不新建代际，旧 SSE 保留原 lease；内存限制、健康与路由历史继续按现有身份规则复用，重启清零。
+
+监听地址／共享并发容量不能在线修改；拒绝后的草稿不会因重启自动生效，本轮需以修订种子另建数据库。活跃或未清空的 rate/quota/window 规则继续遵守候选拒绝约束。serve 不通过 SIGHUP 重新导入种子。完整错误码、权限、超时及恢复操作见[中文服务指南](../standalone/rust-serve_CN.md)和[英文服务指南](../standalone/rust-serve.md)。
+
+G10 仍为部分完成：实体 CRUD、WebUI、OAuth、Postgres、旧数据导入、持久化预算／观测和多副本协调均未交付。数据面 `/readyz` 继续表示 Host lease 可用，不代表数据库健康或已发布版本已激活。旧 Server、Tauri、Tools 及发布流程保留，整体迁移完成后删除本文，不归档；`docs/superpowers/` 保持忽略。
+
+本地验证入口为 `cargo test -p nyro-control -p nyro --offline`、`cargo build -p nyro --offline` 和 `python3 tests/serve_smoke.py`。[真实进程回归](../../tests/serve_smoke.py)使用临时 SQLite 与本地 mock，覆盖认证、草稿与发布分离、版本冲突、拒绝、旧 SSE 和重启恢复；文件模式继续由 [SIGHUP 回归](../../tests/proxy_reload_smoke.py)检查。
+
+
+本轮实际执行：
+
+```sh
+cargo test -p nyro -p nyro-control -p nyro-config --offline -- --test-threads=4
+cargo clippy -p nyro -p nyro-control -p nyro-config --all-targets --offline -- -D warnings
+cargo build -p nyro --offline
+python3 tests/serve_smoke.py
+python3 tests/proxy_reload_smoke.py
+cargo fmt --all -- --check
+```
+
+**59 项 Rust 测试通过，零失败**；Clippy、根构建、serve 真实进程与既有 proxy 重载回归通过。仓储覆盖重开恢复、版本冲突、无效／超限配置、旧库／损坏 schema／特殊文件拒绝、独占、Unix 权限及真实 SQLite 只读写失败；管理 API 覆盖认证、大小限制、并发比较保存、调用方断开、等待超时后继续执行，以及已提交但激活失败的快照重开和 Host 恢复。新进程用例先在缺少 `serve` 的二进制上失败，实现后通过。独立审查提出的权限、超时状态和启动 FIFO 问题已修正并复核；没有修改 kernel 或 LLM 业务实现。
+
+按仓库约束通过 `nyro-tools dump-schema --backend postgres/mysql` 重新生成两份旧数据库参考 schema，结果与已纳管内容一致；新控制库只支持 SQLite，未向旧表添加字段。本轮不涉及真实厂商、WebUI 或旧用户数据迁移。

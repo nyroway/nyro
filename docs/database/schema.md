@@ -1,6 +1,30 @@
 # Database Schema
 
-Nyro supports three storage backends — **SQLite** (default), **PostgreSQL**, and **MySQL** — with identical table structures.
+The released legacy Server and desktop applications support **SQLite** (default), **PostgreSQL**, and **MySQL**, with the entity tables documented below. Their generated reference schemas remain [postgres.sql](../../deploy/schema/postgres.sql) and [mysql.sql](../../deploy/schema/mysql.sql).
+
+The experimental root [`nyro serve`](../standalone/rust-serve.md) uses a **separate, dedicated SQLite database** owned by `nyro-control`. It neither imports nor modifies the legacy tables. PostgreSQL and MySQL reference files describe the legacy backend only; they do not contain this SQLite-only control schema.
+
+## Experimental control database: version 1
+
+Source of truth: [`nyro-control/src/storage.rs`](../../crates/nyro-control/src/storage.rs). `PRAGMA user_version = 1`; the only schema object is the following strict table:
+
+```sql
+CREATE TABLE nyro_control_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    draft_revision INTEGER NOT NULL CHECK (draft_revision > 0),
+    draft_json TEXT NOT NULL CHECK (length(CAST(draft_json AS BLOB)) BETWEEN 1 AND 1048576),
+    published_revision INTEGER NOT NULL CHECK (published_revision > 0 AND published_revision <= draft_revision),
+    published_json TEXT NOT NULL CHECK (length(CAST(published_json AS BLOB)) BETWEEN 1 AND 1048576)
+) STRICT;
+```
+
+The store requires exactly one row, with `singleton = 1`. Both JSON columns contain complete validated `nyro_config::Config` snapshots, including plaintext credentials; neither is an encrypted secret store. Initialization sets both revisions to `1`. A save compares the expected draft revision and increments it; publication copies the current draft to the published columns without incrementing its revision. Matching draft and published revisions must have identical JSON. Each JSON value is limited to 1 MiB in UTF-8 bytes.
+
+The published snapshot is the durable restart target. Runtime activation occurs after the database commit; `active_revision` is process state, not another database column. Draft storage does not persist runtime quotas, rate windows, health, routing history or request observations.
+
+The connection uses SQLite exclusive locking, DELETE journaling and FULL synchronous writes. Only one process owns the file. Schema version, schema shape, row count, revision relationships and decoded configurations are checked; unrelated and legacy databases are refused. New Unix files use mode `0600`; operators must protect the database directory and backups as credentials. See the [serve guide](../standalone/rust-serve.md) for startup permissions, publication and recovery.
+
+## Legacy entity schema
 
 ## Entity Relationship
 

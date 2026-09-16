@@ -1,6 +1,8 @@
 mod bootstrap;
+mod control;
 mod http;
 mod reload;
+mod serve;
 
 use std::{path::PathBuf, time::Duration};
 
@@ -18,6 +20,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run the local SQLite control plane and LLM data plane.
+    Serve(serve::Options),
     /// Run the standalone LLM data plane from a YAML configuration file.
     /// On Unix, send SIGHUP to reload the file while in-flight requests finish.
     Proxy {
@@ -36,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     match cli.command {
+        Command::Serve(options) => serve::run(options).await,
         Command::Proxy { config } => run(config).await,
     }
 }

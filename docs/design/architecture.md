@@ -1,10 +1,10 @@
 # Nyro Rust 目标架构
 
-> 状态：设计定稿，分阶段实施中；独立内核与首个实验性 standalone LLM 数据面已实现。更新日期：2026-09-08。
+> 状态：设计定稿，分阶段实施中；独立内核与首个实验性 standalone LLM 数据面已实现。更新日期：2026-09-16。
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、按授权过滤的模型发现、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级及 weighted／least_recent／latency 选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、主体 RPM／RPD 与 TPM／TPD 滚动窗口、累计 token 额度、请求／尝试关联用量观测、Provider 显式 HTTP／HTTPS 出口代理与独立 HTTP/1 配置、Unix SIGHUP 文件配置重载和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、按授权过滤的模型发现、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级及 weighted／least_recent／latency 选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、主体 RPM／RPD 与 TPM／TPD 滚动窗口、累计 token 额度、请求／尝试关联用量观测、Provider 显式 HTTP／HTTPS 出口代理与独立 HTTP/1 配置、Unix SIGHUP 文件配置重载和代际 lease。实验性 [`nyro serve`](../standalone/rust-serve_CN.md) 已复用该数据面，新增专用 SQLite 完整配置草稿、版本比较与显式发布。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；控制面其余管理能力、`nyro tool` 和产品切换仍待实现。
 
 ## 1. 产品定位与范围
 
@@ -20,7 +20,7 @@ Nyro 是统一的 AI Gateway，目标是在一个进程内承载 LLM Gateway 和
 | `nyro proxy` | 只运行数据面，从 standalone 文件或控制面获取配置 |
 | `nyro tool` | 承接录制、回放、调试透传和 schema 导出等现有工具能力 |
 
-目标中的 `serve` 与 `proxy` 使用同一套数据面构建和执行流程，区别在于配置来源及是否装配控制面。将来可以按配置启用 LLM、MCP 或两者；当前仅 `nyro proxy --config PATH` 可从源码运行，且只装配 LLM 文件数据面。`serve`、`tool` 和 MCP 仍是目标能力。
+目标中的 `serve` 与 `proxy` 使用同一套数据面构建和执行流程，区别在于配置来源及是否装配控制面。将来可以按配置启用 LLM、MCP 或两者；当前 `nyro proxy --config PATH` 装配 LLM 文件数据面，`nyro serve --database PATH --admin-token-file PATH` 装配相同数据面与最小 SQLite 控制面；后者仅初始化时接受 `--config PATH`。WebUI、`tool` 和 MCP 仍是目标能力。
 
 ## 2. 核心原则
 
@@ -383,7 +383,7 @@ SQLite / Postgres → 控制面业务读取 → publish 构建、校验 ──�
                            进程内交付或控制面配置分发 → 数据面协调器
 ```
 
-standalone 在启动时读取文件，Unix 上变更后可显式发送 `SIGHUP` 重载，其他平台需重启；不引入文件自动监听。目标控制面通过配置分发路径驱动在线更新。`serve` 内置的数据面也将消费同样的不可变快照，不在每个模型请求中直接读取管理数据库。
+standalone 在启动时读取文件，Unix 上变更后可显式发送 `SIGHUP` 重载，其他平台需重启；不引入文件自动监听。当前 `serve` 通过管理 API 保存完整草稿并显式发布，内置数据面消费同样的不可变快照，不在每个模型请求中读取管理数据库。它不通过 SIGHUP 重新导入种子文件。
 
 快照保存生效配置，不保存正在变化的许可、计数器、连接和请求状态。有效配置的确定性指纹用于跳过重复更新，不承诺某个序列化格式、hash 算法或 PATCH API。
 
@@ -549,6 +549,12 @@ OpenAI Chat／Responses 共用 `nyro_protocol::openai::ReasoningEffort`；旧 `o
 
 ### 10.1 文件来源与数据库仓储
 
+当前最小实现由 [`nyro-control`](../../crates/nyro-control/src/lib.rs) 拥有类型化快照、严格 schema 校验和专用 SQLite 单行存储，依赖 `nyro-config`，不负责 HTTP 或 Host 激活。根 [`src/control.rs`](../../src/control.rs) 负责管理认证、版本协调和发布，[`src/serve.rs`](../../src/serve.rs) 负责启动、独立回环管理监听及退出。`nyro-kernel` 和 `nyro-llm` 不依赖控制面或数据库。
+
+发布先校验进程设置并构建候选，再提交 SQLite 已发布快照，最后激活 Host；不宣称数据库与代际跨资源原子提交。提交前拒绝保持旧发布目标及活动代际；提交后激活中断返回 `202 pending`，重启恢复持久化目标。API 区分草稿、已发布和活动版本，重复发布等价快照不新建代际。接受后的写操作由服务持有，客户端断连不取消它，调用方需用 GET 核对结果。详情见[服务指南](../standalone/rust-serve_CN.md)。
+
+存储只持久化配置，限制计数、健康和路由历史仍在内存。SQLite 保持单进程独占，不导入旧库；实体 CRUD、Postgres、WebUI、OAuth、持久化观测与多副本协调仍待完成。下表及 10.2 的目录是后续目标划分，当前 SQLite 实现仅位于 `nyro-control/src/storage.rs`。
+
 | 方式 | 所在位置 | 语义 |
 |---|---|---|
 | file / standalone | `nyro-config/src/source/file.rs` | 文件解析、校验、构建不可变配置快照 |
@@ -567,11 +573,11 @@ OpenAI Chat／Responses 共用 `nyro_protocol::openai::ReasoningEffort`；旧 `o
 
 根装配层选择后端并持有连接资源，使用者持有连接池引用。候选重建不能关闭仍在使用的共享池。若后续限制模块确实需要自己的 SQL 状态，其查询和 schema 归 `nyro-limit`；只有实际出现共用连接代码时才考虑提取轻量数据库包，不能让限制模块反向依赖控制面。
 
-schema 的所有权不因共用数据库而合并。修改实际迁移源时仍必须遵守仓库的数据库文档与生成流程；参考 SQL 是派生产物，不手写。本轮不修改现有表结构、迁移或生成文件。
+schema 的所有权不因共用数据库而合并。修改实际迁移源时仍必须遵守仓库的数据库文档与生成流程；参考 SQL 是派生产物，不手写。G10 新增独立 SQLite v1 schema，见[数据库文档](../database/schema.md)；旧表与 PostgreSQL/MySQL 参考 schema 保持原有契约。
 
 ## 11. 现有实现与目标对应
 
-采用新旧实现并行开发、最后统一切换入口的迁移方式。新能力包已加入 workspace，且不依赖旧 `nyro-core`；旧入口继续承担现有发布，新实现独立构建和测试。当前已交付独立内核、协议／LLM／配置／安全／并发能力包，以及从严格 YAML 启动的实验性根 `nyro proxy`。接下来仍需补齐现有能力，再接入控制面与工具。
+采用新旧实现并行开发、最后统一切换入口的迁移方式。新能力包已加入 workspace，且不依赖旧 `nyro-core`；旧入口继续承担现有发布，新实现独立构建和测试。当前已交付独立内核、协议／LLM／配置／安全／并发能力包，以及从严格 YAML 启动的实验性根 `nyro proxy`。同时已接入实验性 SQLite `serve` 最小发布闭环；控制面其余能力、兼容对齐与工具仍待推进。
 
 按 PR #323 基线核对的具体差异、后续关闭状态、代码／测试证据与建议顺序见 [Rust 迁移差异审计](rust-migration-gaps.md)。该清单区分现有子集、旧行为兼容取舍和未来扩展，不能仅凭同名功能认定迁移完成。该临时清单在整体迁移完成后连同本处引用删除，不做归档；长期架构与升级说明保留在正式文档中。
 
@@ -581,7 +587,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 |---|---|---|
 | 内核、代际、文件配置 | 基础机制已落地；SIGHUP 重载已有回归 | 后续能力必须保持生命周期与清理约束 |
 | LLM 数据面 | 主要执行链已落地；模型发现 G01 已补齐，G02 已支持显式开启 OpenAI Chat／无状态 Responses／Anthropic Messages／单候选 Gemini 原生 JSON/SSE 保真；G04 已补充 Anthropic／Gemini 完整工具结果批次、显式错误状态边界、文本结果块与 Gemini ID／顺序校验；函数 Schema 已补充 JSON 约束保留、Gemini 方言转换与 strict 目标边界；G03 已补充用户图片输入及目标限制、缓存读取转换与 Anthropic 缓存写入／TTL 计量边界、OpenAI 当前缓存选项／兼容 retention 及原生缓存放置回归；有序 IR 已支持 Anthropic／Gemini／Responses 历史、JSON 和 SSE 交错顺序，以及各自专有推理的同协议保留，Chat 不可表达顺序明确拒绝；工具结果图片已支持 Anthropic／Responses 保序互转与 Gemini 对象／媒体的同协议保留；本地三轮工具会话矩阵覆盖严格转换、匹配原生模式及图片／专有推理组合，真实客户端与厂商验收仍待完成；G06 文件代理已支持密钥禁用、认证时到期检查和代际重载；G07 已支持主体 RPM／RPD 和 TPM／TPD 滚动窗口、请求规则原子准入、主体／模型 token 预算原子预留与跨代际状态保留，持久化和多副本协调仍待完成；整体兼容对齐未完成 | G02–G09 |
-| 控制面、存储、管理与持久化观测 | 尚未接入新架构 | G10–G12 |
+| 控制面、存储、管理与持久化观测 | G10 部分完成：SQLite 完整草稿、管理认证、版本冲突、显式发布和重启恢复；实体 CRUD、Postgres、WebUI、旧数据导入和持久化观测尚未完成 | G10–G12 |
 | 工具、部署和旧入口切换 | 尚未完成切换验收 | G11、G13 |
 
 完成协议与 Provider 回归、流式响应和取消收尾、配置更新、SQLite/Postgres 数据兼容、管理 API/WebUI 及工具命令验证后，再统一切换构建、安装和发布流程，移除 Tauri、旧 Server/Tools 入口及失去消费者的旧代码。旧五阶段 Hook 框架随旧运行时退出，认证、准入、响应处理、终态日志和资源收尾先由新运行时承接。
@@ -591,7 +597,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 | 当前实现或历史方案 | 目标归属与差异 |
 |---|---|
 | `crates/nyro-core/` 与整体 `Gateway` | 拆为八个职责包；按使用者注入必要资源，减少全局状态依赖 |
-| `src-server/`、`nyro-server --mode ...` | 继续承担现有发布；根 `src/` 已实现实验性文件配置 `nyro proxy`，`nyro serve` 与 `nyro-control` 仍是目标 |
+| `src-server/`、`nyro-server --mode ...` | 继续承担现有发布；根 `src/` 已实现实验性文件配置 `nyro proxy` 和专用 SQLite `nyro serve`，`nyro-control` 仅承接最小快照存储 |
 | `src-tauri/`、桌面 IPC、桌面发布工作流 | 退出目标产品形态；WebUI 通过服务端管理 API 工作 |
 | `crates/nyro-tools/` 独立工具二进制 | 现有能力迁入唯一二进制的 `nyro tool` 命令族 |
 | `crates/nyro-core/src/protocol/ir/` 的 `AiRequest` / `AiResponse` | `nyro-llm` 内入口枚举与 Chat、Embedding 配对类型 |
@@ -600,7 +606,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 | 当前 `PluginKernel`、全局注册表与五阶段 Hook 方案 | 微内核只管理资源；应用掌握可信执行；根程序显式装配 |
 | 当前 `crates/nyro-core/src/storage/` 与 `src-server/src/yaml_config.rs` | 管理仓储归控制面，文件来源归配置包，领域状态归所属模块 |
 | 旧 Rust 的 MySQL 后端及 `deploy/schema/mysql.sql` | 不进入本轮目标支持范围；本轮文档更新不删除实现或生成文件 |
-| 当前 `README.md` / `README_CN.md`、运行手册、`AGENTS.md` | 继续说明已发布旧入口，并单独标出实验性源码构建代理及其独立配置格式 |
+| 当前 `README.md` / `README_CN.md`、运行手册、`AGENTS.md` | 继续说明已发布旧入口，并单独标出实验性源码构建代理／服务及其独立配置格式 |
 
 目标支持范围为 standalone 文件配置、SQLite 和 Postgres。现有 schema、数据和 CLI 的迁移兼容措施属于后续实施计划；本设计不授权删除用户数据或隐式迁移数据库。
 
