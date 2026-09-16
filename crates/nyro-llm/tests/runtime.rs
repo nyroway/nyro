@@ -90,6 +90,7 @@ fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Ru
         models: BTreeMap::from([(
             "public-model".into(),
             config::Model {
+                strategy: Default::default(),
                 max_attempts: 1,
                 health: None,
                 rate: None,

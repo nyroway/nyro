@@ -60,8 +60,19 @@ impl std::fmt::Debug for Provider {
     }
 }
 
+/// Selection within the lowest eligible priority; zero weight always disables a backend.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Strategy {
+    #[default]
+    Weighted,
+    LeastRecent,
+    Latency,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Model {
+    pub strategy: Strategy,
     pub backends: Vec<Backend>,
     pub max_attempts: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,6 +211,8 @@ const fn default_weight() -> u32 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawModel {
+    #[serde(default)]
+    strategy: Strategy,
     #[serde(default = "default_max_attempts")]
     max_attempts: u32,
     #[serde(default)]
@@ -250,6 +263,7 @@ impl<'de> Deserialize<'de> for Model {
         };
         Ok(Self {
             backends,
+            strategy: raw.strategy,
             max_attempts: raw.max_attempts,
             health: raw.health,
             rate: raw.rate,

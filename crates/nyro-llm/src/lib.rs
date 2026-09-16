@@ -1,5 +1,6 @@
 //! nyro-llm.
 
+mod binding;
 pub mod config;
 pub mod health;
 mod ingress;

@@ -1,6 +1,6 @@
 //! Passive backend health shared explicitly across runtime generations.
 
-use crate::config::{Backend, HealthConfig, OpenAiApi, Provider, ProviderKind};
+use crate::config::{Backend, HealthConfig, Provider};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, Weak},
@@ -13,18 +13,9 @@ pub struct HealthRegistry {
     entries: Mutex<HashMap<HealthKey, Weak<BackendHealth>>>,
 }
 
-// Do not derive Debug: a binding contains provider credentials.
 #[derive(Eq, PartialEq, Hash)]
 struct HealthKey {
-    model: String,
-    backend: String,
-    provider: String,
-    kind: ProviderKind,
-    api: OpenAiApi,
-    native_chat: bool,
-    base_url: String,
-    api_key: Option<String>,
-    upstream_model: String,
+    binding: crate::binding::BackendKey,
     policy: HealthConfig,
 }
 
@@ -36,19 +27,8 @@ impl HealthRegistry {
         provider: &Provider,
         policy: &HealthConfig,
     ) -> Arc<BackendHealth> {
-        // Match Driver's effective endpoint and default API selection.
-        let mut base = reqwest::Url::parse(&provider.base_url).expect("validated provider URL");
-        base.set_path(&format!("{}/", base.path().trim_end_matches('/')));
         let key = HealthKey {
-            model: model.into(),
-            backend: backend.id.clone(),
-            provider: backend.provider.clone(),
-            kind: provider.kind,
-            api: provider.api.unwrap_or_default(),
-            native_chat: provider.native_chat,
-            base_url: base.into(),
-            api_key: provider.api_key.clone(),
-            upstream_model: backend.upstream_model.clone(),
+            binding: crate::binding::BackendKey::new(model, backend, provider),
             policy: policy.clone(),
         };
         let mut entries = self.entries.lock().unwrap();

@@ -27,6 +27,8 @@ use crate::{
     subject_limit::{BoundSubjectLimit, SubjectLimitRegistry},
 };
 
+pub use crate::router::RoutingRegistry;
+
 mod endpoint;
 mod native;
 use native::Input;
@@ -36,6 +38,7 @@ mod stream;
 /// Application-owned state shared by immutable runtime generations.
 #[derive(Clone, Default)]
 pub struct SharedResources {
+    pub routing: Arc<RoutingRegistry>,
     pub health: Arc<HealthRegistry>,
     pub rates: Arc<RateRegistry>,
     pub quotas: Arc<QuotaRegistry>,
@@ -66,6 +69,7 @@ impl Default for Options {
 pub struct BuildError;
 
 pub struct Runtime {
+    routing: BTreeMap<String, router::BoundRouting>,
     models: BTreeMap<String, config::Model>,
     providers: BTreeMap<String, Driver>,
     keys: Arc<ApiKeys>,
@@ -117,6 +121,7 @@ impl Runtime {
         resources: SharedResources,
     ) -> Result<Self, BuildError> {
         let SharedResources {
+            routing,
             health,
             rates,
             quotas,
@@ -148,6 +153,11 @@ impl Runtime {
                     resource: id.clone(),
                 })
             })
+            .collect();
+        let routing = config
+            .models
+            .iter()
+            .map(|(id, model)| (id.clone(), routing.bind(id, model, &config.providers)))
             .collect();
         let health = config
             .models
@@ -201,6 +211,7 @@ impl Runtime {
             })
             .collect::<Result<_, _>>()?;
         Ok(Self {
+            routing,
             subject_limits,
             quotas,
             rates,
@@ -491,59 +502,75 @@ impl Runtime {
             if Instant::now() >= deadline {
                 return Err(Failure::timeout());
             }
-            let available: Vec<_> = eligible
-                .iter()
-                .enumerate()
-                .filter(|(_, candidate)| candidate.health.is_none_or(|state| state.available()))
-                .collect();
-            let Some(priority) = available
-                .iter()
-                .map(|(_, candidate)| candidate.backend.priority)
-                .min()
-            else {
-                break;
-            };
-            let choice = router::choose(available.iter().map(|(_, candidate)| {
-                if candidate.backend.priority == priority {
-                    candidate.backend.weight
-                } else {
-                    0
-                }
-            }))
-            .expect("available candidates have positive weights");
-            let index = available[choice].0;
-            // Another request may have claimed the recovery probe after our availability check.
-            let selected = eligible.swap_remove(index);
-            let mut health = match selected.health {
-                Some(state) => match state.try_acquire() {
-                    Some(attempt) => Some(attempt),
-                    None => continue,
-                },
-                None => None,
-            };
-            let (quota, token_window) = match crate::subject_limit::reserve_attempt(
-                self.quotas.get(&public_model).map(AsRef::as_ref),
-                subject_limit.map(AsRef::as_ref),
-            ) {
-                Ok(budgets) => budgets,
-                Err(error) => {
-                    drop(exchange.permit.take());
-                    if let nyro_limit::window::WindowQuotaError::Exceeded { retry_after } = error {
-                        return Err(Failure {
-                            retry_after,
-                            ..Failure::new(
-                                StatusCode::TOO_MANY_REQUESTS,
-                                "rate_limit_exceeded",
-                                "Token rate limit reached",
-                            )
-                        });
+            let (selected, mut health, quota, token_window, routing_attempt) = {
+                let routing = &self.routing[&public_model];
+                let mut selection = routing.selection();
+                let available: Vec<_> = eligible
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| candidate.health.is_none_or(|state| state.available()))
+                    .collect();
+                let Some(priority) = available
+                    .iter()
+                    .map(|(_, candidate)| candidate.backend.priority)
+                    .min()
+                else {
+                    break;
+                };
+                let candidates: Vec<_> = available
+                    .iter()
+                    .map(|(_, candidate)| {
+                        (
+                            candidate.backend.id.as_str(),
+                            if candidate.backend.priority == priority {
+                                candidate.backend.weight
+                            } else {
+                                0
+                            },
+                        )
+                    })
+                    .collect();
+                let choice = routing
+                    .choose(model.strategy, &candidates)
+                    .expect("available candidates have positive weights");
+                let index = available[choice].0;
+                // Another request may have claimed the recovery probe after our availability check.
+                let selected = eligible.swap_remove(index);
+                let health = match selected.health {
+                    Some(state) => match state.try_acquire() {
+                        Some(attempt) => Some(attempt),
+                        None => continue,
+                    },
+                    None => None,
+                };
+                let (quota, token_window) = match crate::subject_limit::reserve_attempt(
+                    self.quotas.get(&public_model).map(AsRef::as_ref),
+                    subject_limit.map(AsRef::as_ref),
+                ) {
+                    Ok(budgets) => budgets,
+                    Err(error) => {
+                        drop(exchange.permit.take());
+                        if let nyro_limit::window::WindowQuotaError::Exceeded { retry_after } =
+                            error
+                        {
+                            return Err(Failure {
+                                retry_after,
+                                ..Failure::new(
+                                    StatusCode::TOO_MANY_REQUESTS,
+                                    "rate_limit_exceeded",
+                                    "Token rate limit reached",
+                                )
+                            });
+                        }
+                        return Err(Failure::new(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "quota_exceeded",
+                            "Token quota cannot admit another attempt",
+                        ));
                     }
-                    return Err(Failure::new(
-                        StatusCode::TOO_MANY_REQUESTS,
-                        "quota_exceeded",
-                        "Token quota cannot admit another attempt",
-                    ));
-                }
+                };
+                let routing_attempt = routing.started(&selected.backend.id, &mut selection);
+                (selected, health, quota, token_window, routing_attempt)
             };
             let mut attempt = Some(exchange.observation.attempt(
                 &selected.backend.id,
@@ -552,6 +579,7 @@ impl Runtime {
                 quota,
                 token_window,
             ));
+            let sent_at = Instant::now();
             let response = match selected
                 .provider
                 .send(
@@ -581,6 +609,7 @@ impl Runtime {
                     continue;
                 }
             };
+            let headers_elapsed = sent_at.elapsed();
             attempt.as_mut().unwrap().status = response.status().as_u16();
             if !response.status().is_success() {
                 attempt.as_mut().unwrap().fail("http_error");
@@ -609,6 +638,7 @@ impl Runtime {
                 last_failure = Some(failure);
                 continue;
             }
+            routing_attempt.headers(headers_elapsed);
             // An upstream 2xx commits the attempt, including malformed or interrupted bodies.
             let result = self
                 .decode_response(

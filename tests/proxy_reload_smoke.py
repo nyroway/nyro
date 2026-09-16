@@ -448,6 +448,54 @@ def main():
                 reload_config(token_rotated, "applied")
                 token_denied(False)
 
+                # Routing history is shared by root generations, including an old live SSE.
+                routed = copy.deepcopy(token_rotated)
+                routed["llm"]["models"]["public-routing"] = {
+                    "backends": [
+                        {"id": "a", "provider": "mock", "upstream_model": "routing-a"},
+                        {"id": "b", "provider": "mock", "upstream_model": "routing-b", "priority": 1}],
+                    "workloads": ["chat"], "subjects": ["tester"]}
+                reload_config(routed, "applied")
+                Upstream.stream_started.clear()
+                Upstream.release_stream.clear()
+                stream_connection, stream_response = connect("/v1/chat/completions", {
+                    "model": "public-routing", "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True}, "client-secret-new")
+                assert stream_response.status == 200 and Upstream.stream_started.wait(2)
+                assert Upstream.calls[-1][1]["model"] == "routing-a"
+                first_event = b""
+                while not first_event.endswith(b"\n\n"):
+                    line = stream_response.readline()
+                    assert line, "routing stream closed before reload"
+                    first_event += line
+
+                def routed_chat(expected):
+                    status, body = chat("public-routing", "client-secret-new")
+                    assert status == 200, body
+                    assert json.loads(body)["choices"][0]["message"]["content"] == expected, body
+
+                routed["llm"]["models"]["public-routing"]["strategy"] = "least_recent"
+                routed["llm"]["models"]["public-routing"]["backends"][1]["priority"] = 0
+                routing_generation = reload_config(routed, "applied")
+                routed_chat("routing-b")
+                routed["llm"]["models"]["public-routing"]["backends"].reverse()
+                assert reload_config(routed, "unchanged") == routing_generation
+                invalid_strategy = copy.deepcopy(routed)
+                invalid_strategy["llm"]["models"]["public-routing"]["strategy"] = "cooldown"
+                reload_config(invalid_strategy, "rejected", "invalid_config")
+                routed_chat("routing-a")
+                routed["llm"]["models"]["public-routing"]["backends"][0]["upstream_model"] = "routing-c"
+                reload_config(routed, "applied")
+                routed_chat("routing-c")  # Changed binding starts without recent history.
+                routed["llm"]["models"]["public-routing"]["strategy"] = "latency"
+                reload_config(routed, "applied")
+                assert chat("public-routing", "client-secret-new")[0] == 200
+                Upstream.release_stream.set()
+                remaining = stream_response.read()
+                assert b"old-finish" in remaining and remaining.endswith(b"data: [DONE]\n\n")
+                stream_connection.close()
+                stream_connection = None
+
                 # A special file must not leave a blocking open alive during shutdown.
                 config.unlink()
                 os.mkfifo(config)
@@ -489,7 +537,7 @@ def main():
         upstream.server_close()
     print("proxy reload smoke passed: SIGHUP, atomic replacement, deduplication, rejection, "
           "auth/routes, model discovery, key disable/expiry/renewal, SSE retention, "
-          "subject RPM/RPD and TPM/TPD retention, rate/quota/health reuse, redacted logs, FIFO rejection, SIGTERM")
+          "subject RPM/RPD and TPM/TPD retention, rate/quota/health reuse, routing strategies/history, redacted logs, FIFO rejection, SIGTERM")
 
 
 if __name__ == "__main__":

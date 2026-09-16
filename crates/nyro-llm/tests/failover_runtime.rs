@@ -37,6 +37,7 @@ fn failover_configuration_is_accepted() {
 #[derive(Clone, Copy)]
 enum Reply {
     Good,
+    SlowBody,
     Status(u16),
     BadJson,
     BadStream,
@@ -121,7 +122,13 @@ async fn upstream(reply: Reply) -> Upstream {
                     .chunks(13)
                     .map(|chunk| Ok::<_, std::io::Error>(chunk.to_vec()))
                     .collect();
-                let stream = futures::stream::iter(chunks);
+                let stream = futures::stream::once(async move {
+                    if matches!(reply, Reply::SlowBody) {
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                    }
+                    Ok::<_, std::io::Error>(Vec::new())
+                })
+                .chain(futures::stream::iter(chunks));
                 let stream = if matches!(reply, Reply::HangingStream) {
                     stream.chain(futures::stream::pending()).boxed()
                 } else {
@@ -130,6 +137,15 @@ async fn upstream(reply: Reply) -> Upstream {
                 return Response::builder()
                     .header("content-type", "text/event-stream")
                     .body(Body::from_stream(stream))
+                    .unwrap();
+            }
+            if matches!(reply, Reply::SlowBody) {
+                return Response::builder()
+                    .header("content-type", "application/json")
+                    .body(Body::from_stream(futures::stream::once(async {
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        Ok::<_, std::io::Error>(ANSWER)
+                    })))
                     .unwrap();
             }
             Response::builder()
@@ -815,3 +831,6 @@ async fn stream_cancellation_and_deadline_are_neutral_for_health() {
         assert_eq!((first.count(), backup.count()), (2, 0));
     }
 }
+
+#[path = "failover_runtime/strategies.rs"]
+mod strategies;
