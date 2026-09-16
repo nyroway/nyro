@@ -45,6 +45,8 @@ pub struct Provider {
     pub base_url: String,
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub transport: Transport,
 }
 
 impl std::fmt::Debug for Provider {
@@ -54,9 +56,60 @@ impl std::fmt::Debug for Provider {
             .field("kind", &self.kind)
             .field("native_chat", &self.native_chat)
             .field("api", &self.api)
+            .field("transport", &self.transport)
             .field("base_url", &"<configured>")
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .finish()
+    }
+}
+
+/// Explicit Provider egress; defaults never consult system proxy settings.
+#[derive(Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Transport {
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proxy_url: Option<String>,
+    #[serde(default)]
+    pub http1_only: bool,
+}
+
+impl std::fmt::Debug for Transport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Transport")
+            .field("proxy_url", &self.proxy_url.as_ref().map(|_| "[REDACTED]"))
+            .field("http1_only", &self.http1_only)
+            .finish()
+    }
+}
+
+impl Transport {
+    pub(crate) fn proxy(&self) -> Result<Option<Url>, ()> {
+        self.proxy_url
+            .as_ref()
+            .map(|raw| {
+                let url = Url::parse(raw).map_err(|_| ())?;
+                let authority = raw
+                    .split_once("://")
+                    .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or_default());
+                if !matches!(url.scheme(), "http" | "https")
+                    || url.host_str().is_none()
+                    || authority.is_none_or(str::is_empty)
+                    || raw.chars().any(|c| c.is_whitespace() || c.is_control())
+                    || url.port() == Some(0)
+                    || url.path() != "/"
+                    || url.query().is_some()
+                    || url.fragment().is_some()
+                {
+                    return Err(());
+                }
+                Ok(url)
+            })
+            .transpose()
     }
 }
 
@@ -289,6 +342,8 @@ pub enum ConfigError {
     EmptyProviderId,
     #[error("provider `{provider}` has an invalid base URL")]
     InvalidProviderUrl { provider: String },
+    #[error("provider `{provider}` has invalid transport settings")]
+    InvalidProviderTransport { provider: String },
     #[error("provider `{provider}` has an invalid API key")]
     InvalidProviderApiKey { provider: String },
     #[error("provider `{provider}` declares an API selector outside the OpenAI family")]
@@ -348,6 +403,12 @@ impl Config {
             if id.trim().is_empty() {
                 return Err(ConfigError::EmptyProviderId);
             }
+            provider
+                .transport
+                .proxy()
+                .map_err(|_| ConfigError::InvalidProviderTransport {
+                    provider: id.clone(),
+                })?;
             if provider.kind != ProviderKind::Openai && provider.api.is_some() {
                 return Err(ConfigError::InvalidProviderApi {
                     provider: id.clone(),

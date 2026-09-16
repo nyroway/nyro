@@ -1,6 +1,6 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，G07 主体 TPM／TPD 预留与结算已由 PR #349 合并，本轮在 `5916a045` 上补齐 G08 可选选择策略并明确路由、健康和重试迁移契约，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，G07 主体 TPM／TPD 预留与结算已由 PR #349 合并，G08 可选选择策略与路由／健康／重试迁移契约已由 PR #350 合并，本轮在 `bffcee58` 上完成 G09 文件代理出口配置与 HTTP 迁移契约，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)说明当前支持范围。
 
 **新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
@@ -34,7 +34,7 @@
 | G06 API Key 生命周期 | 文件代理已落地 | [安全包](../../crates/nyro-security/src/lib.rs)新增默认启用状态与可选 Unix 秒到期时间，所有入口共用认证时检查；禁用／到期返回通用 `401`，无匿名回退。主体绑定、重复校验和配置指纹保留生命周期语义。 | 精确到期边界、慢上传、所有入口在准入前拒绝、禁用／到期／续期重载与已准入 SSE 保留见第 28 节。控制面管理、旧数据到新快照的发布仍由 G10–G11 跟踪，不据此宣布产品迁移完成。 |
 | G07 限制作用域与持久化 | 部分 | 旧授权按 API Key 查询 Minute/Day 窗口的请求／token 数（`rpm/rpd/tpm/tpd`）。新 rate 是模型级 token bucket；已补主体级 RPM／RPD 请求窗口、TPM／TPD 用量预留／结算与组合原子准入；请求边界见第 29 节，token 边界见第 30 节。quota 仍是模型级累计额度。 | 持久化、多副本一致性和旧数据发布仍待推进；请求按逻辑准入，token 按尝试结算加在途预留计量，重启清零。显式迁移策略含义，不静默将 RPM 转成不同桶规则或将 TPM 转成累计额度；也不复制旧日志查询准入的竞争问题。 |
 | G08 均衡与重试策略 | 文件代理已落地 | [新运行时](../../crates/nyro-llm/src/runtime.rs)支持最小可用优先级内 weighted（默认）、least_recent 和 latency，按有效 backend 绑定跨代际保留历史。第 31 节记录旧策略映射、采样与重载契约及回归。 | 已接受用每次发起顺序替代旧 cooldown、用单次 2xx 响应头耗时替代旧混合 latency；保留新版重试／2xx 提交安全边界。旧 weighted 统一优先级，确定顺序用不同 priority，显式配置健康与尝试预算；控制面配置发布和旧数据导入仍由 G10–G11 跟踪。 |
-| G09 HTTP 与网络配置 | 部分／待取舍 | [旧 router](../../crates/nyro-core/src/proxy/server.rs)有 CORS、`/health` 和 `/` 别名、100 MiB JSON 限制；[旧客户端构建](../../crates/nyro-core/src/lib.rs)支持 `use_proxy`、`proxy_url`、`proxy_force_http1`。新根入口有 `/healthz`、`/readyz`、可配置边界，无 CORS，driver 禁用代理和重定向。 | 核对已部署浏览器来源、探针、请求大小和显式出口代理需求，为保留项提供受限配置；说明有意变化的默认值、Header、query、错误行为。不为模仿旧默认值而恢复环境代理或宽泛 CORS。 |
+| G09 HTTP 与网络配置 | 文件代理已落地 | [Provider driver](../../crates/nyro-llm/src/provider.rs)支持显式 HTTP／HTTPS 出口代理及独立 HTTP/1 配置；直连默认、环境隔离、代理认证、传输绑定历史和重载已覆盖。第 32 节记录旧配置映射与有意变化。 | 保留 CORS 关闭、规范探针路径、显式大小／期限和 Header 凭证；不迁入隐式系统代理或旧别名。跨域白名单尚未实现，需要浏览器部署需求后另行确定；serve 就绪、控制面配置发布与部署切换继续由 G10–G11 跟踪，不据此宣布产品迁移完成。 |
 
 ### Provider 清单
 
@@ -610,3 +610,65 @@ python3 tests/proxy_reload_smoke.py
 ```
 
 首轮全量测试在既有慢上传到期用例的前置条件失败：运行时构建及请求启动已超过预设的 5 秒到期窗口，尚未进入要验证的到期后鉴权行为。该用例单独复跑通过，所在 Responses 组以 4 个线程复跑全部通过，并补完首轮被中断的后续组；没有修改鉴权实现或该测试。最终覆盖 **505 项不同的 Rust 测试**，Clippy、根构建、扩展 SIGHUP 进程回归及格式检查通过；169 个本地文档链接路径有效。独立代码及文档／进程测试审查未发现待修复问题。
+
+
+## 32. G09 文件代理网络配置与迁移契约
+
+基于 `bffcee58`（PR #350），核对[旧 Gateway 客户端](../../crates/nyro-core/src/lib.rs)、[旧代理 HTTP router](../../crates/nyro-core/src/proxy/server.rs)、[旧 Server 组合](../../src-server/src/main.rs)，以及[新 HTTP 入口](../../src/http.rs)、[新 Provider driver](../../crates/nyro-llm/src/provider.rs)、[新接入校验](../../crates/nyro-llm/src/runtime/endpoint.rs)和[新文件配置](../../crates/nyro-config/src/lib.rs)。本轮交付 Provider 出口代理与独立 HTTP/1 配置，并按推荐方案保留新版 HTTP 默认行为；不新增 crate，不改管理数据库或旧入口。
+
+### 已确认差异
+
+| 项目 | 旧路径 | 新路径与迁移契约 |
+|---|---|---|
+| 显式出口代理 | Provider `use_proxy` 为 true 且全局 `proxy_enabled` 为 true，才读取 `proxy_url` 构造代理客户端；未启用时返回默认客户端，启用但 URL 空白时报错。 | Provider 通过 `transport.proxy_url` 显式配置 HTTP／HTTPS 代理，省略为直连；不采用旧全局开关与局部开关组合。 |
+| 系统／环境代理 | 默认客户端没有调用 `.no_proxy()`，所以 `use_proxy: false` 或全局开关关闭不保证直连。 | 继续明确禁用系统／环境自动代理；配置显式代理后也不依赖环境旁路规则。旧部署若靠环境变量生效，需迁入显式配置。 |
+| HTTP 版本 | `proxy_force_http1` 仅在构建启用代理的客户端时生效，默认 false；默认客户端不读取它。 | Provider 级 `transport.http1_only` 独立于是否走代理。默认保留现有协商行为，可显式限制为 HTTP/1；不提供强制 HTTP/2 或任意 TLS 放宽开关。 |
+| CORS 默认值 | 默认包含 localhost、127.0.0.1 对应端口及两个 Tauri 来源；支持 `*`。来源字符串仅尝试转成 HeaderValue，全部解析失败时回退任意来源。旧数据面允许 GET／POST／OPTIONS 及固定请求头列表。 | 新入口没有 CORS 层，继续默认关闭；确认浏览器跨域调用需求后，再提供严格来源白名单。非法配置应拒绝，不能静默丢弃后放宽。Tauri 来源不属于目标 Server 默认值；CORS 不能替代认证授权。 |
+| 存活探针 | `/health`、`/healthz`、`/` 都返回状态 200 和 JSON 样式文本。 | 仅 `/healthz`，状态 200、空正文。部署应改用该端点并检查状态码，不因旧别名存在就恢复 `/`；有不能修改的现有探针时再明确兼容范围。 |
+| 就绪探针 | `/readyz` 查询存储可连接与 schema 兼容，返回 200 或 503 及状态文本。 | `/readyz` 根据 Host 是否接受新 lease 返回 200／503、空正文，不表示所有 Provider 健康。未来 serve 的发布就绪与存储要求在 G10–G11 明确，不能让文件代理依赖数据库。 |
+| 请求与响应大小 | 代理 Json 提取器允许 100 MiB 请求。 | 新 runtime 默认请求 1 MiB、响应 16 MiB、流帧 1 MiB，均可配置；请求正文累积读取时执行限制，不依赖 Content-Length。保留现有默认，迁移时显式设置需要的上限。 |
+| 期限 | 旧上游客户端总超时 300 秒，不等价于整个逻辑请求的统一期限。 | 新版默认 120 秒，覆盖正文读取、全部尝试及响应交付，由 `server.request_timeout_ms` 配置。代理与 HTTP/1 配置不得引入独立重试预算或延长原请求期限。 |
+| 重定向／自动重试 | 旧客户端采用依赖默认行为。 | 新 driver 显式禁用重定向与 Reqwest 自动重试；继续由 runtime 管理故障转移与 2xx 提交，不随网络配置开放自动重定向。 |
+| 查询凭证／Header | 旧 Gemini 入口在缺少 `x-goog-api-key` 时把查询参数 `key` 注入本地鉴权 Header；旧 CORS 放行的 Header 也不等于协议层会原样透传。 | 新入口拒绝查询参数 `key`、`api_key`、`access_token`，仅 Gemini 流式端点接受单个 `alt=sse`；按协议接收 Header 凭证。保留显式凭证隔离；厂商特殊 Header 需求归 G05 与协议兼容，不做任意透传。 |
+
+依赖依据为仓库锁定的 Reqwest `0.12.28`。官方 [ClientBuilder](https://docs.rs/reqwest/0.12.28/reqwest/struct.ClientBuilder.html#method.no_proxy) 文档说明 `no_proxy()` 关闭自动系统代理并清空显式代理，添加显式代理也会关闭自动系统代理；[HTTP/1 开关](https://docs.rs/reqwest/0.12.28/reqwest/struct.ClientBuilder.html#method.http1_only)和 [Proxy](https://docs.rs/reqwest/0.12.28/reqwest/struct.Proxy.html) 已提供所需基础能力。实现先设直连默认，再添加显式代理，避免后续 `no_proxy()` 清空刚添加的设置。
+
+### 已交付：Provider 显式出口配置
+
+配置和 driver 留在 `nyro-llm`，根组合层继续负责代际发布，kernel 不参与网络策略。可用配置如下，完整契约见[代理指南](../standalone/rust-proxy_CN.md#provider-网络传输)：
+
+```yaml
+llm:
+  providers:
+    example:
+      kind: openai
+      base_url: https://api.example.com/v1
+      transport:
+        proxy_url: http://127.0.0.1:7890
+        http1_only: true
+```
+
+- `transport` 省略或空对象表示直连、保留现有 HTTP 版本协商；`http1_only` 默认 false。代理 URL 省略表示直连，显式 null／错误类型／未知字段拒绝，不静默回退直连。Rust `Provider` 构造方新增 `transport: Default::default()`。
+- 仅支持显式 HTTP／HTTPS 代理，URL 用户信息提供代理 Basic 认证；拒绝缺失主机、零端口、非根路径、query、fragment 和字面空白。Debug、网关错误和 Nyro 日志不暴露代理地址或凭证；配置序列化仍包含凭证。默认直连和显式代理均忽略自动系统／环境代理及 NO_PROXY 旁路规则。
+- Provider API Key 与代理认证分开，HTTP 转发和 HTTPS CONNECT 均有本地 mock 回归；HTTP 转发代理可看到 HTTP 上游请求，CONNECT 代理认证不进入隧道内请求。代理连接失败不会偷偷改为同一 Provider 直连；其他 backend 继续服从既有路由和尝试预算。
+- 配置指纹纳入传输选项，省略／空对象／默认值一致。代理 URL 文本保留在指纹中，等价拼写可能发布新代际；健康与选择历史使用归一化 URL 身份。地址、代理认证或 HTTP 模式变化会隔离历史，模型 rate、主体窗口和 quota 不因此清零。
+- 新请求使用新客户端，旧 SSE 持有旧代际完成；无效候选保留活动代际。重定向、隐式重试继续关闭，连接建立和响应交付仍共用原请求期限。TLS 保持正常证书校验，没有新增放宽开关。
+
+文件代理范围内的 G09 交付完成。CORS 白名单没有实现，后续浏览器部署如需跨域应另行明确需求；未来 serve 的发布就绪、控制面配置到快照、部署探针更新仍由 G10–G11 跟踪。整体迁移完成后删除本文，不归档；`docs/superpowers/` 继续遵守 Git 忽略规则。
+
+### 本轮验证
+
+新增配置测试先因未知 `transport` 字段失败，实现后通过；配置指纹、默认值、URL 拒绝、脱敏和健康／路由绑定测试覆盖传输变化。[网络进程测试](../../tests/proxy_network_smoke.py)使用真实根二进制和本地 HTTP／TLS mock，覆盖默认直连及环境隔离、显式代理且忽略 NO_PROXY、百分号编码代理认证、CONNECT 凭证边界、直连／代理 HTTP/1 ALPN、非法重载保留活动配置、失败不直连、禁止重定向、期限、旧 SSE 和已消耗 quota 跨重载保留、探针／CORS 及日志脱敏。TLS fixture 为公开测试证书，只注入子进程信任，不改变系统证书或生产校验。
+
+实际执行：
+
+```sh
+cargo test -p nyro-llm -p nyro-config -p nyro --offline -- --test-threads=4
+cargo clippy -p nyro-llm -p nyro-config -p nyro --all-targets --offline -- -D warnings
+cargo build -p nyro --offline
+python3 tests/proxy_network_smoke.py
+python3 tests/proxy_reload_smoke.py
+cargo fmt --all -- --check
+```
+
+**508 项 Rust 测试通过，零失败**；Clippy、根构建、新网络进程回归、既有重载回归和格式检查通过。177 个本地文档链接路径有效，`git diff --check` 通过。独立代码与文档审查未发现待修复问题。首轮 TLS mock 因测试证书误用 `CA:TRUE` 被正常校验拒绝，改为带 `serverAuth` 的 `CA:FALSE` 端点证书后网络回归通过，没有放宽生产 TLS 校验。没有真实厂商请求、数据库迁移或旧入口下线。

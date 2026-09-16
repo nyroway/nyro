@@ -80,6 +80,7 @@ fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Ru
         providers: BTreeMap::from([(
             "upstream".into(),
             config::Provider {
+                transport: Default::default(),
                 native_chat: false,
                 kind: config::ProviderKind::Openai,
                 api: None,

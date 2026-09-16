@@ -18,6 +18,7 @@ fn valid_config() -> Config {
             providers: BTreeMap::from([(
                 "openai".into(),
                 Provider {
+                    transport: Default::default(),
                     native_chat: false,
                     kind: ProviderKind::Openai,
                     api: None,
@@ -708,5 +709,33 @@ fn strategy_fingerprint_normalizes_default_and_preserves_selection_semantics() {
             )))
             .is_err()
         );
+    }
+}
+
+#[test]
+fn provider_transport_fingerprint_normalizes_defaults_and_retains_egress_changes() {
+    let original = valid_config();
+    let baseline = original.fingerprint().unwrap();
+    let mut value = serde_json::to_value(&original).unwrap();
+    value["llm"]["providers"]["openai"]
+        .as_object_mut()
+        .unwrap()
+        .remove("transport");
+    let omitted: Config = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(baseline, omitted.fingerprint().unwrap());
+    value["llm"]["providers"]["openai"]["transport"] = serde_json::json!({});
+    let empty: Config = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(baseline, empty.fingerprint().unwrap());
+    let mut digests = std::collections::BTreeSet::from([baseline]);
+    for transport in [
+        serde_json::json!({"http1_only":true}),
+        serde_json::json!({"proxy_url":"http://proxy.test:8080"}),
+        serde_json::json!({"proxy_url":"http://user:secret@proxy.test:8080"}),
+        serde_json::json!({"proxy_url":"http://user:rotated@proxy.test:8080"}),
+        serde_json::json!({"proxy_url":"http://proxy.test:8080","http1_only":true}),
+    ] {
+        value["llm"]["providers"]["openai"]["transport"] = transport;
+        let changed: Config = serde_json::from_value(value.clone()).unwrap();
+        assert!(digests.insert(changed.fingerprint().unwrap()));
     }
 }

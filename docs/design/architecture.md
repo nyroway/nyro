@@ -4,7 +4,7 @@
 >
 > 本文是本轮 Rust 重构的目标架构依据，不代表代码已完成迁移。目录树、Rust 类型示例和命令形态均为目标设计；当前实现请查看[现有 workspace](../../Cargo.toml)和本文的现状对应表。
 
-当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、按授权过滤的模型发现、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级及 weighted／least_recent／latency 选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、主体 RPM／RPD 与 TPM／TPD 滚动窗口、累计 token 额度、请求／尝试关联用量观测、Unix SIGHUP 文件配置重载和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
+当前已落地独立的 [`nyro-kernel`](../../crates/nyro-kernel/README_CN.md)，以及使用它的实验性源码构建根命令 [`nyro proxy --config`](../standalone/rust-proxy_CN.md)。该命令实现严格文件配置、按授权过滤的模型发现、OpenAI Chat/Embedding、无状态 Responses、Anthropic/Gemini Chat 与跨协议 SSE 子集、多 backend 优先级及 weighted／least_recent／latency 选择与有界故障转移、认证授权、共享并发限制、模型请求频率限制、主体 RPM／RPD 与 TPM／TPD 滚动窗口、累计 token 额度、请求／尝试关联用量观测、Provider 显式 HTTP／HTTPS 出口代理与独立 HTTP/1 配置、Unix SIGHUP 文件配置重载和代际 lease。现有 `nyro-core`、已发布 Server 和 Tauri 请求路径尚未接入该内核；`nyro serve`、`nyro tool`、控制面和其余目标能力仍未实现。
 
 ## 1. 产品定位与范围
 
@@ -430,7 +430,7 @@ HTTP 基础接入
 
 接入层先完成与代际无关的基础解析；依赖配置的解码、能力选择和后续执行使用同一个代际。认证身份、截止时间、路由结果、尝试状态和原始传输信息放在请求执行上下文，不扩散为每个 IR 的通用业务字段。
 
-当前已实现模型范围内带稳定 ID 的 backend 列表、优先级与同级 `weighted`（默认）／`least_recent`／`latency` 选择：认证和准入之后，在本地按各 backend 的 codec 准备请求，仅在可表达该请求的可用项之间选择；没有兼容候选时返回请求错误。`max_attempts` 默认 `1`，显式开启后仅对连接建立失败及指定临时 HTTP 错误向其他 backend 故障转移，每个 backend 每请求至多尝试一次。可选的被动健康状态支持失败阈值、冷却和单个恢复探测；状态由根组合层显式跨代际共享，保留在 `nyro-llm`，不进入 kernel。旧单上游 YAML 在解析时归一化，列表顺序不影响配置指纹。选择历史按公开模型和有效 backend 绑定共享，权重／优先级／策略变更保留，凭证等绑定变化重置；最近发起和延迟采样独立于健康状态，延迟只计每次发送到 2xx 响应头，包含少量探索以重新评估旧样本。完整配置与重试条件见 [Rust proxy 指南](../standalone/rust-proxy_CN.md)。
+当前已实现模型范围内带稳定 ID 的 backend 列表、优先级与同级 `weighted`（默认）／`least_recent`／`latency` 选择：认证和准入之后，在本地按各 backend 的 codec 准备请求，仅在可表达该请求的可用项之间选择；没有兼容候选时返回请求错误。`max_attempts` 默认 `1`，显式开启后仅对连接建立失败及指定临时 HTTP 错误向其他 backend 故障转移，每个 backend 每请求至多尝试一次。可选的被动健康状态支持失败阈值、冷却和单个恢复探测；状态由根组合层显式跨代际共享，保留在 `nyro-llm`，不进入 kernel。旧单上游 YAML 在解析时归一化，列表顺序不影响配置指纹。选择历史按公开模型和有效 backend 绑定共享，权重／优先级／策略变更保留，凭证、出口代理地址／认证和 HTTP 版本模式等绑定变化重置；最近发起和延迟采样独立于健康状态，延迟只计每次发送到 2xx 响应头，包含少量探索以重新评估旧样本。完整配置与重试条件见 [Rust proxy 指南](../standalone/rust-proxy_CN.md)。
 
 LLM runtime 掌握必需阶段顺序、最终路由选择、重试预算、流提交状态及终态交付。可选扩展只能在声明槽位继续、拒绝或短路；提前产生结果仍由 runtime 完成协议交付和收尾。扩展不能跳过认证、授权或准入，不能自行调用下一阶段、发送上游请求或写入客户端响应，也不能取消已登记的 Finalizers。
 

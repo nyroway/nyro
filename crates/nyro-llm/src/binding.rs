@@ -12,6 +12,8 @@ pub(crate) struct BackendKey {
     native_chat: bool,
     base_url: String,
     api_key: Option<String>,
+    proxy_url: Option<String>,
+    http1_only: bool,
     upstream_model: String,
 }
 
@@ -29,7 +31,42 @@ impl BackendKey {
             native_chat: provider.native_chat,
             base_url: base.into(),
             api_key: provider.api_key.clone(),
+            proxy_url: provider
+                .transport
+                .proxy()
+                .expect("validated provider transport")
+                .map(Into::into),
+            http1_only: provider.transport.http1_only,
             upstream_model: backend.upstream_model.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxy_identity_normalizes_urls_but_isolates_credentials_and_http_mode() {
+        let backend = Backend {
+            id: "a".into(),
+            provider: "p".into(),
+            upstream_model: "m".into(),
+            weight: 1,
+            priority: 0,
+        };
+        let mut provider: Provider = serde_json::from_value(serde_json::json!({
+            "kind":"openai", "base_url":"http://upstream.test/v1",
+            "transport":{"proxy_url":"http://user:password@LOCALHOST:80"}
+        }))
+        .unwrap();
+        let original = BackendKey::new("public", &backend, &provider);
+        provider.transport.proxy_url = Some("http://user:password@localhost/".into());
+        assert!(original == BackendKey::new("public", &backend, &provider));
+        provider.transport.proxy_url = Some("http://user:rotated@localhost/".into());
+        assert!(original != BackendKey::new("public", &backend, &provider));
+        provider.transport.proxy_url = Some("http://user:password@localhost/".into());
+        provider.transport.http1_only = true;
+        assert!(original != BackendKey::new("public", &backend, &provider));
     }
 }

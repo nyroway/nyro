@@ -38,14 +38,19 @@ impl Driver {
                 Ok::<_, BuildError>((HeaderName::from_static(name), value))
             })
             .transpose()?;
+        let mut client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            // Runtime owns the attempt budget, including protocol-level failures.
+            .retry(reqwest::retry::never());
+        if let Some(url) = config.transport.proxy().map_err(|_| BuildError)? {
+            client = client.proxy(reqwest::Proxy::all(url).map_err(|_| BuildError)?);
+        }
+        if config.transport.http1_only {
+            client = client.http1_only();
+        }
         Ok(Self {
-            client: Client::builder()
-                .no_proxy()
-                .redirect(reqwest::redirect::Policy::none())
-                // Runtime owns the attempt budget, including protocol-level failures.
-                .retry(reqwest::retry::never())
-                .build()
-                .map_err(|_| BuildError)?,
+            client: client.build().map_err(|_| BuildError)?,
             base,
             kind: config.kind,
             native_chat: config.native_chat,
