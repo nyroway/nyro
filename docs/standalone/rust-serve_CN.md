@@ -2,7 +2,7 @@
 
 [English](rust-serve.md)
 
-源码构建的根命令 `nyro serve` 为[实验性 Rust 代理](rust-proxy_CN.md)增加本地 SQLite 配置控制面，复用相同的 LLM 运行时和配置格式。本轮仅交付 G10 的完整配置草稿与显式发布闭环。实体 CRUD、WebUI、OAuth 管理、PostgreSQL、旧数据导入、持久化用量预算和多进程部署仍待后续实现。已发布的 `nyro-server` 与桌面入口继续使用原有数据库。
+源码构建的根命令 `nyro serve` 为[实验性 Rust 代理](rust-proxy_CN.md)增加本地 SQLite 配置控制面，复用相同的 LLM 运行时和配置格式。G10 当前已交付完整配置草稿、Provider／Model／API Key CRUD 与显式发布闭环。WebUI、OAuth 管理、PostgreSQL、旧数据导入、持久化用量预算和多进程部署仍待后续实现。已发布的 `nyro-server` 与桌面入口继续使用原有数据库。
 
 ## 启动与重启
 
@@ -33,13 +33,16 @@ cargo run -p nyro -- serve \
 
 ## 读取、保存与发布
 
-所有受支持的管理路由都要求恰好一个 `Authorization: Bearer TOKEN` Header。数据面密钥不能用于管理认证；`x-api-key`、`x-goog-api-key` 和查询参数被拒绝。响应带 `Cache-Control: no-store`。**认证后的 `GET /admin/config` 返回包含明文凭证的完整草稿**，输出应按密钥保护。
+所有受支持的管理路由都要求恰好一个 `Authorization: Bearer TOKEN` Header。数据面密钥不能用于管理认证；`x-api-key`、`x-goog-api-key` 和查询参数被拒绝。响应带 `Cache-Control: no-store`。`GET /admin/config` 和实体查询返回不含凭证的视图。**认证后的 `GET /admin/config/export` 返回包含明文凭证的完整草稿**，沿用相同的管理认证和 `no-store` 策略；输出应按密钥保护。
 
 | 请求 | 结果 |
 |---|---|
-| `GET /admin/config` | `200`：`{ "draft": { "revision": 1, "config": CONFIG }, "published_revision": 1, "active_revision": 1, "publication": "active" }` |
+| `GET /admin/config` | `200`：`{ "draft": { "revision": 1, "config": VIEW }, "published_revision": 1, "active_revision": 1, "publication": "active" }` |
+| `GET /admin/config/export` | 相同外层结构，`draft.config` 为完整原始 `CONFIG` |
 | `PUT /admin/config`，正文 `{ "expected_revision": 1, "config": CONFIG }` | 保存完成返回 `200`：`{ "draft_revision": 2 }`，仍在执行返回 `202`、`operation: "pending"`；不发布 |
 | `POST /admin/config/publish`，正文 `{ "revision": 2 }` | 生效返回 `200`，待激活返回 `202`；发布完成响应包含 `published_revision`、`active_revision`、`publication` |
+
+`VIEW` 将 Provider 的 `api_key`、整个 `transport.proxy_url` 和客户端 `secret` 替换为 `has_api_key`、`has_proxy_url`、`has_secret` 布尔值，不返回掩码密钥字符串。读取投影不能直接写回：`has_*` 会作为未知字段被拒绝。前端必须显式构建实体写入 DTO，或使用敏感导出进行完整配置编辑。
 
 上表 `CONFIG` 指完整 JSON 配置对象，字段与 YAML 种子一致。草稿必须通过完整配置校验，不能保存未填完的局部配置。管理请求正文固定限制 1 MiB，与数据面限制独立。未知字段、格式或类型错误会被拒绝。每次保存都增加草稿版本，即使配置等价。`expected_revision` 必须匹配当前草稿，发布同样要求当前草稿版本；版本过期返回 `409`。
 
@@ -48,7 +51,7 @@ cargo run -p nyro -- serve \
 ```sh
 umask 077
 export NYRO_ADMIN_TOKEN="$(cat admin.token)"
-curl --fail-with-body http://127.0.0.1:19531/admin/config \
+curl --fail-with-body http://127.0.0.1:19531/admin/config/export \
   -H "Authorization: Bearer $NYRO_ADMIN_TOKEN" > draft.json
 # 执行下一条命令前，编辑 draft.json 中的 draft.config 对象。
 jq '{expected_revision: .draft.revision, config: .draft.config}' draft.json > save.json
@@ -64,13 +67,58 @@ unset NYRO_ADMIN_TOKEN
 
 每一步都应检查响应后再继续。发生冲突后重新读取，并将修改与当前草稿核对。
 
+## 实体草稿
+
+集合路径为 `/admin/providers`、`/admin/models` 和 `/admin/api-keys`，三者使用相同契约。替换下表 `COLLECTION`，将完整 ID 编码为单个 URL 路径段，包括将 `/` 编码为 `%2F`，例如 `team/model` 变为 `team%2Fmodel`。ID 固定，不提供重命名操作。
+
+| 请求 | 完成后的结果 |
+|---|---|
+| `GET /admin/COLLECTION` | `200`：`{ "draft_revision": 2, "items": [{ "id": "example", "value": VIEW }] }`，按 ID 排序 |
+| `GET /admin/COLLECTION/ID` | `200`：`{ "draft_revision": 2, "item": { "id": "example", "value": VIEW } }` |
+| `POST /admin/COLLECTION`，正文 `{ "expected_revision": 2, "id": "example", "value": INPUT }` | `201`：`{ "draft_revision": 3 }` |
+| `PUT /admin/COLLECTION/ID`，正文 `{ "expected_revision": 2, "value": INPUT }` | `200`：`{ "draft_revision": 3 }` |
+| `DELETE /admin/COLLECTION/ID`，正文 `{ "expected_revision": 2 }` | `200`：`{ "draft_revision": 3 }` |
+
+所有编辑与完整配置 PUT 共用全局草稿版本，校验修改后的完整配置并保存，不自动发布。失败保留草稿与已发布状态。实体操作复用既有认证、正文限制、服务持有队列和超时行为；写操作超过 10 秒仍未完成时返回 `202 { "operation": "pending" }`。最终草稿需通过 `/admin/config/publish` 显式发布。
+
+`INPUT` 完整替换元数据，省略的元数据使用默认值，不是局部补丁。只有凭证在省略时保留旧值。凭证字段使用以下带标签对象：
+
+| 凭证输入 | 语义 |
+|---|---|
+| 省略或 `{ "action": "keep" }` | 保留现有凭证 |
+| `{ "action": "set", "value": "new-secret" }` | 替换凭证 |
+| `{ "action": "clear" }` | 移除可选的 Provider 凭证 |
+| `null`、直接传字符串、未知 action／字段 | 返回 `422 invalid_config` |
+
+Provider 输入必填 `kind` 和 `base_url`；`native_chat`、`transport.http1_only` 默认 `false`，`api` 默认不显式选择。`api_key` 和 `transport.proxy_url` 各自使用凭证契约且允许清除；新 Provider 使用 keep 时维持未设置。省略 `transport` 会保留原代理 URL，但将 `http1_only` 重置为 `false`。普通查询只返回 `has_api_key` 和 `transport.has_proxy_url`，即使代理 URL 不含密码，也不会返回其地址。
+
+API Key 输入接受 `secret`、`enabled`（默认 `true`）和 `expires_at`（Unix 秒；省略或 `null` 表示不过期）。新建必须提供 `secret: { "action": "set", "value": "..." }`；更新可省略 `secret` 保留原值，不允许清除客户端密钥。普通查询返回 `has_secret: true`。此 DTO 不接受限额字段：通过导出、编辑、完整配置 PUT 修改 `llm.subject_limits`。Model 输入为[代理指南](rust-proxy_CN.md)中的完整模型配置，省略的可选模型设置使用配置默认值。
+
+例如，无需导出凭证即可向草稿添加一个尚未被引用的本地 Provider：
+
+```sh
+umask 077
+export NYRO_ADMIN_TOKEN="$(cat admin.token)"
+curl --fail-with-body http://127.0.0.1:19531/admin/providers \
+  -H "Authorization: Bearer $NYRO_ADMIN_TOKEN" > providers.json
+jq '{expected_revision: .draft_revision, id: "local-example", value: {
+  kind: "openai", base_url: "http://127.0.0.1:8000/v1"
+}}' providers.json > create.json
+curl --fail-with-body -X POST http://127.0.0.1:19531/admin/providers \
+  -H "Authorization: Bearer $NYRO_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' --data-binary @create.json
+unset NYRO_ADMIN_TOKEN
+```
+
+继续编辑或发布前先检查返回版本。ID 已存在返回 `409 entity_exists`；版本过期返回 `409 revision_conflict`；实体不存在返回 `404 not_found`。Provider 被任意模型 backend 引用时不可删除，包括零权重 backend，返回 `409 entity_referenced`。API Key 被任意模型的 `subjects` 或 `llm.subject_limits` 引用时同样拒绝删除。不级联修改：先移除引用，或通过完整配置一次协调修改。删除最后一个模型返回 `422 invalid_config`，因为每次保存的草稿都必须有效。
+
 ## 发布与恢复
 
 服务先检查进程设置并构建运行时候选，再提交数据库发布。提交前拒绝保留原有发布目标和活动代际；已保存的有效草稿仍可修正。SQLite 提交是持久化发布边界，随后才进行 Host 激活；两者**不是同一个原子事务**。
 
 激活成功返回 `200`、`publication: "active"`。持久化提交后若激活中断，返回 `202`、`publication: "pending"`；此时即使 `active_revision` 仍旧，已发布版本也已成为重启目标。用 GET 核对状态，再重试发布当前草稿版本，或重启恢复已发布目标。当前没有后台自动重试服务。数据面 `/readyz` 仅表示 Host 能否接收新 lease，不检查数据库健康或已发布版本是否已经激活。
 
-请求正文读取最多 15 秒，超时在接收操作前返回 `408 request_timeout`。有效请求进入服务持有的队列后，HTTP 最多等待 10 秒；仍在执行的保存或发布返回 `202 { "operation": "pending" }`，之后可能成功、冲突或失败。它与确认持久化提交已完成的 `publication: "pending"` 不同。客户端断连或 HTTP 停止等待不取消已接收操作，应先 GET 核对草稿内容及草稿／已发布／活动版本，不能直接盲目重试写入。GET 在 10 秒内未完成则返回 `503 control_busy`。操作串行执行，最多接收 16 个，超出返回 `503`。关闭时先停止接收，等待服务持有的工作结束，再清理 Host；关闭开始时仍在排队的操作可能返回 `control_stopping`。
+请求正文读取最多 15 秒，超时在接收操作前返回 `408 request_timeout`。有效请求进入服务持有的队列后，HTTP 最多等待 10 秒；仍在执行的保存、实体编辑或发布返回 `202 { "operation": "pending" }`，之后可能成功、冲突或失败。它与确认持久化提交已完成的 `publication: "pending"` 不同。客户端断连或 HTTP 停止等待不取消已接收操作，应先 GET 核对草稿内容及草稿／已发布／活动版本，不能直接盲目重试写入。GET 在 10 秒内未完成则返回 `503 control_busy`。操作串行执行，最多接收 16 个，超出返回 `503`。关闭时先停止接收，等待服务持有的工作结束，再清理 Host；关闭开始时仍在排队的操作可能返回 `control_stopping`。
 
 重复发布已激活版本，或发布配置指纹等价的草稿，不新建运行时代际。新请求使用激活后的快照，已有 lease 和 SSE 保持原代际。共享内存中的 rate、quota、主体窗口、健康及路由历史继续遵守原有身份与更新规则；配置入库不使计数器持久化，进程重启仍清零。
 
@@ -78,10 +126,11 @@ unset NYRO_ADMIN_TOKEN
 
 | 状态 | 错误码／含义 |
 |---|---|
-| `400` | `query_not_supported`，或 JSON 格式错误的 `invalid_request` |
+| `400` | `invalid_path`、`query_not_supported`，或 JSON 格式错误的 `invalid_request` |
 | `401` | `authentication_failed` |
+| `404` | `not_found`：集合未知或实体不存在 |
 | `408` | `request_timeout`：操作接收前正文读取超时 |
-| `409` | `revision_conflict` 或 `restart_required` |
+| `409` | `revision_conflict`、`entity_exists`、`entity_referenced` 或 `restart_required` |
 | `413` / `415` | `invalid_request`：正文过大／Content-Type 不支持 |
 | `422` | `invalid_config`、`candidate_rejected`，或 JSON 结构／类型错误的 `invalid_request` |
 | `500` | `control_failed` |
@@ -97,4 +146,4 @@ cargo build -p nyro --offline
 python3 tests/serve_smoke.py
 ```
 
-[进程回归](../../tests/serve_smoke.py)使用临时 SQLite 与回环 mock，覆盖认证、草稿／发布分离、版本冲突、发布拒绝、SSE 连续性和已发布快照的重启恢复。独立的[代理重载回归](../../tests/proxy_reload_smoke.py)覆盖文件模式 SIGHUP 行为。
+[进程回归](../../tests/serve_smoke.py)使用临时 SQLite 与回环 mock，覆盖认证、实体 CRUD、脱敏查询与显式导出、凭证轮换、草稿／发布分离、版本冲突、发布拒绝、SSE 连续性和已发布快照的重启恢复。独立的[代理重载回归](../../tests/proxy_reload_smoke.py)覆盖文件模式 SIGHUP 行为。

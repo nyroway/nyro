@@ -7,6 +7,8 @@ repository.workspace = true
 
 [dependencies]
 nyro-config = { path = "../nyro-config" }
+nyro-llm = { path = "../nyro-llm" }
+nyro-security = { path = "../nyro-security" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

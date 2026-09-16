@@ -3,6 +3,7 @@
 use nyro_config::Config;
 use serde::Serialize;
 
+pub mod entity;
 mod storage;
 pub use storage::Store;
 
@@ -28,6 +29,12 @@ pub enum Error {
     Invalid,
     #[error("configuration revision conflict")]
     Conflict,
+    #[error("entity not found")]
+    NotFound,
+    #[error("entity already exists")]
+    AlreadyExists,
+    #[error("entity is referenced")]
+    Referenced,
     #[error("unsupported or corrupt configuration database")]
     Schema,
     #[error("a configuration seed is required")]

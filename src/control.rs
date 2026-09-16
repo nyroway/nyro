@@ -10,7 +10,11 @@ use axum::{
     routing::{get, post},
 };
 use nyro_config::Config;
-use nyro_control::{Error, MAX_CONFIG_BYTES, Store};
+use nyro_control::{
+    Error, MAX_CONFIG_BYTES, Store,
+    entity::{EntityChange, EntityKind},
+};
+
 use nyro_kernel::{Context, Host};
 use nyro_llm::runtime::Runtime;
 use nyro_security::ApiKeys;
@@ -25,6 +29,8 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
+
+mod entity;
 
 struct Managed {
     store: Store,
@@ -77,7 +83,10 @@ impl Control {
     }
 
     async fn execute(self: Arc<Self>, command: Command) -> Response {
-        let mutating = !matches!(&command, Command::Read);
+        let mutating = !matches!(
+            &command,
+            Command::Read | Command::Export | Command::ReadEntities { .. }
+        );
         let task = {
             let accepting = self.accepting.lock().unwrap();
             if !*accepting {
@@ -106,12 +115,13 @@ impl Control {
     }
 
     async fn apply(&self, managed: &mut Managed, command: Command) -> Response {
+        let export = matches!(&command, Command::Export);
         match command {
-            Command::Read => match managed.store.state().await {
+            Command::Read | Command::Export => match managed.store.state().await {
                 Ok(state) => success(
                     StatusCode::OK,
                     json!({
-                        "draft":state.draft,
+                        "draft":if export { json!(state.draft) } else { state.draft.redacted() },
                         "published_revision":state.published.revision,
                         "active_revision":managed.active_revision,
                         "publication":if state.published.revision == managed.active_revision {"active"} else {"pending"},
@@ -129,6 +139,27 @@ impl Control {
                 }
                 Err(error) => storage_error(error),
             },
+            Command::ReadEntities { kind, id } => match managed.store.state().await {
+                Ok(state) => match state.draft.entities(kind, id.as_deref()) {
+                    Ok(view) => success(StatusCode::OK, view),
+                    Err(error) => storage_error(error),
+                },
+                Err(error) => storage_error(error),
+            },
+            Command::EditEntity {
+                expected_revision,
+                change,
+            } => {
+                let status = if matches!(&change, EntityChange::Create { .. }) {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                };
+                match managed.store.edit(expected_revision, change).await {
+                    Ok(revision) => success(status, json!({"draft_revision":revision})),
+                    Err(error) => storage_error(error),
+                }
+            }
             Command::Publish(revision) => self.publish(managed, revision).await,
         }
     }
@@ -213,13 +244,24 @@ struct Publish {
 }
 enum Command {
     Read,
+    Export,
+    ReadEntities {
+        kind: EntityKind,
+        id: Option<String>,
+    },
+    EditEntity {
+        expected_revision: u64,
+        change: EntityChange,
+    },
     Save(Save),
     Publish(u64),
 }
 
 pub(crate) fn router(control: Arc<Control>) -> Router {
     Router::new()
+        .merge(entity::routes())
         .route("/admin/config", get(read).put(save))
+        .route("/admin/config/export", get(export))
         .route("/admin/config/publish", post(publish))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "not_found") })
         .route_layer(middleware::from_fn_with_state(
@@ -271,6 +313,9 @@ async fn authenticate(
 async fn read(State(control): State<Arc<Control>>) -> Response {
     control.execute(Command::Read).await
 }
+async fn export(State(control): State<Arc<Control>>) -> Response {
+    control.execute(Command::Export).await
+}
 async fn save(
     State(control): State<Arc<Control>>,
     body: Result<Json<Save>, JsonRejection>,
@@ -293,6 +338,9 @@ fn storage_error(error: Error) -> Response {
     match error {
         Error::Invalid => failure(StatusCode::UNPROCESSABLE_ENTITY, "invalid_config"),
         Error::Conflict => failure(StatusCode::CONFLICT, "revision_conflict"),
+        Error::AlreadyExists => failure(StatusCode::CONFLICT, "entity_exists"),
+        Error::Referenced => failure(StatusCode::CONFLICT, "entity_referenced"),
+        Error::NotFound => failure(StatusCode::NOT_FOUND, "not_found"),
         _ => failure(StatusCode::SERVICE_UNAVAILABLE, "storage_failed"),
     }
 }
