@@ -388,3 +388,5 @@ async fn accepted_write_timeout_reports_pending_and_eventually_finishes() {
     );
     finish(&control).await;
 }
+
+mod entity;

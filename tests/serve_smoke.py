@@ -29,7 +29,7 @@ class Upstream(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        assert self.headers['Authorization'] == 'Bearer upstream-test-secret'
+        assert self.headers['Authorization'] == f'Bearer {self.server.expected_key}'
         answer = {'id': 'local-test', 'object': 'chat.completion', 'created': 1,
                   'model': body['model'], 'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': body['model']}, 'finish_reason': 'stop'}],
                   'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}}
@@ -62,6 +62,7 @@ def main():
         print('serve smoke skipped: process shutdown test requires Unix')
         return
     upstream = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
+    upstream.expected_key = 'upstream-test-secret'
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
     try:
         with tempfile.TemporaryDirectory(prefix='nyro-serve-') as directory:
@@ -91,11 +92,15 @@ def main():
                 assert response.getheader('Cache-Control') == 'no-store'
                 connection.close()
                 return json.loads(raw)
-            def chat(want, stream=False):
+            def chat(want, stream=False, key=CLIENT, expected=200):
                 connection = http.client.HTTPConnection('127.0.0.1', data_port, timeout=15)
-                connection.request('POST', '/v1/chat/completions', json.dumps({'model': 'public', 'messages': [{'role': 'user', 'content': 'hello'}], 'stream': stream}), {'Content-Type': 'application/json', 'Authorization': f'Bearer {CLIENT}'})
+                connection.request('POST', '/v1/chat/completions', json.dumps({'model': 'public', 'messages': [{'role': 'user', 'content': 'hello'}], 'stream': stream}), {'Content-Type': 'application/json', 'Authorization': f'Bearer {key}'})
                 response = connection.getresponse()
-                assert response.status == 200, response.read()
+                assert response.status == expected, response.read()
+                if expected != 200:
+                    response.read()
+                    connection.close()
+                    return
                 if stream:
                     return connection, response
                 assert json.loads(response.read())['choices'][0]['message']['content'] == want
@@ -194,8 +199,60 @@ def main():
                 assert response.read().endswith(b'data: [DONE]\n\n')
                 held.close()
                 assert b'published' in first
+                # Entity edits share the same draft revision and explicit publication path.
+                def edit(method, path, value=None, entity_id=None):
+                    revision = admin()['draft']['revision']
+                    body = {'expected_revision': revision}
+                    if value is not None:
+                        body['value'] = value
+                    if entity_id is not None:
+                        body['id'] = entity_id
+                    result = admin(method, path, body, expected=201 if method == 'POST' else 200)
+                    assert result['draft_revision'] == revision + 1
+                edit('POST', '/admin/providers', {'kind': 'openai', 'base_url': config['llm']['providers']['p']['base_url']}, 'secondary')
+                edit('POST', '/admin/models', {'provider': 'secondary', 'upstream_model': 'temporary', 'workloads': ['chat'], 'allow_anonymous': True}, 'temporary')
+                revision = admin()['draft']['revision']
+                admin('DELETE', '/admin/providers/secondary', {'expected_revision': revision}, expected=409)
+                edit('DELETE', '/admin/models/temporary')
+                edit('DELETE', '/admin/providers/secondary')
+                edit('POST', '/admin/api-keys', {'secret': {'action': 'set', 'value': 'extra-client-secret'}}, 'extra')
+                edit('DELETE', '/admin/api-keys/extra')
+                admin(path='/admin/api-keys/extra', expected=404)
+                STREAM_STARTED.clear()
+                STREAM_RELEASE.clear()
+                held, response = chat(None, stream=True)
+                assert STREAM_STARTED.wait(3)
+                first = b''
+                while not first.endswith(b'\n\n'):
+                    line = response.readline()
+                    assert line
+                    first += line
+                replacement = {'kind': 'openai', 'base_url': config['llm']['providers']['p']['base_url'], 'api_key': {'action': 'set', 'value': 'rotated-upstream-secret'}}
+                edit('PUT', '/admin/providers/p', replacement)
+                edit('PUT', '/admin/api-keys/client', {'secret': {'action': 'set', 'value': 'rotated-client-secret'}})
+                chat('after-stream')  # Draft rotation has not changed active credentials.
+                for path in ['/admin/config', '/admin/providers', '/admin/providers/p', '/admin/api-keys', '/admin/api-keys/client']:
+                    view = json.dumps(admin(path=path))
+                    for secret in [CLIENT, 'upstream-test-secret', 'rotated-upstream-secret', 'rotated-client-secret']:
+                        assert secret not in view
+                exported = admin(path='/admin/config/export')
+                assert exported['draft']['config']['llm']['providers']['p']['api_key'] == 'rotated-upstream-secret'
+                revision = admin()['draft']['revision']
+                admin('DELETE', '/admin/api-keys/client', {'expected_revision': revision}, expected=409)
+                upstream.expected_key = 'rotated-upstream-secret'
+                publish(revision)
+                chat('after-stream', key='rotated-client-secret')
+                chat(None, expected=401)
+                admin(key='rotated-client-secret', expected=401)
+                STREAM_RELEASE.set()
+                assert response.read().endswith(b'data: [DONE]\n\n')
+                held.close()
                 stop()
-                for secret in [ADMIN, CLIENT, 'upstream-test-secret']:
+                start()
+                chat('after-stream', key='rotated-client-secret')
+                chat(None, expected=401)
+                stop()
+                for secret in [ADMIN, CLIENT, 'upstream-test-secret', 'rotated-client-secret', 'rotated-upstream-secret', 'extra-client-secret']:
                     assert secret not in (root / 'process.log').read_text()
             finally:
                 STREAM_RELEASE.set()
@@ -205,7 +262,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print('serve smoke passed: auth, SQLite drafts/publication, conflicts/rejection, restart, SSE retention, redaction')
+    print('serve smoke passed: auth, SQLite drafts/publication, conflicts/rejection, restart, SSE retention, entity CRUD/credential rotation, redaction')
 
 
 if __name__ == '__main__':
