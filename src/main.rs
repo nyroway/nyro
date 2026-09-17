@@ -20,7 +20,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the local SQLite control plane and LLM data plane.
+    /// Run the SQLite or PostgreSQL control plane and LLM data plane.
     Serve(serve::Options),
     /// Run the standalone LLM data plane from a YAML configuration file.
     /// On Unix, send SIGHUP to reload the file while in-flight requests finish.

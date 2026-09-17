@@ -336,6 +336,9 @@ async fn publish(
 }
 fn storage_error(error: Error) -> Response {
     match error {
+        Error::OutcomeUnknown => {
+            failure(StatusCode::SERVICE_UNAVAILABLE, "storage_outcome_unknown")
+        }
         Error::Invalid => failure(StatusCode::UNPROCESSABLE_ENTITY, "invalid_config"),
         Error::Conflict => failure(StatusCode::CONFLICT, "revision_conflict"),
         Error::AlreadyExists => failure(StatusCode::CONFLICT, "entity_exists"),

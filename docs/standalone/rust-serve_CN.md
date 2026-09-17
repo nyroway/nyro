@@ -1,8 +1,8 @@
-# 实验性 Rust SQLite 服务
+# 实验性 Rust 配置服务
 
 [English](rust-serve.md)
 
-源码构建的根命令 `nyro serve` 为[实验性 Rust 代理](rust-proxy_CN.md)增加本地 SQLite 配置控制面，复用相同的 LLM 运行时和配置格式。G10 当前已交付完整配置草稿、Provider／Model／API Key CRUD 与显式发布闭环。WebUI、OAuth 管理、PostgreSQL、旧数据导入、持久化用量预算和多进程部署仍待后续实现。已发布的 `nyro-server` 与桌面入口继续使用原有数据库。
+源码构建的根命令 `nyro serve` 为[实验性 Rust 代理](rust-proxy_CN.md)增加 SQLite 或 PostgreSQL 配置控制面，复用相同的 LLM 运行时和配置格式。G10 当前两个后端均已支持完整配置草稿、Provider／Model／API Key CRUD 与显式发布闭环。WebUI、OAuth 管理、旧数据导入、持久化用量预算和多进程部署仍待后续实现。已发布的 `nyro-server` 与桌面入口继续使用原有数据库。
 
 ## 启动与重启
 
@@ -17,7 +17,7 @@ cargo run -p nyro -- serve \
   --admin-token-file admin.token
 ```
 
-`--database` 和 `--admin-token-file` 必填。管理令牌需要 16–1024 个可见 ASCII 字符；末尾 CR/LF 会被移除，整个文件最多 1024 字节。该令牌与数据面客户端使用的 `security.api_keys` 分开。管理监听默认 `127.0.0.1:19531`，`--admin-listen` 只接受回环 IP 地址。数据监听由已发布配置的 `server.listen` 指定（默认 `127.0.0.1:19530`），两者需使用不同地址。
+`--database PATH`（SQLite）和 `--postgres-url-file PATH`（PostgreSQL）必须且只能选择一个；两者互斥。两种后端均要求 `--admin-token-file`。管理令牌需要 16–1024 个可见 ASCII 字符；末尾 CR/LF 会被移除，整个文件最多 1024 字节。该令牌与数据面客户端使用的 `security.api_keys` 分开。管理监听默认 `127.0.0.1:19531`，`--admin-listen` 只接受回环 IP 地址。数据监听由已发布配置的 `server.listen` 指定（默认 `127.0.0.1:19530`），两者需使用不同地址。
 
 `--config` 仅用于为空的专用数据库建立草稿与已发布快照，初始版本均为 `1`。已初始化数据库拒绝再次传入 `--config`，重启时省略：
 
@@ -30,6 +30,25 @@ cargo run -p nyro -- serve \
 启动校验并加载持久化的**已发布**快照。未发布草稿在重启后保留，但不会自动生效。修改种子 YAML 不会重新导入。`serve` 不支持 SIGHUP 重载，Unix 的默认信号行为可能终止进程；后续更新使用管理 API。
 
 一个 SQLite 文件只允许一个进程持有，存储层保持独占连接，并拒绝旧版、外部、不支持或损坏的数据库，没有隐式转换或导入。Unix 上新数据库文件权限为 `0600`，已有 Unix 文件若有任何组／其他用户权限位则拒绝打开，不会悄悄修改权限。快照包含明文 Provider、代理和客户端凭证，需保护目录、令牌文件、数据库、备份及导出的 JSON。管理令牌本身从文件读取，不存入配置数据库。
+
+## PostgreSQL 配置
+
+先创建使用 UTF8 编码的专用空 PostgreSQL 数据库，并为连接角色授予创建和使用控制表的权限。将连接 URL 保存到 `postgres.url` 等私有普通文件；命令行只传文件路径，不传 URL。文件必须包含一个 UTF-8 URL，整个文件（含末尾 CR/LF）最多 16 KiB，读取时去掉末尾换行。文件可能包含数据库密码，需像管理令牌一样保护。
+
+```sh
+cargo run -p nyro -- serve \
+  --postgres-url-file postgres.url \
+  --config nyro.yaml \
+  --admin-token-file admin.token
+```
+
+TLS 默认 `verify-full`。显式 `sslmode` 可选择 `require`、`verify-ca` 或 `verify-full`；`require` 不提供与 `verify-full` 相同的证书／主机名校验。`sslmode=disable` 仅对 `localhost` 或字面回环 IP 开放，用于本地测试。拒绝机会式 `prefer`／`allow` 模式。URL 必须指定数据库并使用 TCP，不接受 Unix socket 或 TLS 以外的查询参数；需要时可通过 `sslrootcert`、`sslcert`、`sslkey` 指定证书。
+
+重启使用相同命令并去掉 `--config`。下文草稿、发布、实体 CRUD 和脱敏契约适用于 SQLite 与 PostgreSQL。PostgreSQL 快照保存于 `public.nyro_control_state`，必须使用专用数据库，不能将控制表加入已有业务库或 Nyro 旧库。不提供 SQLite／PostgreSQL 自动转换。详见[数据库说明](../database/schema.md)及生成的 [control-postgres.sql](../../deploy/schema/control-postgres.sql)，后者与旧版 `postgres.sql` 分开。生成 SQL 仅供参考，不应预先导入：Nyro 在空数据库中原子创建表与种子行；预建空表会被拒绝。
+
+存储层在整个生命周期内保持单连接与会话级 advisory lock，第二个使用同一数据库的服务会被拒绝。应直连 PostgreSQL，不支持事务／语句级连接池、自动重连和多副本。建立连接及每个存储操作的期限为 5 秒，PostgreSQL 语句超时为 3 秒、锁等待超时为 1 秒。连接丢失或存储操作超过期限后，控制存储停止接收后续操作，直至重启。当前活动的数据面代际继续服务；`/readyz` 仍只反映 Host 可用性，不代表数据库健康。
+
+两个后端的快照和数据库备份都包含明文凭证，需限制数据库访问并按密钥保护备份。advisory lock 用于协调 Nyro 实例，不能阻止其他数据库客户端修改表；服务运行时不要直接修改控制表。
 
 ## 读取、保存与发布
 
@@ -79,7 +98,7 @@ unset NYRO_ADMIN_TOKEN
 | `PUT /admin/COLLECTION/ID`，正文 `{ "expected_revision": 2, "value": INPUT }` | `200`：`{ "draft_revision": 3 }` |
 | `DELETE /admin/COLLECTION/ID`，正文 `{ "expected_revision": 2 }` | `200`：`{ "draft_revision": 3 }` |
 
-所有编辑与完整配置 PUT 共用全局草稿版本，校验修改后的完整配置并保存，不自动发布。失败保留草稿与已发布状态。实体操作复用既有认证、正文限制、服务持有队列和超时行为；写操作超过 10 秒仍未完成时返回 `202 { "operation": "pending" }`。最终草稿需通过 `/admin/config/publish` 显式发布。
+所有编辑与完整配置 PUT 共用全局草稿版本，校验修改后的完整配置并保存，不自动发布。配置校验和版本冲突拒绝保留草稿与已发布状态；PostgreSQL 存储故障可能导致写入结果未知，见下文。实体操作复用既有认证、正文限制、服务持有队列和超时行为；写操作超过 10 秒仍未完成时返回 `202 { "operation": "pending" }`。最终草稿需通过 `/admin/config/publish` 显式发布。
 
 `INPUT` 完整替换元数据，省略的元数据使用默认值，不是局部补丁。只有凭证在省略时保留旧值。凭证字段使用以下带标签对象：
 
@@ -114,9 +133,11 @@ unset NYRO_ADMIN_TOKEN
 
 ## 发布与恢复
 
-服务先检查进程设置并构建运行时候选，再提交数据库发布。提交前拒绝保留原有发布目标和活动代际；已保存的有效草稿仍可修正。SQLite 提交是持久化发布边界，随后才进行 Host 激活；两者**不是同一个原子事务**。
+服务先检查进程设置并构建运行时候选，再提交数据库发布。提交前拒绝保留原有发布目标和活动代际；已保存的有效草稿仍可修正。数据库提交是持久化发布边界，随后才进行 Host 激活；两者**不是同一个原子事务**。
 
 激活成功返回 `200`、`publication: "active"`。持久化提交后若激活中断，返回 `202`、`publication: "pending"`；此时即使 `active_revision` 仍旧，已发布版本也已成为重启目标。用 GET 核对状态，再重试发布当前草稿版本，或重启恢复已发布目标。当前没有后台自动重试服务。数据面 `/readyz` 仅表示 Host 能否接收新 lease，不检查数据库健康或已发布版本是否已经激活。
+
+PostgreSQL 事务使用 `synchronous_commit = on`。COMMIT 确认因断连或超时丢失、无法确认写入结果时，API 返回 `503 storage_outcome_unknown`。写入**可能已经持久化**，该错误既不证明回滚，也不确认发布已提交。控制存储随后停用，不会自动重连或重试。恢复数据库可用性后，不带 `--config` 重启，读取草稿和已发布版本，核对预期修改后再决定是否重新提交。重启加载实际持久化的已发布快照，它可能比故障前的活动代际更新。读取及已知存储失败（包括发送 COMMIT 前的失败）返回 `503 storage_failed`。
 
 请求正文读取最多 15 秒，超时在接收操作前返回 `408 request_timeout`。有效请求进入服务持有的队列后，HTTP 最多等待 10 秒；仍在执行的保存、实体编辑或发布返回 `202 { "operation": "pending" }`，之后可能成功、冲突或失败。它与确认持久化提交已完成的 `publication: "pending"` 不同。客户端断连或 HTTP 停止等待不取消已接收操作，应先 GET 核对草稿内容及草稿／已发布／活动版本，不能直接盲目重试写入。GET 在 10 秒内未完成则返回 `503 control_busy`。操作串行执行，最多接收 16 个，超出返回 `503`。关闭时先停止接收，等待服务持有的工作结束，再清理 Host；关闭开始时仍在排队的操作可能返回 `control_stopping`。
 
@@ -134,7 +155,7 @@ unset NYRO_ADMIN_TOKEN
 | `413` / `415` | `invalid_request`：正文过大／Content-Type 不支持 |
 | `422` | `invalid_config`、`candidate_rejected`，或 JSON 结构／类型错误的 `invalid_request` |
 | `500` | `control_failed` |
-| `503` | `storage_failed`、`control_busy` 或 `control_stopping` |
+| `503` | `storage_failed`、`storage_outcome_unknown`、`control_busy` 或 `control_stopping` |
 
 错误格式为 `{ "error": { "code": "..." } }`，不包含凭证或数据库细节。提交后激活出问题使用上述 `202` 待激活响应，不作为编辑拒绝返回。
 
@@ -147,3 +168,21 @@ python3 tests/serve_smoke.py
 ```
 
 [进程回归](../../tests/serve_smoke.py)使用临时 SQLite 与回环 mock，覆盖认证、实体 CRUD、脱敏查询与显式导出、凭证轮换、草稿／发布分离、版本冲突、发布拒绝、SSE 连续性和已发布快照的重启恢复。独立的[代理重载回归](../../tests/proxy_reload_smoke.py)覆盖文件模式 SIGHUP 行为。
+
+
+PostgreSQL 集成测试需显式启用。先准备可丢弃的 PostgreSQL 实例，将管理数据库 URL 保存到私有文件，连接角色需能创建和删除数据库。[存储测试](../../crates/nyro-control/tests/postgres.rs)自行创建隔离数据库，在检查成功后清理这些数据库：
+
+```sh
+export NYRO_TEST_POSTGRES_URL="$(cat /private/path/postgres-admin.url)"
+cargo test -p nyro-control --test postgres -- --ignored
+unset NYRO_TEST_POSTGRES_URL
+```
+
+运行 [PostgreSQL 进程回归](../../tests/serve_postgres_smoke.py)前，需另外在回环 PostgreSQL 服务上创建一个新的、空的、可丢弃数据库。将其 URL 保存到 `/private/path/test.url`，显式指定 `sslmode=disable`；本地故障代理通过该模式丢弃 COMMIT 确认。先构建根二进制，再运行驱动：
+
+```sh
+cargo build -p nyro --offline
+python3 tests/serve_postgres_smoke.py --postgres-url-file /private/path/test.url
+```
+
+进程回归会初始化该数据库，并保留其内容供检查，不会清空已有数据库；每次运行需换用新空库。它覆盖共用 serve 行为，以及 PostgreSQL 所有权、启动脱敏和丢失 COMMIT 确认后的恢复。本轮真实数据库回归覆盖 PostgreSQL 16，不据此宣称兼容所有 PostgreSQL 版本。

@@ -38,7 +38,7 @@ enum Command {
     Replay(replay::ReplayArgs),
     /// Print scenario metadata (anchor + expected_fields per protocol) as JSON — consumed by pytest
     PrintScenarios,
-    /// Print the final-state DDL schema for the given storage backend (postgres or mysql).
+    /// Print the final-state DDL schema for a legacy backend or the experimental control database.
     /// Useful for DBAs to pre-create the database or review schema changes.
     /// The output matches deploy/schema/{backend}.sql in the repository.
     DumpSchema(DumpSchemaArgs),
@@ -55,6 +55,8 @@ struct DumpSchemaArgs {
 enum SchemaBackend {
     Postgres,
     Mysql,
+    /// Experimental control database; generated from its initialization source.
+    ControlPostgres,
 }
 
 #[tokio::main]
@@ -70,6 +72,7 @@ async fn main() -> Result<()> {
             let sql = match args.backend {
                 SchemaBackend::Postgres => POSTGRES_SCHEMA_SQL,
                 SchemaBackend::Mysql => MYSQL_SCHEMA_SQL,
+                SchemaBackend::ControlPostgres => nyro_control::POSTGRES_SCHEMA,
             };
             print!("{sql}");
             Ok(())

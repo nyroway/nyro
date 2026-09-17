@@ -616,7 +616,7 @@ LLM 运行时以 `INFO` 级别输出结构化 `tracing` 事件：每次已发出
 - HTTP 服务运行期间，`GET /healthz` 返回 `200`。
 - 内核 Host 接受新的代际 lease 时，`GET /readyz` 返回 `200`；停止接受时返回 `503`。这个源码构建代理没有数据库或上游 backend 就绪检查。
 
-重试与被动健康检查需要按上述配置显式开启。文件模式不提供控制面或 Admin API；独立的[实验性 `nyro serve`](rust-serve_CN.md) 已增加本地 SQLite 配置管理与发布。额度的持久化／跨进程共享存储、WebUI 和 `nyro tool` 仍未实现。程序不会展开环境变量，不接受旧 Standalone YAML，不自动监听文件，也不会远程获取配置；Unix 支持显式 SIGHUP 重载，不支持重载的设置仍需重启。
+重试与被动健康检查需要按上述配置显式开启。文件模式不提供控制面或 Admin API；独立的[实验性 `nyro serve`](rust-serve_CN.md) 已增加 SQLite 或 PostgreSQL 配置管理与发布。额度的持久化／跨进程共享存储、WebUI 和 `nyro tool` 仍未实现。程序不会展开环境变量，不接受旧 Standalone YAML，不自动监听文件，也不会远程获取配置；Unix 支持显式 SIGHUP 重载，不支持重载的设置仍需重启。
 
 贡献者可以在不连接真实 Provider 的情况下验证根进程、健康检查、认证、Chat、Embedding、SSE、脱敏和正常退出：
 

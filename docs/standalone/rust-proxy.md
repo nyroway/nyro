@@ -616,7 +616,7 @@ Events contain no credentials, provider URLs, request paths, client-supplied IDs
 - `GET /healthz` returns `200` while the HTTP process is serving.
 - `GET /readyz` returns `200` while the kernel host accepts new generation leases and `503` once it does not. This source-built proxy has no database or upstream-backend readiness check.
 
-Retries and passive health are opt-in as described above. File mode has no control plane or Admin API. The separate [experimental `nyro serve`](rust-serve.md) adds local SQLite configuration management and publication. Persistent/shared quota storage, WebUI and `nyro tool` remain unimplemented. It does not expand environment variables, accept the legacy standalone YAML format, watch the file automatically, or fetch configuration remotely. Unix supports explicit SIGHUP reload; unsupported setting changes require restart.
+Retries and passive health are opt-in as described above. File mode has no control plane or Admin API. The separate [experimental `nyro serve`](rust-serve.md) adds SQLite or PostgreSQL configuration management and publication. Persistent/shared quota storage, WebUI and `nyro tool` remain unimplemented. It does not expand environment variables, accept the legacy standalone YAML format, watch the file automatically, or fetch configuration remotely. Unix supports explicit SIGHUP reload; unsupported setting changes require restart.
 
 Contributors can exercise the root process, probes, authentication, Chat, Embedding, SSE, redaction, and graceful termination without a real provider:
 

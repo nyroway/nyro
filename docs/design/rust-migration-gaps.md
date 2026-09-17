@@ -1,6 +1,6 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，G07 主体 TPM／TPD 预留与结算已由 PR #349 合并，G08 可选选择策略与路由／健康／重试迁移契约已由 PR #350 合并，G09 文件代理出口配置与 HTTP 迁移契约已由 PR #351 合并，G10 首轮最小 SQLite 控制面已由 PR #352 合并，本轮推进 Provider／Model／API Key 实体管理与凭证脱敏查询，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)和[服务指南](../standalone/rust-serve_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，G07 主体 TPM／TPD 预留与结算已由 PR #349 合并，G08 可选选择策略与路由／健康／重试迁移契约已由 PR #350 合并，G09 文件代理出口配置与 HTTP 迁移契约已由 PR #351 合并，G10 首轮最小 SQLite 控制面已由 PR #352 合并，Provider／Model／API Key 实体管理与凭证脱敏查询已由 PR #353 合并，本轮推进 PostgreSQL 等价控制存储，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)和[服务指南](../standalone/rust-serve_CN.md)说明当前支持范围。
 
 **新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
@@ -12,7 +12,7 @@
 
 | 能力 | 当前证据与边界 |
 |---|---|
-| 生命周期与代际 | [内核](../../crates/nyro-kernel/README_CN.md)、[装配](../../src/bootstrap.rs)和[重载](../../src/reload.rs)：候选激活、失败清理、lease 和退役；文件模式 Unix 显式 SIGHUP 重载；serve 模式由独立回环管理 API 发布 SQLite 快照，没有远程分发。 |
+| 生命周期与代际 | [内核](../../crates/nyro-kernel/README_CN.md)、[装配](../../src/bootstrap.rs)和[重载](../../src/reload.rs)：候选激活、失败清理、lease 和退役；文件模式 Unix 显式 SIGHUP 重载；serve 模式由独立回环管理 API 发布 SQLite／PostgreSQL 快照，没有远程分发。 |
 | 类型化工作负载 | [IR](../../crates/nyro-llm/src/ir/mod.rs)：`Request`/`Response` 配对 Chat 和 Embedding，其他工作负载未实现。 |
 | 协议执行 | [矩阵测试](../../crates/nyro-llm/tests/protocol_matrix.rs)覆盖三种 Chat 格式，[Responses 运行时测试](../../crates/nyro-llm/tests/responses_runtime.rs)补充 Responses 组合。覆盖已支持的文本、函数和流，不代表任意厂商字段兼容。 |
 | 准入 | [安全包](../../crates/nyro-security/src/lib.rs)、[rate 运行时](../../crates/nyro-llm/tests/rate_runtime.rs)和[quota 运行时](../../crates/nyro-llm/tests/quota_runtime.rs)：凭证认证、模型授权、进程并发、按模型 rate、主体 RPM／RPD 和 TPM／TPD 窗口、累计 token 预留。旧契约差异见 G06–G07。 |
@@ -53,7 +53,7 @@
 
 | ID | 剩余工作 | 归属与验收 |
 |---|---|---|
-| G10 控制面与存储 | 部分完成：根 [serve](../../src/serve.rs) 与 [nyro-control](../../crates/nyro-control/src/lib.rs) 实现专用 SQLite 完整草稿、管理认证、版本冲突、显式发布与重启恢复，并补充 Provider／Model／API Key CRUD、脱敏查询及显式导出；第 33–34 节说明持久化／活动边界和实体契约。旧管理服务、仓储与 WebUI 仍使用旧 Gateway。 | 继续补 Postgres 等价、OAuth、旧数据兼容、持久化预算与 WebUI。当前拒绝旧库，配置含明文凭证，单进程独占；不持久化额度或观测，不支持分布式发布。已提交发布但激活未完成必须报告 pending，不能当作编辑拒绝或已生效。 |
+| G10 控制面与存储 | 部分完成：根 [serve](../../src/serve.rs) 与 [nyro-control](../../crates/nyro-control/src/lib.rs) 实现专用 SQLite／PostgreSQL 完整草稿、管理认证、版本冲突、显式发布与重启恢复，并补充 Provider／Model／API Key CRUD、脱敏查询及显式导出；第 33–35 节说明持久化／活动边界、实体契约和 PostgreSQL 故障恢复。旧管理服务、仓储与 WebUI 仍使用旧 Gateway。 | 继续补 OAuth、旧数据兼容、持久化预算与 WebUI。当前拒绝旧库，配置含明文凭证，单进程独占；不持久化额度或观测，不支持分布式发布。已提交发布但激活未完成必须报告 pending，不能当作编辑拒绝或已生效。 |
 | G11 配置与部署兼容 | [旧 standalone YAML](../../src-server/src/yaml_config.rs)不同于 `nyro-config`；[旧 Server](../../src-server/src/main.rs)有 all/proxy/admin 模式及数据库 epoch 轮询；SIGHUP 只是本地文件来源。 | 提供明确的格式／CLI 迁移说明或工具，证明文件／控制面支持的等价快照行为一致。若保留分离或多副本部署，落实配置交付、就绪和恢复契约；本地 SIGHUP 不等价替代。 |
 | G12 持久化观测与统计 | 旧[日志存储契约](../../crates/nyro-core/src/storage/traits.rs)及管理 API 提供日志／统计；新版只有有界结构化事件。 | 消费新请求／尝试语义建立历史查询和统计，明确保留周期、脱敏及可选正文记录；不隐式恢复旧正文日志。缺失用量、输出交付和 quota 扣费分别处理。 |
 | G13 工具与发布 | [Tools CLI](../../crates/nyro-tools/src/main.rs)仍有 proxy/record/replay/print-scenarios/dump-schema；[Makefile](../../Makefile)、[CI](../../.github/workflows/ci.yml)、[Server 发布](../../.github/workflows/release-server.yml)仍构建旧产物。 | 保留命令迁入 `nyro tool`，验证支持平台的安装、构建、升级，切换发布产物，再移除 Tauri、旧 Server/Tools 和无消费者代码；保留 schema 生成与数据迁移约束。 |
@@ -73,7 +73,7 @@
 | 1（已完成） | G01：在现有 LLM 运行时内补充带授权过滤的 `GET /v1/models`，根程序继续持有代际 lease，不新增 crate。 | 仅公开别名；稳定排序；匿名／绑定／无效／歧义凭证；空集合；成功重载后更新，失败重载后保持；不调用上游或扣 quota。使用现有严格凭证处理，不默默复制旧无效密钥回退。 |
 | 2（进行中） | G02–G04：分类旧录制 fixture，按协议逐步补兼容。 | 每个输入标明保留、明确不支持或回退；同协议和跨协议预期分开。先补旧客户端需要的原生字段、推理／工具历史，再补媒体／缓存；验证 JSON、SSE、错误／截断响应和取消。 |
 | 3 | G05–G09：补保留的凭证、策略和网络差异。 | 到期与主体窗口测试、路由／配置迁移用例、特殊通道 URL/Header/token 轮换 mock 测试。账号登录／刷新持久化结合步骤 4，不隐式弱化策略。 |
-| 4（部分完成） | G10–G12：已交付 `nyro serve` 的 SQLite 管理到发布路径及实体 CRUD，继续补 Postgres 等价与其余管理能力。 | 持久化 → 校验 → 发布 → 新请求使用快照；失败保留活动代际；重启／数据兼容；WebUI/API 与观测一致。可与兼容工作并行推进，单独完成不代表可发布替换。 |
+| 4（部分完成） | G10–G12：已交付 `nyro serve` 的 SQLite／PostgreSQL 管理到发布路径及实体 CRUD，继续补其余管理能力。 | 持久化 → 校验 → 发布 → 新请求使用快照；失败保留活动代际；重启／数据兼容；WebUI/API 与观测一致。可与兼容工作并行推进，单独完成不代表可发布替换。 |
 | 5 | G11/G13：部署、工具、发布切换。 | 文件／控制面等价，保留 CLI、录制客户端矩阵、支持平台构建、迁移／恢复说明全部过关后移除旧入口。 |
 
 步骤 1 已完成；步骤 2 已完成 16 份录制样本分类、OpenAI Chat／Anthropic Messages 原生增量及单候选 Gemini mock 验证，无状态 Responses 原生 mock 验证也已完成；PR #329 补充四种入口到 Anthropic 的完整并行工具结果历史转换，PR #330 补充工具错误、空／分块文本结果及 Gemini ID／批次语义，PR #331 补充函数 Schema 保留、转换和拒绝边界；PR #332 补充用户图片输入，PR #333 补充缓存用量计量，PR #334 补充按官方定义的缓存控制，PR #335 补充 OpenAI 文本／用户图片的严格断点转换，PR #336 补充 Anthropic 严格缓存控制，PR #337 补充 Anthropic 严格推理配置、历史及 JSON／SSE 签名回放，PR #339 补充 Gemini 严格推理配置、Part／函数签名及流式保留，PR #340 补充 Responses 严格推理；PR #341–#342 补齐 OpenAI effort 映射并明确跨协议签名、兼容扩展与旧标签处理的取舍；PR #343 迁移有序消息项及流式位置，PR #344 补齐三协议交错输出；PR #345 补齐工具结果图片子集；PR #346 补充本地三轮工具会话回归（第 27 节）；本轮先交付步骤 3 中范围集中的 G06（第 28 节），步骤 2 的其余媒体／缓存和真实客户端／厂商会话仍继续跟踪。原生保真和密钥限制语义仍是发布阻塞项；后续每一步可能需要多份聚焦 PR。
@@ -709,7 +709,7 @@ cargo fmt --all -- --check
 
 ## 34. G10 实体草稿管理与凭证脱敏查询
 
-在已合并的 PR #352 基础上，复用现有 `nyro-control`、根 `serve` 和 SQLite v1 完整快照，不新增 crate、实体表或数据库 schema。[控制库实体模块](../../crates/nyro-control/src/entity.rs)拥有类型化编辑命令、凭证变更、引用检查与查询投影；[根 HTTP 适配](../../src/control/entity.rs)解析请求后交给既有服务持有队列。业务规则不进入 kernel、LLM 请求路径或 HTTP handler。
+本节记录已合并的 PR #353：在 PR #352 基础上，复用现有 `nyro-control`、根 `serve` 和 SQLite v1 完整快照，不新增 crate、实体表或数据库 schema。[控制库实体模块](../../crates/nyro-control/src/entity.rs)拥有类型化编辑命令、凭证变更、引用检查与查询投影；[根 HTTP 适配](../../src/control/entity.rs)解析请求后交给既有服务持有队列。业务规则不进入 kernel、LLM 请求路径或 HTTP handler。
 
 `/admin/providers`、`/admin/models`、`/admin/api-keys` 支持列表／新建和单项读取／替换／删除。列表按 ID 排序，返回 `{draft_revision, items: [{id, value}]}`；详情返回 `{draft_revision, item: {id, value}}`。新建请求为 `{expected_revision, id, value}`，完成返回 `201 {draft_revision}`；替换为 `{expected_revision, value}`，删除为 `{expected_revision}`，均完成返回 `200 {draft_revision}`。路径 ID 整段 URL 编码，包含 `/` 时使用 `%2F`；不提供重命名。
 
@@ -735,3 +735,41 @@ cargo fmt --all -- --check
 ```
 
 **69 项 Rust 测试通过，零失败**；Clippy、根构建、格式检查和真实 serve 进程回归通过。新增实体测试覆盖凭证更新、脱敏、引用保护、版本冲突、拒绝原子性及 SQLite 重开；HTTP 测试覆盖认证、编码 ID、错误映射和显式导出。真实进程覆盖草稿密钥轮换在发布前不生效、发布后新密钥生效而旧密钥失效、旧 SSE 完成、重启恢复及日志脱敏。202 个本地文档链接有效，10 个中英文 shell 示例语法通过，`git diff --check` 通过。独立代码审查未发现待修复问题；没有新增 schema、真实厂商请求或旧入口下线。
+
+
+## 35. G10 PostgreSQL 等价控制存储
+
+在已合并的 PR #353 实体管理基础上，为同一个 `nyro-control::Store` 增加 `open_postgres`，不新建 crate。公共门面位于 [`storage/mod.rs`](../../crates/nyro-control/src/storage/mod.rs)，私有 SQLite／PostgreSQL 实现分别位于 [`storage/sqlite.rs`](../../crates/nyro-control/src/storage/sqlite.rs) 和 [`storage/postgres.rs`](../../crates/nyro-control/src/storage/postgres.rs)。实体命令、完整配置校验、脱敏投影、全局草稿版本比较和显式发布复用既有业务路径；数据库逻辑不进入 kernel 或 LLM。
+
+根 `serve` 在 `--database PATH` 与 `--postgres-url-file PATH` 中二选一，继续要求 `--admin-token-file PATH`。PostgreSQL URL 从最多 16 KiB 的普通 UTF-8 文件读取，去掉末尾 CR/LF，不接受命令行直接传 URL。`--config` 仅初始化种子，草稿和已发布版本均从 1 开始；已有状态拒绝重新导入，重启加载已发布快照并保留未发布草稿。两个后端共用相同 HTTP 路由、CRUD DTO、凭证更新、管理认证和正文／队列限制。
+
+PostgreSQL 使用 UTF8 编码的专用数据库，非 UTF8 在建表前拒绝；固定 `public.nyro_control_state` v1，严格检查 schema 和已保存快照，拒绝旧 Nyro／外部数据库。只保存一行完整草稿和已发布 JSON，使用 TEXT 字段，每个快照最多 1 MiB，版本使用正 bigint；schema 详见[数据库文档](../database/schema.md)。通过 `nyro-tools dump-schema --backend control-postgres` 从真实 DDL 生成独立的 [`control-postgres.sql`](../../deploy/schema/control-postgres.sql)；旧 `postgres.sql` 和 `mysql.sql` 保持原有实体 schema，不用它们初始化新控制库。新生成 SQL 也仅为参考，不预先导入；控制库在空数据库中原子创建表与种子行，已有空控制表会被拒绝。
+
+整个 Store 生命周期保留一个非池化连接，并持有会话 advisory lock；同一数据库第二个进程无法取得所有权。锁随 PostgreSQL 会话结束释放，不能改用事务级池化连接或自动重连继续控制操作，也不据此支持多副本。PostgreSQL 官方[会话锁说明](https://www.postgresql.org/docs/16/explicit-locking.html#ADVISORY-LOCKS)解释了此生命周期；连接和 TLS 参数基于仓库 SQLx 0.8 的 [PgConnectOptions](https://docs.rs/sqlx/0.8.6/sqlx/postgres/struct.PgConnectOptions.html)。锁只协调守约的实例，不能防止管理员直接修改表。连接／完整操作期限为 5 秒，语句超时为 3 秒、锁等待为 1 秒。TLS 默认 verify-full，可显式选择 require／verify-ca／verify-full；disable 仅限 localhost 或字面回环 IP 本地测试，拒绝 prefer／allow、Unix socket 和非 TLS URL 查询参数。
+
+保存和发布使用事务及版本比较，开启 `synchronous_commit`；成功数据库提交后才激活 Host。已知提交前拒绝保留原目标，已确认提交但激活未完成仍为 `202 publication: pending`。COMMIT 确认因断连／超时丢失、结果无法确定时返回 `503 storage_outcome_unknown`：数据库可能已持久化，不能宣称失败必然回滚。控制存储随之停用，不自动重试或重连；恢复连接条件后重启，再读取实际草稿与已发布版本核对。读取和已知存储失败（包括发送 COMMIT 前失败）为 `503 storage_failed`。原有 HTTP 等待 10 秒后的 `202 operation: pending` 只表示服务仍持有操作，不代表提交结果未知或已持久化。
+
+存储失效不会停止已活动的数据面代际；`/readyz` 仍仅表示 Host lease 可用。重启以实际持久化发布值恢复。SQLite 独占、权限和旧库拒绝边界保持，两个后端都不持久化运行时额度、窗口、健康、路由历史或观测。快照和备份仍含明文凭证，PostgreSQL URL 文件也需按密钥保护。完整启动、故障及恢复步骤见[中文服务指南](../standalone/rust-serve_CN.md)和[英文服务指南](../standalone/rust-serve.md)。
+
+G10 仍部分完成：WebUI、OAuth、旧数据导入、持久化预算／观测、多副本协调和产品切换继续跟踪；没有下线旧 Server／Tauri／Tools 入口。此差异清单只保留一份中文临时文档，整体迁移完成后删除，不归档；`docs/superpowers/` 继续忽略。
+
+
+### 本轮验证
+
+实际执行：
+
+```sh
+cargo test -p nyro -p nyro-control -p nyro-config -p nyro-tools --offline -- --test-threads=4
+# NYRO_TEST_POSTGRES_URL 指向临时测试实例的管理库；测试自行创建并清理独立数据库。
+cargo test -p nyro-control --test postgres -- --ignored
+cargo clippy -p nyro -p nyro-control --all-targets --offline -- -D warnings
+cargo check -p nyro-tools --all-targets --offline
+cargo build -p nyro -p nyro-tools --offline
+python3 tests/serve_smoke.py
+python3 tests/serve_postgres_smoke.py --postgres-url-file /private/path/test.url
+cargo fmt --all -- --check
+```
+
+**118 项常规 Rust 测试和 7 项显式启用的 PostgreSQL 测试通过，共 125 项、零失败**。真实数据库为临时 PostgreSQL 16.14；仓储测试覆盖持久化与重开、版本冲突／溢出、实体凭证和引用拒绝、旧库／异物／损坏 schema 拒绝、单会话所有权、断线后不重连、锁超时回滚并停用、确定 SQL 写失败保留快照，以及非 UTF8 数据库在初始化前拒绝。SQLite 和 PostgreSQL 真实进程回归均通过；PostgreSQL 另以无超级用户权限的数据库所有者完整运行，覆盖管理认证、CRUD、显式发布、密钥轮换、旧 SSE、重启和脱敏。故障代理收到 PostgreSQL 的 UPDATE 与 COMMIT 完成消息后丢弃 COMMIT 确认，验证返回未知结果、旧活动代际继续服务、存储停用，以及重启恢复已提交目标。没有真实厂商请求。
+
+根程序与控制包严格 Clippy、工具包 check、构建、格式和文档检查通过。扩大严格 Clippy 到 `nyro-tools` 时，未修改的旧 `crates/nyro-tools/src/proxy.rs` 报出 9 项既有 `unnecessary_map_or`／`single_match`／`collapsible_if` 问题；没有混入无关清理，也不将该工具包记为严格 Clippy 通过。新 PostgreSQL DDL 已从真实初始化常量生成；按仓库要求重新输出旧 PostgreSQL／MySQL 参考 schema，内容保持一致。独立审查提出的 schema 前缀匹配、锁超时、PostgreSQL 18 的 NOT NULL 元数据、IPv6 和密码文件日志问题已修正并复核；PostgreSQL 18 仅做静态兼容审查，运行验证范围仍为 PostgreSQL 16。
