@@ -241,7 +241,7 @@ async fn check_schema(connection: &mut SqliteConnection) -> Result<bool, Error> 
     }
 }
 
-fn encode(config: &Config) -> Result<String, Error> {
+pub(super) fn encode(config: &Config) -> Result<String, Error> {
     config.validate().map_err(|_| Error::Invalid)?;
     let json = serde_json::to_string(config).map_err(|_| Error::Invalid)?;
     if json.len() > MAX_CONFIG_BYTES {
@@ -250,7 +250,7 @@ fn encode(config: &Config) -> Result<String, Error> {
     Ok(json)
 }
 
-fn decode(json: &str) -> Result<Config, Error> {
+pub(super) fn decode(json: &str) -> Result<Config, Error> {
     let config: Config = serde_json::from_str(json).map_err(|_| Error::Schema)?;
     config.validate().map_err(|_| Error::Schema)?;
     Ok(config)

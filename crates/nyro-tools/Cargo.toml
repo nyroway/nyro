@@ -10,6 +10,7 @@ name = "nyro-tools"
 path = "src/main.rs"
 
 [dependencies]
+nyro-control = { path = "../nyro-control" }
 tokio = { workspace = true }
 axum = { workspace = true }
 reqwest = { workspace = true }

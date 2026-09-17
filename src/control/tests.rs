@@ -390,3 +390,13 @@ async fn accepted_write_timeout_reports_pending_and_eventually_finishes() {
 }
 
 mod entity;
+
+#[tokio::test]
+async fn uncertain_database_write_has_a_distinct_recovery_error() {
+    let response = storage_error(Error::OutcomeUnknown);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let bytes = to_bytes(response.into_body(), 1024).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body, json!({"error":{"code":"storage_outcome_unknown"}}));
+}

@@ -2936,6 +2936,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3073,6 +3074,7 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
+ "nyro-control",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

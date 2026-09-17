@@ -1,4 +1,4 @@
-"""Run after cargo build -p nyro; only local SQLite and loopback HTTP are used."""
+"""Run after cargo build -p nyro; local SQLite by default; serve_postgres_smoke.py reuses this suite for PostgreSQL."""
 import copy
 import http.client
 import json
@@ -57,7 +57,7 @@ class Upstream(BaseHTTPRequestHandler):
             self.wfile.write(encoded)
 
 
-def main():
+def main(postgres_url_file=None, publication_fault=None):
     if os.name != 'posix':
         print('serve smoke skipped: process shutdown test requires Unix')
         return
@@ -78,7 +78,8 @@ def main():
             seed.write_text(json.dumps(config))
             token = root / 'admin-token'
             token.write_text(ADMIN + '\n')
-            command = [str(Path('target/debug/nyro').resolve()), 'serve', '--database', str(root / 'control.db'), '--admin-listen', f'127.0.0.1:{admin_port}', '--admin-token-file', str(token)]
+            database_args = ['--postgres-url-file', str(postgres_url_file)] if postgres_url_file else ['--database', str(root / 'control.db')]
+            command = [str(Path('target/debug/nyro').resolve()), 'serve', *database_args, '--admin-listen', f'127.0.0.1:{admin_port}', '--admin-token-file', str(token)]
             process = None
             def admin(method='GET', path='/admin/config', body=None, key=ADMIN, expected=200):
                 connection = http.client.HTTPConnection('127.0.0.1', admin_port, timeout=15)
@@ -141,6 +142,8 @@ def main():
                     process = None
             try:
                 start(True)
+                competing = subprocess.run(command, capture_output=True, timeout=10)
+                assert competing.returncode != 0 and b'configuration storage failed' in competing.stderr
                 assert admin()['active_revision'] == 1
                 admin(key=None, expected=401)
                 admin(key=CLIENT, expected=401)
@@ -251,6 +254,23 @@ def main():
                 start()
                 chat('after-stream', key='rotated-client-secret')
                 chat(None, expected=401)
+                if publication_fault:
+                    exported = admin(path='/admin/config/export')
+                    changed = exported['draft']['config']
+                    changed['llm']['models']['public']['backends'][0]['upstream_model'] = 'recovered-after-lost-commit'
+                    revision = save(changed, exported['draft']['revision'])['draft_revision']
+                    publication_fault.arm()
+                    outcome = publish(revision, expected=503)
+                    assert publication_fault.dropped.wait(3), 'the database COMMIT reply was not intercepted'
+                    assert outcome['error']['code'] == 'storage_outcome_unknown'
+                    # A committed target is not activated without a confirmed write outcome.
+                    chat('after-stream', key='rotated-client-secret')
+                    assert admin(expected=503)['error']['code'] == 'storage_failed'
+                    stop()
+                    start()
+                    state = admin()
+                    assert state['published_revision'] == state['active_revision'] == revision
+                    chat('recovered-after-lost-commit', key='rotated-client-secret')
                 stop()
                 for secret in [ADMIN, CLIENT, 'upstream-test-secret', 'rotated-client-secret', 'rotated-upstream-secret', 'extra-client-secret']:
                     assert secret not in (root / 'process.log').read_text()
@@ -262,7 +282,7 @@ def main():
     finally:
         upstream.shutdown()
         upstream.server_close()
-    print('serve smoke passed: auth, SQLite drafts/publication, conflicts/rejection, restart, SSE retention, entity CRUD/credential rotation, redaction')
+    print(f'serve smoke passed ({"PostgreSQL" if postgres_url_file else "SQLite"}): auth, ownership, drafts/publication, conflicts/rejection, restart, SSE retention, entity CRUD/credential rotation, redaction' + (', lost COMMIT recovery' if publication_fault else ''))
 
 
 if __name__ == '__main__':

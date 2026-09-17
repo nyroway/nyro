@@ -5,7 +5,7 @@ use serde::Serialize;
 
 pub mod entity;
 mod storage;
-pub use storage::Store;
+pub use storage::{POSTGRES_SCHEMA, Store};
 
 pub const MAX_CONFIG_BYTES: usize = 1_048_576;
 
@@ -25,6 +25,8 @@ pub struct State {
 pub enum Error {
     #[error("configuration storage failed")]
     Storage,
+    #[error("configuration storage outcome is unknown; restart and reconcile durable state")]
+    OutcomeUnknown,
     #[error("invalid configuration")]
     Invalid,
     #[error("configuration revision conflict")]

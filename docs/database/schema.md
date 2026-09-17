@@ -2,11 +2,11 @@
 
 The released legacy Server and desktop applications support **SQLite** (default), **PostgreSQL**, and **MySQL**, with the entity tables documented below. Their generated reference schemas remain [postgres.sql](../../deploy/schema/postgres.sql) and [mysql.sql](../../deploy/schema/mysql.sql).
 
-The experimental root [`nyro serve`](../standalone/rust-serve.md) uses a **separate, dedicated SQLite database** owned by `nyro-control`. It neither imports nor modifies the legacy tables. PostgreSQL and MySQL reference files describe the legacy backend only; they do not contain this SQLite-only control schema.
+The experimental root [`nyro serve`](../standalone/rust-serve.md) uses a **separate, dedicated SQLite or PostgreSQL database** owned by `nyro-control`. It neither imports nor modifies the legacy tables. The legacy PostgreSQL and MySQL reference files do not describe the experimental control database; its PostgreSQL DDL is generated separately as [control-postgres.sql](../../deploy/schema/control-postgres.sql).
 
-## Experimental control database: version 1
+## Experimental SQLite control database: version 1
 
-Source of truth: [`nyro-control/src/storage.rs`](../../crates/nyro-control/src/storage.rs). `PRAGMA user_version = 1`; the only schema object is the following strict table:
+Source of truth: [`nyro-control/src/storage/sqlite.rs`](../../crates/nyro-control/src/storage/sqlite.rs). `PRAGMA user_version = 1`; the only schema object is the following strict table:
 
 ```sql
 CREATE TABLE nyro_control_state (
@@ -23,6 +23,33 @@ The store requires exactly one row, with `singleton = 1`. Both JSON columns cont
 The published snapshot is the durable restart target. Runtime activation occurs after the database commit; `active_revision` is process state, not another database column. Draft storage does not persist runtime quotas, rate windows, health, routing history or request observations.
 
 The connection uses SQLite exclusive locking, DELETE journaling and FULL synchronous writes. Only one process owns the file. Schema version, schema shape, row count, revision relationships and decoded configurations are checked; unrelated and legacy databases are refused. New Unix files use mode `0600`; operators must protect the database directory and backups as credentials. See the [serve guide](../standalone/rust-serve.md) for startup permissions, publication and recovery.
+
+## Experimental PostgreSQL control database: version 1
+
+Source of truth: `POSTGRES_SCHEMA` in [`nyro-control/src/storage/postgres.rs`](../../crates/nyro-control/src/storage/postgres.rs). Generate the DBA reference from that constant:
+
+```sh
+cargo run -p nyro-tools -- dump-schema --backend control-postgres > deploy/schema/control-postgres.sql
+```
+
+The table has the fixed, qualified name `public.nyro_control_state`:
+
+```sql
+CREATE TABLE public.nyro_control_state (
+    singleton BIGINT PRIMARY KEY CHECK (singleton = 1),
+    schema_version BIGINT NOT NULL CHECK (schema_version = 1),
+    draft_revision BIGINT NOT NULL CHECK (draft_revision > 0),
+    draft_json TEXT NOT NULL CHECK (octet_length(draft_json) BETWEEN 1 AND 1048576),
+    published_revision BIGINT NOT NULL CHECK (published_revision > 0 AND published_revision <= draft_revision),
+    published_json TEXT NOT NULL CHECK (octet_length(published_json) BETWEEN 1 AND 1048576)
+);
+```
+
+The singleton row, validated complete JSON snapshots, 1 MiB byte limits, positive revisions, draft/publication relationship and publication behavior match SQLite. `schema_version` must be `1`; it replaces SQLite's `PRAGMA user_version`. Both revisions start at `1`; equal revisions require identical JSON. `TEXT` preserves the serialized snapshot instead of normalizing it through `JSONB`. Schema creation and the seed row are committed together, and initialized databases reject a seed. The generated SQL is a reference only: do not preload it. An existing empty control table is rejected rather than seeded. There are no entity tables or automatic imports from legacy databases or SQLite files.
+
+The database must be dedicated to this store and use UTF8 encoding. Other encodings are rejected before initialization so the byte limits match the UTF-8 JSON payloads. Schema shape and stored snapshots are checked before accepting existing state. Only the ordinary persistent control table, its primary-key index and generated row/array types are accepted in `public`. Column order, types, nullability, absence of defaults, named validated constraints and primary-key index properties must match the DDL. Extra user schemas or objects, extensions other than the standard `plpgsql`, triggers, rules, partitioning and row-level security are rejected. Do not rename the table or point the service at a legacy database. Startup requires a role able to create the table on first initialization and read/write the state afterward. Protect its credentials, database and backups; the JSON includes plaintext provider, proxy and client secrets.
+
+One nonpooled connection holds a session advisory lock until close; a second Nyro owner is rejected. Writes use transactions and SQL revision comparisons with `synchronous_commit = on`. There is no automatic reconnect or support for transaction/statement pooling. A lost connection or expired storage deadline disables the store until restart; the active runtime can continue independently. If commit acknowledgement is lost, `503 storage_outcome_unknown` means the write may have persisted. Restart and read the persisted state before deciding whether to retry; an unknown outcome is not rollback. The [serve guide](../standalone/rust-serve.md) distinguishes this from an operation still running or a committed publication awaiting activation.
 
 ## Legacy entity schema
 

@@ -19,8 +19,15 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 #[derive(Args)]
 pub(crate) struct Options {
     /// Dedicated control-plane SQLite file; legacy databases are not imported.
+    #[arg(
+        long,
+        required_unless_present = "postgres_url_file",
+        conflicts_with = "postgres_url_file"
+    )]
+    database: Option<PathBuf>,
+    /// File containing a PostgreSQL URL for a dedicated control database.
     #[arg(long)]
-    database: PathBuf,
+    postgres_url_file: Option<PathBuf>,
     /// YAML seed for a new database only; omit when restarting an initialized database.
     #[arg(short, long)]
     config: Option<PathBuf>,
@@ -79,7 +86,14 @@ pub(crate) async fn run(options: Options) -> anyhow::Result<()> {
                 .map_err(|_| anyhow::anyhow!("Invalid seed configuration"))
         })
         .transpose()?;
-    let mut store = Store::open(&options.database, seed.as_ref()).await?;
+    let mut store = match (&options.database, &options.postgres_url_file) {
+        (Some(path), None) => Store::open(path, seed.as_ref()).await?,
+        (None, Some(path)) => {
+            let url = read_file(path, 16 * 1024)?;
+            Store::open_postgres(url.trim_end_matches(['\r', '\n']), seed.as_ref()).await?
+        }
+        _ => anyhow::bail!("Exactly one database source is required"),
+    };
     let published = store.state().await?.published;
     let resources = bootstrap::Resources::new(&published.config)?;
     let host = bootstrap::host(&published.config, &resources).await?;
@@ -150,4 +164,48 @@ pub(crate) async fn run(options: Options) -> anyhow::Result<()> {
     drained?;
     tracked.context("Response cleanup tasks did not stop")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn serve_requires_exactly_one_database_source() {
+        let parse = |args: &[&str]| {
+            crate::Cli::try_parse_from(
+                ["nyro", "serve", "--admin-token-file", "admin.token"]
+                    .into_iter()
+                    .chain(args.iter().copied()),
+            )
+        };
+        assert!(parse(&[]).is_err());
+        assert!(parse(&["--database", "control.db"]).is_ok());
+        assert!(parse(&["--postgres-url-file", "postgres.url"]).is_ok());
+        assert!(
+            parse(&[
+                "--database",
+                "control.db",
+                "--postgres-url-file",
+                "postgres.url"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn startup_file_errors_never_include_contents() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("postgres.url");
+        std::fs::write(
+            &path,
+            "postgres://user:private-password@example.test/control",
+        )
+        .unwrap();
+        let error = read_file(&path, 16).unwrap_err().to_string();
+        assert_eq!(error, "Startup file exceeds size limit");
+        assert!(!error.contains("private-password"));
+        assert!(read_file(temp.path(), 1024).is_err());
+    }
 }
