@@ -43,7 +43,7 @@
 | 旧版分组 | 新版覆盖／仍需证据 |
 |---|---|
 | OpenAI API Key、Anthropic API Key、Gemini API Key | 基础静态密钥路径已有；字段、原生保真、beta Header 和完整客户端会话仍需 G02–G04。旧 `google` 目录是历史命名，新协议命名保持 Gemini。 |
-| DeepSeek、MiniMax、Moonshot AI、NVIDIA、OpenRouter、xAI、Z.ai、Zhipu AI、custom | [旧 inventory](../../crates/nyro-core/src/provider/mod.rs)与公共 pipeline 同时包含协议处理和厂商／通道元数据。逐个保留通道核对配置端点、认证、录制输出语义；不按厂商拆 crate，也不因 kind 相同就宣布认证完成。 |
+| DeepSeek、MiniMax、Moonshot AI、NVIDIA、OpenRouter、Requesty、xAI、Z.ai、Zhipu AI、custom | [旧 inventory](../../crates/nyro-core/src/provider/mod.rs)与公共 pipeline 同时包含协议处理和厂商／通道元数据。逐个保留通道核对配置端点、认证、录制输出语义；不按厂商拆 crate，也不因 kind 相同就宣布认证完成。 |
 | Ollama | 兼容端点可使用通用 driver；[能力探测](../../crates/nyro-core/src/provider/ollama/capabilities.rs)、模型发现、预设属于独立的控制面缺口。 |
 | OpenAI Codex 账号通道 | [旧 OAuth driver](../../crates/nyro-core/src/auth/drivers/openai.rs)处理刷新、账号 Header、URL 绑定；旧 Responses 转换还有流／token 参数假设。静态 `api: responses` 不等价。Codex 作为下游客户端的测试与该上游账号通道分开。 |
 | Anthropic Claude Code 账号通道 | [旧 OAuth driver](../../crates/nyro-core/src/auth/drivers/claude.rs)构造 Bearer/beta/version Header 并禁用默认 API Key 认证。新版 Anthropic driver 使用 `x-api-key`，把 OAuth token 填进去不等价。Claude Code 客户端兼容与账号授权分开。 |
