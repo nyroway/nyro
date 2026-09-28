@@ -155,10 +155,6 @@ fn validation_rejects_empty_names_workloads_duplicates_and_missing_references() 
     assert!(config.validate().is_err());
 
     let mut config = valid_config();
-    config.models.clear();
-    assert!(config.validate().is_err());
-
-    let mut config = valid_config();
     let provider = config.providers.remove("openai").unwrap();
     config.providers.insert("".into(), provider);
     assert!(config.validate().is_err());
@@ -587,4 +583,13 @@ fn provider_transport_defaults_validation_and_diagnostics_are_explicit() {
             .validate()
             .unwrap();
     }
+}
+
+#[test]
+fn empty_and_provider_only_configs_are_valid() {
+    let empty: Config = serde_json::from_value(serde_json::json!({})).unwrap();
+    empty.validate().unwrap();
+    let mut providers_only = valid_config();
+    providers_only.models.clear();
+    providers_only.validate().unwrap();
 }

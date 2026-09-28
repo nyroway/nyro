@@ -48,7 +48,6 @@ fn rejects_invalid_config_and_hides_credentials() {
 #[test]
 fn rejects_invalid_limits_and_server_ids() {
     for (field, value) in [
-        ("servers", json!({})),
         ("servers", Value::Null),
         ("request_timeout_ms", json!(0)),
         ("max_body_bytes", json!(0)),
@@ -84,4 +83,13 @@ fn sdk_has_the_selected_wire_revision() {
         rmcp::model::ProtocolVersion::V_2026_07_28.as_str(),
         "2026-07-28"
     );
+}
+
+#[test]
+fn empty_servers_are_valid_but_limits_still_apply() {
+    for value in [json!({}), json!({"servers": {}})] {
+        let config: Config = serde_json::from_value(value).unwrap();
+        config.validate().unwrap();
+    }
+    invalid(json!({"servers": {}, "request_timeout_ms": 0}));
 }

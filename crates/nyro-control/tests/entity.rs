@@ -432,10 +432,6 @@ async fn stale_missing_duplicate_referenced_and_invalid_edits_are_atomic() {
         store.edit(1, delete(EntityKind::Provider, "p")).await,
         Err(Error::Referenced)
     ));
-    assert!(matches!(
-        store.edit(1, delete(EntityKind::Model, "chat")).await,
-        Err(Error::Invalid)
-    ));
     let mut invalid_model = model();
     invalid_model["provider"] = json!("missing");
     assert!(matches!(
@@ -578,4 +574,63 @@ async fn mcp_subject_reference_and_redaction() {
         Some("new-mcp-secret")
     );
     reopened.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_draft_can_add_and_remove_the_last_model_and_provider() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("control.db");
+    let mut store = Store::open(&path, Some(&Config::from_yaml("{}").unwrap()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .edit(1, create(EntityKind::Model, "chat", model()))
+            .await,
+        Err(Error::Invalid)
+    ));
+    assert_eq!(
+        store
+            .edit(1, create(EntityKind::Provider, "p", provider()))
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        store
+            .edit(2, create(EntityKind::Model, "chat", model()))
+            .await
+            .unwrap(),
+        3
+    );
+    assert!(matches!(
+        store.edit(3, delete(EntityKind::Provider, "p")).await,
+        Err(Error::Referenced)
+    ));
+    store.publish(3).await.unwrap();
+    assert_eq!(
+        store
+            .edit(3, delete(EntityKind::Model, "chat"))
+            .await
+            .unwrap(),
+        4
+    );
+    assert_eq!(
+        store
+            .edit(4, delete(EntityKind::Provider, "p"))
+            .await
+            .unwrap(),
+        5
+    );
+    let pending = store.state().await.unwrap();
+    assert!(pending.draft.config.llm.models.is_empty());
+    assert!(pending.published.config.llm.models.contains_key("chat"));
+    store.publish(5).await.unwrap();
+    store.close().await.unwrap();
+    let mut store = Store::open(&path, None).await.unwrap();
+    let restored = store.state().await.unwrap();
+    assert!(restored.published.config.llm.models.is_empty());
+    assert!(restored.published.config.llm.providers.is_empty());
+    assert_eq!(restored.published.revision, 5);
+    store.close().await.unwrap();
 }

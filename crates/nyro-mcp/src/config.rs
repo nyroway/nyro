@@ -18,7 +18,19 @@ pub struct Config {
     pub max_response_bytes: usize,
     #[serde(default = "body_limit")]
     pub max_frame_bytes: usize,
+    #[serde(default)]
     pub servers: BTreeMap<String, Server>,
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            request_timeout_ms: timeout(),
+            max_body_bytes: body_limit(),
+            max_response_bytes: response_limit(),
+            max_frame_bytes: body_limit(),
+            servers: BTreeMap::new(),
+        }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,9 +102,6 @@ impl Config {
             return Err(ConfigError(
                 "limits must be positive and timeout representable",
             ));
-        }
-        if self.servers.is_empty() {
-            return Err(ConfigError("servers must not be empty"));
         }
         for (id, server) in &self.servers {
             if !valid_id(id) {

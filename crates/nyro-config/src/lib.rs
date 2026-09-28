@@ -18,12 +18,14 @@ use thiserror::Error;
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
+    #[serde(default)]
     pub llm: LlmConfig,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present_mcp"
     )]
+    // Absence preserves the serialized config shape; composition supplies an empty runtime.
     pub mcp: Option<nyro_mcp::config::Config>,
     #[serde(default)]
     pub security: SecurityConfig,

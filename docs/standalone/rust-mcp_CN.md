@@ -8,7 +8,16 @@
 cargo run -p nyro -- proxy --config docs/standalone/rust-mcp.yaml
 ```
 
-当前仍要求 `llm` 区块。省略 `mcp` 即不启用 MCP，原有 LLM 配置行为不变。`nyro serve` 使用同一份完整配置初始化；后续通过[草稿保存与发布 API](rust-serve_CN.md) 更新。
+启动时默认加载 LLM 和 MCP 两个运行时。任一区块都可以省略，对应应用以空资源启动；支持仅配置 LLM、仅配置 MCP、同时配置或均不配置。只使用 MCP 时，删除示例中的 `llm`，保留 `mcp` 及其引用的 `security.api_keys` 即可。已有的纯 LLM 配置仍然有效。
+
+配置文件内容为 `{}` 时，以默认监听地址启动空网关；也可以显式指定监听地址：
+
+```yaml
+server:
+  listen: 127.0.0.1:19530
+```
+
+请求格式正确但模型别名或 MCP 服务未配置时返回 404；`/v1/models` 在遵循原有认证规则的前提下返回空列表。`/readyz` 仍表示就绪。通过 SIGHUP 或控制面发布新增、移除资源，无需重启。`nyro serve` 可以用这份空配置初始化，后续通过[草稿保存与发布 API](rust-serve_CN.md) 更新。首次创建数据库仍要求 `--config PATH`，已有数据库重启时无需提供。
 
 ## 协议范围
 
@@ -32,7 +41,7 @@ curl http://127.0.0.1:19530/mcp/knowledge \
 
 ## 配置与权限
 
-出现 `mcp` 时，`servers` 必须非空。服务 ID 由 1–64 个 ASCII 字母、数字、`-`、`_` 组成。`transport: http` 必填。`url` 是明确的 HTTP(S) 端点，不得包含用户信息、query、fragment 或空白，Nyro 不追加路径；允许管理员配置本地或内网端点。未知字段、显式 null 对象均拒绝。
+`llm.providers`、`llm.models` 和 `mcp.servers` 默认是空映射，允许不配置资源；已声明的资源和请求限制仍需完整校验。模型必须引用已有 Provider，MCP 服务必须引用已有主体。服务 ID 由 1–64 个 ASCII 字母、数字、`-`、`_` 组成。`transport: http` 必填。`url` 是明确的 HTTP(S) 端点，不得包含用户信息、query、fragment 或空白，Nyro 不追加路径；允许管理员配置本地或内网端点。未知字段、显式 null 对象均拒绝。
 
 每个服务必须声明非空、无重复、无通配符的 `subjects` 和 `allowed_tools`。主体引用 `security.api_keys[].id`；禁用或过期 Key 仍可作为配置引用，但不能认证。所有操作要求唯一 Bearer Authorization Header 和服务访问权限，不接受 query 凭据。列表过滤和直接工具调用都执行精确名称白名单。
 

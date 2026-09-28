@@ -4,7 +4,10 @@ use crate::gateway::GatewayRuntime;
 use nyro_config::Config;
 use nyro_kernel::{Candidate, Context, Host};
 use nyro_limit::ConcurrencyLimit;
-use nyro_llm::runtime::{Options, Runtime as LlmRuntime, SharedResources};
+use nyro_llm::{
+    Runtime as LlmRuntime,
+    runtime::{Options, SharedResources},
+};
 use nyro_security::ApiKeys;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -53,11 +56,11 @@ impl Resources {
             version: "standalone".into(),
             fingerprint: Some(config.fingerprint()?),
             value: GatewayRuntime {
-                mcp: config
-                    .mcp
-                    .clone()
-                    .map(|config| nyro_mcp::Runtime::new(config, keys.clone(), self.limit.clone()))
-                    .transpose()?,
+                mcp: nyro_mcp::Runtime::new(
+                    config.mcp.clone().unwrap_or_default(),
+                    keys.clone(),
+                    self.limit.clone(),
+                )?,
                 llm: LlmRuntime::with_resources(
                     config.llm.clone(),
                     keys,

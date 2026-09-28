@@ -8,7 +8,16 @@ The source-built root `nyro` binary can serve LLM and MCP requests on the same l
 cargo run -p nyro -- proxy --config docs/standalone/rust-mcp.yaml
 ```
 
-The existing `llm` section remains required. Omitting `mcp` disables MCP and preserves existing LLM configuration behavior. `nyro serve` accepts the same complete configuration as its initial seed; subsequent changes use its [draft/save/publish API](rust-serve.md).
+Both LLM and MCP runtimes load at startup. Either configuration section can be omitted: its application starts with no resources. Configure LLM only, MCP only, both, or neither. To use only MCP, remove `llm` from the example and retain `mcp` and its referenced `security.api_keys`. Existing LLM-only files remain valid.
+
+A configuration file containing `{}` starts an empty gateway on the default listener. You can also set the listener explicitly:
+
+```yaml
+server:
+  listen: 127.0.0.1:19530
+```
+
+Valid requests for unconfigured model aliases or MCP services return 404; `/v1/models` returns an empty list subject to its normal authentication rules. `/readyz` remains ready. Add or remove resources through SIGHUP reload or control-plane publication without restarting. `nyro serve` accepts this empty configuration as its initial seed; subsequent changes use its [draft/save/publish API](rust-serve.md). Initial database creation still requires `--config PATH`; an existing database reopens without it.
 
 ## Supported protocol
 
@@ -32,7 +41,7 @@ For `tools/call`, use the same metadata, set `Mcp-Method: tools/call`, add `Mcp-
 
 ## Configuration and authorization
 
-`mcp.servers` must be nonempty when present. Server IDs contain 1–64 ASCII letters, digits, `-` or `_`. `transport: http` is required. `url` is the exact HTTP(S) endpoint, with no user information, query, fragment or whitespace; Nyro does not append a path. Local and private endpoints are allowed. Unknown fields and explicit null objects are rejected.
+`llm.providers`, `llm.models` and `mcp.servers` default to empty maps. Empty maps are valid; all declared resources and request limits are still validated. A model must reference an existing provider, and a server must reference existing subjects. Server IDs contain 1–64 ASCII letters, digits, `-` or `_`. `transport: http` is required. `url` is the exact HTTP(S) endpoint, with no user information, query, fragment or whitespace; Nyro does not append a path. Local and private endpoints are allowed. Unknown fields and explicit null objects are rejected.
 
 Each server requires nonempty `subjects` and `allowed_tools` arrays, without duplicates or wildcards. Subjects reference `security.api_keys[].id`. Disabled or expired keys remain valid configuration references but cannot authenticate. Every operation requires a unique Bearer Authorization header and service access. Query credentials are rejected. Both listing and direct calls enforce the exact tool allowlist.
 
