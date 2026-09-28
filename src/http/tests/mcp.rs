@@ -44,10 +44,26 @@ async fn dual_application_reload_and_shared_concurrency() {
         expires_at: None,
     });
     config.mcp=Some(serde_json::from_value(json!({"servers":{"tools":{"transport":"http","url":format!("{url}/mcp"),"subjects":["client"],"allowed_tools":["read"]}}})).unwrap());
-    let resources = bootstrap::Resources::new(&config).unwrap();
-    let host = bootstrap::host(&config, &resources).await.unwrap();
+    let mut empty = Config::from_yaml("{}").unwrap();
+    empty.limit.concurrency = config.limit.concurrency;
+    let resources = bootstrap::Resources::new(&empty).unwrap();
+    let host = bootstrap::host(&empty, &resources).await.unwrap();
     let tracker = TaskTracker::new();
     let router = router(host.clone(), tracker.clone());
+    for missing in [request(), mcp_request("old-key")] {
+        let response = router.clone().oneshot(missing).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        to_bytes(response.into_body(), 16384).await.unwrap();
+    }
+    host.activate(
+        resources.candidate(&config).unwrap(),
+        Context {
+            deadline: Instant::now() + Duration::from_secs(2),
+            cancellation: CancellationToken::new(),
+        },
+    )
+    .await
+    .unwrap();
     let pending = tokio::spawn(router.clone().oneshot(mcp_request("old-key")));
     tokio::time::timeout(Duration::from_secs(3), started.notified())
         .await

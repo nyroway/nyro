@@ -8,7 +8,7 @@
 
 文档生命周期：本文作为临时迁移清单纳入 Git，仅维护这一份中文版本。整体迁移完成、切换验收通过后，将仍需保留的架构与用户升级说明移入正式文档，并在迁移收尾 PR 中删除本文件及其引用，不做归档。
 
-MCP 扩展：已新增独立 `nyro-mcp` 与根 `GatewayRuntime`，LLM/MCP 同代际发布；支持工具子集、共享认证/并发、完整配置快照及上游凭据脱敏。该项用于验证双应用边界，不代表旧入口迁移或控制台迁移已经结束。范围见 [MCP 指南](../standalone/rust-mcp_CN.md)。
+MCP 扩展：已新增独立 `nyro-mcp` 与根 `GatewayRuntime`，LLM/MCP 默认加载并同代际发布，支持纯 LLM、纯 MCP 和空资源启动；支持工具子集、共享认证/并发、完整配置快照及上游凭据脱敏。该项用于验证双应用边界，不代表旧入口迁移或控制台迁移已经结束。范围见 [MCP 指南](../standalone/rust-mcp_CN.md)。
 
 ## 1. 已有基础及其范围
 
@@ -717,7 +717,7 @@ cargo fmt --all -- --check
 
 实体编辑和完整配置 PUT 共用全局草稿版本、完整配置校验和原保存路径，不隐式发布。元数据采用完整替换及默认值，只有凭证省略时保留。凭证输入为 `{action: "keep"}`、`{action: "set", value: "..."}`、`{action: "clear"}`；`null` 和未知字段拒绝。Provider 必填 `kind/base_url`，其 API Key 与代理 URL 可清除；API Key 新建必须 Set，已有 secret 可省略保留，不可 Clear；`enabled` 默认 true，`expires_at` 省略／null 为不过期。API Key DTO 不编辑限额，`llm.subject_limits` 继续通过导出、编辑、完整配置 PUT 修改。
 
-删除被任意 backend 引用的 Provider（包括零权重引用），或被任意模型 subjects／subject_limits 引用的 API Key，返回 `409 entity_referenced`，不级联。删除最后一个模型因完整配置无效返回 `422 invalid_config`。重复 ID 返回 `409 entity_exists`，版本过期返回 `409 revision_conflict`，不存在返回 `404 not_found`；拒绝不改变草稿和发布状态。
+删除被任意 backend 引用的 Provider（包括零权重引用），或被任意模型 subjects／subject_limits 引用的 API Key，返回 `409 entity_referenced`，不级联。默认加载双应用后，允许删除最后一个模型及无引用的 Provider；空配置也能依次创建 Provider、模型，再显式发布。重复 ID 返回 `409 entity_exists`，版本过期返回 `409 revision_conflict`，不存在返回 `404 not_found`；拒绝不改变草稿和发布状态。
 
 普通 `GET /admin/config` 和实体查询以 `has_api_key`、`has_proxy_url`、`has_secret` 表示凭证存在，不返回掩码字符串或整个代理 URL。读取投影不是写入 DTO，未知 `has_*` 字段被拒绝，前端不能直接读后原样写回。显式 `GET /admin/config/export` 保留原 `{draft, published_revision, active_revision, publication}` 结构和明文完整配置，沿用同一管理认证与 `no-store`，属于敏感导出。文件和 SQLite 仍保存原始凭证。中英文服务指南的完整配置往返示例已改为 `/export`，实体示例无需导出密钥。
 

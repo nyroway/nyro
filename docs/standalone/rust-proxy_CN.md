@@ -4,7 +4,7 @@
 
 根 `nyro` 二进制已包含一个实验性的 LLM 数据面，目前需要从源码构建。它与 [README](README.md) 介绍的已发布 `nyro-server` Standalone 模式相互独立，YAML 格式也不兼容。
 
-可选 MCP 工具端点可以复用当前监听器，见 [MCP 网关指南](rust-mcp_CN.md)及[双应用配置示例](rust-mcp.yaml)。
+LLM 与 MCP 运行时默认加载并共用监听器，省略应用配置时对应资源为空，见 [MCP 网关指南](rust-mcp_CN.md)及[双应用配置示例](rust-mcp.yaml)。
 
 ## 从源码运行
 

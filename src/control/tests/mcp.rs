@@ -21,7 +21,25 @@ async fn mcp_full_snapshot_save_publish_and_export() {
         .0,
         StatusCode::OK
     );
-    assert!(control.host.acquire().unwrap().value().mcp.is_none());
+    let probe = || {
+        Request::builder()
+            .method("POST")
+            .uri("/mcp/knowledge")
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        control
+            .host
+            .acquire()
+            .unwrap()
+            .value()
+            .mcp
+            .handle(probe(), CancellationToken::new())
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
     let (status, view) = request(&control, "GET", "/admin/config", json!(null), &[ADMIN]).await;
     assert_eq!(status, StatusCode::OK);
     assert!(!view.to_string().contains("mcp-upstream-secret"));
@@ -54,7 +72,18 @@ async fn mcp_full_snapshot_save_publish_and_export() {
         .0,
         StatusCode::OK
     );
-    assert!(control.host.acquire().unwrap().value().mcp.is_some());
+    assert_eq!(
+        control
+            .host
+            .acquire()
+            .unwrap()
+            .value()
+            .mcp
+            .handle(probe(), CancellationToken::new())
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
     config
         .mcp
         .as_mut()

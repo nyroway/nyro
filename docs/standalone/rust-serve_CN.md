@@ -4,7 +4,7 @@
 
 源码构建的根命令 `nyro serve` 为[实验性 Rust 代理](rust-proxy_CN.md)增加 SQLite 或 PostgreSQL 配置控制面，复用相同的 LLM 运行时和配置格式。G10 当前两个后端均已支持完整配置草稿、Provider／Model／API Key CRUD 与显式发布闭环。WebUI、OAuth 管理、旧数据导入、持久化用量预算和多进程部署仍待后续实现。已发布的 `nyro-server` 与桌面入口继续使用原有数据库。
 
-完整配置快照支持在 LLM 旁增加可选的 MCP 工具服务，见 [MCP 网关指南](rust-mcp_CN.md)。两个应用原子发布，普通配置查询对 MCP 上游凭据脱敏。
+LLM 与 MCP 运行时默认加载，完整配置快照可以只声明任一种应用、同时声明或均不声明；空配置初始化后可通过发布添加资源，见 [MCP 网关指南](rust-mcp_CN.md)。两个应用原子发布，普通配置查询对 MCP 上游凭据脱敏。
 
 ## 启动与重启
 
@@ -131,7 +131,7 @@ curl --fail-with-body -X POST http://127.0.0.1:19531/admin/providers \
 unset NYRO_ADMIN_TOKEN
 ```
 
-继续编辑或发布前先检查返回版本。ID 已存在返回 `409 entity_exists`；版本过期返回 `409 revision_conflict`；实体不存在返回 `404 not_found`。Provider 被任意模型 backend 引用时不可删除，包括零权重 backend，返回 `409 entity_referenced`。API Key 被任意模型的 `subjects` 或 `llm.subject_limits` 引用时同样拒绝删除。不级联修改：先移除引用，或通过完整配置一次协调修改。删除最后一个模型返回 `422 invalid_config`，因为每次保存的草稿都必须有效。
+继续编辑或发布前先检查返回版本。ID 已存在返回 `409 entity_exists`；版本过期返回 `409 revision_conflict`；实体不存在返回 `404 not_found`。Provider 被任意模型 backend 引用时不可删除，包括零权重 backend，返回 `409 entity_referenced`。API Key 被任意模型的 `subjects` 或 `llm.subject_limits` 引用时同样拒绝删除。不级联修改：先移除引用，或通过完整配置一次协调修改。允许删除最后一个模型；Provider 无引用后也可删除，应用资源为空仍是有效配置。从空配置开始时，可先创建 Provider，再创建模型，最后发布草稿。
 
 ## 发布与恢复
 

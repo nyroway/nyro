@@ -20,7 +20,7 @@ Nyro 是统一的 AI Gateway，目标是在一个进程内承载 LLM Gateway 和
 | `nyro proxy` | 只运行数据面，从 standalone 文件或控制面获取配置 |
 | `nyro tool` | 承接录制、回放、调试透传和 schema 导出等现有工具能力 |
 
-目标中的 `serve` 与 `proxy` 使用同一套数据面构建和执行流程，区别在于配置来源及是否装配控制面。将来可以按配置启用 LLM、MCP 或两者；当前 `nyro proxy --config PATH` 装配 LLM 与可选 MCP 文件数据面，`nyro serve` 通过互斥的 `--database PATH` 或 `--postgres-url-file PATH` 选择 SQLite／PostgreSQL 控制面，并要求 `--admin-token-file PATH`；两者仅初始化时接受 `--config PATH`。LLM 与可选 MCP 工具应用现通过 `src/gateway.rs` 的具体 `GatewayRuntime` 在同一监听器组合，使用 `Host<GatewayRuntime>` 整体发布；WebUI、`tool` 仍是目标能力。
+目标中的 `serve` 与 `proxy` 使用同一套数据面构建和执行流程，区别在于配置来源及是否装配控制面。当前启动时默认装配 LLM、MCP 两个运行时，配置决定各自的资源；支持纯 LLM、纯 MCP、双应用资源及空资源启动。`nyro proxy --config PATH` 使用文件数据面，`nyro serve` 通过互斥的 `--database PATH` 或 `--postgres-url-file PATH` 选择 SQLite／PostgreSQL 控制面，并要求 `--admin-token-file PATH`；两者仅初始化时接受 `--config PATH`。LLM 与 MCP 工具应用现通过 `src/gateway.rs` 的具体 `GatewayRuntime` 在同一监听器组合，使用 `Host<GatewayRuntime>` 整体发布；WebUI、`tool` 仍是目标能力。
 
 ## 2. 核心原则
 
@@ -599,7 +599,7 @@ schema 的所有权不因共用数据库而合并。修改实际迁移源时仍�
 
 ## 11. 现有实现与目标对应
 
-MCP 首版见[使用指南](../standalone/rust-mcp_CN.md)：固定现代协议、独立 `/mcp/{server_id}`、工具列表过滤与调用白名单，支持文件重载及控制面完整快照发布。`nyro-llm` 和 `nyro-mcp` 不相互依赖，内核不新增协议职责。当前仍需 LLM 配置；MCP-only、聚合目录、OAuth 和实体 CRUD 不在首版范围。
+MCP 首版见[使用指南](../standalone/rust-mcp_CN.md)：固定现代协议、独立 `/mcp/{server_id}`、工具列表过滤与调用白名单，支持文件重载及控制面完整快照发布。`nyro-llm` 和 `nyro-mcp` 不相互依赖，内核不新增协议职责。LLM 和 MCP 运行时默认加载，缺省应用配置按空资源处理；纯 MCP 和空资源启动均已支持，可通过重载或控制面发布增删资源。聚合目录、OAuth 和 MCP 实体 CRUD 尚未实现。
 
 
 采用新旧实现并行开发、最后统一切换入口的迁移方式。新能力包已加入 workspace，且不依赖旧 `nyro-core`；旧入口继续承担现有发布，新实现独立构建和测试。当前已交付独立内核、协议／LLM／配置／安全／并发能力包，以及从严格 YAML 启动的实验性根 `nyro proxy`。同时已接入实验性 SQLite／PostgreSQL `serve` 发布闭环与实体草稿管理；控制面其余能力、兼容对齐与工具仍待推进。

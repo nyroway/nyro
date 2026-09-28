@@ -4,7 +4,7 @@
 
 The source-built root `nyro serve` adds a SQLite or PostgreSQL configuration control plane to the [experimental Rust proxy](rust-proxy.md). It uses the same LLM runtime and configuration format. G10 currently includes whole-configuration drafts, Provider/Model/API Key CRUD and explicit publication on either backend. WebUI, OAuth management, legacy data import, persistent usage budgets and multiple server processes remain outside this increment. Released `nyro-server` and desktop entries continue to use their existing databases.
 
-Full configuration snapshots also support optional MCP tools services alongside LLM. See the [MCP gateway guide](rust-mcp.md); both applications publish atomically, and ordinary configuration queries redact MCP upstream credentials.
+LLM and MCP runtimes load by default. Full configuration snapshots may declare either application, both, or neither; an empty seed can receive resources through later publication. See the [MCP gateway guide](rust-mcp.md); both applications publish atomically, and ordinary configuration queries redact MCP upstream credentials.
 
 ## Start and restart
 
@@ -131,7 +131,7 @@ curl --fail-with-body -X POST http://127.0.0.1:19531/admin/providers \
 unset NYRO_ADMIN_TOKEN
 ```
 
-Check the returned revision before further edits or publication. An existing ID returns `409 entity_exists`; stale revisions return `409 revision_conflict`; a missing item returns `404 not_found`. Deleting a Provider referenced by any model backend, including a zero-weight backend, returns `409 entity_referenced`. Deleting an API Key referenced by any model's `subjects` or by `llm.subject_limits` does too. There is no cascade: remove references first, or make a coordinated full-configuration edit. Deleting the last model returns `422 invalid_config` because every saved draft must remain valid.
+Check the returned revision before further edits or publication. An existing ID returns `409 entity_exists`; stale revisions return `409 revision_conflict`; a missing item returns `404 not_found`. Deleting a Provider referenced by any model backend, including a zero-weight backend, returns `409 entity_referenced`. Deleting an API Key referenced by any model's `subjects` or by `llm.subject_limits` does too. There is no cascade: remove references first, or make a coordinated full-configuration edit. Deleting the last model is allowed. Once no model references a Provider, that Provider can also be deleted; the resulting empty application remains valid. An empty seed can be populated by creating a Provider first, then a model, and publishing the draft.
 
 ## Publication and recovery
 

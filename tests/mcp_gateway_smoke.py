@@ -161,8 +161,28 @@ def run():
                 assert status == 200, (status, body)
                 return json.loads(body)
 
+            def chat():
+                return request_http(data, "POST", "/v1/chat/completions",
+                                    {"model": "public", "messages": [{"role": "user", "content": "hello"}]},
+                                    {"Authorization": f"Bearer {CLIENT}", "Content-Type": "application/json"})
+
+            empty = {"server": config["server"]}
+            mcp_only = copy.deepcopy(config)
+            del mcp_only["llm"]
             try:
+                for initial in [empty, mcp_only]:
+                    path.write_text(json.dumps(initial))
+                    start(["proxy", "--config", str(path)])
+                    assert chat()[0] == 404
+                    status, _, body = request_http(data, "GET", "/v1/models")
+                    assert status == 200 and json.loads(body)["data"] == []
+                    assert mcp()[0] == (200 if "mcp" in initial else 404)
+                    stop()
+                path.write_text(json.dumps(empty))
                 start(["proxy", "--config", str(path)])
+                path.write_text(json.dumps(config))
+                process.send_signal(signal.SIGHUP)
+                wait(lambda: chat()[0] == 200 and mcp()[0] == 200, process)
                 for server in ["one", "two"]:
                     status, _, body = mcp(server=server)
                     assert status == 200 and json.loads(body)["result"]["structuredContent"] == [1, 2], body
@@ -196,20 +216,37 @@ def run():
                 wait(lambda: "Configuration reload rejected" in log_path.read_text() or "reload failed" in log_path.read_text().lower(), process)
                 assert mcp(method="server/discover", key="replacement-client")[0] == 200
                 stop()
-                path.write_text(json.dumps(config))
+                path.write_text(json.dumps(empty))
                 command = ["serve", "--database", str(root / "control.db"), "--admin-listen", f"127.0.0.1:{admin_port}", "--admin-token-file", str(token)]
                 start([*command, "--config", str(path)])
+                assert chat()[0] == 404 and mcp()[0] == 404
+                admin("PUT", value={"expected_revision": 1, "config": config})
+                assert chat()[0] == 404 and mcp()[0] == 404
+                admin("POST", "/admin/config/publish", {"revision": 2})
+                assert chat()[0] == 200 and mcp()[0] == 200
                 view = admin()
                 assert UPSTREAM not in json.dumps(view) and CLIENT not in json.dumps(view)
                 exported = admin(path="/admin/config/export")["draft"]["config"]
                 exported["mcp"]["servers"]["one"]["allowed_tools"] = ["stream"]
-                saved = admin("PUT", value={"expected_revision": 1, "config": exported})
+                admin("PUT", value={"expected_revision": 2, "config": exported})
                 assert mcp()[0] == 200
-                admin("POST", "/admin/config/publish", {"revision": 2})
+                admin("POST", "/admin/config/publish", {"revision": 3})
                 assert mcp()[0] == 403
                 stop()
                 start(command)
                 assert mcp()[0] == 403 and mcp(server="two")[0] == 200
+                admin("PUT", value={"expected_revision": 3, "config": empty})
+                admin("POST", "/admin/config/publish", {"revision": 4})
+                assert chat()[0] == 404 and mcp()[0] == 404
+                stop()
+                start(command)
+                assert chat()[0] == 404 and mcp()[0] == 404
+                admin("PUT", value={"expected_revision": 4, "config": mcp_only})
+                admin("POST", "/admin/config/publish", {"revision": 5})
+                assert chat()[0] == 404 and mcp()[0] == 200
+                stop()
+                start(command)
+                assert chat()[0] == 404 and mcp()[0] == 200
                 stop()
                 log.flush()
                 logs = log_path.read_text()

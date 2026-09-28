@@ -767,3 +767,57 @@ fn mcp_subjects_and_fingerprints_are_validated() {
     value["mcp"] = serde_json::Value::Null;
     assert!(serde_json::from_value::<Config>(value).is_err());
 }
+
+#[test]
+fn empty_and_mcp_only_configuration_are_valid() {
+    let empty = Config::from_yaml("{}").unwrap();
+    assert!(empty.llm.models.is_empty());
+    assert!(empty.llm.providers.is_empty());
+    for yaml in [
+        "llm: {}",
+        "llm: {providers: {}, models: {}}",
+        "mcp: {}",
+        "mcp: {servers: {}}",
+    ] {
+        Config::from_yaml(yaml).unwrap();
+    }
+    assert_eq!(
+        empty.fingerprint().unwrap(),
+        Config::from_yaml("llm: {}").unwrap().fingerprint().unwrap()
+    );
+    let mcp_only = Config::from_yaml(
+        r#"
+security:
+  api_keys: [{id: client, secret: client-secret}]
+mcp:
+  servers:
+    tools:
+      transport: http
+      url: http://127.0.0.1:1/mcp
+      subjects: [client]
+      allowed_tools: [read]
+"#,
+    )
+    .unwrap();
+    assert!(mcp_only.llm.models.is_empty());
+    assert_eq!(mcp_only.mcp.unwrap().servers.len(), 1);
+}
+
+#[test]
+fn empty_applications_still_validate_declared_resources_and_limits() {
+    for yaml in [
+        "llm: null",
+        "mcp: null",
+        "llm: {providers: null}",
+        "llm: {models: null}",
+        "mcp: {servers: null}",
+        "llm: {unexpected: true}",
+        "mcp: {unexpected: true}",
+        "mcp: {max_body_bytes: 0}",
+        "llm: {providers: {p: {kind: openai, base_url: invalid}}}",
+        "llm: {models: {m: {provider: missing, upstream_model: test, workloads: [chat], allow_anonymous: true}}}",
+        "llm: {subject_limits: {missing: {rpm: 1}}}",
+    ] {
+        assert!(Config::from_yaml(yaml).is_err(), "accepted {yaml}");
+    }
+}

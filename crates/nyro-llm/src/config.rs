@@ -7,10 +7,12 @@ use std::{
 };
 use thiserror::Error;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
     pub providers: BTreeMap<String, Provider>,
+    #[serde(default)]
     pub models: BTreeMap<String, Model>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub subject_limits: BTreeMap<String, SubjectLimitConfig>,
@@ -334,10 +336,6 @@ pub enum ConfigError {
         "subject `{subject}` limits require a nonempty ID, positive bounds, and a valid token reservation"
     )]
     InvalidSubjectLimit { subject: String },
-    #[error("LLM configuration must define at least one provider")]
-    NoProviders,
-    #[error("LLM configuration must define at least one model")]
-    NoModels,
     #[error("provider ID must not be empty")]
     EmptyProviderId,
     #[error("provider `{provider}` has an invalid base URL")]
@@ -384,13 +382,6 @@ pub enum ConfigError {
 
 impl Config {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.providers.is_empty() {
-            return Err(ConfigError::NoProviders);
-        }
-        if self.models.is_empty() {
-            return Err(ConfigError::NoModels);
-        }
-
         for (id, policy) in &self.subject_limits {
             if id.trim().is_empty() || !policy.valid() {
                 return Err(ConfigError::InvalidSubjectLimit {

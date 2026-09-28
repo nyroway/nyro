@@ -166,6 +166,8 @@ async fn entity_crud_preserves_secrets_enforces_references_and_never_publishes()
         (6, "/admin/api-keys/client"),
         (7, "/admin/models/second"),
         (8, "/admin/providers/new%2Fprovider"),
+        (9, "/admin/models/public"),
+        (10, "/admin/providers/p"),
     ] {
         assert_eq!(
             request(
@@ -183,7 +185,7 @@ async fn entity_crud_preserves_secrets_enforces_references_and_never_publishes()
     let state = request(&control, "GET", "/admin/config", json!(null), &[ADMIN])
         .await
         .1;
-    assert_eq!(state["draft"]["revision"], 9);
+    assert_eq!(state["draft"]["revision"], 11);
     assert_eq!(state["published_revision"], 1);
     assert_eq!(state["active_revision"], 1);
     finish(&control).await;
@@ -239,18 +241,6 @@ async fn invalid_entity_requests_do_not_mutate_or_disclose_the_payload() {
         .await
         .0,
         StatusCode::CONFLICT
-    );
-    assert_eq!(
-        request(
-            &control,
-            "DELETE",
-            "/admin/models/public",
-            json!({"expected_revision":1}),
-            &[ADMIN]
-        )
-        .await
-        .0,
-        StatusCode::UNPROCESSABLE_ENTITY
     );
     assert_eq!(
         request(
