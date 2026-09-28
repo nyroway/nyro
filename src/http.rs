@@ -1,3 +1,4 @@
+use crate::gateway::GatewayRuntime;
 use axum::{
     Router,
     extract::{Request, State},
@@ -6,7 +7,6 @@ use axum::{
     routing::get,
 };
 use nyro_kernel::Host;
-use nyro_llm::runtime::Runtime;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tokio_util::task::TaskTracker;
@@ -15,11 +15,11 @@ mod body;
 
 #[derive(Clone)]
 struct App {
-    host: Arc<Host<Runtime>>,
+    host: Arc<Host<GatewayRuntime>>,
     tracker: TaskTracker,
 }
 
-pub(crate) fn router(host: Arc<Host<Runtime>>, tracker: TaskTracker) -> Router {
+pub(crate) fn router(host: Arc<Host<GatewayRuntime>>, tracker: TaskTracker) -> Router {
     Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route(
@@ -41,7 +41,7 @@ async fn dispatch(State(app): State<App>, request: Request) -> Response {
         Ok(lease) => lease,
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({"error":{"type":"unavailable","message":"Gateway is not ready"}}))).into_response(),
     };
-    let deadline = Instant::now() + lease.value().request_timeout();
+    let deadline = Instant::now() + lease.value().request_timeout(request.uri().path());
     let response = lease.value().handle(request, lease.cancellation()).await;
     let deadline = if response.status().is_success() {
         deadline
@@ -54,6 +54,7 @@ async fn dispatch(State(app): State<App>, request: Request) -> Response {
 
 #[cfg(test)]
 mod tests {
+    mod mcp;
     use super::*;
     use crate::bootstrap;
     use axum::{

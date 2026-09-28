@@ -417,3 +417,42 @@ async fn postgres_rejects_non_utf8_database_before_initialization() {
         "refusal must happen before schema initialization"
     );
 }
+
+#[tokio::test]
+#[ignore = "requires explicitly configured PostgreSQL admin; creates isolated databases"]
+async fn postgres_mcp_snapshot_roundtrip() {
+    let db = Database::create().await;
+    let mut raw = serde_json::to_value(config()).unwrap();
+    raw["security"] =
+        serde_json::json!({"api_keys":[{"id":"client","secret":"local-test-secret"}]});
+    raw["mcp"] = serde_json::json!({"servers":{"tools":{"transport":"http","url":"https://tools.example.test/mcp","bearer_token":"mcp-test-secret","subjects":["client"],"allowed_tools":["read"]}}});
+    let config: Config = serde_json::from_value(raw).unwrap();
+    let mut store = Store::open_postgres(&db.url, Some(&config)).await.unwrap();
+    let mut next = config.clone();
+    next.mcp
+        .as_mut()
+        .unwrap()
+        .servers
+        .get_mut("tools")
+        .unwrap()
+        .allowed_tools
+        .push("search".into());
+    let revision = store.save(1, &next).await.unwrap().revision;
+    store.publish(revision).await.unwrap();
+    store.close().await.unwrap();
+    let mut reopened = Store::open_postgres(&db.url, None).await.unwrap();
+    let state = reopened.state().await.unwrap();
+    assert_eq!(
+        state.published.config.fingerprint().unwrap(),
+        next.fingerprint().unwrap()
+    );
+    assert!(
+        !state
+            .published
+            .redacted()
+            .to_string()
+            .contains("mcp-test-secret")
+    );
+    reopened.close().await.unwrap();
+    db.cleanup().await;
+}

@@ -1,5 +1,6 @@
 mod bootstrap;
 mod control;
+mod gateway;
 mod http;
 mod reload;
 mod serve;
@@ -20,9 +21,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the SQLite or PostgreSQL control plane and LLM data plane.
+    /// Run the SQLite or PostgreSQL control plane and gateway data plane.
     Serve(serve::Options),
-    /// Run the standalone LLM data plane from a YAML configuration file.
+    /// Run the standalone gateway data plane from a YAML configuration file.
     /// On Unix, send SIGHUP to reload the file while in-flight requests finish.
     Proxy {
         #[arg(short, long)]
@@ -33,11 +34,18 @@ enum Command {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    use tracing_subscriber::prelude::*;
+    tracing_subscriber::registry()
+        // The SDK emits wire payloads. An independent target filter cannot be
+        // overridden by more specific RUST_LOG directives (e.g. rmcp::service).
+        .with(tracing_subscriber::filter::filter_fn(|metadata| {
+            metadata.target() != "rmcp" && !metadata.target().starts_with("rmcp::")
+        }))
+        .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "nyro=info".into()),
         )
+        .with(tracing_subscriber::fmt::layer())
         .init();
     match cli.command {
         Command::Serve(options) => serve::run(options).await,

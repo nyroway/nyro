@@ -19,6 +19,12 @@ pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
     pub llm: LlmConfig,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_mcp"
+    )]
+    pub mcp: Option<nyro_mcp::config::Config>,
     #[serde(default)]
     pub security: SecurityConfig,
     #[serde(default)]
@@ -74,8 +80,18 @@ impl Default for LimitConfig {
     }
 }
 
+fn present_mcp<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<nyro_mcp::config::Config>, D::Error> {
+    nyro_mcp::config::Config::deserialize(d).map(Some)
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error(transparent)]
+    Mcp(#[from] nyro_mcp::config::ConfigError),
+    #[error("MCP server references an unknown subject")]
+    UnknownMcpSubject,
     #[error("could not read configuration file")]
     Read(#[source] std::io::Error),
     #[error("invalid YAML configuration")]
@@ -155,6 +171,17 @@ impl Config {
             .iter()
             .map(|key| key.id.as_str())
             .collect();
+        if let Some(mcp) = &self.mcp {
+            mcp.validate()?;
+            if mcp.servers.values().any(|server| {
+                server
+                    .subjects
+                    .iter()
+                    .any(|id| !subjects.contains(id.as_str()))
+            }) {
+                return Err(ConfigError::UnknownMcpSubject);
+            }
+        }
         for subject in self.llm.subject_limits.keys() {
             if !subjects.contains(subject.as_str()) {
                 return Err(ConfigError::UnknownLimitedSubject {
@@ -185,6 +212,9 @@ impl Config {
         self.validate()?;
         let mut canonical = self.clone();
         canonical.server.listen = default_listen();
+        if let Some(mcp) = &mut canonical.mcp {
+            mcp.canonicalize();
+        }
         canonical
             .security
             .api_keys

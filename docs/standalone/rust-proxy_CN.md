@@ -4,6 +4,8 @@
 
 根 `nyro` 二进制已包含一个实验性的 LLM 数据面，目前需要从源码构建。它与 [README](README.md) 介绍的已发布 `nyro-server` Standalone 模式相互独立，YAML 格式也不兼容。
 
+可选 MCP 工具端点可以复用当前监听器，见 [MCP 网关指南](rust-mcp_CN.md)及[双应用配置示例](rust-mcp.yaml)。
+
 ## 从源码运行
 
 复制 [rust-proxy.yaml](rust-proxy.yaml)，替换示例中的 Provider 地址、模型名和密钥，然后运行：

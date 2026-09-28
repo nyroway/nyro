@@ -400,3 +400,5 @@ async fn uncertain_database_write_has_a_distinct_recovery_error() {
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body, json!({"error":{"code":"storage_outcome_unknown"}}));
 }
+
+mod mcp;

@@ -4,6 +4,8 @@
 
 The source-built root `nyro serve` adds a SQLite or PostgreSQL configuration control plane to the [experimental Rust proxy](rust-proxy.md). It uses the same LLM runtime and configuration format. G10 currently includes whole-configuration drafts, Provider/Model/API Key CRUD and explicit publication on either backend. WebUI, OAuth management, legacy data import, persistent usage budgets and multiple server processes remain outside this increment. Released `nyro-server` and desktop entries continue to use their existing databases.
 
+Full configuration snapshots also support optional MCP tools services alongside LLM. See the [MCP gateway guide](rust-mcp.md); both applications publish atomically, and ordinary configuration queries redact MCP upstream credentials.
+
 ## Start and restart
 
 Copy [rust-proxy.yaml](rust-proxy.yaml) to `nyro.yaml` and set your provider endpoints, models and credentials. Create a private token file and initialize a dedicated database:

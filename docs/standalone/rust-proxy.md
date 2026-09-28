@@ -4,6 +4,8 @@
 
 The root `nyro` binary includes an experimental, source-built LLM data plane. It is separate from the released `nyro-server` standalone mode documented in [README.md](README.md), and its YAML format is not compatible with that legacy entry.
 
+Optional MCP tools endpoints can share this listener; see the [MCP gateway guide](rust-mcp.md) and [dual-application configuration](rust-mcp.yaml).
+
 ## Run from source
 
 Copy [rust-proxy.yaml](rust-proxy.yaml), replace the example provider URL, model names, and secrets, then run:

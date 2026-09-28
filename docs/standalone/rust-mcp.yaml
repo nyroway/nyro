@@ -1,0 +1,38 @@
+# Source-built Nyro: one LLM application and two independent MCP tool services.
+server:
+  listen: 127.0.0.1:19530
+limit:
+  concurrency: 64
+security:
+  api_keys:
+    - id: client-a
+      secret: replace-with-client-secret
+llm:
+  providers:
+    example:
+      kind: openai
+      base_url: https://api.example.com/v1
+      api_key: replace-with-provider-secret
+  models:
+    chat-default:
+      provider: example
+      upstream_model: example-chat-model
+      workloads: [chat]
+      subjects: [client-a]
+mcp:
+  request_timeout_ms: 30000
+  max_body_bytes: 1048576
+  max_response_bytes: 16777216
+  max_frame_bytes: 1048576
+  servers:
+    knowledge:
+      transport: http
+      url: https://tools.example.com/mcp
+      bearer_token: replace-with-upstream-token
+      subjects: [client-a]
+      allowed_tools: [search_documents, read_document]
+    catalog:
+      transport: http
+      url: https://catalog.example.com/mcp
+      subjects: [client-a]
+      allowed_tools: [lookup_product]
