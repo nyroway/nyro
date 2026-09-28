@@ -157,7 +157,11 @@ impl Store {
                         config.llm.models.remove(&id);
                     }
                     EntityKind::ApiKey => {
-                        if config.llm.subject_limits.contains_key(&id)
+                        if config.mcp.as_ref().is_some_and(|mcp| {
+                            mcp.servers
+                                .values()
+                                .any(|server| server.subjects.contains(&id))
+                        }) || config.llm.subject_limits.contains_key(&id)
                             || config
                                 .llm
                                 .models
@@ -245,7 +249,7 @@ impl Snapshot {
                 })
             })
             .collect();
-        json!({
+        let mut view = json!({
             "revision": self.revision,
             "config": {
                 "server": self.config.server,
@@ -257,7 +261,17 @@ impl Snapshot {
                 "security": {"api_keys": keys},
                 "limit": self.config.limit,
             },
-        })
+        });
+        if let Some(mcp) = &self.config.mcp {
+            let mut value = serde_json::to_value(mcp).expect("validated MCP config serializes");
+            for server in value["servers"].as_object_mut().unwrap().values_mut() {
+                let server = server.as_object_mut().unwrap();
+                let present = server.remove("bearer_token").is_some();
+                server.insert("has_bearer_token".into(), json!(present));
+            }
+            view["config"]["mcp"] = value;
+        }
+        view
     }
 
     /// Return entities sorted by ID, or one entity. Credentials are never projected.

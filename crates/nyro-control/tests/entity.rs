@@ -507,3 +507,75 @@ async fn deletion_rejects_disabled_backends_anonymous_subjects_and_subject_limit
         assert_eq!(state(&mut store).await, before);
     }
 }
+
+#[tokio::test]
+async fn mcp_subject_reference_and_redaction() {
+    let mut raw = serde_json::to_value(config()).unwrap();
+    raw["mcp"] = json!({"servers":{"knowledge":{"transport":"http","url":"https://tools.example.test/mcp","bearer_token":"mcp-upstream-secret","subjects":["z-key"],"allowed_tools":["search_documents"]}}});
+    let config: Config = serde_json::from_value(raw).unwrap();
+    config.validate().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("control.db");
+    let mut store = Store::open(&path, Some(&config)).await.unwrap();
+    let before = store.state().await.unwrap();
+    assert!(matches!(
+        store.edit(1, delete(EntityKind::ApiKey, "z-key")).await,
+        Err(Error::Referenced)
+    ));
+    let after = store.state().await.unwrap();
+    assert_eq!(after.draft.revision, before.draft.revision);
+    let view = after.draft.redacted();
+    assert_eq!(
+        view["config"]["mcp"]["servers"]["knowledge"]["has_bearer_token"],
+        true
+    );
+    assert!(!view.to_string().contains("mcp-upstream-secret"));
+    store
+        .edit(1, replace(EntityKind::Model, "chat", model()))
+        .await
+        .unwrap();
+    let state = store.state().await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&state.draft.config.mcp).unwrap(),
+        serde_json::to_value(&config.mcp).unwrap()
+    );
+    let mut next = state.draft.config;
+    next.mcp
+        .as_mut()
+        .unwrap()
+        .servers
+        .get_mut("knowledge")
+        .unwrap()
+        .bearer_token = Some("new-mcp-secret".into());
+    let revision = store
+        .save(state.draft.revision, &next)
+        .await
+        .unwrap()
+        .revision;
+    assert_eq!(
+        store
+            .state()
+            .await
+            .unwrap()
+            .published
+            .config
+            .mcp
+            .as_ref()
+            .unwrap()
+            .servers["knowledge"]
+            .bearer_token
+            .as_deref(),
+        Some("mcp-upstream-secret")
+    );
+    store.publish(revision).await.unwrap();
+    store.close().await.unwrap();
+    let mut reopened = Store::open(&path, None).await.unwrap();
+    let saved = reopened.state().await.unwrap();
+    assert_eq!(
+        saved.published.config.mcp.unwrap().servers["knowledge"]
+            .bearer_token
+            .as_deref(),
+        Some("new-mcp-secret")
+    );
+    reopened.close().await.unwrap();
+}

@@ -10,7 +10,7 @@
 
 Nyro 是统一的 AI Gateway，目标是在一个进程内承载 LLM Gateway 和 MCP Gateway。两者是并列的应用，各自拥有协议类型、业务规则和执行流程，共享微内核、控制面及基础能力。
 
-当前范围聚焦 LLM。MCP 仅确定应用边界；Image、Audio、Video 等交互在实际接入时定义，不预建空包、空类型或通用执行框架。LLM 对话里的工具调用不等于已经实现 MCP Gateway。
+当前已实现 LLM 与 MCP 工具网关两个并列应用。MCP 首版只支持固定现代协议的工具子集，不自动执行 LLM 对话中的工具调用；Image、Audio、Video 等独立交互在实际接入时定义，不预建空包、空类型或通用执行框架。
 
 目标只分发一个 `nyro` 二进制：
 
@@ -20,7 +20,7 @@ Nyro 是统一的 AI Gateway，目标是在一个进程内承载 LLM Gateway 和
 | `nyro proxy` | 只运行数据面，从 standalone 文件或控制面获取配置 |
 | `nyro tool` | 承接录制、回放、调试透传和 schema 导出等现有工具能力 |
 
-目标中的 `serve` 与 `proxy` 使用同一套数据面构建和执行流程，区别在于配置来源及是否装配控制面。将来可以按配置启用 LLM、MCP 或两者；当前 `nyro proxy --config PATH` 装配 LLM 文件数据面，`nyro serve` 通过互斥的 `--database PATH` 或 `--postgres-url-file PATH` 选择 SQLite／PostgreSQL 控制面，并要求 `--admin-token-file PATH`；两者仅初始化时接受 `--config PATH`。WebUI、`tool` 和 MCP 仍是目标能力。
+目标中的 `serve` 与 `proxy` 使用同一套数据面构建和执行流程，区别在于配置来源及是否装配控制面。将来可以按配置启用 LLM、MCP 或两者；当前 `nyro proxy --config PATH` 装配 LLM 与可选 MCP 文件数据面，`nyro serve` 通过互斥的 `--database PATH` 或 `--postgres-url-file PATH` 选择 SQLite／PostgreSQL 控制面，并要求 `--admin-token-file PATH`；两者仅初始化时接受 `--config PATH`。LLM 与可选 MCP 工具应用现通过 `src/gateway.rs` 的具体 `GatewayRuntime` 在同一监听器组合，使用 `Host<GatewayRuntime>` 整体发布；WebUI、`tool` 仍是目标能力。
 
 ## 2. 核心原则
 
@@ -65,6 +65,7 @@ nyro/
 │   │   ├── candidate.rs             # 应用候选与内核生命周期适配
 │   │   ├── reconcile.rs             # 配置变更协调
 │   │   └── resource.rs              # 跨代际资源的持有与注入
+│   ├── gateway.rs                   # 具体 LLM/MCP 运行时组合
 │   ├── http.rs                      # 通用监听、挂载、健康检查
 │   ├── webui.rs                     # 静态资源嵌入与托管
 │   ├── shutdown.rs                  # 进程信号与退出协调
@@ -204,6 +205,20 @@ nyro/
 │   │   │   ├── observation.rs       # LLM 观测语义
 │   │   │   └── error.rs
 │   │   └── tests/
+│   ├── nyro-mcp/                    # MCP 工具应用，与 LLM 并列
+│   │   ├── Cargo.toml
+│   │   ├── README.md
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── config.rs
+│   │   │   ├── runtime.rs
+│   │   │   ├── handler.rs
+│   │   │   ├── upstream.rs
+│   │   │   ├── headers.rs
+│   │   │   ├── body.rs
+│   │   │   └── error.rs
+│   │   └── tests/
+│   │
 │   ├── nyro-control/
 │   │   ├── Cargo.toml
 │   │   ├── src/
@@ -300,7 +315,7 @@ nyro/
 
 当前目标是八个能力 crate，加根目录的 `nyro` package。包名采用 `nyro-limit`；不引入 `nyro-provider`、`nyro-llm-types`、`nyro-llm-runtime`、`nyro-plugins`、`nyro-modules` 或通用 `nyro-storage`/`nyro-database` 包。
 
-`crates/nyro-mcp/` 仅作为未来并列应用的位置，不创建、不加入当前 workspace。构建产物、运行数据及开发者本地工具配置未在目标树中展开。已有缓存控制、字段修复、协议扩展等细分实现按职责迁入相应模块，目录合并不表示删除功能。
+`crates/nyro-mcp/` 已加入 workspace，包含配置、运行时、SDK handler、有界上游传输及请求清理；实际布局见该 crate。构建产物、运行数据及开发者本地工具配置未在目标树中展开。已有缓存控制、字段修复、协议扩展等细分实现按职责迁入相应模块，目录合并不表示删除功能。
 
 ## 4. 职责与依赖方向
 
@@ -313,6 +328,7 @@ nyro/
 | `nyro-limit` | 频率、累计额度、并发许可及必要状态操作 | 模型价格、协议响应、控制面实体 |
 | `nyro-protocol` | 基础 wire 类型、序列化、协议错误与流帧处理 | LLM IR、Provider 凭证、路由、重试 |
 | `nyro-llm` | LLM 配置、IR、转换、可信执行、路由、Provider、传输 | 管理数据库、进程装配、MCP 执行规则 |
+| `nyro-mcp` | MCP 配置、工具访问策略、SDK 协议适配与有界上游传输 | LLM IR、数据库、内核代际管理 |
 | `nyro-control` | 管理业务、业务仓储、配置快照发布 | 在请求路径中执行 LLM/MCP 调度 |
 | `nyro-telemetry` | 可共享的日志、指标、追踪设施 | 模型计费策略、控制面的业务查询 |
 
@@ -342,7 +358,7 @@ flowchart TD
 
 根程序可以直接引用共享能力包以完成构造和注入。内核与共享库不反向引用根程序；配置、控制面及应用也不通过全局单例访问它。将应用接入内核的生命周期适配留在装配层，独立库可以在不启动内核的情况下使用。
 
-未来 MCP 自己定义配置、请求类型和运行时，消费同一组共享能力；不通过导入 LLM 的请求模型获取认证或限额能力。现阶段不为将来的跨应用业务编排建立 Integration 包。
+`nyro-mcp` 现已独立定义工具网关配置和运行时，复用官方 SDK 协议类型、共享认证与实例并发限制；不通过导入 LLM 的请求模型获取认证或限额能力。现阶段不为将来的跨应用业务编排建立 Integration 包。
 
 ## 5. 模块契约、嵌套与资源所有权
 
@@ -505,7 +521,7 @@ Chat 流使用自己的事件类型，不要求所有交互实现流接口。当
 | 能力 | 共享机制 | 应用负责的语义 |
 |---|---|---|
 | authn | 凭证验证、身份结果 | 入口凭证提取、身份来源适配 |
-| authz | 主体、操作、资源的授权契约 | 模型访问、未来 MCP 工具/资源访问策略 |
+| authz | 主体、操作、资源的授权契约 | 模型访问、MCP 工具访问；资源访问留待后续支持 |
 | rate | 指定作用域下的频率控制 | 限制对象、阈值和协议拒绝结果 |
 | quota | 累计用量、预留和结算 | token/其他计量单位映射及成本策略 |
 | concurrency | 在途许可获取与释放 | 受限操作的边界和生命周期 |
@@ -582,6 +598,9 @@ OpenAI Chat／Responses 共用 `nyro_protocol::openai::ReasoningEffort`；旧 `o
 schema 的所有权不因共用数据库而合并。修改实际迁移源时仍必须遵守仓库的数据库文档与生成流程；参考 SQL 是派生产物，不手写。G10 使用独立 SQLite v1 和 PostgreSQL v1 schema，见[数据库文档](../database/schema.md)。新 PostgreSQL 参考文件通过 `nyro-tools dump-schema --backend control-postgres` 从控制库 DDL 生成；旧 `postgres.sql`／`mysql.sql` 仍服务旧实体表，保持原有契约。
 
 ## 11. 现有实现与目标对应
+
+MCP 首版见[使用指南](../standalone/rust-mcp_CN.md)：固定现代协议、独立 `/mcp/{server_id}`、工具列表过滤与调用白名单，支持文件重载及控制面完整快照发布。`nyro-llm` 和 `nyro-mcp` 不相互依赖，内核不新增协议职责。当前仍需 LLM 配置；MCP-only、聚合目录、OAuth 和实体 CRUD 不在首版范围。
+
 
 采用新旧实现并行开发、最后统一切换入口的迁移方式。新能力包已加入 workspace，且不依赖旧 `nyro-core`；旧入口继续承担现有发布，新实现独立构建和测试。当前已交付独立内核、协议／LLM／配置／安全／并发能力包，以及从严格 YAML 启动的实验性根 `nyro proxy`。同时已接入实验性 SQLite／PostgreSQL `serve` 发布闭环与实体草稿管理；控制面其余能力、兼容对齐与工具仍待推进。
 

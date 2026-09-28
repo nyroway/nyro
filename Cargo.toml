@@ -11,6 +11,7 @@ nyro-control = { path = "crates/nyro-control" }
 nyro-kernel = { path = "crates/nyro-kernel" }
 nyro-config = { path = "crates/nyro-config" }
 nyro-llm = { path = "crates/nyro-llm" }
+nyro-mcp = { path = "crates/nyro-mcp" }
 nyro-security = { path = "crates/nyro-security" }
 nyro-limit = { path = "crates/nyro-limit" }
 tokio.workspace = true
@@ -33,7 +34,7 @@ tower = { version = "0.5", features = ["util"] }
 
 [workspace]
 resolver = "2"
-members = ["crates/nyro-control", "crates/nyro-protocol", "crates/nyro-security", "crates/nyro-limit", "crates/nyro-llm", "crates/nyro-config", "crates/nyro-kernel", "crates/nyro-core", "crates/nyro-tools", "src-tauri", "src-server"]
+members = ["crates/nyro-mcp", "crates/nyro-control", "crates/nyro-protocol", "crates/nyro-security", "crates/nyro-limit", "crates/nyro-llm", "crates/nyro-config", "crates/nyro-kernel", "crates/nyro-core", "crates/nyro-tools", "src-tauri", "src-server"]
 
 [workspace.package]
 version = "1.8.3"

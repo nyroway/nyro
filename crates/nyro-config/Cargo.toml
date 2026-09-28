@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+nyro-mcp = { path = "../nyro-mcp" }
 nyro-llm = { path = "../nyro-llm" }
 nyro-limit = { path = "../nyro-limit" }
 nyro-security = { path = "../nyro-security" }

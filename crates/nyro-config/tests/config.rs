@@ -13,6 +13,7 @@ use std::{
 fn valid_config() -> Config {
     Config {
         server: ServerConfig::default(),
+        mcp: None,
         llm: LlmConfig {
             subject_limits: BTreeMap::new(),
             providers: BTreeMap::from([(
@@ -738,4 +739,31 @@ fn provider_transport_fingerprint_normalizes_defaults_and_retains_egress_changes
         let changed: Config = serde_json::from_value(value.clone()).unwrap();
         assert!(digests.insert(changed.fingerprint().unwrap()));
     }
+}
+
+#[test]
+fn mcp_subjects_and_fingerprints_are_validated() {
+    let original = serde_json::to_value(valid_config()).unwrap();
+    assert!(original.get("mcp").is_none());
+    let mut value = original.clone();
+    value["mcp"] = serde_json::json!({"servers":{"knowledge":{
+        "transport":"http","url":"https://tools.example.test/mcp",
+        "subjects":["deploy"],"allowed_tools":["z","a"]
+    }}});
+    let config: Config = serde_json::from_value(value.clone()).unwrap();
+    config.validate().unwrap();
+    let fingerprint = config.fingerprint().unwrap();
+    value["mcp"]["servers"]["knowledge"]["allowed_tools"] = serde_json::json!(["a", "z"]);
+    let reordered: Config = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(fingerprint, reordered.fingerprint().unwrap());
+    value["mcp"]["servers"]["knowledge"]["subjects"] = serde_json::json!(["unknown"]);
+    assert!(
+        serde_json::from_value::<Config>(value)
+            .unwrap()
+            .validate()
+            .is_err()
+    );
+    let mut value = original;
+    value["mcp"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<Config>(value).is_err());
 }

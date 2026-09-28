@@ -1,9 +1,10 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use crate::gateway::GatewayRuntime;
 use nyro_config::Config;
 use nyro_kernel::{Candidate, Context, Host};
 use nyro_limit::ConcurrencyLimit;
-use nyro_llm::runtime::{Options, Runtime, SharedResources};
+use nyro_llm::runtime::{Options, Runtime as LlmRuntime, SharedResources};
 use nyro_security::ApiKeys;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -38,7 +39,7 @@ impl Resources {
         Ok(())
     }
 
-    pub(crate) fn candidate(&self, config: &Config) -> anyhow::Result<Candidate<Runtime>> {
+    pub(crate) fn candidate(&self, config: &Config) -> anyhow::Result<Candidate<GatewayRuntime>> {
         config.validate()?;
         self.check_settings(config)?;
         let options = Options {
@@ -51,13 +52,20 @@ impl Resources {
         Ok(Candidate {
             version: "standalone".into(),
             fingerprint: Some(config.fingerprint()?),
-            value: Runtime::with_resources(
-                config.llm.clone(),
-                keys,
-                self.limit.clone(),
-                options,
-                self.shared.clone(),
-            )?,
+            value: GatewayRuntime {
+                mcp: config
+                    .mcp
+                    .clone()
+                    .map(|config| nyro_mcp::Runtime::new(config, keys.clone(), self.limit.clone()))
+                    .transpose()?,
+                llm: LlmRuntime::with_resources(
+                    config.llm.clone(),
+                    keys,
+                    self.limit.clone(),
+                    options,
+                    self.shared.clone(),
+                )?,
+            },
             // Reqwest clients have synchronous RAII cleanup; no background component is needed.
             components: vec![],
         })
@@ -67,7 +75,7 @@ impl Resources {
 pub(crate) async fn host(
     config: &Config,
     resources: &Resources,
-) -> anyhow::Result<Arc<Host<Runtime>>> {
+) -> anyhow::Result<Arc<Host<GatewayRuntime>>> {
     let host = Arc::new(Host::new(Default::default()));
     host.activate(
         resources.candidate(config)?,

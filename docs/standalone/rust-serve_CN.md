@@ -4,6 +4,8 @@
 
 源码构建的根命令 `nyro serve` 为[实验性 Rust 代理](rust-proxy_CN.md)增加 SQLite 或 PostgreSQL 配置控制面，复用相同的 LLM 运行时和配置格式。G10 当前两个后端均已支持完整配置草稿、Provider／Model／API Key CRUD 与显式发布闭环。WebUI、OAuth 管理、旧数据导入、持久化用量预算和多进程部署仍待后续实现。已发布的 `nyro-server` 与桌面入口继续使用原有数据库。
 
+完整配置快照支持在 LLM 旁增加可选的 MCP 工具服务，见 [MCP 网关指南](rust-mcp_CN.md)。两个应用原子发布，普通配置查询对 MCP 上游凭据脱敏。
+
 ## 启动与重启
 
 复制 [rust-proxy.yaml](rust-proxy.yaml) 为 `nyro.yaml`，设置 Provider 地址、模型与凭证，然后生成私有管理令牌文件并初始化专用数据库：

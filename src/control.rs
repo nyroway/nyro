@@ -15,8 +15,8 @@ use nyro_control::{
     entity::{EntityChange, EntityKind},
 };
 
+use crate::gateway::GatewayRuntime;
 use nyro_kernel::{Context, Host};
-use nyro_llm::runtime::Runtime;
 use nyro_security::ApiKeys;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -40,7 +40,7 @@ struct Managed {
 
 pub(crate) struct Control {
     managed: AsyncMutex<Managed>,
-    host: Arc<Host<Runtime>>,
+    host: Arc<Host<GatewayRuntime>>,
     keys: ApiKeys,
     slots: Arc<Semaphore>,
     accepting: Mutex<bool>,
@@ -52,7 +52,7 @@ impl Control {
     pub(crate) fn new(
         store: Store,
         resources: Resources,
-        host: Arc<Host<Runtime>>,
+        host: Arc<Host<GatewayRuntime>>,
         active_revision: u64,
         keys: ApiKeys,
     ) -> Arc<Self> {

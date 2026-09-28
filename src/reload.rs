@@ -1,8 +1,8 @@
 //! Serial file reloads; the kernel owns publication and retirement.
 use crate::bootstrap::Resources;
+use crate::gateway::GatewayRuntime;
 use nyro_config::Config;
 use nyro_kernel::{Context, Host};
-use nyro_llm::runtime::Runtime;
 use std::{io, path::Path, time::Duration};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -66,7 +66,7 @@ pub(crate) async fn run(
     mut trigger: Trigger,
     path: &Path,
     resources: &Resources,
-    host: &Host<Runtime>,
+    host: &Host<GatewayRuntime>,
     shutdown: CancellationToken,
 ) -> io::Result<()> {
     loop {
@@ -90,7 +90,7 @@ pub(crate) async fn run(
 async fn from_file(
     path: &Path,
     resources: &Resources,
-    host: &Host<Runtime>,
+    host: &Host<GatewayRuntime>,
     shutdown: CancellationToken,
 ) -> Result<Outcome, ReloadError> {
     let cancellation = shutdown.child_token();
@@ -130,7 +130,7 @@ async fn from_file(
 async fn apply(
     config: &Config,
     resources: &Resources,
-    host: &Host<Runtime>,
+    host: &Host<GatewayRuntime>,
     context: Context,
 ) -> Result<Outcome, ReloadError> {
     if context.cancellation.is_cancelled()
