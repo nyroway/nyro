@@ -20,7 +20,7 @@ func testProviderCatalog(t *testing.T) *provider.Catalog {
 	t.Helper()
 	catalog, err := provider.NewCatalog(
 		provider.Generic(), provider.OpenAI(), provider.Anthropic(),
-		provider.Gemini(), provider.DeepSeek(), provider.OpenRouter(),
+		provider.Gemini(), provider.DeepSeek(), provider.OpenRouter(), provider.Requesty(),
 	)
 	if err != nil {
 		t.Fatalf("provider.NewCatalog(): %v", err)

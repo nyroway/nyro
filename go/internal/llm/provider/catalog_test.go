@@ -162,7 +162,7 @@ func TestCatalogResolvesUnknownProviderToGenericDriver(t *testing.T) {
 
 func TestBuiltinsContainExpectedProviderIDs(t *testing.T) {
 	t.Parallel()
-	catalog, err := NewCatalog(Generic(), OpenAI(), Anthropic(), Gemini(), DeepSeek(), OpenRouter())
+	catalog, err := NewCatalog(Generic(), OpenAI(), Anthropic(), Gemini(), DeepSeek(), OpenRouter(), Requesty())
 	if err != nil {
 		t.Fatalf("NewCatalog(): %v", err)
 	}
@@ -171,7 +171,7 @@ func TestBuiltinsContainExpectedProviderIDs(t *testing.T) {
 	for _, definition := range definitions {
 		got = append(got, definition.ID)
 	}
-	want := []string{"anthropic", "openai", "gemini", "deepseek", "openrouter"}
+	want := []string{"anthropic", "openai", "gemini", "deepseek", "openrouter", "requesty"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Definitions() IDs = %v, want %v", got, want)
 	}

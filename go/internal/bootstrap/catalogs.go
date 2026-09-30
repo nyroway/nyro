@@ -41,5 +41,6 @@ func NewLLMProviderCatalog() (*provider.Catalog, error) {
 		provider.Gemini(),
 		provider.DeepSeek(),
 		provider.OpenRouter(),
+		provider.Requesty(),
 	)
 }

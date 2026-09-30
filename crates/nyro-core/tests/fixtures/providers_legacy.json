@@ -434,6 +434,30 @@
     ]
   },
   {
+    "id": "requesty",
+    "label": {
+      "zh": "Requesty",
+      "en": "Requesty"
+    },
+    "icon": "requesty",
+    "defaultProtocol": "openai-compatible",
+    "channels": [
+      {
+        "id": "default",
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
+        "baseUrls": {
+          "openai-compatible": "https://router.requesty.ai/v1",
+          "anthropic-messages": "https://router.requesty.ai"
+        },
+        "modelsSource": "https://router.requesty.ai/v1/models/managed",
+        "authMode": "apikey"
+      }
+    ]
+  },
+  {
     "id": "ollama",
     "label": {
       "zh": "Ollama",
