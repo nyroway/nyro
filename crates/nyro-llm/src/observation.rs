@@ -3,7 +3,6 @@ use crate::{
     EmbeddingUsage, Usage, Workload,
     codec::{ChatFormat, CodecError},
     ingress::body::Outcome,
-    quota::AttemptQuota,
 };
 use std::sync::{Arc, Mutex};
 use tokio::time::Instant;
@@ -43,7 +42,6 @@ struct Totals {
     input: u128,
     output: u128,
     total: u128,
-    quota: u128,
     token_window: u128,
     known: u32,
     complete: u32,
@@ -87,13 +85,15 @@ impl RequestObservation {
         }
     }
 
+    pub fn set_deadline(&mut self, deadline: Instant) {
+        self.deadline = deadline;
+    }
+
     pub fn attempt(
         &mut self,
         backend: &str,
         provider: &str,
         protocol: &'static str,
-        quota: Option<AttemptQuota>,
-        token_window: Option<AttemptQuota>,
     ) -> AttemptObservation {
         self.attempts += 1;
         self.backend = backend.to_owned();
@@ -108,8 +108,7 @@ impl RequestObservation {
             cancellation: self.cancellation.clone(),
             deadline: self.deadline,
             totals: self.totals.clone(),
-            quota,
-            token_window,
+            actual_usage: None,
             usage: None,
             invalid_usage: false,
             status: 0,
@@ -149,7 +148,7 @@ impl Drop for RequestObservation {
             attempts = self.attempts, status = self.status, outcome, delivery_outcome = delivery,
             error_code = self.error_code, duration_ms = self.started.elapsed().as_millis() as u64,
             input_tokens = totals.input, output_tokens = totals.output, total_tokens = totals.total,
-            usage_state, quota_charged_tokens = totals.quota,
+            usage_state,
             token_window_charged_tokens = totals.token_window, "LLM request finished");
     }
 }
@@ -162,6 +161,7 @@ struct Tokens {
 }
 
 pub(crate) struct AttemptObservation {
+    pub actual_usage: Option<nyro_limit::token::Receipt>,
     request_id: String,
     model: String,
     backend: String,
@@ -172,8 +172,6 @@ pub(crate) struct AttemptObservation {
     cancellation: CancellationToken,
     deadline: Instant,
     totals: Arc<Mutex<Totals>>,
-    quota: Option<AttemptQuota>,
-    token_window: Option<AttemptQuota>,
     usage: Option<Tokens>,
     invalid_usage: bool,
     pub status: u16,
@@ -192,11 +190,8 @@ impl AttemptObservation {
             },
             valid,
         );
-        for quota in [&mut self.quota, &mut self.token_window]
-            .into_iter()
-            .flatten()
-        {
-            quota.observe(usage)?;
+        if self.invalid_usage {
+            return Err(CodecError("invalid token usage".into()));
         }
         Ok(())
     }
@@ -210,11 +205,8 @@ impl AttemptObservation {
             },
             usage.prompt_tokens == usage.total_tokens,
         );
-        for quota in [&mut self.quota, &mut self.token_window]
-            .into_iter()
-            .flatten()
-        {
-            quota.observe_embedding(usage)?;
+        if self.invalid_usage {
+            return Err(CodecError("invalid token usage".into()));
         }
         Ok(())
     }
@@ -245,21 +237,18 @@ impl AttemptObservation {
             return;
         }
         self.finished = true;
-        let settle = |quota: Option<AttemptQuota>| match quota {
-            Some(quota) if outcome == "complete" => (
-                Some(quota.complete()),
-                if self.usage.is_some() {
-                    "actual"
-                } else {
-                    "fallback"
-                },
-            ),
-            Some(quota) if outcome == "connect_error" => (Some(quota.release()), "released"),
-            Some(quota) => (Some(quota.abandon()), "fallback"),
-            None => (None, "disabled"),
+        let actual_charged = self.actual_usage.take().map(|mut receipt| {
+            if let Some(usage) = self.usage {
+                let _ = receipt.observe(usage.total);
+            }
+            receipt.settle()
+        });
+        let window_charged = actual_charged;
+        let token_window_outcome = if self.usage.is_some() {
+            "actual"
+        } else {
+            "missing"
         };
-        let (charged, quota_outcome) = settle(self.quota.take());
-        let (window_charged, token_window_outcome) = settle(self.token_window.take());
         let usage_state = if self.invalid_usage {
             "invalid"
         } else if self.usage.is_none() {
@@ -279,7 +268,6 @@ impl AttemptObservation {
             }
             totals.complete += u32::from(usage_state == "complete");
             totals.invalid |= self.invalid_usage;
-            totals.quota += u128::from(charged.unwrap_or(0));
             totals.token_window += u128::from(window_charged.unwrap_or(0));
         }
         tracing::info!(target: "nyro::attempt",
@@ -288,8 +276,7 @@ impl AttemptObservation {
             upstream_status = self.status, outcome,
             duration_ms = self.started.elapsed().as_millis() as u64, usage_state,
             input_tokens = self.usage.map(|u| u.input), output_tokens = self.usage.map(|u| u.output),
-            total_tokens = self.usage.map(|u| u.total), quota_charged_tokens = charged,
-            quota_outcome, token_window_charged_tokens = window_charged,
+            total_tokens = self.usage.map(|u| u.total), token_window_charged_tokens = window_charged,
             token_window_outcome, "LLM upstream attempt finished");
     }
 }

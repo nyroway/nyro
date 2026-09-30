@@ -6,8 +6,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+nyro-balance = { path = "../nyro-balance" }
+nyro-authz = { path = "../nyro-authz" }
 nyro-protocol = { path = "../nyro-protocol" }
-nyro-security = { path = "../nyro-security" }
+nyro-authn = { path = "../nyro-authn" }
 nyro-limit = { path = "../nyro-limit" }
 serde.workspace = true
 serde_json.workspace = true

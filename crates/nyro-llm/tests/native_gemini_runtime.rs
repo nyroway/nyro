@@ -1,4 +1,5 @@
 //! Gemini native fidelity, path routing, EOF validation, and usage over real HTTP.
+mod support;
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -6,12 +7,9 @@ use axum::{
     routing::post,
 };
 use futures::StreamExt;
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
-use nyro_llm::{
-    config::Config,
-    runtime::{Options, Runtime},
-};
-use nyro_security::{ApiKey, ApiKeys};
+use nyro_llm::runtime::{Options, Runtime};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -109,11 +107,10 @@ fn config(backends: &[(&Upstream, &str, bool)]) -> Value {
     json!({"providers":providers,"models":{"public":{"max_attempts":backends.len(),"backends":backends,"workloads":["chat"],"subjects":["alice"]}}})
 }
 fn runtime(config: Value, limit: &ConcurrencyLimit, options: Options) -> Runtime {
-    let config: Config = serde_json::from_value(config).unwrap();
-    Runtime::new(
+    support::runtime(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,
@@ -123,8 +120,8 @@ fn runtime(config: Value, limit: &ConcurrencyLimit, options: Options) -> Runtime
         ),
         limit.clone(),
         options,
+        support::SharedResources::default(),
     )
-    .unwrap()
 }
 fn request(body: Value, stream: bool) -> Request<Body> {
     Request::builder()
@@ -384,7 +381,7 @@ async fn path_controls_and_minimum_contents_are_validated_before_dispatch() {
 }
 
 #[tokio::test]
-async fn safety_blocks_and_missing_usage_preserve_success_and_fallback_quota() {
+async fn safety_blocks_and_missing_usage_preserve_success_without_estimated_charges() {
     let blocked = json!({"promptFeedback":{"blockReason":"SAFETY","safetyRatings":[{"category":"HARM_CATEGORY_DANGEROUS_CONTENT","probability":"HIGH","blocked":true}]},"modelVersion":"version-metadata"});
     for payload in [
         blocked,
@@ -425,20 +422,13 @@ async fn safety_blocks_and_missing_usage_preserve_success_and_fallback_quota() {
             assert_eq!(actual, payload);
             assert_eq!(limit.available(), 1);
             let next = invoke(&gateway, input(false), streaming).await;
-            assert_eq!(
-                next.status(),
-                if payload.get("usageMetadata").is_some() {
-                    StatusCode::OK
-                } else {
-                    StatusCode::TOO_MANY_REQUESTS
-                }
-            );
+            assert_eq!(next.status(), StatusCode::OK);
         }
     }
 }
 
 #[tokio::test]
-async fn malformed_json_and_usage_keep_reservation_without_retry() {
+async fn malformed_json_and_usage_charge_no_unknown_usage_without_retry() {
     let mut cases = vec![
         json!({}),
         json!({"candidates":[]}),
@@ -481,9 +471,9 @@ async fn malformed_json_and_usage_keep_reservation_without_retry() {
         assert!(!output.contains("provider-secret") && !output.contains("opaque-signature"));
         assert_eq!(
             invoke(&gateway, input(false), false).await.status(),
-            StatusCode::TOO_MANY_REQUESTS
+            StatusCode::BAD_GATEWAY
         );
-        assert_eq!(first.calls.lock().unwrap().len(), 1);
+        assert_eq!(first.calls.lock().unwrap().len(), 2);
         assert!(backup.calls.lock().unwrap().is_empty());
         assert_eq!(limit.available(), 1);
     }
@@ -586,7 +576,7 @@ async fn early_usage_without_terminal_snapshot_cannot_settle_output_as_zero() {
     let upstream = upstream(200, sse(&frames), true).await;
     let limit = ConcurrencyLimit::new(1).unwrap();
     let mut config = config(&[(&upstream, "gemini", true)]);
-    config["models"]["public"]["quota"] = json!({"total_tokens":30,"reserve_tokens":20});
+    config["models"]["public"]["quota"] = json!({"total_tokens":10,"reserve_tokens":20});
     let gateway = runtime(config, &limit, Options::default());
     let response = invoke(&gateway, input(true), true).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -789,7 +779,7 @@ async fn strict_thinking_retry_preserves_signed_history_outputs_and_final_usage(
                     (&incompatible, "anthropic", false),
                     (&backup, "gemini", false),
                 ]);
-                config["models"]["public"]["quota"] = json!({"total_tokens":28,"reserve_tokens":1});
+                config["models"]["public"]["quota"] = json!({"total_tokens":26,"reserve_tokens":1});
                 let gateway = runtime(config, &limit, Options::default());
                 for _ in 0..2 {
                     let response = invoke(&gateway, strict_thinking_input(), streaming).await;
@@ -916,7 +906,11 @@ async fn malformed_strict_thinking_responses_never_retry_and_release_admission()
             invoke(&gateway, strict_thinking_input(), streaming)
                 .await
                 .status(),
-            StatusCode::TOO_MANY_REQUESTS
+            if streaming {
+                StatusCode::OK
+            } else {
+                StatusCode::BAD_GATEWAY
+            }
         );
     }
 }

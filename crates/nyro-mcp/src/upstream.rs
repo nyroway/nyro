@@ -31,6 +31,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 struct BoundedClient {
+    auth: Option<nyro_authn::outbound::KeyAuth>,
     http: reqwest::Client,
     remaining: Arc<AtomicUsize>,
     max_frame: usize,
@@ -53,9 +54,15 @@ impl BoundedClient {
         if session.is_some() {
             return Err(bad());
         }
+        let mut url = url::Url::parse(uri.as_ref()).map_err(|_| bad())?;
+        let mut credentials = axum::http::HeaderMap::new();
+        if let Some(auth) = &self.auth {
+            auth.apply(&mut url, &mut credentials).map_err(|_| bad())?;
+        }
         let mut request = self
             .http
-            .post(uri.as_ref())
+            .post(url)
+            .headers(credentials)
             .timeout(self.deadline.saturating_duration_since(Instant::now()))
             .header("accept", "application/json, text/event-stream")
             .json(&message);
@@ -192,6 +199,7 @@ pub(crate) async fn run(
     let ct = cancel.child_token();
     let _guard = ct.clone().drop_guard();
     let adapter = BoundedClient {
+        auth: server.auth.clone(),
         http,
         remaining: Arc::new(AtomicUsize::new(config.max_response_bytes)),
         max_frame: config.max_frame_bytes,

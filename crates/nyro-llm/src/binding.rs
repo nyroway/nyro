@@ -12,12 +12,16 @@ pub(crate) struct BackendKey {
     native_chat: bool,
     base_url: String,
     api_key: Option<String>,
+    auth: Option<String>,
     proxy_url: Option<String>,
     http1_only: bool,
     upstream_model: String,
 }
 
 impl BackendKey {
+    pub(crate) fn backend_id(&self) -> &str {
+        &self.backend
+    }
     pub(crate) fn new(model: &str, backend: &Backend, provider: &Provider) -> Self {
         // Match Driver's effective endpoint and default API selection.
         let mut base = reqwest::Url::parse(&provider.base_url).expect("validated provider URL");
@@ -31,6 +35,10 @@ impl BackendKey {
             native_chat: provider.native_chat,
             base_url: base.into(),
             api_key: provider.api_key.clone(),
+            auth: provider
+                .auth
+                .as_ref()
+                .map(|auth| serde_json::to_string(auth).expect("serializable auth")),
             proxy_url: provider
                 .transport
                 .proxy()

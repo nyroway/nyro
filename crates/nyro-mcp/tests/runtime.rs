@@ -2,9 +2,9 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
 use nyro_mcp::{Runtime, config::Config};
-use nyro_security::{ApiKey, ApiKeys};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -17,7 +17,7 @@ fn config(url: &str) -> Config {
     .unwrap()
 }
 fn runtime(config: Config) -> Runtime {
-    let keys = ApiKeys::new(vec![ApiKey {
+    let keys = KeyAuth::new(vec![KeyCredential {
         id: "client-a".into(),
         secret: "client-secret".into(),
         enabled: true,
@@ -261,7 +261,7 @@ fn limited_runtime(config: Config, limit: ConcurrencyLimit) -> Runtime {
     Runtime::new(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "client-a".into(),
                 secret: "client-secret".into(),
                 enabled: true,
@@ -459,4 +459,25 @@ async fn parameter_header_mismatch_is_rejected_before_tool_execution() {
         assert!(value.get("result").is_some());
     }
     assert_eq!(upstream.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn empty_grants_build_successfully_but_deny_valid_consumers() {
+    let mut config = config("http://127.0.0.1:1/mcp");
+    config
+        .servers
+        .get_mut("knowledge")
+        .unwrap()
+        .subjects
+        .clear();
+    let runtime = runtime(config);
+    assert_eq!(
+        response(
+            &runtime,
+            request("tools/call", Some("search_documents"), "client-secret")
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
 }

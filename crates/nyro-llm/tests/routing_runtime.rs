@@ -12,12 +12,12 @@ use axum::{
     routing::post,
 };
 use futures::StreamExt;
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
 use nyro_llm::{
     config::Config,
     runtime::{Options, Runtime},
 };
-use nyro_security::{ApiKey, ApiKeys};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -197,16 +197,16 @@ fn configuration(upstreams: &[&Upstream], weights: &[u32], workloads: &[&str]) -
     serde_json::from_value(json!({"providers":providers,"models":{"public":{"backends":backends,"workloads":workloads,"subjects":["alice"]}}})).unwrap()
 }
 
-fn keys() -> Arc<ApiKeys> {
+fn keys() -> Arc<KeyAuth> {
     Arc::new(
-        ApiKeys::new(vec![
-            ApiKey {
+        KeyAuth::new(vec![
+            KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,
                 expires_at: None,
             },
-            ApiKey {
+            KeyCredential {
                 id: "bob".into(),
                 secret: "bob-secret".into(),
                 enabled: true,

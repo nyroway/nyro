@@ -18,6 +18,7 @@ pub(crate) struct Driver {
     pub(crate) format: ChatFormat,
     pub(crate) native_chat: bool,
     credential: Option<(HeaderName, HeaderValue)>,
+    auth: Option<nyro_authn::outbound::KeyAuth>,
 }
 
 impl Driver {
@@ -63,6 +64,7 @@ impl Driver {
                 ProviderKind::Gemini => ChatFormat::Gemini,
             },
             credential,
+            auth: config.auth.clone(),
         })
     }
 
@@ -109,7 +111,12 @@ impl Driver {
         if self.kind == ProviderKind::Gemini && streaming {
             url.query_pairs_mut().append_pair("alt", "sse");
         }
-        let mut builder = self.client.post(url).json(body);
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(auth) = &self.auth {
+            auth.apply(&mut url, &mut headers)
+                .expect("validated upstream auth");
+        }
+        let mut builder = self.client.post(url).headers(headers).json(body);
         if let Some((name, value)) = &self.credential {
             builder = builder.header(name, value);
         }

@@ -5,6 +5,41 @@ use nyro_llm::{
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
+fn valid_config() -> Config {
+    Config {
+        providers: BTreeMap::from([(
+            "openai".into(),
+            Provider {
+                kind: ProviderKind::Openai,
+                api: None,
+                native_chat: false,
+                base_url: "https://api.example.test/v1".into(),
+                api_key: Some("provider-secret".into()),
+                auth: None,
+                transport: Default::default(),
+            },
+        )]),
+        models: BTreeMap::from([(
+            "chat".into(),
+            Model {
+                strategy: Default::default(),
+                max_attempts: 1,
+                health: None,
+                backends: vec![Backend {
+                    id: "default".into(),
+                    provider: "openai".into(),
+                    upstream_model: "upstream".into(),
+                    weight: 100,
+                    priority: 0,
+                }],
+                workloads: vec![Workload::Chat],
+                allow_anonymous: false,
+                subjects: BTreeSet::from(["client".into()]),
+            },
+        )]),
+    }
+}
+
 #[test]
 fn native_chat_requires_supported_matching_protocol_capability() {
     for (kind, api, valid) in [
@@ -24,98 +59,6 @@ fn native_chat_requires_supported_matching_protocol_capability() {
         let config: Config =
             serde_json::from_value(value).expect("native_chat is a supported field");
         assert_eq!(config.validate().is_ok(), valid, "{kind} {api:?}");
-    }
-}
-
-#[test]
-fn quota_policy_omission_disables_it_and_explicit_bounds_roundtrip() {
-    let value = serde_json::to_value(valid_config()).unwrap();
-    assert!(value["models"]["chat"].get("quota").is_none());
-    for policy in [
-        serde_json::json!({"total_tokens": 100, "reserve_tokens": 20}),
-        serde_json::json!({"total_tokens": u64::MAX, "reserve_tokens": u64::MAX}),
-    ] {
-        let mut enabled = value.clone();
-        enabled["models"]["chat"]["quota"] = policy.clone();
-        let config: Config = serde_json::from_value(enabled).expect("quota policy must load");
-        config.validate().unwrap();
-        assert_eq!(
-            serde_json::to_value(config).unwrap()["models"]["chat"]["quota"],
-            policy
-        );
-    }
-}
-
-#[test]
-fn quota_policy_rejects_missing_null_unknown_and_invalid_values() {
-    for policy in [
-        serde_json::json!(null),
-        serde_json::json!({}),
-        serde_json::json!({"total_tokens": 100}),
-        serde_json::json!({"reserve_tokens": 20}),
-        serde_json::json!({"total_tokens": 0, "reserve_tokens": 20}),
-        serde_json::json!({"total_tokens": 100, "reserve_tokens": 0}),
-        serde_json::json!({"total_tokens": 10, "reserve_tokens": 20}),
-        serde_json::json!({"total_tokens": -1, "reserve_tokens": 20}),
-        serde_json::json!({"total_tokens": 100, "reserve_tokens": -1}),
-        serde_json::json!({"total_tokens": null, "reserve_tokens": 20}),
-        serde_json::json!({"total_tokens": 100, "reserve_tokens": null}),
-        serde_json::json!({"total_tokens": 100, "reserve_tokens": 20, "unknown": true}),
-    ] {
-        let mut value = serde_json::to_value(valid_config()).unwrap();
-        value["models"]["chat"]["quota"] = policy.clone();
-        if let Ok(config) = serde_json::from_value::<Config>(value) {
-            assert!(config.validate().is_err(), "{policy}");
-        }
-    }
-}
-
-#[test]
-fn rate_policy_defaults_to_one_burst_and_omission_disables_it() {
-    let value = serde_json::to_value(valid_config()).unwrap();
-    assert!(value["models"]["chat"].get("rate").is_none());
-    let mut enabled = value;
-    enabled["models"]["chat"]["rate"] = serde_json::json!({"requests": 10, "period_ms": 60_000});
-    let config: Config = serde_json::from_value(enabled).expect("rate policy must load");
-    config.validate().unwrap();
-    let canonical = serde_json::to_value(config).unwrap();
-    assert_eq!(canonical["models"]["chat"]["rate"]["burst"], 1);
-}
-
-fn valid_config() -> Config {
-    Config {
-        subject_limits: BTreeMap::new(),
-        providers: BTreeMap::from([(
-            "openai".into(),
-            Provider {
-                transport: Default::default(),
-                native_chat: false,
-                kind: ProviderKind::Openai,
-                api: None,
-                base_url: "https://api.example.test/v1".into(),
-                api_key: Some("provider-secret".into()),
-            },
-        )]),
-        models: BTreeMap::from([(
-            "chat".into(),
-            Model {
-                strategy: Default::default(),
-                max_attempts: 1,
-                health: None,
-                rate: None,
-                quota: None,
-                backends: vec![Backend {
-                    id: "default".into(),
-                    provider: "openai".into(),
-                    upstream_model: "gpt-example".into(),
-                    weight: 100,
-                    priority: 0,
-                }],
-                workloads: vec![Workload::Chat],
-                allow_anonymous: false,
-                subjects: BTreeSet::from(["deploy".into()]),
-            },
-        )]),
     }
 }
 
@@ -444,87 +387,6 @@ fn health_cooldown_must_fit_the_platform_timer() {
 }
 
 #[test]
-fn rate_policy_rejects_missing_null_unknown_and_invalid_values() {
-    for policy in [
-        serde_json::json!(null),
-        serde_json::json!({}),
-        serde_json::json!({"requests": 1}),
-        serde_json::json!({"period_ms": 1000}),
-        serde_json::json!({"requests": 0, "period_ms": 1000}),
-        serde_json::json!({"requests": -1, "period_ms": 1000}),
-        serde_json::json!({"requests": 4294967296u64, "period_ms": 1000}),
-        serde_json::json!({"requests": null, "period_ms": 1000}),
-        serde_json::json!({"requests": 1, "period_ms": 0}),
-        serde_json::json!({"requests": 1, "period_ms": -1}),
-        serde_json::json!({"requests": 1, "period_ms": null}),
-        serde_json::json!({"requests": 1, "period_ms": 1000, "burst": 0}),
-        serde_json::json!({"requests": 1, "period_ms": 1000, "burst": -1}),
-        serde_json::json!({"requests": 1, "period_ms": 1000, "burst": 4294967296u64}),
-        serde_json::json!({"requests": 1, "period_ms": 1000, "burst": null}),
-        serde_json::json!({"requests": 1, "period_ms": 1000, "unexpected": true}),
-    ] {
-        let mut value = serde_json::to_value(valid_config()).unwrap();
-        value["models"]["chat"]["rate"] = policy.clone();
-        if let Ok(config) = serde_json::from_value::<Config>(value) {
-            assert!(config.validate().is_err(), "{policy}");
-        }
-    }
-}
-
-#[test]
-fn rate_policy_accepts_large_bounds_and_burst_independent_of_refill_count() {
-    for policy in [
-        serde_json::json!({"requests": 1, "period_ms": 1, "burst": 10}),
-        serde_json::json!({"requests": u32::MAX, "period_ms": u64::MAX, "burst": u32::MAX}),
-    ] {
-        let mut value = serde_json::to_value(valid_config()).unwrap();
-        value["models"]["chat"]["rate"] = policy;
-        serde_json::from_value::<Config>(value)
-            .unwrap()
-            .validate()
-            .unwrap();
-    }
-}
-
-#[test]
-fn subject_token_windows_accept_standalone_and_combined_request_rules() {
-    for policy in [
-        serde_json::json!({"tpm":100,"reserve_tokens":10}),
-        serde_json::json!({"tpd":1000,"reserve_tokens":10}),
-        serde_json::json!({"rpm":2,"rpd":10,"tpm":100,"tpd":1000,"reserve_tokens":10}),
-    ] {
-        let mut value = serde_json::to_value(valid_config()).unwrap();
-        value["subject_limits"] = serde_json::json!({"alice":policy});
-        let parsed = serde_json::from_value::<Config>(value);
-        assert!(parsed.is_ok(), "{parsed:?}");
-        parsed.unwrap().validate().unwrap();
-    }
-}
-
-#[test]
-fn subject_token_windows_reject_invalid_or_unusable_reservations() {
-    for policy in [
-        serde_json::json!({"tpm":0,"reserve_tokens":1}),
-        serde_json::json!({"tpm":100}),
-        serde_json::json!({"tpd":100,"reserve_tokens":0}),
-        serde_json::json!({"tpm":100,"tpd":5,"reserve_tokens":10}),
-        serde_json::json!({"tpm":5,"tpd":100,"reserve_tokens":10}),
-        serde_json::json!({"rpm":2,"reserve_tokens":10}),
-        serde_json::json!({"tpm":null,"reserve_tokens":1}),
-        serde_json::json!({"tpd":100,"reserve_tokens":null}),
-        serde_json::json!({"tpd":-1,"reserve_tokens":1}),
-    ] {
-        let mut value = serde_json::to_value(valid_config()).unwrap();
-        value["subject_limits"] = serde_json::json!({"alice":policy});
-        let parsed = serde_json::from_value::<Config>(value);
-        assert!(
-            parsed.is_err() || parsed.unwrap().validate().is_err(),
-            "{policy}"
-        );
-    }
-}
-
-#[test]
 fn provider_transport_defaults_validation_and_diagnostics_are_explicit() {
     let base = serde_json::to_value(valid_config()).unwrap();
     let mut input = base.clone();
@@ -543,12 +405,18 @@ fn provider_transport_defaults_validation_and_diagnostics_are_explicit() {
         serde_json::json!(null),
         serde_json::json!({"proxy_url":null}),
         serde_json::json!({"http1_only":null}),
-        serde_json::json!({"http1_only":"true"}),
+        serde_json::json!({"http1_only":"invalid"}),
         serde_json::json!({"unknown":true}),
     ] {
         let mut input = base.clone();
         input["providers"]["openai"]["transport"] = transport;
         assert!(serde_json::from_value::<Config>(input).is_err());
+    }
+    for (value, expected) in [("true", true), ("false", false)] {
+        let mut input = base.clone();
+        input["providers"]["openai"]["transport"] = serde_json::json!({"http1_only":value});
+        let config: Config = serde_json::from_value(input).unwrap();
+        assert_eq!(config.providers["openai"].transport.http1_only, expected);
     }
     for url in [
         "",

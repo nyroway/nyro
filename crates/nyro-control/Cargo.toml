@@ -6,9 +6,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+uuid.workspace = true
 nyro-config = { path = "../nyro-config" }
 nyro-llm = { path = "../nyro-llm" }
-nyro-security = { path = "../nyro-security" }
+nyro-authn = { path = "../nyro-authn" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -6,12 +6,12 @@ use axum::{
     routing::post,
 };
 use futures::StreamExt;
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
 use nyro_llm::{
     config::{Config, ProviderKind},
     runtime::{Options, Runtime},
 };
-use nyro_security::{ApiKey, ApiKeys};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -139,7 +139,7 @@ fn runtime(fixture: &Fixture, format: &str, limit: ConcurrencyLimit, options: Op
     Runtime::new(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,

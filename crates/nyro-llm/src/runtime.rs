@@ -7,8 +7,9 @@ use axum::{
     http::{HeaderMap, Method, Request as HttpRequest, Response as HttpResponse, StatusCode},
 };
 use futures::StreamExt;
+use nyro_authn::{Authenticator, Identity};
+use nyro_authz::{Authorizer, Grant};
 use nyro_limit::{ConcurrencyLimit, Permit};
-use nyro_security::{ApiKeys, Authorizer, Grant, Identity};
 use serde_json::{Value, json};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -21,10 +22,7 @@ use crate::{
     ingress::body::{self, Outcome},
     observation::{self, RequestObservation},
     provider::Driver,
-    quota::{BoundQuota, QuotaRegistry},
-    rate::{BoundRate, RateRegistry},
     router,
-    subject_limit::{BoundSubjectLimit, SubjectLimitRegistry},
 };
 
 pub use crate::router::RoutingRegistry;
@@ -40,9 +38,16 @@ mod stream;
 pub struct SharedResources {
     pub routing: Arc<RoutingRegistry>,
     pub health: Arc<HealthRegistry>,
-    pub rates: Arc<RateRegistry>,
-    pub quotas: Arc<QuotaRegistry>,
-    pub subject_limits: Arc<SubjectLimitRegistry>,
+}
+
+/// Resource policies supplied by composition, independent of wire protocol configuration.
+#[derive(Clone, Default)]
+pub struct Policies {
+    pub registry: nyro_limit::token::Registry,
+    pub models: BTreeMap<String, nyro_limit::token::Policy>,
+    pub consumers: BTreeMap<String, nyro_limit::token::Policy>,
+    pub routing_scopes: BTreeMap<String, String>,
+    pub execution: BTreeMap<String, Options>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -69,23 +74,21 @@ impl Default for Options {
 pub struct BuildError;
 
 pub struct Runtime {
+    policies: Policies,
     routing: BTreeMap<String, router::BoundRouting>,
     models: BTreeMap<String, config::Model>,
     providers: BTreeMap<String, Driver>,
-    keys: Arc<ApiKeys>,
+    keys: Arc<dyn Authenticator>,
     authorizer: Authorizer,
     limit: ConcurrencyLimit,
     options: Options,
     health: BTreeMap<String, BTreeMap<String, Arc<BackendHealth>>>,
-    rates: BTreeMap<String, Arc<BoundRate>>,
-    quotas: BTreeMap<String, Arc<BoundQuota>>,
-    subject_limits: BTreeMap<String, Arc<BoundSubjectLimit>>,
 }
 
 impl Runtime {
     pub fn new(
         config: config::Config,
-        keys: Arc<ApiKeys>,
+        keys: Arc<dyn Authenticator>,
         limit: ConcurrencyLimit,
         options: Options,
     ) -> Result<Self, BuildError> {
@@ -95,7 +98,7 @@ impl Runtime {
     /// Share this registry between generations to retain health for unchanged backends.
     pub fn with_health(
         config: config::Config,
-        keys: Arc<ApiKeys>,
+        keys: Arc<dyn Authenticator>,
         limit: ConcurrencyLimit,
         options: Options,
         health: Arc<HealthRegistry>,
@@ -115,18 +118,23 @@ impl Runtime {
     /// Reuse registries across generations; changing retained limit rules requires new resources.
     pub fn with_resources(
         config: config::Config,
-        keys: Arc<ApiKeys>,
+        keys: Arc<dyn Authenticator>,
         limit: ConcurrencyLimit,
         options: Options,
         resources: SharedResources,
     ) -> Result<Self, BuildError> {
-        let SharedResources {
-            routing,
-            health,
-            rates,
-            quotas,
-            subject_limits,
-        } = resources;
+        Self::with_policies(config, keys, limit, options, resources, Policies::default())
+    }
+
+    pub fn with_policies(
+        config: config::Config,
+        keys: Arc<dyn Authenticator>,
+        limit: ConcurrencyLimit,
+        options: Options,
+        resources: SharedResources,
+        policies: Policies,
+    ) -> Result<Self, BuildError> {
+        let SharedResources { routing, health } = resources;
         config.validate().map_err(|_| BuildError)?;
         if options.request_timeout.is_zero()
             || Instant::now()
@@ -157,7 +165,19 @@ impl Runtime {
         let routing = config
             .models
             .iter()
-            .map(|(id, model)| (id.clone(), routing.bind(id, model, &config.providers)))
+            .map(|(id, model)| {
+                (
+                    id.clone(),
+                    routing.bind(
+                        policies
+                            .routing_scopes
+                            .get(id)
+                            .map_or(id.as_str(), String::as_str),
+                        model,
+                        &config.providers,
+                    ),
+                )
+            })
             .collect();
         let health = config
             .models
@@ -181,40 +201,9 @@ impl Runtime {
                 })
             })
             .collect();
-        let rates = config
-            .models
-            .iter()
-            .filter_map(|(id, model)| {
-                model
-                    .rate
-                    .as_ref()
-                    .map(|policy| rates.bind(id, policy).map(|rate| (id.clone(), rate)))
-            })
-            .collect::<Result<_, _>>()?;
-        let quotas = config
-            .models
-            .iter()
-            .filter_map(|(id, model)| {
-                model
-                    .quota
-                    .as_ref()
-                    .map(|policy| quotas.bind(id, policy).map(|quota| (id.clone(), quota)))
-            })
-            .collect::<Result<_, _>>()?;
-        let subject_limits = config
-            .subject_limits
-            .iter()
-            .map(|(id, policy)| {
-                subject_limits
-                    .bind(id, policy)
-                    .map(|bound| (id.clone(), bound))
-            })
-            .collect::<Result<_, _>>()?;
         Ok(Self {
+            policies,
             routing,
-            subject_limits,
-            quotas,
-            rates,
             health,
             models: config.models,
             providers,
@@ -242,6 +231,8 @@ impl Runtime {
         let mut exchange = Exchange {
             observation: RequestObservation::new(started, deadline, cancellation.clone()),
             permit: None,
+            started,
+            deadline,
         };
         let result = tokio::select! {
             biased;
@@ -250,7 +241,7 @@ impl Runtime {
             result = self.execute(request, &mut exchange, &cancellation, deadline) => result,
         };
         let (mut response, body_deadline) = match result {
-            Ok(response) => (response, deadline),
+            Ok(response) => (response, exchange.deadline),
             // Error delivery is a separate, bounded terminal action, so a 504 body can be read.
             Err(failure) => {
                 exchange.observation.error_code = failure.code;
@@ -436,6 +427,48 @@ impl Runtime {
         } else {
             Input::Typed(endpoint.decode(value)?)
         };
+        let options = self
+            .policies
+            .execution
+            .get(request.model())
+            .copied()
+            .unwrap_or(self.options);
+        if input.len() > options.max_body_bytes {
+            return Err(Failure::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request_too_large",
+                "Request body exceeds the configured limit",
+            ));
+        }
+        let deadline = deadline.min(exchange.started + options.request_timeout);
+        exchange.deadline = deadline;
+        exchange.observation.set_deadline(deadline);
+        let resolved = Resolved {
+            request,
+            endpoint,
+            headers: parts.headers,
+        };
+        tokio::time::timeout_at(
+            deadline,
+            self.execute_model(resolved, exchange, cancellation, deadline),
+        )
+        .await
+        .map_err(|_| Failure::timeout())?
+    }
+
+    async fn execute_model(
+        &self,
+        resolved: Resolved,
+        exchange: &mut Exchange,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<HttpResponse<Body>, Failure> {
+        let Resolved {
+            request,
+            endpoint,
+            headers,
+        } = resolved;
+        let workload = endpoint.workload;
         let public_model = request.model().to_owned();
         exchange.observation.streaming = request.is_streaming();
         // Resolve -> Authenticate -> Authorize -> Admit are mandatory ordinary runtime steps.
@@ -446,7 +479,11 @@ impl Runtime {
         if !model.workloads.contains(&workload) {
             return Err(Failure::invalid("Model does not support this workload"));
         }
-        let identity = self.authenticate(endpoint.kind, &parts.headers)?;
+        let identity = if model.allow_anonymous {
+            None
+        } else {
+            self.authenticate(endpoint.kind, &headers)?
+        };
         match &identity {
             Some(identity) => {
                 if !model.allow_anonymous {
@@ -479,20 +516,21 @@ impl Runtime {
         if Instant::now() >= deadline {
             return Err(Failure::timeout());
         }
-        let model_rate = self.rates.get(&public_model);
-        let subject_limit = identity
-            .as_ref()
-            .and_then(|identity| self.subject_limits.get(&identity.id));
-        let admission = if let Some(subject_limit) = subject_limit {
-            subject_limit.admit_request(model_rate.map(|rate| &rate.limit))
-        } else {
-            model_rate.map_or(Ok(()), |rate| rate.try_acquire())
-        };
-        if let Err(exceeded) = admission {
-            // Rate admission rejects synchronously; its error body must not occupy an in-flight slot.
-            drop(exchange.permit.take());
-            return Err(Failure::rate(exceeded.retry_after));
-        }
+        let policies: Vec<_> = self
+            .policies
+            .models
+            .get(&public_model)
+            .into_iter()
+            .chain(
+                identity
+                    .as_ref()
+                    .and_then(|id| self.policies.consumers.get(&id.id)),
+            )
+            .collect();
+        self.policies
+            .registry
+            .admit(&policies)
+            .map_err(|e| Failure::rate(e.retry_after))?;
         // One logical admission; retries, failed upstreams and cancellation never refund it.
         let mut last_failure = None;
         while exchange.observation.attempts < model.max_attempts {
@@ -502,7 +540,7 @@ impl Runtime {
             if Instant::now() >= deadline {
                 return Err(Failure::timeout());
             }
-            let (selected, mut health, quota, token_window, routing_attempt) = {
+            let (selected, mut health, routing_attempt) = {
                 let routing = &self.routing[&public_model];
                 let mut selection = routing.selection();
                 let available: Vec<_> = eligible
@@ -543,41 +581,16 @@ impl Runtime {
                     },
                     None => None,
                 };
-                let (quota, token_window) = match crate::subject_limit::reserve_attempt(
-                    self.quotas.get(&public_model).map(AsRef::as_ref),
-                    subject_limit.map(AsRef::as_ref),
-                ) {
-                    Ok(budgets) => budgets,
-                    Err(error) => {
-                        drop(exchange.permit.take());
-                        if let nyro_limit::window::WindowQuotaError::Exceeded { retry_after } =
-                            error
-                        {
-                            return Err(Failure {
-                                retry_after,
-                                ..Failure::new(
-                                    StatusCode::TOO_MANY_REQUESTS,
-                                    "rate_limit_exceeded",
-                                    "Token rate limit reached",
-                                )
-                            });
-                        }
-                        return Err(Failure::new(
-                            StatusCode::TOO_MANY_REQUESTS,
-                            "quota_exceeded",
-                            "Token quota cannot admit another attempt",
-                        ));
-                    }
-                };
                 let routing_attempt = routing.started(&selected.backend.id, &mut selection);
-                (selected, health, quota, token_window, routing_attempt)
+                (selected, health, routing_attempt)
             };
             let mut attempt = Some(exchange.observation.attempt(
                 &selected.backend.id,
                 &selected.backend.provider,
                 observation::protocol(selected.provider.format, workload),
-                quota,
-                token_window,
+            ));
+            attempt.as_mut().unwrap().actual_usage = Some(nyro_limit::token::Receipt::new(
+                policies.iter().map(|p| (*p).clone()).collect(),
             ));
             let sent_at = Instant::now();
             let response = match selected
@@ -681,7 +694,15 @@ struct Prepared<'a> {
     health: Option<&'a Arc<BackendHealth>>,
 }
 
+struct Resolved {
+    request: Input,
+    endpoint: endpoint::Endpoint,
+    headers: HeaderMap,
+}
+
 struct Exchange {
+    started: Instant,
+    deadline: Instant,
     observation: RequestObservation,
     permit: Option<Permit>,
 }

@@ -9,12 +9,15 @@ repository.workspace = true
 nyro-mcp = { path = "../nyro-mcp" }
 nyro-llm = { path = "../nyro-llm" }
 nyro-limit = { path = "../nyro-limit" }
-nyro-security = { path = "../nyro-security" }
+nyro-authn = { path = "../nyro-authn" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
 sha2 = "0.10"
 thiserror.workspace = true
+
+nyro-balance = { path = "../nyro-balance" }
+url = "2"
 
 [dev-dependencies]
 tempfile = "3"

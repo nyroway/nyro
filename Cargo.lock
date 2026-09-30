@@ -2957,13 +2957,14 @@ dependencies = [
  "clap",
  "futures",
  "http-body",
+ "nyro-authn",
  "nyro-config",
  "nyro-control",
  "nyro-kernel",
  "nyro-limit",
  "nyro-llm",
  "nyro-mcp",
- "nyro-security",
+ "nyro-sync",
  "serde",
  "serde_json",
  "tempfile",
@@ -2975,28 +2976,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "nyro-authn"
+version = "1.8.3"
+dependencies = [
+ "http",
+ "serde",
+ "sha2",
+ "thiserror 2.0.18",
+ "url",
+]
+
+[[package]]
+name = "nyro-authz"
+version = "1.8.3"
+dependencies = [
+ "nyro-authn",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nyro-balance"
+version = "1.8.3"
+dependencies = [
+ "rand 0.8.6",
+ "serde",
+]
+
+[[package]]
 name = "nyro-config"
 version = "1.8.3"
 dependencies = [
+ "nyro-authn",
+ "nyro-balance",
  "nyro-limit",
  "nyro-llm",
  "nyro-mcp",
- "nyro-security",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]
 name = "nyro-control"
 version = "1.8.3"
 dependencies = [
+ "nyro-authn",
  "nyro-config",
  "nyro-llm",
- "nyro-security",
  "serde",
  "serde_json",
  "sqlx",
@@ -3004,6 +3035,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3078,9 +3110,11 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures",
+ "nyro-authn",
+ "nyro-authz",
+ "nyro-balance",
  "nyro-limit",
  "nyro-protocol",
- "nyro-security",
  "rand 0.8.6",
  "reqwest 0.12.28",
  "serde",
@@ -3101,8 +3135,11 @@ dependencies = [
  "bytes",
  "futures",
  "http-body",
+ "nyro-authn",
+ "nyro-authz",
+ "nyro-balance",
  "nyro-limit",
- "nyro-security",
+ "rand 0.8.6",
  "reqwest 0.13.4",
  "rmcp",
  "serde",
@@ -3125,15 +3162,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nyro-security"
-version = "1.8.3"
-dependencies = [
- "serde",
- "sha2",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "nyro-server"
 version = "1.8.3"
 dependencies = [
@@ -3152,6 +3180,23 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "nyro-sync"
+version = "1.8.3"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

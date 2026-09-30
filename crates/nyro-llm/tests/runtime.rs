@@ -10,12 +10,12 @@ use axum::{
     http::{Request, StatusCode},
     routing::post,
 };
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
 use nyro_llm::{
     Workload, config,
     runtime::{Options, Runtime},
 };
-use nyro_security::{ApiKey, ApiKeys};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -76,10 +76,10 @@ use futures::StreamExt;
 
 fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Runtime {
     let config = config::Config {
-        subject_limits: BTreeMap::new(),
         providers: BTreeMap::from([(
             "upstream".into(),
             config::Provider {
+                auth: None,
                 transport: Default::default(),
                 native_chat: false,
                 kind: config::ProviderKind::Openai,
@@ -94,8 +94,6 @@ fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Ru
                 strategy: Default::default(),
                 max_attempts: 1,
                 health: None,
-                rate: None,
-                quota: None,
                 backends: vec![config::Backend {
                     id: "default".into(),
                     provider: "upstream".into(),
@@ -109,14 +107,14 @@ fn runtime(upstream: &Upstream, limit: ConcurrencyLimit, options: Options) -> Ru
             },
         )]),
     };
-    let keys = ApiKeys::new(vec![
-        ApiKey {
+    let keys = KeyAuth::new(vec![
+        KeyCredential {
             id: "alice".into(),
             secret: "client-secret".into(),
             enabled: true,
             expires_at: None,
         },
-        ApiKey {
+        KeyCredential {
             id: "bob".into(),
             secret: "other-secret".into(),
             enabled: true,

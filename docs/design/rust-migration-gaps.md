@@ -1,8 +1,8 @@
 # Rust 迁移差异审计
 
-审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，G07 主体 TPM／TPD 预留与结算已由 PR #349 合并，G08 可选选择策略与路由／健康／重试迁移契约已由 PR #350 合并，G09 文件代理出口配置与 HTTP 迁移契约已由 PR #351 合并，G10 首轮最小 SQLite 控制面已由 PR #352 合并，Provider／Model／API Key 实体管理与凭证脱敏查询已由 PR #353 合并，本轮推进 PostgreSQL 等价控制存储，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)和[服务指南](../standalone/rust-serve_CN.md)说明当前支持范围。
+审计基线：`d943c174`（2026-09-09，含 PR #323）。后续关闭状态：G01 已由 PR #324 补齐；G02 的 OpenAI Chat／Anthropic Messages／Gemini／无状态 Responses 原生增量已由 PR #325–#328 合并，G04 的工具历史／结果与 Schema 增量已由 PR #329–#331 合并，G03 用户图片输入、缓存用量、官方缓存控制、OpenAI 严格断点及 Anthropic 严格缓存控制已由 PR #332–#336 合并，Anthropic 严格推理／签名已由 PR #337 合并，Gemini 严格推理／签名已由 PR #339 合并，Responses 严格推理已由 PR #340 合并，OpenAI effort 映射与推理边界已由 PR #341–#342 合并，有序 IR 基础已由 PR #343 合并，三协议交错输出已由 PR #344 合并，工具结果图片子集已由 PR #345 合并，本地多轮工具会话回归已由 PR #346 合并，G06 文件代理密钥生命周期已由 PR #347 合并，G07 主体 RPM／RPD 请求窗口已由 PR #348 合并，G07 主体 TPM／TPD 预留与结算已由 PR #349 合并，G08 可选选择策略与路由／健康／重试迁移契约已由 PR #350 合并，G09 文件代理出口配置与 HTTP 迁移契约已由 PR #351 合并，G10 首轮最小 SQLite 控制面已由 PR #352 合并，Provider／Model／API Key 实体管理与凭证脱敏查询已由 PR #353 合并，PostgreSQL 等价控制存储及 MCP 双应用已落地；本轮按下文 2026-09-29 更新统一资源及同步模型，其余差异继续跟踪。本文核对仓库实现和测试，不代表真实厂商或 SDK 兼容认证。[架构文档](architecture.md)仍是目标设计，[实验性代理指南](../standalone/rust-proxy_CN.md)和[服务指南](../standalone/rust-serve_CN.md)说明当前支持范围。
 
-**新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：模型 token bucket 不等于 API Key 请求窗口；存在 Responses 端点也不等于兼容 Codex 账号通道。
+**新文件配置 LLM 数据面已具备主要执行和生命周期机制，尚不能替换已发布 Server。** 同名能力不等于契约已迁移：本轮改用资源／Consumer 滚动窗口及实际 token 结算；存在 Responses 端点也不等于兼容 Codex 账号通道。
 
 本文记录现状与建议顺序，不授权下线旧功能、修改用户数据或创建所有目标 crate。移除旧消费者前，每项差异必须有行为与回归证据，或经过明确接受的兼容性变更。
 
@@ -10,17 +10,25 @@
 
 MCP 扩展：已新增独立 `nyro-mcp` 与根 `GatewayRuntime`，LLM/MCP 默认加载并同代际发布，支持纯 LLM、纯 MCP 和空资源启动；支持工具子集、共享认证/并发、完整配置快照及上游凭据脱敏。该项用于验证双应用边界，不代表旧入口迁移或控制台迁移已经结束。范围见 [MCP 指南](../standalone/rust-mcp_CN.md)。
 
+## 2026-09-29 资源与同步模型更新
+
+根入口改用四类资源和按资源建表；保存后自动分发，不再使用草稿/发布。`nyro proxy --config` 只读取一次文件，取消 SIGHUP；`nyro proxy --server` 接收 HTTP 完整快照；`nyro serve` 默认仅控制面，`--enable-proxy` 通过 memory 启用内嵌数据面。
+
+认证/授权已拆分 authn/authz；上游池复用 balance；请求/token 改为灵活滚动窗口并仅结算实际已知用量，取消预占、固定 RPM/RPD/TPM/TPD 配置及资源 token bucket。下方编号章节中的旧 G07/G10 契约是历史验收背景，已删除源码的证据链接固定到本轮之前的提交，以当前[架构](architecture.md)、[资源指南](../standalone/rust-proxy_CN.md)和[控制面指南](../standalone/rust-serve_CN.md)为准。
+
+旧桌面、已发布 Server、控制台适配、账号 OAuth 通道等迁移仍未完成，因此本清单继续保留，最终切换验收后删除。
+
 ## 1. 已有基础及其范围
 
 | 能力 | 当前证据与边界 |
 |---|---|
-| 生命周期与代际 | [内核](../../crates/nyro-kernel/README_CN.md)、[装配](../../src/bootstrap.rs)和[重载](../../src/reload.rs)：候选激活、失败清理、lease 和退役；文件模式 Unix 显式 SIGHUP 重载；serve 模式由独立回环管理 API 发布 SQLite／PostgreSQL 快照，没有远程分发。 |
+| 生命周期与代际 | [内核](../../crates/nyro-kernel/README_CN.md)、[装配](../../src/bootstrap.rs)和[同步](../../crates/nyro-sync/src/lib.rs)：候选激活、失败清理、lease 和退役；文件模式仅启动读取；serve 保存 SQLite／Postgres 资源后经 memory 或 HTTP 分发完整快照。 |
 | 类型化工作负载 | [IR](../../crates/nyro-llm/src/ir/mod.rs)：`Request`/`Response` 配对 Chat 和 Embedding，其他工作负载未实现。 |
 | 协议执行 | [矩阵测试](../../crates/nyro-llm/tests/protocol_matrix.rs)覆盖三种 Chat 格式，[Responses 运行时测试](../../crates/nyro-llm/tests/responses_runtime.rs)补充 Responses 组合。覆盖已支持的文本、函数和流，不代表任意厂商字段兼容。 |
-| 准入 | [安全包](../../crates/nyro-security/src/lib.rs)、[rate 运行时](../../crates/nyro-llm/tests/rate_runtime.rs)和[quota 运行时](../../crates/nyro-llm/tests/quota_runtime.rs)：凭证认证、模型授权、进程并发、按模型 rate、主体 RPM／RPD 和 TPM／TPD 窗口、累计 token 预留。旧契约差异见 G06–G07。 |
-| 路由与健康 | [路由测试](../../crates/nyro-llm/tests/routing_runtime.rs)和[故障转移测试](../../crates/nyro-llm/tests/failover_runtime.rs)：优先级内 weighted／least_recent／latency 选择、有界尝试、被动健康检查；旧策略映射和有意变化见第 31 节。 |
-| 交付与观测 | [响应体所有权](../../src/http/body.rs)、[观测](../../crates/nyro-llm/tests/observation_runtime.rs)和[进程测试](../../tests/proxy_smoke.py)：期限、取消、SSE 终止、请求／尝试关联日志及清理。没有持久化请求查询服务。 |
-| 共享状态重载 | [重载进程测试](../../tests/proxy_reload_smoke.py)：去重、拒绝变更、持有 SSE 时轮换凭证／路由、rate/quota/health 复用、主体请求窗口保留、FIFO 拒绝及退出。监听／并发和既有策略变更限制仍存在。 |
+| 准入 | [认证](../../crates/nyro-authn/src/lib.rs)、[授权](../../crates/nyro-authz/src/lib.rs)、[滚动限制](../../crates/nyro-limit/src/token.rs)和[用量回归](../../crates/nyro-llm/tests/quota_runtime.rs)：进程并发、资源／Consumer 请求与实际 token 窗口，无预占。 |
+| 路由与健康 | [路由测试](../../crates/nyro-llm/tests/routing_runtime.rs)和[故障转移测试](../../crates/nyro-llm/tests/failover_runtime.rs)：优先级内 weighted-roundrobin／weighted-random／least-recent／latency-aware 选择、有界尝试、被动健康检查；旧策略映射和有意变化见第 31 节。 |
+| 交付与观测 | [响应体所有权](../../src/http/body.rs)、[观测](../../crates/nyro-llm/tests/observation_runtime.rs)和[进程测试](../../tests/rust_resource_smoke.py)：期限、取消、SSE 终止、请求／尝试关联日志及清理。没有持久化请求查询服务。 |
+| 配置同步 | [进程测试](../../tests/rust_resource_smoke.py)：文件只读一次、memory／HTTP 完整快照、收到与已生效回执区分、改名保留 UID、断连继续服务及控制面重启恢复。监听／进程并发属于启动设置。 |
 
 ## 2. 替换旧入口前的数据面差异
 
@@ -33,7 +41,7 @@ MCP 扩展：已新增独立 `nyro-mcp` 与根 `GatewayRuntime`，LLM/MCP 默认
 | G03 推理、缓存与媒体语义 | 部分 | [旧转换测试](../../crates/nyro-core/tests/protocol_conversion.rs)包含 thinking／签名、`reasoning_content`、think-tag 归一化和 Gemini `fileData`。新版已支持 Anthropic、Gemini generateContent、Responses 各自的严格推理配置、历史及 JSON／SSE 保留；已补齐 OpenAI Chat／Responses effort 双向映射与[边界回归](../../crates/nyro-llm/tests/reasoning_boundary_codec.rs)。厂商签名／加密状态不互换，旧标签自动抽取不迁入，兼容扩展交由匹配原生模式；具体范围见[代理指南](../standalone/rust-proxy_CN.md#推理转换与旧行为取舍)。用户图片、缓存用量、OpenAI 与 Anthropic 严格缓存控制／断点已有回归（第 15–22 节）。 | 当前推理转换取舍见第 23 节；有序 IR 基础见第 24 节，三协议交错输出见第 25 节，工具结果图片见第 26 节，本地三轮组合回归见第 27 节；其余 Chat 媒体、未实现缓存／用量扩展及完整客户端验收继续推进。独立 Image/Audio/Video 操作另算范围，不将自动合成签名或丢弃推理当作兼容方案。 |
 | G04 工具历史与 Schema 处理 | 部分／待取舍 | 旧转换测试包含合成调用、重复 ID 修复、丢弃中间文本／孤立调用、Gemini Schema 裁剪。新 [Anthropic](../../crates/nyro-llm/tests/anthropic_codec.rs)／[Gemini](../../crates/nyro-llm/tests/gemini_codec.rs) encoder 保留完整结果批次及后续文本，拒绝缺失／重复／交错批次；Anthropic 显式错误、空结果、[Responses](../../crates/nyro-llm/tests/responses_codec.rs) 文本块数组及 Gemini ID／顺序已补充。多块文本结果到 Gemini、跨协议错误标志映射和非图片媒体结果明确拒绝；图片结果新增支持范围见第 26 节。[Schema 回归](../../crates/nyro-llm/tests/tool_schema_codec.rs)已覆盖 JSON Schema 对象保留、Gemini 计数／类型／嵌套方言转换及 strict 目标筛选；不裁剪引用或约束。完整客户端／厂商验收仍待后续。 | 回放并行调用、交错文本、工具结果和 Schema，保留合法客户端历史；不自动迁移虚构调用或丢内容的处理。区分有意拒绝和兼容回退。 |
 | G05 Provider 通道与凭证 | 部分 | 旧版有[厂商适配](../../crates/nyro-core/src/provider/mod.rs)、[账号认证 driver](../../crates/nyro-core/src/auth/drivers/mod.rs)和 Vertex 服务账号支持。新 Provider 配置只有协议 kind、可选 OpenAI API、URL 和可选静态 API Key。 | 迁移必要端点、Header 和凭证行为，不向 driver 传递 Gateway 或数据库实体。账号授权、刷新、持久化归控制面；driver 消费已解析凭证。详见下方清单。 |
-| G06 API Key 生命周期 | 文件代理已落地 | [安全包](../../crates/nyro-security/src/lib.rs)新增默认启用状态与可选 Unix 秒到期时间，所有入口共用认证时检查；禁用／到期返回通用 `401`，无匿名回退。主体绑定、重复校验和配置指纹保留生命周期语义。 | 精确到期边界、慢上传、所有入口在准入前拒绝、禁用／到期／续期重载与已准入 SSE 保留见第 28 节。控制面管理、旧数据到新快照的发布仍由 G10–G11 跟踪，不据此宣布产品迁移完成。 |
+| G06 API Key 生命周期 | 文件代理已落地 | [安全包](../../crates/nyro-authn/src/lib.rs)新增默认启用状态与可选 Unix 秒到期时间，所有入口共用认证时检查；禁用／到期返回通用 `401`，无匿名回退。主体绑定、重复校验和配置指纹保留生命周期语义。 | 精确到期边界、慢上传、所有入口在准入前拒绝、禁用／到期／续期重载与已准入 SSE 保留见第 28 节。控制面管理、旧数据到新快照的发布仍由 G10–G11 跟踪，不据此宣布产品迁移完成。 |
 | G07 限制作用域与持久化 | 部分 | 旧授权按 API Key 查询 Minute/Day 窗口的请求／token 数（`rpm/rpd/tpm/tpd`）。新 rate 是模型级 token bucket；已补主体级 RPM／RPD 请求窗口、TPM／TPD 用量预留／结算与组合原子准入；请求边界见第 29 节，token 边界见第 30 节。quota 仍是模型级累计额度。 | 持久化、多副本一致性和旧数据发布仍待推进；请求按逻辑准入，token 按尝试结算加在途预留计量，重启清零。显式迁移策略含义，不静默将 RPM 转成不同桶规则或将 TPM 转成累计额度；也不复制旧日志查询准入的竞争问题。 |
 | G08 均衡与重试策略 | 文件代理已落地 | [新运行时](../../crates/nyro-llm/src/runtime.rs)支持最小可用优先级内 weighted（默认）、least_recent 和 latency，按有效 backend 绑定跨代际保留历史。第 31 节记录旧策略映射、采样与重载契约及回归。 | 已接受用每次发起顺序替代旧 cooldown、用单次 2xx 响应头耗时替代旧混合 latency；保留新版重试／2xx 提交安全边界。旧 weighted 统一优先级，确定顺序用不同 priority，显式配置健康与尝试预算；控制面配置发布和旧数据导入仍由 G10–G11 跟踪。 |
 | G09 HTTP 与网络配置 | 文件代理已落地 | [Provider driver](../../crates/nyro-llm/src/provider.rs)支持显式 HTTP／HTTPS 出口代理及独立 HTTP/1 配置；直连默认、环境隔离、代理认证、传输绑定历史和重载已覆盖。第 32 节记录旧配置映射与有意变化。 | 保留 CORS 关闭、规范探针路径、显式大小／期限和 Header 凭证；不迁入隐式系统代理或旧别名。跨域白名单尚未实现，需要浏览器部署需求后另行确定；serve 就绪、控制面配置发布与部署切换继续由 G10–G11 跟踪，不据此宣布产品迁移完成。 |
@@ -64,7 +72,7 @@ MCP 扩展：已新增独立 `nyro-mcp` 与根 `GatewayRuntime`，LLM/MCP 默认
 
 - 保留严格校验、凭证隔离、有界解析、错误脱敏、强制准入和终态清理。兼容不要求恢复不安全或有损旧行为；错误状态／正文、别名、query 和默认值的变化必须说明客户端预期。
 - 五阶段 Hook API 随旧运行时退出。[phase.rs](../../crates/nyro-core/src/plugin/phase.rs)头部仍写“types only”，但调用点已接入。仓库搜索发现阶段注册位于测试，请求／响应扩展示例也存在，没有发现必须重建该框架的内置生产消费者；这不证明仓库外没有消费者。按实际需求提供类型化扩展点，本次切换不要求动态加载 ABI 或全局通用注册表。
-- `nyro-protocol`、`nyro-security`、`nyro-limit` 已有独立包边界。新 `nyro-llm` Provider driver 仍是私有具体实现，并非通用外部 driver 扩展 API。稳定插件 API 要有实际下游复用验证，不预建 `nyro-provider` 或全部规划 crate。
+- `nyro-protocol`、`nyro-authn`、`nyro-authz`、`nyro-balance`、`nyro-limit`、`nyro-sync` 已有独立包边界。新 `nyro-llm` Provider driver 仍是私有具体实现，并非通用外部 driver 扩展 API。稳定插件 API 要有实际下游复用验证，不预建 `nyro-provider` 或全部规划 crate。
 - MCP 工具子集现已作为独立扩展实现，后续 MCP 能力、Gemini Interactions、独立 Image/Audio/Video 操作、托管 Responses 会话／后台任务／内置工具、分布式硬预算，在本次审计中没有确立为旧功能对齐要求。除非保留部署有需求，否则列为后续扩展；这不推迟上文已有 Chat 媒体、凭证和策略差异。
 - Tauri、MySQL 不属于已接受的目标产品范围，但退役仍需发布／数据说明；本次审计不删除实现，也不授权破坏性数据库转换。
 
@@ -528,9 +536,9 @@ G06 的文件代理数据面部分已落地。管理界面／数据库密钥编�
 
 [`nyro-limit/request`](../../crates/nyro-limit/src/request.rs) 使用单调时钟和准入时间队列实现最近 60 秒／24 小时滚动窗口，达到边界的记录过期，日窗口不在午夜清零。各窗口及可选模型桶在固定锁序下原子准入；拒绝不扣减任何请求规则，原生协议 `429` 带建议性的 `Retry-After`，立即释放并发许可且不调用上游。一次逻辑请求跨重试只计一次；准入后的上游错误、无健康 backend、quota 拒绝、取消与响应丢失不退款，准入前拒绝与模型发现不计数。
 
-主体跨模型别名、协议和工作负载共享；不同主体相互独立。匿名请求没有主体窗口，认证调用匿名模型仍受主体规则约束。[LLM 注册表](../../crates/nyro-llm/src/subject_limit.rs)通过 `SharedResources` 跨代际保留活跃或未过期历史，轮换 secret、禁用／重新启用、到期／续期、移除／加回同一 ID 不清零。有活跃绑定或未过期历史时修改窗口参数拒绝候选；不活跃且历史过期后在后续绑定时回收。失败候选不重置现役预算，未使用的候选绑定不永久占住规则。
+主体跨模型别名、协议和工作负载共享；不同主体相互独立。匿名请求没有主体窗口，认证调用匿名模型仍受主体规则约束。[LLM 注册表](https://github.com/nyroway/nyro/blob/d861b718/crates/nyro-llm/src/subject_limit.rs)通过 `SharedResources` 跨代际保留活跃或未过期历史，轮换 secret、禁用／重新启用、到期／续期、移除／加回同一 ID 不清零。有活跃绑定或未过期历史时修改窗口参数拒绝候选；不活跃且历史过期后在后续绑定时回收。失败候选不重置现役预算，未使用的候选绑定不永久占住规则。
 
-[HTTP 回归](../../crates/nyro-llm/tests/rate_runtime/subject_limits.rs)覆盖作用域、四种 Chat API／Embedding、匹配原生 Chat、发现隔离、组合拒绝、代际与部分构建失败；原有 rate 回归分别对模型桶和主体窗口运行，覆盖准入前拒绝、重试、健康、取消／超时及 SSE 丢失。[进程回归](../../tests/proxy_reload_smoke.py)增加实际 SIGHUP 轮换、窗口参数拒绝、禁用／重新启用与移除／加回计数保留。
+[HTTP 回归](https://github.com/nyroway/nyro/blob/d861b718/crates/nyro-llm/tests/rate_runtime/subject_limits.rs)覆盖作用域、四种 Chat API／Embedding、匹配原生 Chat、发现隔离、组合拒绝、代际与部分构建失败；原有 rate 回归分别对模型桶和主体窗口运行，覆盖准入前拒绝、重试、健康、取消／超时及 SSE 丢失。[进程回归](../../tests/proxy_reload_smoke.py)增加实际 SIGHUP 轮换、窗口参数拒绝、禁用／重新启用与移除／加回计数保留。
 
 验证：`cargo test -p nyro-limit -p nyro-security -p nyro-protocol -p nyro-llm -p nyro-config -p nyro --offline` 全量 506 项通过；随后补充部分候选构建回滚和后续 quota 拒绝计数，6 项主体专项通过，共验证 508 项不同 Rust 测试。受影响 crate 的 Clippy（all-targets、拒绝 warning）、非桌面 workspace 检查、根二进制构建及扩展后的重载进程回归通过；格式、diff 与 154 个文档相对路径检查通过。配置接受、未知主体拒绝和 HTTP 限速先验证旧行为失败，再通过实现；并发组合准入与窗口精确边界由原语测试覆盖。独立审查未发现生产代码问题，已补充建议的部分候选失败测试及重载排查文档。验证仅使用本地 mock 与临时测试密钥字符串。
 
@@ -541,7 +549,7 @@ G06 的文件代理数据面部分已落地。管理界面／数据库密钥编�
 
 基于 `02c75a3f`（PR #348），在现有 `llm.subject_limits` 中补充可选 `tpm/tpd` 与配套 `reserve_tokens`，至少一个请求或 token 窗口，token 预留须为正且不超过各已配置上限。允许仅 token 窗口或与 RPM／RPD 组合；旧请求窗口 YAML 保持兼容，Rust `SubjectLimitConfig` 字面量需新增三个可选字段。
 
-[`nyro-limit/window`](../../crates/nyro-limit/src/window.rs) 按通用单位维护每个窗口的已结算队列及共享在途预留。预留不随时间过期；正用量从结算时刻进入最近 60 秒／24 小时窗口，边界准确过期。与模型累计 quota 在固定锁序下原子预留，拒绝不改变两类 token 预算；原先逻辑请求准入次数不退款。每次上游重试独立预留，连接建立失败全额释放，协议完成按实际结算，缺失／失败／取消分别取各预算自身预留和最高有效观测值的较大值。超额如实记录并阻止后续预留，不中断已准入流，不承诺厂商实际消耗硬上限。
+[`nyro-limit/window`](https://github.com/nyroway/nyro/blob/d861b718/crates/nyro-limit/src/window.rs) 按通用单位维护每个窗口的已结算队列及共享在途预留。预留不随时间过期；正用量从结算时刻进入最近 60 秒／24 小时窗口，边界准确过期。与模型累计 quota 在固定锁序下原子预留，拒绝不改变两类 token 预算；原先逻辑请求准入次数不退款。每次上游重试独立预留，连接建立失败全额释放，协议完成按实际结算，缺失／失败／取消分别取各预算自身预留和最高有效观测值的较大值。超额如实记录并阻止后续预留，不中断已准入流，不承诺厂商实际消耗硬上限。
 
 主体 token 拒绝返回原生协议 `429`，已结算历史可腾出预算时返回向上取整的最长所需 `Retry-After`；仅在途预算已足以阻塞时不返回未知等待时间。模型 quota 保持原错误语义。现有观察与 `AttemptQuota` 结算路径共同覆盖严格、原生、JSON、SSE 和 Embedding；`token_window_charged_tokens`／`token_window_outcome` 与模型 quota、上游报告用量分开，TPM 和 TPD 不重复累加成日志用量。
 
@@ -711,7 +719,7 @@ cargo fmt --all -- --check
 
 ## 34. G10 实体草稿管理与凭证脱敏查询
 
-本节记录已合并的 PR #353：在 PR #352 基础上，复用现有 `nyro-control`、根 `serve` 和 SQLite v1 完整快照，不新增 crate、实体表或数据库 schema。[控制库实体模块](../../crates/nyro-control/src/entity.rs)拥有类型化编辑命令、凭证变更、引用检查与查询投影；[根 HTTP 适配](../../src/control/entity.rs)解析请求后交给既有服务持有队列。业务规则不进入 kernel、LLM 请求路径或 HTTP handler。
+本节记录已合并的 PR #353：在 PR #352 基础上，复用现有 `nyro-control`、根 `serve` 和 SQLite v1 完整快照，不新增 crate、实体表或数据库 schema。[控制库实体模块](../../crates/nyro-control/src/resource/mod.rs)拥有类型化编辑命令、凭证变更、引用检查与查询投影；[根 HTTP 适配](https://github.com/nyroway/nyro/blob/d861b718/src/control/entity.rs)解析请求后交给既有服务持有队列。业务规则不进入 kernel、LLM 请求路径或 HTTP handler。
 
 `/admin/providers`、`/admin/models`、`/admin/api-keys` 支持列表／新建和单项读取／替换／删除。列表按 ID 排序，返回 `{draft_revision, items: [{id, value}]}`；详情返回 `{draft_revision, item: {id, value}}`。新建请求为 `{expected_revision, id, value}`，完成返回 `201 {draft_revision}`；替换为 `{expected_revision, value}`，删除为 `{expected_revision}`，均完成返回 `200 {draft_revision}`。路径 ID 整段 URL 编码，包含 `/` 时使用 `%2F`；不提供重命名。
 
@@ -723,7 +731,7 @@ cargo fmt --all -- --check
 
 所有新路径复用既有管理认证、1 MiB 正文上限、15 秒正文读取期限、16 个操作准入、10 秒等待及断连后继续执行契约。编辑只保存草稿；显式发布、失败边界、等价配置、SSE lease、共享限制状态和重启恢复沿用第 33 节。完整请求、默认值与恢复说明见[中文服务指南](../standalone/rust-serve_CN.md)和[英文服务指南](../standalone/rust-serve.md)。
 
-本轮回归入口为[控制库实体测试](../../crates/nyro-control/tests/entity.rs)、[管理 API 测试](../../src/control/tests.rs)及[真实 serve 进程回归](../../tests/serve_smoke.py)。G10 仍部分完成，WebUI、Postgres、OAuth、旧数据导入、持久化预算／观测、多副本协调及产品切换继续跟踪。此清单仅维护这一份中文临时文档，整体迁移完成后删除，不归档；`docs/superpowers/` 继续保持忽略。
+本轮回归入口为[控制库实体测试](https://github.com/nyroway/nyro/blob/d861b718/crates/nyro-control/tests/entity.rs)、[管理 API 测试](https://github.com/nyroway/nyro/blob/d861b718/src/control/tests.rs)及[真实 serve 进程回归](../../tests/serve_smoke.py)。G10 仍部分完成，WebUI、Postgres、OAuth、旧数据导入、持久化预算／观测、多副本协调及产品切换继续跟踪。此清单仅维护这一份中文临时文档，整体迁移完成后删除，不归档；`docs/superpowers/` 继续保持忽略。
 
 
 本轮实际执行：
@@ -741,7 +749,7 @@ cargo fmt --all -- --check
 
 ## 35. G10 PostgreSQL 等价控制存储
 
-在已合并的 PR #353 实体管理基础上，为同一个 `nyro-control::Store` 增加 `open_postgres`，不新建 crate。公共门面位于 [`storage/mod.rs`](../../crates/nyro-control/src/storage/mod.rs)，私有 SQLite／PostgreSQL 实现分别位于 [`storage/sqlite.rs`](../../crates/nyro-control/src/storage/sqlite.rs) 和 [`storage/postgres.rs`](../../crates/nyro-control/src/storage/postgres.rs)。实体命令、完整配置校验、脱敏投影、全局草稿版本比较和显式发布复用既有业务路径；数据库逻辑不进入 kernel 或 LLM。
+在已合并的 PR #353 实体管理基础上，为同一个 `nyro-control::Store` 增加 `open_postgres`，不新建 crate。公共门面位于 [`storage/mod.rs`](https://github.com/nyroway/nyro/blob/d861b718/crates/nyro-control/src/storage/mod.rs)，私有 SQLite／PostgreSQL 实现分别位于 [`storage/sqlite.rs`](../../crates/nyro-control/src/resource/database.rs) 和 [`storage/postgres.rs`](../../crates/nyro-control/src/resource/database.rs)。实体命令、完整配置校验、脱敏投影、全局草稿版本比较和显式发布复用既有业务路径；数据库逻辑不进入 kernel 或 LLM。
 
 根 `serve` 在 `--database PATH` 与 `--postgres-url-file PATH` 中二选一，继续要求 `--admin-token-file PATH`。PostgreSQL URL 从最多 16 KiB 的普通 UTF-8 文件读取，去掉末尾 CR/LF，不接受命令行直接传 URL。`--config` 仅初始化种子，草稿和已发布版本均从 1 开始；已有状态拒绝重新导入，重启加载已发布快照并保留未发布草稿。两个后端共用相同 HTTP 路由、CRUD DTO、凭证更新、管理认证和正文／队列限制。
 
