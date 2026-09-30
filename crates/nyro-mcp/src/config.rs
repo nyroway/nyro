@@ -43,6 +43,8 @@ pub struct Server {
         deserialize_with = "present"
     )]
     pub bearer_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<nyro_authn::outbound::KeyAuth>,
     pub subjects: Vec<String>,
     pub allowed_tools: Vec<String>,
 }
@@ -130,6 +132,11 @@ impl Config {
                     "upstream URL must be HTTP(S) without credentials, query, fragment or whitespace",
                 ));
             }
+            if server.auth.as_ref().is_some_and(|a| a.validate().is_err())
+                || (server.auth.is_some() && server.bearer_token.is_some())
+            {
+                return Err(ConfigError("invalid upstream authentication"));
+            }
             if let Some(token) = &server.bearer_token {
                 let core = token.trim_end_matches('=');
                 if core.is_empty()
@@ -140,7 +147,9 @@ impl Config {
                     return Err(ConfigError("invalid upstream bearer token"));
                 }
             }
-            if !valid_set(&server.subjects) || !valid_set(&server.allowed_tools) {
+            if (!server.subjects.is_empty() && !valid_set(&server.subjects))
+                || !valid_set(&server.allowed_tools)
+            {
                 return Err(ConfigError(
                     "subjects and allowed_tools must be nonempty unique exact names",
                 ));

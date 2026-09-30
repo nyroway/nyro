@@ -6,12 +6,12 @@ use axum::{
     routing::post,
 };
 use futures::StreamExt;
+use nyro_authn::KeyAuth;
 use nyro_limit::ConcurrencyLimit;
 use nyro_llm::{
     config::Config,
     runtime::{Options, Runtime, SharedResources},
 };
-use nyro_security::ApiKeys;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -175,22 +175,38 @@ fn answer(usage: Value) -> Value {
 fn usage() -> Value {
     json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":5})
 }
-fn config(upstreams: &[&Upstream], quota: Option<u64>) -> Config {
+fn config(upstreams: &[&Upstream], _legacy_budget: Option<u64>) -> Config {
     let providers: serde_json::Map<_, _> = upstreams.iter().enumerate().map(|(i, upstream)| (format!("p{i}"), json!({"kind":"openai","base_url":format!("{}/v1",upstream.base),"api_key":"upstream-secret"}))).collect();
     let backends: Vec<_> = upstreams.iter().enumerate().map(|(i, _)| json!({"id":format!("b{i}"),"provider":format!("p{i}"),"upstream_model":"private-model","priority":i})).collect();
-    let mut value = json!({"providers":providers,"models":{"public":{"backends":backends,"max_attempts":upstreams.len(),"workloads":["chat","embedding"],"allow_anonymous":true}}});
-    if let Some(total) = quota {
-        value["models"]["public"]["quota"] = json!({"total_tokens":total,"reserve_tokens":10});
-    }
+    let value = json!({"providers":providers,"models":{"public":{"backends":backends,"max_attempts":upstreams.len(),"workloads":["chat","embedding"],"allow_anonymous":true}}});
     serde_json::from_value(value).unwrap()
 }
 fn runtime(config: Config, options: Options) -> Runtime {
-    Runtime::with_resources(
+    runtime_with_budget(config, options, 100)
+}
+fn runtime_with_budget(config: Config, options: Options, budget: u64) -> Runtime {
+    let registry = nyro_limit::token::Registry::default();
+    let policy = registry
+        .bind(
+            "public",
+            vec![],
+            vec![nyro_limit::token::Rule {
+                limit: budget,
+                window: Duration::from_secs(60),
+            }],
+        )
+        .unwrap();
+    Runtime::with_policies(
         config,
-        Arc::new(ApiKeys::new(vec![]).unwrap()),
+        Arc::new(KeyAuth::new(vec![]).unwrap()),
         ConcurrencyLimit::new(2).unwrap(),
         options,
         SharedResources::default(),
+        nyro_llm::runtime::Policies {
+            registry,
+            models: std::collections::BTreeMap::from([("public".into(), policy)]),
+            ..Default::default()
+        },
     )
     .unwrap()
 }
@@ -255,7 +271,7 @@ async fn json_emits_correlated_attempt_and_summary_only_after_delivery() {
     assert_eq!(summary.number("input_tokens"), 3);
     assert_eq!(summary.number("output_tokens"), 2);
     assert_eq!(summary.number("total_tokens"), 5);
-    assert_eq!(summary.number("quota_charged_tokens"), 0);
+    assert_eq!(summary.number("token_window_charged_tokens"), 5);
     summary.number("duration_ms");
     let attempt = &attempts[0];
     assert_eq!(attempt.get("message"), "LLM upstream attempt finished");
@@ -267,8 +283,8 @@ async fn json_emits_correlated_attempt_and_summary_only_after_delivery() {
     assert_eq!(attempt.number("attempt"), 1);
     assert_eq!(attempt.number("upstream_status"), 200);
     assert_eq!(attempt.get("outcome"), "complete");
-    assert_eq!(attempt.get("quota_outcome"), "disabled");
-    assert!(!attempt.fields.contains_key("quota_charged_tokens"));
+    assert_eq!(attempt.get("token_window_outcome"), "actual");
+    assert_eq!(attempt.number("token_window_charged_tokens"), 5);
     assert_eq!(attempt.number("total_tokens"), 5);
     attempt.number("duration_ms");
     let serialized = format!("{:?}", events.0.lock().unwrap());
@@ -354,12 +370,12 @@ async fn zero_missing_invalid_usage_are_distinct_with_and_without_quota() {
                 200,
                 0,
             ),
-            (Value::Null, "missing", 200, 10),
+            (Value::Null, "missing", 200, 0),
             (
                 json!({"prompt_tokens":3,"completion_tokens":2,"total_tokens":4}),
                 "invalid",
-                if quota.is_some() { 502 } else { 200 },
-                10,
+                502,
+                0,
             ),
         ] {
             let events = Events::default();
@@ -376,7 +392,7 @@ async fn zero_missing_invalid_usage_are_distinct_with_and_without_quota() {
             let summary = events.request();
             assert_eq!(summary.get("usage_state"), state);
             assert_eq!(
-                summary.number("quota_charged_tokens"),
+                summary.number("token_window_charged_tokens"),
                 if quota.is_some() { charged } else { 0 }
             );
             let attempts = events.target("nyro::attempt");
@@ -389,13 +405,11 @@ async fn zero_missing_invalid_usage_are_distinct_with_and_without_quota() {
                 assert!(!attempts[0].fields.contains_key("total_tokens"));
             }
             assert_eq!(
-                attempts[0].get("quota_outcome"),
-                if quota.is_none() {
-                    "disabled"
-                } else if state == "complete" {
+                attempts[0].get("token_window_outcome"),
+                if state == "complete" {
                     "actual"
                 } else {
-                    "fallback"
+                    "missing"
                 }
             );
         }
@@ -421,7 +435,7 @@ async fn retry_summary_correlates_attempts_and_separates_observed_from_charged_t
     assert_eq!(summary.get("outcome"), "complete");
     assert_eq!(summary.get("usage_state"), "partial");
     assert_eq!(summary.number("total_tokens"), 5);
-    assert_eq!(summary.number("quota_charged_tokens"), 15);
+    assert_eq!(summary.number("token_window_charged_tokens"), 5);
     let attempts = events.target("nyro::attempt");
     assert_eq!(attempts.len(), 2);
     for (index, attempt) in attempts.iter().enumerate() {
@@ -431,10 +445,10 @@ async fn retry_summary_correlates_attempts_and_separates_observed_from_charged_t
     }
     assert_eq!(attempts[0].get("outcome"), "http_error");
     assert_eq!(attempts[0].number("upstream_status"), 503);
-    assert_eq!(attempts[0].get("quota_outcome"), "fallback");
-    assert_eq!(attempts[0].number("quota_charged_tokens"), 10);
-    assert_eq!(attempts[1].get("quota_outcome"), "actual");
-    assert_eq!(attempts[1].number("quota_charged_tokens"), 5);
+    assert_eq!(attempts[0].get("token_window_outcome"), "missing");
+    assert_eq!(attempts[0].number("token_window_charged_tokens"), 0);
+    assert_eq!(attempts[1].get("token_window_outcome"), "actual");
+    assert_eq!(attempts[1].number("token_window_charged_tokens"), 5);
 }
 
 #[tokio::test]
@@ -452,9 +466,10 @@ async fn local_rejections_have_no_attempt_and_do_not_log_untrusted_model_or_cred
         if rejection == "authentication" {
             configuration["models"]["public"]["allow_anonymous"] = json!(false);
         }
-        let runtime = runtime(
+        let runtime = runtime_with_budget(
             serde_json::from_value(configuration).unwrap(),
             Options::default(),
+            if rejection == "quota" { 5 } else { 100 },
         );
         if rejection == "quota" {
             let response = runtime
@@ -523,7 +538,7 @@ async fn upstream_timeout_keeps_timeout_outcome_after_error_body_is_delivered() 
     assert_eq!(summary.get("outcome"), "timeout");
     assert_eq!(summary.get("delivery_outcome"), "complete");
     assert_eq!(summary.get("error_code"), "request_timeout");
-    assert_eq!(summary.number("quota_charged_tokens"), 10);
+    assert_eq!(summary.number("token_window_charged_tokens"), 0);
     let attempts = events.target("nyro::attempt");
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].get("outcome"), "timeout");
@@ -547,7 +562,7 @@ async fn aborting_handle_future_finalizes_request_and_attempt_once_before_header
     assert_eq!(summary.number("status"), 0);
     assert_eq!(summary.get("outcome"), "cancelled");
     assert_eq!(summary.get("delivery_outcome"), "none");
-    assert_eq!(summary.number("quota_charged_tokens"), 10);
+    assert_eq!(summary.number("token_window_charged_tokens"), 0);
     let attempts = events.target("nyro::attempt");
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].get("outcome"), "cancelled");
@@ -569,11 +584,11 @@ async fn completed_upstream_attempt_survives_downstream_body_drop() {
     assert_eq!(summary.get("outcome"), "cancelled");
     assert_eq!(summary.get("delivery_outcome"), "cancelled");
     assert_eq!(summary.get("usage_state"), "complete");
-    assert_eq!(summary.number("quota_charged_tokens"), 5);
+    assert_eq!(summary.number("token_window_charged_tokens"), 5);
     let attempts = events.target("nyro::attempt");
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].get("outcome"), "complete");
-    assert_eq!(attempts[0].get("quota_outcome"), "actual");
+    assert_eq!(attempts[0].get("token_window_outcome"), "actual");
 }
 
 #[tokio::test]
@@ -609,12 +624,12 @@ async fn cancelling_stream_retains_last_usage_and_charges_fallback_once() {
     assert_eq!(summary.get("outcome"), "cancelled");
     assert_eq!(summary.get("delivery_outcome"), "cancelled");
     assert_eq!(summary.number("total_tokens"), 5);
-    assert_eq!(summary.number("quota_charged_tokens"), 10);
+    assert_eq!(summary.number("token_window_charged_tokens"), 5);
     let attempts = events.target("nyro::attempt");
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].get("outcome"), "cancelled");
     assert_eq!(attempts[0].number("total_tokens"), 5);
-    assert_eq!(attempts[0].get("quota_outcome"), "fallback");
+    assert_eq!(attempts[0].get("token_window_outcome"), "actual");
 }
 
 #[tokio::test]
@@ -723,14 +738,14 @@ async fn connection_failure_reports_unknown_status_and_released_reservation() {
     assert_eq!(response.status(), 502);
     consume(response).await;
     let summary = events.request();
-    assert_eq!(summary.number("quota_charged_tokens"), 0);
+    assert_eq!(summary.number("token_window_charged_tokens"), 0);
     assert_eq!(summary.get("outcome"), "error");
     let attempts = events.target("nyro::attempt");
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].get("outcome"), "connect_error");
     assert_eq!(attempts[0].number("upstream_status"), 0);
-    assert_eq!(attempts[0].get("quota_outcome"), "released");
-    assert_eq!(attempts[0].number("quota_charged_tokens"), 0);
+    assert_eq!(attempts[0].get("token_window_outcome"), "missing");
+    assert_eq!(attempts[0].number("token_window_charged_tokens"), 0);
     assert!(upstream.calls.lock().unwrap().is_empty());
 }
 
@@ -804,13 +819,16 @@ async fn broken_transport_after_headers_is_not_a_protocol_error() {
             "transport_error",
             "streaming={streaming}"
         );
-        assert_eq!(attempts[0].get("quota_outcome"), "fallback");
+        assert_eq!(
+            attempts[0].get("token_window_outcome"),
+            if streaming { "actual" } else { "missing" }
+        );
         assert_eq!(events.request().get("outcome"), "error");
     }
 }
 
 #[tokio::test]
-async fn subject_window_charges_are_separate_from_model_quota_and_reported_usage() {
+async fn consumer_and_model_windows_both_charge_only_known_actual_usage() {
     for model_quota in [None, Some(100)] {
         for reported in [Value::Null, usage()] {
             let events = Events::default();
@@ -819,13 +837,48 @@ async fn subject_window_charges_are_separate_from_model_quota_and_reported_usage
             );
             let upstream = upstream(Reply::Json(answer(reported.clone()))).await;
             let mut config = config(&[&upstream], model_quota);
-            config.subject_limits =
-                serde_json::from_value(json!({"alice":{"tpm":100,"tpd":1000,"reserve_tokens":17}}))
-                    .unwrap();
-            let runtime = Runtime::new(
+            config.models.get_mut("public").unwrap().allow_anonymous = false;
+            config
+                .models
+                .get_mut("public")
+                .unwrap()
+                .subjects
+                .insert("alice".into());
+            let registry = nyro_limit::token::Registry::default();
+            let caller = registry
+                .bind(
+                    "alice",
+                    vec![],
+                    vec![nyro_limit::token::Rule {
+                        limit: 5,
+                        window: Duration::from_secs(60),
+                    }],
+                )
+                .unwrap();
+            let model = registry
+                .bind(
+                    "public",
+                    vec![],
+                    vec![nyro_limit::token::Rule {
+                        limit: 5,
+                        window: Duration::from_secs(60),
+                    }],
+                )
+                .unwrap();
+            let policies = nyro_llm::runtime::Policies {
+                registry: registry.clone(),
+                consumers: std::collections::BTreeMap::from([("alice".into(), caller.clone())]),
+                models: if model_quota.is_some() {
+                    std::collections::BTreeMap::from([("public".into(), model.clone())])
+                } else {
+                    Default::default()
+                },
+                ..Default::default()
+            };
+            let runtime = Runtime::with_policies(
                 config,
                 Arc::new(
-                    ApiKeys::new(vec![nyro_security::ApiKey {
+                    KeyAuth::new(vec![nyro_authn::KeyCredential {
                         id: "alice".into(),
                         secret: "client-secret".into(),
                         enabled: true,
@@ -835,6 +888,8 @@ async fn subject_window_charges_are_separate_from_model_quota_and_reported_usage
                 ),
                 ConcurrencyLimit::new(1).unwrap(),
                 Options::default(),
+                SharedResources::default(),
+                policies,
             )
             .unwrap();
             let mut input = request(false);
@@ -845,16 +900,13 @@ async fn subject_window_charges_are_separate_from_model_quota_and_reported_usage
             assert_eq!(response.status(), 200);
             consume(response).await;
             let summary = events.request();
-            let window = if reported.is_null() { 17 } else { 5 };
-            let model = if model_quota.is_none() {
-                0
-            } else if reported.is_null() {
-                10
-            } else {
-                5
-            };
+            let window = if reported.is_null() { 0 } else { 5 };
             assert_eq!(summary.number("token_window_charged_tokens"), window);
-            assert_eq!(summary.number("quota_charged_tokens"), model);
+            assert_eq!(registry.admit(&[&caller]).is_err(), !reported.is_null());
+            assert_eq!(
+                registry.admit(&[&model]).is_err(),
+                model_quota.is_some() && !reported.is_null()
+            );
             assert_eq!(
                 summary.number("total_tokens"),
                 if reported.is_null() { 0 } else { 5 }
@@ -865,17 +917,11 @@ async fn subject_window_charges_are_separate_from_model_quota_and_reported_usage
             assert_eq!(
                 attempts[0].get("token_window_outcome"),
                 if reported.is_null() {
-                    "fallback"
+                    "missing"
                 } else {
                     "actual"
                 }
             );
-            if model_quota.is_none() {
-                assert_eq!(attempts[0].get("quota_outcome"), "disabled");
-                assert!(!attempts[0].fields.contains_key("quota_charged_tokens"));
-            } else {
-                assert_eq!(attempts[0].number("quota_charged_tokens"), model);
-            }
         }
     }
 }

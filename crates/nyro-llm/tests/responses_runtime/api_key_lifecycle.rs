@@ -8,23 +8,22 @@ async fn inactive_keys_fail_before_admission_for_every_surface() {
             let fixture = upstream("openai", "normal").await;
             let config: Config = serde_json::from_value(json!({
                 "providers":{"p":{"kind":"openai","base_url":format!("{}/v1",fixture.base),"api_key":"upstream-secret","native_chat":native}},
-                "models":{"public":{"provider":"p","upstream_model":"internal","workloads":["chat","embedding"],"subjects":["alice"],"allow_anonymous":anonymous,
-                    "rate":{"requests":1,"period_ms":600000},"quota":{"total_tokens":5,"reserve_tokens":5}}}
+                "models":{"public":{"provider":"p","upstream_model":"internal","workloads":["chat","embedding"],"subjects":["alice"],"allow_anonymous":anonymous}}
             })).unwrap();
-            let keys = ApiKeys::new(vec![
-                ApiKey {
+            let keys = KeyAuth::new(vec![
+                KeyCredential {
                     id: "disabled".into(),
                     secret: "disabled-secret".into(),
                     enabled: false,
                     expires_at: None,
                 },
-                ApiKey {
+                KeyCredential {
                     id: "expired".into(),
                     secret: "expired-secret".into(),
                     enabled: true,
                     expires_at: Some(0),
                 },
-                ApiKey {
+                KeyCredential {
                     id: "alice".into(),
                     secret: "client-secret".into(),
                     enabled: true,
@@ -85,7 +84,11 @@ async fn inactive_keys_fail_before_admission_for_every_surface() {
                         let result = gateway.handle(request, CancellationToken::new()).await;
                         assert_eq!(
                             result.status(),
-                            StatusCode::UNAUTHORIZED,
+                            if anonymous && surface != "models" {
+                                StatusCode::TOO_MANY_REQUESTS
+                            } else {
+                                StatusCode::UNAUTHORIZED
+                            },
                             "{surface} native={native} anonymous={anonymous}"
                         );
                         let bytes = to_bytes(result.into_body(), 65536).await.unwrap();
@@ -131,7 +134,7 @@ async fn expiry_is_checked_after_a_slow_request_body_arrives() {
         .unwrap()
         .as_secs()
         + 5;
-    let keys = ApiKeys::new(vec![ApiKey {
+    let keys = KeyAuth::new(vec![KeyCredential {
         id: "alice".into(),
         secret: "client-secret".into(),
         enabled: true,

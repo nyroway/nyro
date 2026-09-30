@@ -27,7 +27,6 @@ fn rejects_invalid_config_and_hides_credentials() {
         json!({"url":" https://example.test/mcp"}),
         json!({"url":"file:///tmp/a"}),
         json!({"url":"https://@example.test/mcp"}),
-        json!({"subjects":[]}),
         json!({"subjects":["a","a"]}),
         json!({"allowed_tools":[]}),
         json!({"allowed_tools":["a","a"]}),
@@ -92,4 +91,10 @@ fn empty_servers_are_valid_but_limits_still_apply() {
         config.validate().unwrap();
     }
     invalid(json!({"servers": {}, "request_timeout_ms": 0}));
+    let mut value = input();
+    value["servers"]["knowledge"]["subjects"] = json!([]);
+    serde_json::from_value::<Config>(value)
+        .unwrap()
+        .validate()
+        .unwrap();
 }

@@ -1,0 +1,22 @@
+[package]
+name = "nyro-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+uuid.workspace = true
+thiserror.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

@@ -1,45 +1,77 @@
-//! Server composition; database entities never enter request execution or the kernel.
+//! Process composition. Only the control plane opens databases.
 use crate::{
-    bootstrap,
+    bootstrap::Application,
     control::{self, Control},
+    gateway::GatewayRuntime,
     http, shutdown_signal,
 };
 use anyhow::Context;
 use clap::Args;
-use nyro_config::Config;
-use nyro_control::{MAX_CONFIG_BYTES, Store};
-use nyro_security::{ApiKey, ApiKeys};
+use nyro_config::compile::Snapshot;
+use nyro_kernel::Host;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+#[derive(Args, Clone)]
+pub(crate) struct DataOptions {
+    #[arg(long, env = "NYRO_LISTEN", default_value = "127.0.0.1:19530")]
+    pub(crate) listen: SocketAddr,
+    #[arg(long, env = "NYRO_CONCURRENCY", default_value_t = 64)]
+    pub(crate) concurrency: usize,
+}
+#[derive(Args)]
+pub(crate) struct ProxyOptions {
+    /// Read runtime resources once at startup.
+    #[arg(
+        short,
+        long,
+        env = "NYRO_CONFIG",
+        required_unless_present = "server",
+        conflicts_with = "server"
+    )]
+    config: Option<PathBuf>,
+    /// HTTPS control-plane origin (HTTP is permitted only for loopback testing).
+    #[arg(long, env = "NYRO_SERVER", requires_all = ["sync_token_file", "node_id"])]
+    server: Option<String>,
+    #[arg(long, env = "NYRO_SYNC_TOKEN_FILE", requires = "server")]
+    sync_token_file: Option<PathBuf>,
+    #[arg(long, env = "NYRO_NODE_ID", requires = "server")]
+    node_id: Option<String>,
+    #[command(flatten)]
+    data: DataOptions,
+}
 #[derive(Args)]
 pub(crate) struct Options {
-    /// Dedicated control-plane SQLite file; legacy databases are not imported.
     #[arg(
         long,
+        env = "NYRO_DATABASE",
         required_unless_present = "postgres_url_file",
         conflicts_with = "postgres_url_file"
     )]
     database: Option<PathBuf>,
-    /// File containing a PostgreSQL URL for a dedicated control database.
-    #[arg(long)]
+    #[arg(long, env = "NYRO_POSTGRES_URL_FILE")]
     postgres_url_file: Option<PathBuf>,
-    /// YAML seed for a new database only; omit when restarting an initialized database.
-    #[arg(short, long)]
-    config: Option<PathBuf>,
-    /// Local admin API listener, separate from the data-plane listener in the snapshot.
-    #[arg(long, default_value = "127.0.0.1:19531")]
+    #[arg(long, env = "NYRO_ADMIN_LISTEN", default_value = "127.0.0.1:19531")]
     admin_listen: SocketAddr,
-    /// File containing the admin Bearer token, separate from data-plane API keys.
-    #[arg(long)]
+    #[arg(long, env = "NYRO_ADMIN_TOKEN_FILE")]
     admin_token_file: PathBuf,
+    /// Run an embedded gateway using the same snapshot/application contract as remote nodes.
+    #[arg(long, env = "NYRO_ENABLE_PROXY", default_value_t = false)]
+    enable_proxy: bool,
+    /// Dedicated loopback listener. Expose remotely through an HTTPS reverse proxy.
+    #[arg(long, env = "NYRO_SYNC_LISTEN", requires = "sync_token_file")]
+    sync_listen: Option<SocketAddr>,
+    #[arg(long, env = "NYRO_SYNC_TOKEN_FILE", requires = "sync_listen")]
+    sync_token_file: Option<PathBuf>,
+    #[command(flatten)]
+    data: DataOptions,
 }
-
-fn read_file(path: &Path, max: usize) -> anyhow::Result<String> {
+pub(crate) fn read_file(path: &Path, max: usize) -> anyhow::Result<String> {
     use std::io::Read;
     anyhow::ensure!(
         std::fs::metadata(path)
@@ -60,152 +92,280 @@ fn read_file(path: &Path, max: usize) -> anyhow::Result<String> {
     anyhow::ensure!(value.len() <= max, "Startup file exceeds size limit");
     Ok(value)
 }
-
+fn token(path: &Path) -> anyhow::Result<String> {
+    let token = read_file(path, 1024)?
+        .trim_end_matches(['\r', '\n'])
+        .to_owned();
+    anyhow::ensure!(
+        token.len() >= 16 && token.bytes().all(|b| b.is_ascii_graphic()),
+        "Token must contain 16 to 1024 visible ASCII characters"
+    );
+    Ok(token)
+}
+fn keys(token: String) -> anyhow::Result<nyro_authn::KeyAuth> {
+    Ok(nyro_authn::KeyAuth::new(vec![nyro_authn::KeyCredential {
+        id: "admin".into(),
+        secret: token,
+        enabled: true,
+        expires_at: None,
+    }])?)
+}
+fn follow<S: nyro_sync::Source<Snapshot> + 'static>(
+    source: S,
+    node: String,
+    application: Arc<Application>,
+    host: Arc<Host<GatewayRuntime>>,
+    stop: CancellationToken,
+) -> tokio::task::JoinHandle<Result<(), nyro_sync::Error>> {
+    tokio::spawn(async move {
+        nyro_sync::run(&source, &node, stop, |snapshot| {
+            let application = application.clone();
+            let host = host.clone();
+            async move { application.apply(&host, &snapshot.config).await }
+        })
+        .await
+    })
+}
+fn listener(
+    tasks: &mut tokio::task::JoinSet<anyhow::Result<()>>,
+    tcp: tokio::net::TcpListener,
+    app: axum::Router,
+    stop: CancellationToken,
+) {
+    tasks.spawn(async move {
+        axum::serve(tcp, app)
+            .with_graceful_shutdown(stop.cancelled_owned())
+            .await
+            .context("Listener failed")
+    });
+}
+async fn finish(
+    mut tasks: tokio::task::JoinSet<anyhow::Result<()>>,
+    mut sync: Option<tokio::task::JoinHandle<Result<(), nyro_sync::Error>>>,
+    stop: CancellationToken,
+    host: Option<Arc<Host<GatewayRuntime>>>,
+    control: Option<Arc<Control>>,
+    tracker: TaskTracker,
+) -> anyhow::Result<()> {
+    let outcome = tokio::select! {
+        result = shutdown_signal() => result.context("Shutdown signal failed"),
+        result = tasks.join_next() => match result { Some(Ok(result)) => result, _ => Err(anyhow::anyhow!("Listener task failed")) },
+        result = async { match sync.as_mut() { Some(task) => task.await.map_err(anyhow::Error::from)?.map_err(anyhow::Error::from), None => std::future::pending().await } } => result,
+    };
+    stop.cancel();
+    if let Some(control) = &control {
+        control.shutdown().await;
+    }
+    // Cancellation wakes long polls; an application transition is owned by the kernel.
+    if let Some(task) = sync.as_mut()
+        && !task.is_finished()
+    {
+        let _ = task.await;
+    }
+    let cleanup = if let Some(host) = &host {
+        host.shutdown().await.map_err(anyhow::Error::from)
+    } else {
+        Ok(())
+    };
+    let drained = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(task) = tasks.join_next().await {
+            task??;
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await;
+    tasks.abort_all();
+    tracker.close();
+    let tracked = tokio::time::timeout(Duration::from_secs(5), tracker.wait()).await;
+    outcome?;
+    cleanup?;
+    drained.context("HTTP connections did not drain")??;
+    tracked.context("Response cleanup did not finish")?;
+    Ok(())
+}
+pub(crate) async fn proxy(options: ProxyOptions) -> anyhow::Result<()> {
+    let application = Arc::new(Application::new(options.data.concurrency)?);
+    let host = Arc::new(Host::new(Default::default()));
+    let stop = CancellationToken::new();
+    let tracker = TaskTracker::new();
+    let tcp = tokio::net::TcpListener::bind(options.data.listen)
+        .await
+        .context("Could not bind proxy listener")?;
+    let sync = match (&options.config, &options.server) {
+        (Some(path), None) => {
+            let resources = nyro_config::resources::Resources::from_yaml(&read_file(
+                path,
+                nyro_control::MAX_CONFIG_BYTES,
+            )?)?;
+            application
+                .apply(&host, &Snapshot::file(resources))
+                .await
+                .map_err(|_| anyhow::anyhow!("Could not activate resource configuration"))?;
+            None
+        }
+        (None, Some(server)) => {
+            let node = options.node_id.as_deref().unwrap_or("");
+            anyhow::ensure!(
+                (1..=128).contains(&node.len())
+                    && node
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)),
+                "Invalid node ID"
+            );
+            let client = nyro_sync::HttpClient::<Snapshot>::new(
+                server,
+                &token(
+                    options
+                        .sync_token_file
+                        .as_deref()
+                        .context("Sync token required")?,
+                )?,
+            )?;
+            Some(follow(
+                client,
+                node.into(),
+                application,
+                host.clone(),
+                stop.clone(),
+            ))
+        }
+        _ => anyhow::bail!("Exactly one configuration source is required"),
+    };
+    let mut tasks = tokio::task::JoinSet::new();
+    listener(
+        &mut tasks,
+        tcp,
+        http::router(host.clone(), tracker.clone()),
+        stop.clone(),
+    );
+    tracing::info!(listen = %options.data.listen, "Proxy listener started; /readyz reports active configuration");
+    finish(tasks, sync, stop, Some(host), None, tracker).await
+}
 pub(crate) async fn run(options: Options) -> anyhow::Result<()> {
     anyhow::ensure!(
         options.admin_listen.ip().is_loopback(),
-        "The experimental admin listener must use a loopback address"
+        "Admin listener must use loopback"
     );
-    let token = read_file(&options.admin_token_file, 1024)?;
-    let token = token.trim_end_matches(['\r', '\n']);
+    if let Some(listen) = options.sync_listen {
+        anyhow::ensure!(
+            listen.ip().is_loopback(),
+            "Sync listener must use loopback behind an HTTPS reverse proxy"
+        );
+    }
+    let admin_token = token(&options.admin_token_file)?;
+    let sync_token = options.sync_token_file.as_deref().map(token).transpose()?;
     anyhow::ensure!(
-        token.len() >= 16 && token.bytes().all(|b| b.is_ascii_graphic()),
-        "Admin token must contain 16 to 1024 visible ASCII characters"
+        sync_token.as_ref() != Some(&admin_token),
+        "Admin and sync tokens must be different"
     );
-    let keys = ApiKeys::new(vec![ApiKey {
-        id: "admin".into(),
-        secret: token.into(),
-        enabled: true,
-        expires_at: None,
-    }])?;
-    let seed = options
-        .config
-        .as_ref()
-        .map(|path| {
-            Config::from_yaml(&read_file(path, MAX_CONFIG_BYTES)?)
-                .map_err(|_| anyhow::anyhow!("Invalid seed configuration"))
-        })
-        .transpose()?;
     let mut store = match (&options.database, &options.postgres_url_file) {
-        (Some(path), None) => Store::open(path, seed.as_ref()).await?,
+        (Some(path), None) => nyro_control::resource::Store::open(path).await?,
         (None, Some(path)) => {
-            let url = read_file(path, 16 * 1024)?;
-            Store::open_postgres(url.trim_end_matches(['\r', '\n']), seed.as_ref()).await?
+            nyro_control::resource::Store::open_postgres(
+                read_file(path, 16384)?.trim_end_matches(['\r', '\n']),
+            )
+            .await?
         }
         _ => anyhow::bail!("Exactly one database source is required"),
     };
-    let published = store.state().await?.published;
-    let resources = bootstrap::Resources::new(&published.config)?;
-    let host = bootstrap::host(&published.config, &resources).await?;
-    let listeners = async {
-        let data = tokio::net::TcpListener::bind(published.config.server.listen).await?;
-        let admin = tokio::net::TcpListener::bind(options.admin_listen).await?;
-        Ok::<_, std::io::Error>((data, admin))
-    }
-    .await;
-    let (data, admin) = match listeners {
-        Ok(listeners) => listeners,
-        Err(_) => {
-            host.shutdown().await?;
-            return Err(anyhow::anyhow!("Could not bind serve listeners"));
-        }
+    let snapshot = store.snapshot().await?;
+    let control = Control::new(store, snapshot, keys(admin_token)?)?;
+    let admin = tokio::net::TcpListener::bind(options.admin_listen)
+        .await
+        .context("Could not bind admin listener")?;
+    let sync_tcp = match options.sync_listen {
+        Some(listen) => Some(
+            tokio::net::TcpListener::bind(listen)
+                .await
+                .context("Could not bind sync listener")?,
+        ),
+        None => None,
     };
-    let control = Control::new(store, resources, host.clone(), published.revision, keys);
-    let tracker = TaskTracker::new();
+    let data_tcp = if options.enable_proxy {
+        Some(
+            tokio::net::TcpListener::bind(options.data.listen)
+                .await
+                .context("Could not bind data listener")?,
+        )
+    } else {
+        None
+    };
     let stop = CancellationToken::new();
-    let data_stop = stop.clone();
-    let admin_stop = stop.clone();
-    let data_app = http::router(host.clone(), tracker.clone());
-    let admin_app = control::router(control.clone());
-    let mut data_server = tokio::spawn(async move {
-        axum::serve(data, data_app)
-            .with_graceful_shutdown(data_stop.cancelled_owned())
-            .await
-    });
-    let mut admin_server = tokio::spawn(async move {
-        axum::serve(admin, admin_app)
-            .with_graceful_shutdown(admin_stop.cancelled_owned())
-            .await
-    });
-    tracing::info!(data_listen = %published.config.server.listen, admin_listen = %options.admin_listen, revision = published.revision, "Server ready");
-    drop(published);
-    drop(seed);
-    let (exit, data_done, admin_done) = tokio::select! {
-        result = &mut data_server => (result.context("Data server task failed").and_then(|r| r.context("Data server failed")), true, false),
-        result = &mut admin_server => (result.context("Admin server task failed").and_then(|r| r.context("Admin server failed")), false, true),
-        result = shutdown_signal() => (result.context("Could not receive shutdown signal"), false, false),
-    };
-    stop.cancel();
-    // Finish accepted durable writes before closing the Host, even if their callers left.
-    control.shutdown().await;
-    let cleanup = host.shutdown().await;
-    let mut drained = Ok(());
-    for (mut server, done) in [(data_server, data_done), (admin_server, admin_done)] {
-        if !done {
-            match tokio::time::timeout(Duration::from_secs(5), &mut server).await {
-                Ok(result) => {
-                    if !matches!(result, Ok(Ok(()))) {
-                        drained = Err(anyhow::anyhow!("Serve listener failed"));
-                    }
-                }
-                Err(_) => {
-                    server.abort();
-                    let _ = server.await;
-                    drained = Err(anyhow::anyhow!("Serve connections did not drain"));
-                }
-            }
-        }
+    let tracker = TaskTracker::new();
+    let mut tasks = tokio::task::JoinSet::new();
+    listener(
+        &mut tasks,
+        admin,
+        control::router(control.clone()),
+        stop.clone(),
+    );
+    if let Some(tcp) = sync_tcp {
+        listener(
+            &mut tasks,
+            tcp,
+            nyro_sync::http_router(control.hub.clone(), sync_token.as_deref().unwrap())?,
+            stop.clone(),
+        );
     }
-    tracker.close();
-    let tracked = tokio::time::timeout(Duration::from_secs(5), tracker.wait()).await;
-    drop(control);
-    exit?;
-    cleanup?;
-    drained?;
-    tracked.context("Response cleanup tasks did not stop")?;
-    Ok(())
+    let (host, sync) = if let Some(tcp) = data_tcp {
+        let application = Arc::new(Application::new(options.data.concurrency)?);
+        let host = Arc::new(Host::new(Default::default()));
+        let sync = follow(
+            control.hub.clone(),
+            "embedded".into(),
+            application,
+            host.clone(),
+            stop.clone(),
+        );
+        listener(
+            &mut tasks,
+            tcp,
+            http::router(host.clone(), tracker.clone()),
+            stop.clone(),
+        );
+        (Some(host), Some(sync))
+    } else {
+        (None, None)
+    };
+    tracing::info!(admin_listen = %options.admin_listen, proxy = options.enable_proxy, "Control plane ready");
+    finish(tasks, sync, stop, host, Some(control), tracker).await
 }
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
-
     #[test]
-    fn serve_requires_exactly_one_database_source() {
-        let parse = |args: &[&str]| {
-            crate::Cli::try_parse_from(
-                ["nyro", "serve", "--admin-token-file", "admin.token"]
-                    .into_iter()
-                    .chain(args.iter().copied()),
-            )
+    fn serve_is_control_only_by_default_and_proxy_requires_one_source() {
+        let cli = crate::Cli::try_parse_from([
+            "nyro",
+            "serve",
+            "--database",
+            "control.db",
+            "--admin-token-file",
+            "token",
+        ])
+        .unwrap();
+        let crate::Command::Serve(options) = cli.command else {
+            panic!()
         };
-        assert!(parse(&[]).is_err());
-        assert!(parse(&["--database", "control.db"]).is_ok());
-        assert!(parse(&["--postgres-url-file", "postgres.url"]).is_ok());
+        assert!(!options.enable_proxy);
+        assert!(crate::Cli::try_parse_from(["nyro", "proxy"]).is_err());
         assert!(
-            parse(&[
-                "--database",
-                "control.db",
-                "--postgres-url-file",
-                "postgres.url"
+            crate::Cli::try_parse_from(["nyro", "proxy", "--config", "resources.yaml"]).is_ok()
+        );
+        assert!(
+            crate::Cli::try_parse_from(["nyro", "proxy", "--server", "https://example.test"])
+                .is_err()
+        );
+        assert!(
+            crate::Cli::try_parse_from([
+                "nyro",
+                "proxy",
+                "--config",
+                "resources.yaml",
+                "--server",
+                "https://example.test"
             ])
             .is_err()
         );
-    }
-
-    #[test]
-    fn startup_file_errors_never_include_contents() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("postgres.url");
-        std::fs::write(
-            &path,
-            "postgres://user:private-password@example.test/control",
-        )
-        .unwrap();
-        let error = read_file(&path, 16).unwrap_err().to_string();
-        assert_eq!(error, "Startup file exceeds size limit");
-        assert!(!error.contains("private-password"));
-        assert!(read_file(temp.path(), 1024).is_err());
     }
 }

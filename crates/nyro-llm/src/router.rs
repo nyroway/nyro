@@ -1,14 +1,9 @@
 //! Model-scoped selection history; request preparation owns eligibility.
-use rand::{
-    Rng,
-    distributions::{Distribution, WeightedIndex},
-};
-
-fn choose_with(weights: impl IntoIterator<Item = u32>, rng: &mut impl Rng) -> Option<usize> {
-    WeightedIndex::new(weights.into_iter().map(u64::from))
-        .ok()
-        .map(|distribution| distribution.sample(rng))
-}
+#[cfg(test)]
+use nyro_balance::choose_weighted as choose_with;
+use nyro_balance::{Balancer, History};
+#[cfg(test)]
+use rand::Rng;
 
 use crate::{
     binding::BackendKey,
@@ -30,14 +25,8 @@ pub struct RoutingRegistry {
 struct ModelState {
     // Serializes choice through admission/dispatch recording, never across network I/O.
     sequence: Mutex<u64>,
+    balancer: Mutex<Balancer>,
     entries: Mutex<HashMap<BackendKey, Weak<Mutex<History>>>>,
-}
-
-#[derive(Default, Clone, Copy)]
-struct History {
-    last_started: Option<u64>,
-    latency: Option<f64>,
-    pending: usize,
 }
 
 pub(crate) struct BoundRouting {
@@ -93,19 +82,20 @@ impl BoundRouting {
 
     // Caller holds selection() until started(), so concurrent cold requests see pending claims.
     pub(crate) fn choose(&self, strategy: Strategy, candidates: &[(&str, u32)]) -> Option<usize> {
-        if strategy == Strategy::Weighted {
-            return choose_with(
-                candidates.iter().map(|(_, weight)| *weight),
-                &mut rand::thread_rng(),
-            );
-        }
         let histories: Vec<_> = candidates
             .iter()
             .map(|(id, _)| *self.backends[*id].lock().unwrap())
             .collect();
-        select(
-            strategy,
-            candidates.iter().map(|(_, weight)| *weight).collect(),
+        // Prune only targets with no live binding. Preparing/discarding a candidate
+        // must not reset credits owned by the active generation.
+        let mut entries = self.model.entries.lock().unwrap();
+        entries.retain(|_, history| history.strong_count() > 0);
+        let targets: Vec<_> = entries.keys().map(BackendKey::backend_id).collect();
+        let mut balancer = self.model.balancer.lock().unwrap();
+        balancer.retain_targets(&targets);
+        balancer.choose(
+            strategy.into(),
+            candidates,
             &histories,
             &mut rand::thread_rng(),
         )
@@ -126,81 +116,20 @@ impl BoundRouting {
 }
 
 // Only enabled, compatible, healthy candidates at the lowest priority reach here.
+#[cfg(test)]
 fn select(
     strategy: Strategy,
     weights: Vec<u32>,
     histories: &[History],
     rng: &mut impl Rng,
 ) -> Option<usize> {
-    let enabled: Vec<_> = weights
+    let names: Vec<_> = (0..weights.len()).map(|i| i.to_string()).collect();
+    let candidates: Vec<_> = names
         .iter()
-        .enumerate()
-        .filter_map(|(i, w)| (*w > 0).then_some(i))
+        .zip(weights)
+        .map(|(id, weight)| (id.as_str(), weight))
         .collect();
-    if enabled.is_empty() {
-        return None;
-    }
-    let mut preferred = enabled.clone();
-    match strategy {
-        Strategy::Weighted => {}
-        Strategy::LeastRecent => {
-            let oldest = enabled
-                .iter()
-                .map(|i| histories[*i].last_started)
-                .min()
-                .unwrap();
-            preferred.retain(|i| histories[*i].last_started == oldest);
-        }
-        Strategy::Latency => {
-            let unknown: Vec<_> = enabled
-                .iter()
-                .copied()
-                .filter(|i| histories[*i].last_started.is_none())
-                .collect();
-            let known: Vec<_> = enabled
-                .iter()
-                .copied()
-                .filter(|i| histories[*i].latency.is_some())
-                .collect();
-            if !unknown.is_empty() {
-                // Give each never-attempted backend one initial sample.
-                preferred = unknown;
-            } else if known.is_empty() {
-                let pending = enabled.iter().map(|i| histories[*i].pending).min().unwrap();
-                preferred.retain(|i| histories[*i].pending == pending);
-                let oldest = preferred
-                    .iter()
-                    .map(|i| histories[*i].last_started)
-                    .min()
-                    .unwrap();
-                preferred.retain(|i| histories[*i].last_started == oldest);
-            } else if rng.gen_ratio(1, 20) {
-                // Explore the stalest idle/known backend (5%), including prior attempts without 2xx.
-                preferred.retain(|i| histories[*i].pending == 0 || histories[*i].latency.is_some());
-                let oldest = preferred
-                    .iter()
-                    .map(|i| histories[*i].last_started)
-                    .min()
-                    .unwrap();
-                preferred.retain(|i| histories[*i].last_started == oldest);
-            } else {
-                let fastest = known
-                    .iter()
-                    .map(|i| histories[*i].latency.unwrap())
-                    .reduce(f64::min)
-                    .unwrap();
-                preferred = known
-                    .into_iter()
-                    .filter(|i| histories[*i].latency == Some(fastest))
-                    .collect();
-            }
-        }
-    }
-    let mut filtered = vec![0; weights.len()];
-    for i in preferred {
-        filtered[i] = weights[i];
-    }
-    choose_with(filtered, rng)
+    Balancer::default().choose(strategy.into(), &candidates, histories, rng)
 }
 
 pub(crate) struct Attempt {
@@ -455,4 +384,26 @@ mod tests {
         drop(receipt);
         assert!(model_weak.upgrade().is_none());
     }
+}
+
+#[cfg(test)]
+#[test]
+fn discarded_candidate_cannot_reset_live_round_robin_credit() {
+    let cfg: crate::config::Config = serde_json::from_value(serde_json::json!({
+        "providers":{"p":{"kind":"openai","base_url":"https://example.test/v1"}},
+        "models":{"m":{"workloads":["chat"],"backends":[
+            {"id":"a","provider":"p","upstream_model":"m","weight":3},
+            {"id":"b","provider":"p","upstream_model":"m","weight":1}
+        ]}}
+    }))
+    .unwrap();
+    let registry = RoutingRegistry::default();
+    let live = registry.bind("pool", &cfg.models["m"], &cfg.providers);
+    let targets = [("a", 3), ("b", 1)];
+    assert_eq!(live.choose(Strategy::WeightedRoundrobin, &targets), Some(0));
+    assert_eq!(live.choose(Strategy::WeightedRoundrobin, &targets), Some(0));
+    let mut candidate = cfg.models["m"].clone();
+    candidate.backends.pop();
+    drop(registry.bind("pool", &candidate, &cfg.providers));
+    assert_eq!(live.choose(Strategy::WeightedRoundrobin, &targets), Some(1));
 }

@@ -1,38 +1,28 @@
-# Source-built Nyro: one LLM application and two independent MCP tool services.
-server:
-  listen: 127.0.0.1:19530
-limit:
-  concurrency: 64
-security:
-  api_keys:
-    - id: client-a
-      secret: replace-with-client-secret
-llm:
-  providers:
-    example:
-      kind: openai
-      base_url: https://api.example.com/v1
-      api_key: replace-with-provider-secret
-  models:
-    chat-default:
-      provider: example
-      upstream_model: example-chat-model
-      workloads: [chat]
-      subjects: [client-a]
-mcp:
-  request_timeout_ms: 30000
-  max_body_bytes: 1048576
-  max_response_bytes: 16777216
-  max_frame_bytes: 1048576
-  servers:
-    knowledge:
-      transport: http
-      url: https://tools.example.com/mcp
-      bearer_token: replace-with-upstream-token
-      subjects: [client-a]
-      allowed_tools: [search_documents, read_document]
-    catalog:
-      transport: http
-      url: https://catalog.example.com/mcp
-      subjects: [client-a]
-      allowed_tools: [lookup_product]
+version: 1
+upstreams:
+  - id: tools-pool
+    kind: mcp
+    balance: weighted-roundrobin
+    targets:
+      - id: primary
+        transport: streamable-http
+        url: ${MCP_UPSTREAM_URL}
+        auth:
+          type: key-auth
+          in: header
+          name: Authorization
+          prefix: Bearer
+          secret: ${MCP_UPSTREAM_TOKEN}
+mcps:
+  - id: tools
+    name: Application tools
+    upstream: tools-pool
+    access: {mode: restricted}
+    allowed_tools: [search]
+    execution: {request_timeout: 30}
+    limits: {request: [{limit: 60, window: 1m}]}
+models: []
+consumers:
+  - id: application
+    credentials: [{id: primary, type: key-auth, secret: '${NYRO_CLIENT_TOKEN}'}]
+    grants: {mcps: [tools]}

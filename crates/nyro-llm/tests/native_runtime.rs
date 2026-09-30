@@ -1,4 +1,5 @@
 //! Native Chat exercises real HTTP boundaries without round-tripping fixtures through codecs.
+mod support;
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -6,12 +7,9 @@ use axum::{
     routing::post,
 };
 use futures::StreamExt;
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
-use nyro_llm::{
-    config::Config,
-    runtime::{Options, Runtime},
-};
-use nyro_security::{ApiKey, ApiKeys};
+use nyro_llm::runtime::{Options, Runtime};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -97,11 +95,10 @@ fn config(backends: &[(&Upstream, &str, bool)]) -> Value {
     json!({"providers":providers,"models":{"public":{"max_attempts":backends.len(),"backends":backends,"workloads":["chat"],"subjects":["alice"]}}})
 }
 fn runtime(config: Value, limit: &ConcurrencyLimit, options: Options) -> Runtime {
-    let config: Config = serde_json::from_value(config).unwrap();
-    Runtime::new(
+    support::runtime(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,
@@ -111,8 +108,8 @@ fn runtime(config: Value, limit: &ConcurrencyLimit, options: Options) -> Runtime
         ),
         limit.clone(),
         options,
+        support::SharedResources::default(),
     )
-    .unwrap()
 }
 fn request(body: Value) -> Request<Body> {
     Request::builder()
@@ -421,7 +418,7 @@ async fn native_requests_reject_malformed_routing_and_stream_controls_before_dis
 }
 
 #[tokio::test]
-async fn native_json_rejects_malformed_envelopes_without_retry_or_refunding_unknown_usage() {
+async fn native_json_rejects_malformed_envelopes_without_retry_or_charging_unknown_usage() {
     for (pointer, invalid) in [
         ("/object", json!("wrong")),
         ("/choices", json!([])),
@@ -454,9 +451,9 @@ async fn native_json_rejects_malformed_envelopes_without_retry_or_refunding_unkn
         assert_eq!(limit.available(), 1);
         assert_eq!(
             invoke(&runtime, input()).await.status(),
-            StatusCode::TOO_MANY_REQUESTS
+            StatusCode::BAD_GATEWAY
         );
-        assert_eq!(first.calls.lock().unwrap().len(), 1);
+        assert_eq!(first.calls.lock().unwrap().len(), 2);
     }
 }
 

@@ -4,12 +4,12 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
 use nyro_llm::{
     config,
     runtime::{Options, Runtime},
 };
-use nyro_security::{ApiKey, ApiKeys};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -34,10 +34,10 @@ fn config() -> config::Config {
 }
 
 fn runtime(config: config::Config, limit: ConcurrencyLimit) -> Runtime {
-    let keys = ApiKeys::new(
+    let keys = KeyAuth::new(
         ["alice", "bob", "unbound"]
             .into_iter()
-            .map(|id| ApiKey {
+            .map(|id| KeyCredential {
                 id: id.into(),
                 secret: format!("{id}-secret"),
                 enabled: true,

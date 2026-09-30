@@ -7,12 +7,15 @@ repository.workspace = true
 description = "Authenticated MCP tools gateway"
 
 [dependencies]
+nyro-balance = { path = "../nyro-balance" }
+rand = "0.8"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 url = "2"
 rmcp = { version = "=3.4.1", default-features = false, features = ["client", "server", "transport-streamable-http-client", "transport-streamable-http-server"] }
-nyro-security = { path = "../nyro-security" }
+nyro-authn = { path = "../nyro-authn" }
+nyro-authz = { path = "../nyro-authz" }
 nyro-limit = { path = "../nyro-limit" }
 axum.workspace = true
 tokio.workspace = true

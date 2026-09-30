@@ -1,646 +1,78 @@
-# Experimental Rust file-config proxy
+# Rust data plane
 
 [中文](rust-proxy_CN.md)
 
-The root `nyro` binary includes an experimental, source-built LLM data plane. It is separate from the released `nyro-server` standalone mode documented in [README.md](README.md), and its YAML format is not compatible with that legacy entry.
-
-LLM and MCP runtimes load by default on the same listener; omitted application sections have no resources. See the [MCP gateway guide](rust-mcp.md) and [dual-application configuration](rust-mcp.yaml).
-
-## Run from source
-
-Copy [rust-proxy.yaml](rust-proxy.yaml), replace the example provider URL, model names, and secrets, then run:
+Build the root binary with `cargo build -p nyro`. This source-built entry is separate from the released desktop and `nyro-server` applications.
 
 ```sh
+export UPSTREAM_MODEL=your-backend-model
+export UPSTREAM_TOKEN=your-upstream-secret
+export NYRO_CLIENT_TOKEN=your-client-secret
 cargo run -p nyro -- proxy --config docs/standalone/rust-proxy.yaml
 ```
 
-The file is read and validated before the listener binds. The default address is `127.0.0.1:19530`. On Unix, `SIGHUP` reloads the same file as described below.
+The [example](rust-proxy.yaml) defines four runtime resource collections: `upstreams`, `models`, `mcps`, and `consumers`, plus `version: 1`. Omitted collections are empty. Startup settings use CLI/environment: `--listen` (`NYRO_LISTEN`, default `127.0.0.1:19530`), `--concurrency` (`NYRO_CONCURRENCY`, default 64), and `--config` (`NYRO_CONFIG`). The file is read once. There is no file watcher or SIGHUP reload. Restart to apply file changes.
 
-Send a protected Chat Completions request with the client credential configured under `security.api_keys`:
+Every scalar value can contain `${VARIABLE}`. Missing variables are errors; `$${VARIABLE}` produces a literal `${VARIABLE}`. Expansion happens within parsed scalar values, so an environment value cannot inject YAML objects or lists. Values are not recursively expanded. Numeric settings accept numeric environment strings. Configuration and sync payloads are bounded to 1 MiB.
+
+## Resources
+
+A model's `id` is the client-visible model name. Its `name` is an optional display label. `capability` is `chat` or `embedding`; `upstream` references an LLM pool. Each target has its own backend `model`, `base_url`, `protocol`, optional `auth`, `weight` (default 1), and `priority` (default 0, lower wins). LLM base URLs are API roots; adapters append paths. Supported protocols:
+
+- `openai/chat-completions`
+- `openai/responses`
+- `openai/embeddings`
+- `anthropic/messages`
+- `gemini/generate-content`
+
+Matching native Chat APIs preserve supported wire fields; cross-protocol requests use typed conversion and reject representations that cannot be preserved. See the existing protocol tests for operation-specific boundaries. Gemini Interactions, image/audio/video generation and OAuth are not added by this resource migration.
+
+Pool `balance` defaults to **`weighted-roundrobin`**, a smooth weighted round-robin algorithm. LLM pools also accept `weighted-random`, `least-recent`, and `latency-aware`. Aliases referencing the same pool share selection history. Weight zero disables selection. LLM `execution.max_attempts` includes the first attempt; replay boundaries remain governed by the protocol runtime.
+
+MCP resources use the same upstream and consumer concepts. See [MCP](rust-mcp.md).
+
+## Authentication and authorization
+
+`access.mode` defaults to `restricted`:
+
+| Mode | Behavior |
+|---|---|
+| `anonymous` | Ignores incoming credentials, including incorrect credentials. Consumer limits do not apply. |
+| `authenticated` | Requires a valid consumer credential. |
+| `restricted` | Requires a valid credential and a matching consumer grant. |
+
+Consumers can have multiple `{id, type: key-auth, secret}` credentials; rotation shares the same consumer identity and limits. `grants.models` and `grants.mcps` reference public resource IDs. An empty grant list authorizes no restricted resources. There are no `enabled` flags or `api-key`/`apikey` authentication aliases.
+
+Outgoing authentication is independent:
+
+```yaml
+auth:
+  type: key-auth
+  in: header
+  name: Authorization
+  prefix: Bearer
+  secret: ${UPSTREAM_TOKEN}
+```
+
+`prefix` is optional; a nonempty prefix is followed by exactly one space. For query credentials use `in: query`, a parameter `name`, and `secret`; omit `prefix`. The adapter encodes the value and replaces existing parameters with the same name. Caller credentials and arbitrary incoming headers are not forwarded upstream.
+
+## Execution and limits
+
+`execution.request_timeout` is a positive number of seconds, including fractions such as `1.5`. Defaults are 120 seconds for LLM and 30 for MCP. The model is resolved from the parsed request; uploads before that point use the application-wide body/deadline envelope. Once resolved, the resource deadline is measured from request arrival, and its body bound is checked before dispatch. Optional positive `max_body_bytes`, `max_response_bytes`, and `max_frame_bytes` default to 1 MiB, 16 MiB, and 1 MiB respectively.
+
+`limits.request` and LLM `limits.token` are lists of `{limit, window}`. Windows accept `ms`, `s`, `m`, `h`, `d`. Resource limits and `consumers[].limits.llm` / `.mcp` all apply together. MCP supports request limits only.
+
+Requests count once per admitted logical request, including retries and subsequent failures. Tokens count actual known usage for every upstream attempt; there is no reservation or estimate. Repeated cumulative usage is charged once. Missing usage charges zero; interrupted streams charge the last valid known usage and report it as incomplete. In-flight work can exceed token limits.
+
+Counters are node-local memory: they are not shared across replicas or persisted across restarts. Control-plane renames and key rotation preserve identity and history. Changing a threshold for the same window preserves history; a new window starts counting from activation. Monetary quotas, resource-level rate buckets and concurrency policies are not supported. The process-wide concurrency guard remains.
+
+## Remote configuration
 
 ```sh
-curl http://127.0.0.1:19530/v1/chat/completions \
-  -H 'Authorization: Bearer replace-with-client-secret' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"chat-default","messages":[{"role":"user","content":"Hello"}]}'
+nyro proxy --server https://control.example.com \
+  --sync-token-file /run/secrets/nyro-sync --node-id edge-1
 ```
 
-The current ingress implements typed subsets of OpenAI Chat/Embedding, stateless Responses, Anthropic Messages, and Gemini generateContent. Chat supports cross-protocol text, function calls/results and SSE across the four supported Chat API formats. It is not a promise of full vendor API compatibility. By default, unknown or unsupported request fields are rejected with `400` instead of being forwarded. Unsupported upstream response semantics produce `502` before streaming begins, or terminate an SSE stream if they arrive after its validated first frame. The opt-in OpenAI Chat/Responses, Anthropic Messages and Gemini generateContent native modes below preserve vendor JSON fields on matching endpoints. Model names are public aliases: Nyro replaces them with the selected backend's `upstream_model` on the upstream request and restores the public name in typed responses and OpenAI/Anthropic native responses. Gemini native responses preserve `modelVersion` as upstream version metadata.
+Use `--config` or `--server`, never both. Remote proxies do not open a database. `NYRO_SERVER`, `NYRO_SYNC_TOKEN_FILE`, and `NYRO_NODE_ID` are equivalent environment settings. Sync uses authenticated full-snapshot HTTP long polling. Remote URLs require HTTPS; HTTP is allowed only for IP loopback tests.
 
-## Provider network transport
-
-Each Provider can configure its own egress proxy and HTTP version:
-
-```yaml
-llm:
-  providers:
-    example:
-      kind: openai
-      base_url: https://api.example.com/v1
-      transport:
-        proxy_url: http://127.0.0.1:7890
-        http1_only: true
-```
-
-Omitting `transport`, using `{}`, or setting only `http1_only: false` keeps direct connections and normal HTTP version negotiation. `http1_only: true` restricts upstream connections to HTTP/1 independently of whether a proxy is configured. All protocol kinds and native modes use these settings. Rust callers constructing `Provider` must supply `transport: Default::default()` or their chosen `Transport`.
-
-`proxy_url` accepts an explicit HTTP or HTTPS proxy URL with a host, an optional nonzero port, and no path other than `/`, query or fragment. SOCKS, implicit schemes, literal whitespace, unknown fields, wrong types and explicit null values are rejected. Optional URL user information supplies proxy Basic authentication; percent-encode reserved characters in credentials (for example, `p%40ss` for `p@ss`). Configuration serialization contains these credentials; Debug output, gateway error responses and Nyro events redact the proxy address and credentials. No environment-variable expansion is performed.
-
-Both direct and explicit-proxy connections ignore automatic environment/system proxies, including `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` bypass rules. An HTTP target uses proxy forwarding; an HTTPS target uses CONNECT and normal upstream TLS verification. An `https://` proxy URL also encrypts the connection to the proxy. Caller credentials are never forwarded. Provider credentials authenticate the upstream; proxy credentials authenticate the forwarding request or CONNECT, and are not added to the tunneled upstream request. An HTTP forwarding proxy necessarily sees the HTTP upstream request.
-
-Proxy failure does not silently switch that Provider to direct access. Existing configured backend failover remains available within the runtime's attempt budget. Redirects and automatic Reqwest retries remain disabled, and the same logical-request deadline covers connection setup, all attempts and response delivery.
-
-These settings support SIGHUP reload. Changing the proxy address, proxy credentials or HTTP mode resets the affected backend's health and routing history; model rate, subject windows and quota retain their existing state. New requests use the new client while admitted SSE streams finish on their original generation. Invalid settings reject the candidate and retain the active generation. Omitted/empty/default transport settings have the same fingerprint. Proxy URL spelling is retained in the fingerprint, so equivalent spellings can publish a new generation; history identity uses the normalized URL and remains shared when its effective binding is unchanged.
-
-## HTTP deployment migration
-
-The file proxy has no CORS layer or origin allowlist setting. Browser cross-origin access requires a separate deployment decision; legacy wildcard/Tauri defaults are not imported. Use `GET /healthz` for liveness and `/readyz` for whether the Host accepts new generation leases; check the status code, as their bodies are empty. Legacy `/health` and `/` aliases return `404`. Readiness does not test Provider availability or a database.
-
-The defaults remain `server.max_body_bytes: 1048576` (1 MiB), `max_response_bytes: 16777216` (16 MiB), `max_frame_bytes: 1048576` (1 MiB), and `request_timeout_ms: 120000`. Set explicit values when migrating deployments that need the legacy 100 MiB request limit or a longer deadline; the deadline covers the whole logical request, not just one upstream call. Query credentials remain rejected; use the documented protocol-specific credential headers.
-
-Local regression: build with `cargo build -p nyro`, then run `python3 tests/proxy_network_smoke.py`. It covers HTTP/HTTPS proxies, CONNECT authentication, HTTP/1 ALPN, environment isolation, redirects, deadlines, probes/CORS and reload with an active stream and consumed quota. The checked-in TLS key is a public test fixture; only the test child process trusts its certificate.
-
-## API key lifecycle
-
-`security.api_keys` accepts optional `enabled` and `expires_at` fields:
-
-```yaml
-security:
-  api_keys:
-    - id: deploy
-      secret: replace-with-client-secret
-      enabled: true
-      expires_at: 1893456000
-```
-
-`enabled` defaults to `true`; `false` prevents new authentication. `expires_at` is a UTC Unix timestamp in whole seconds (a nonnegative integer; the example is 2030-01-01 00:00:00 UTC). Omission or `null` means no expiry; `0` is already expired. It is not milliseconds, a duration or a date string. The key becomes invalid at `expires_at`, without SIGHUP or a background timer. Invalid field types reject the entire configuration. Disabled or expired keys still participate in duplicate ID/secret validation and retain model `subjects` bindings.
-
-Model discovery, all four Chat APIs, Embedding and matching native mode share this authentication rule. A supplied disabled or expired key returns a generic `401`, including on anonymous models; invalid credentials do not fall back to anonymous access. These authentication failures neither dispatch upstream nor consume concurrency, rate or quota. Omitting credentials still follows the model's anonymous-access setting.
-
-Changing `enabled` or setting, extending or removing `expires_at` requires publishing the configuration (SIGHUP in file mode). These values enter the configuration fingerprint; current time does not. Reloading an identical file remains `unchanged` even after expiry. Disabling, renewing or removing expiry preserves the subject and model bindings; failed reloads retain the active configuration.
-
-A request selects its configuration generation on entry and checks the current system time at authentication, after reading the request body. A slow upload that entered before a reload retains the old generation's key settings, but is rejected if that key expires while its body is being read. Once authenticated and admitted, requests (including SSE) continue through later expiry or reload-based disabling, subject to the existing deadline, cancellation and generation cleanup contracts. Checks use the system wall clock; a clock rollback is evaluated afresh rather than setting a permanent expired flag. Expiring keys fail authentication when the supplied time precedes the Unix epoch.
-
-Rust callers constructing `nyro_security::ApiKey` must supply `enabled: true` and `expires_at: None` (or their desired values). `ApiKeys::authenticate()` uses system time; `authenticate_at(secret, SystemTime)` accepts a caller-supplied time. Authenticate every new operation rather than caching the returned `Identity` as a live key status. The security crate has no LLM, HTTP, database or kernel dependency. The `ApiKeys` registry retains no plaintext secret.
-
-Validation: `cargo test -p nyro-security -p nyro-config`, `cargo test -p nyro-llm --test responses_runtime api_key_lifecycle`, and, after building the root binary, `python3 tests/proxy_reload_smoke.py`.
-
-## List available models
-
-`GET /v1/models` lists the configured public model aliases visible to the caller, in ascending alias order:
-
-```sh
-curl http://127.0.0.1:19530/v1/models \
-  -H 'Authorization: Bearer replace-with-client-secret'
-```
-
-The response has the OpenAI list shape: `{"object":"list","data":[{"id":"public-alias","object":"model","created":0,"owned_by":"Nyro"}]}`. `created: 0` is a fixed placeholder, not a provider timestamp. Without credentials, only models with `allow_anonymous: true` are listed. A valid Bearer key also sees models granting its subject access; a caller with no visible models receives `200` with an empty `data` array. Invalid, duplicate or conflicting credentials return `401`, even when public models exist. This OpenAI-format endpoint accepts Bearer credentials only, not `x-api-key` or `x-goog-api-key`. Query credentials are rejected; pagination and other query parameters are unsupported. Only `GET` is supported.
-
-The catalog comes from one active runtime generation and contains no upstream model names, provider addresses or secrets. Successful reloads update the list and credentials; failed reloads retain the old catalog. Listing does not contact providers or consume inference concurrency, rate or quota. Models remain discoverable when their inference budgets are exhausted or their backends are unhealthy: visibility is an authorization decision, not an availability promise. Responses use `Cache-Control: no-store`; normal request IDs, deadlines and response-body cleanup still apply. Model discovery emits a request observation with `protocol=openai_models`, `workload=none`, zero attempts and `usage_state=not_attempted`.
-
-Regression: `cargo test -p nyro-llm --test models_runtime` and, after building the root binary, `python3 tests/proxy_reload_smoke.py`.
-
-## Reload the file
-
-On Unix, send `SIGHUP` to the running **nyro process** after saving a complete configuration. For example, with a source-built binary:
-
-```sh
-target/debug/nyro proxy --config docs/standalone/rust-proxy.yaml &
-nyro_pid=$!
-# Save the updated configuration, preferably by atomically replacing the file.
-kill -HUP "$nyro_pid"
-```
-
-The signal handler is registered before readiness. Each reload reads the original `--config` path again, including files replaced by rename. Reload accepts regular files (including symlinks to regular files); directories and special files such as FIFOs are rejected. Reloads are serial; signals may coalesce, so they are not a queue of configuration versions. Nyro does not watch files automatically. On Windows, restart to load edits.
-
-A reload validates the whole file, checks settings that require restart, then compares the effective configuration fingerprint. Equivalent configurations skip candidate construction and keep the same generation. Valid changes build a candidate and publish it atomically: new requests use the new generation, while in-flight requests retain their original routing, credentials, response limits and deadline through body cleanup. Removing a model or rotating a key does not revoke already admitted work. Failed reads, validation, candidate construction or activation leave the current generation serving traffic. Shutdown cancels pending reload activation before kernel cleanup; reload publication uses a ten-second deadline.
-
-`server.listen` and `limit.concurrency` require restart. Other supported request settings, routes, providers and credentials can reload. Unchanged model rate, subject-window and quota policies retain their counters. Changing active model rate rules, active/unexpired subject-window rules or live/consumed quota rules rejects the candidate as documented below. Health state is reused only for unchanged backend identities. Reload does not clear process-local budgets or force old streams to finish.
-
-`nyro::reload` events report `outcome=applied` or `unchanged` with a numeric generation ID. Rejection events use `outcome=rejected` and a safe reason:
-
-| Reason | Action |
-|---|---|
-| `read_failed` | Restore a readable configuration file |
-| `invalid_config` | Correct YAML, unknown fields, references or invalid values |
-| `restart_required` | Restore the listener/concurrency settings, or restart to change them |
-| `candidate_rejected` | Check active model rate, active/unexpired subject-window or live/consumed quota policy changes and runtime construction constraints |
-| `activation_failed` / `interrupted` | Check shutdown/deadline conditions before retrying |
-
-Reload logs exclude configuration contents, file paths, fingerprints and detailed error chains. A rejected file is not rewritten; correct it and send another signal. Regression: `cargo test -p nyro reload::tests` and `python3 tests/proxy_reload_smoke.py` after building the root binary.
-
-## Configuration
-
-All configuration structures reject unknown fields. `kind` is required and accepts `openai`, `anthropic`, or `gemini`. OpenAI providers optionally select `api: chat_completions` (default) or `api: responses`; other kinds reject the `api` field. Provider URLs must use HTTP or HTTPS, have a host, and contain no user information, query, or fragment. Nyro appends the native endpoint to the configured base path. Upstream requests use only the provider's optional `api_key`; caller credentials are not forwarded. Redirects, environment-configured HTTP proxies, and Reqwest automatic protocol retries are disabled for upstream calls; the LLM runtime owns the retry budget.
-
-| Provider kind | Example base URL | Appended endpoint | Upstream credential |
-|---|---|---|---|
-| `openai`, default API | `https://api.example.com/v1` | `chat/completions` or `embeddings` | Bearer Authorization |
-| `openai`, `api: responses` | `https://api.example.com/v1` | `responses` | Bearer Authorization |
-| `anthropic` | `https://api.anthropic.com/v1` | `messages` | `x-api-key`; fixed `anthropic-version: 2023-06-01` |
-| `gemini` | `https://generativelanguage.googleapis.com/v1beta` | `models/{upstream_model}:generateContent` or `:streamGenerateContent?alt=sse` | `x-goog-api-key` |
-
-Gemini upstream model names accept a single ASCII letter/digit/`-_.` segment, optionally prefixed with `models/`; `.` and `..` path segments are rejected.
-
-Each model declares:
-
-- `backends`: a nonempty list of upstream backends. Each has a model-scoped, unique, nonblank `id`, a `provider` ID from `llm.providers`, an `upstream_model`, and an optional integer `weight` (default `100`), and `priority` (default `0`, smaller values preferred).
-- `strategy`: optional `weighted` (default), `least_recent`, or `latency`, selecting within the lowest available priority. Null, unknown names, and the legacy `cooldown` name are rejected.
-- `max_attempts`: positive integer, default `1`, including the first upstream send. Each backend ID is attempted at most once per request.
-- `health`: optional passive breaker policy, disabled when omitted. An empty object enables `failure_threshold: 3` and `cooldown_ms: 30000`; both must be positive.
-- `rate`: optional per-model request frequency; omitted means disabled. See [Request rate](#request-rate).
-- `quota`: optional cumulative model token budget; omitted means disabled. See [Token quota](#token-quota).
-- `workloads`: a nonempty, duplicate-free list containing `chat`, `embedding`, or both when every backend uses OpenAI Chat Completions; Responses, Anthropic, and Gemini support only `chat`. Every backend, including disabled entries, must support the model's declared workloads. Invalid combinations fail startup.
-- `allow_anonymous`: optional, default `false`.
-- `subjects`: client credential IDs allowed to invoke a protected model; optional only for anonymous models.
-
-Backend weights range from `0` to `4294967295`. Zero disables selection; a model with no positive weight fails startup. Backend IDs are independent of provider/model names and unique within their public model. Changing an ID changes the effective configuration identity. Backend list order does not express priority and does not change the configuration fingerprint.
-
-Legacy models using top-level `provider` and `upstream_model` remain accepted. They normalize in memory to one backend with `id: default` and `weight: 100`; an equivalent explicit backend has the same fingerprint. Mixing the legacy fields with `backends`, incomplete legacy pairs, explicit null routing fields, or unknown fields is rejected. Config serialization emits the normalized `backends` form; source files are not rewritten.
-
-```yaml
-chat-default:
-  backends:
-    - id: primary
-      provider: example
-      upstream_model: example-chat-model
-      weight: 80
-    - id: secondary
-      provider: responses-example
-      upstream_model: example-responses-model
-      weight: 20
-  workloads: [chat]
-  subjects: [local-client]
-```
-
-Authentication, authorization, and shared admission apply once to the public model. Nyro then prepares each enabled backend locally using its strict codec or the native mode below, excludes backends that cannot represent the request, and selects from the lowest available `priority` using the model's `strategy`. The default `weighted` strategy chooses randomly in proportion to weight. These weights apply to the eligible subset; they are not per-batch traffic guarantees. Preparation sends no network requests. If none can represent the request, the response is `400` and no upstream is called. For example, without a token limit an Anthropic backend is ineligible while a compatible OpenAI backend can still be selected. Preparation cannot determine actual provider availability or whether its eventual response is convertible.
-
-All three strategies respect protocol compatibility, zero-weight disabling, health and priority. Exploration never bypasses these filters or selects a larger priority while a smaller one is available.
-
-| `strategy` | Selection within a priority |
-|---|---|
-| `weighted` | Random choice proportional to positive weight. |
-| `least_recent` | Prefer the backend whose attempt was started least recently, with never-attempted backends first; break ties by weight. Selection, health probe acquisition, token admission and dispatch recording are synchronous within a model, with no lock held while awaiting upstream. |
-| `latency` | Give each never-attempted backend an initial sampling opportunity. When successful samples exist, normally prefer the lowest response-header latency EMA; with 5% probability, explore the least recently started candidate. Break ties by weight. Unsampled backends with pending attempts are excluded from that exploration. If no successful samples exist, prefer fewer pending attempts, then least recent dispatch, then weight. |
-
-Latency measures each individual send through receipt of upstream `2xx` headers. The first sample initializes the EMA; subsequent samples contribute 20%. It excludes authentication, earlier retries, JSON body reads and SSE first-frame/subsequent consumption, and does not measure time to first token. A later invalid body does not undo the header sample; health still independently validates the complete response. Non-`2xx`, connection failures, cancellation/deadline before headers produce no sample. Previously attempted backends without successful samples are resampled through exploration instead of continuously displacing working ones. Exploration is probabilistic, with no fixed request-count guarantee for recovery sampling.
-
-All three strategies collect dispatch history and header samples, allowing strategy changes to use existing observations. Rejected token admission does not change history. Once dispatched, errors and cancellation retain dispatch order; pending sampling counts are released on headers or attempt exit. These counts cover header acquisition only, not the full SSE lifetime, and do not introduce another concurrency limit.
-
-The root composition shares history across generations through `SharedResources.routing`, scoped to the public model and effective backend binding. Changes to weight, priority, list order, selection strategy or health policy retain routing history. Provider ID/URL/API/credentials/native mode, upstream model or backend ID changes get a fresh binding; public models remain isolated. Removed bindings can be reclaimed after old generations and attempts release them. Re-adding a binding after its last holder drops starts fresh, as does restarting the process. History retention does not require `health` to be enabled.
-
-When migrating legacy Server configuration, normalize all priorities to `0` for legacy `weighted`. If legacy `priority` relied on input order within a level, assign distinct priorities; map signed priorities to nonnegative levels preserving relative order. `least_recent` replaces legacy `cooldown`'s last-success timestamp and 60-second cap with dispatch order. Legacy `latency`'s mixed timing and global samples are not imported. Legacy non-weighted strategies could still select zero-weight targets; the new runtime consistently disables them, so set positive weights for targets that must remain enabled. Configure health and retry limits separately: selection strategy names do not enable either feature.
-
-By default, each invocation makes one upstream attempt. Setting `max_attempts` above `1` enables failover to another eligible backend after a connection-establishment failure or an upstream HTTP `429`, `500`, `502`, `503`, `504`, or `529`. Remaining backends at the same priority are tried before larger priorities. Skipped incompatible, disabled, or unhealthy backends do not consume the budget. There is no backoff or separate attempt timeout: all attempts share one whole-request deadline and concurrency permit. A slow attempt can exhaust that deadline before failover is possible. Cancellation or dropping the request/body stops owned work.
-
-Other HTTP statuses and ambiguous transport failures do not trigger failover. Once an upstream returns `2xx`, the backend is fixed: a malformed JSON response, wrong content type, invalid first SSE frame, or later broken stream fails without another attempt. Failed-attempt headers and bodies are discarded. Opting into retries can still result in work at multiple upstreams; it does not guarantee exactly-once provider execution. Request logs include the public model, last selected backend ID, and number of attempts.
-
-For example, this model prefers `primary` and can fall back to `secondary`:
-
-```yaml
-chat-failover:
-  backends:
-    - {id: primary, provider: example, upstream_model: example-chat-model, priority: 0}
-    - {id: secondary, provider: responses-example, upstream_model: example-responses-model, priority: 1}
-  max_attempts: 2
-  health: {failure_threshold: 3, cooldown_ms: 30000}
-  workloads: [chat]
-  subjects: [local-client]
-```
-
-With `health` enabled, observed network errors, the transient statuses above, and invalid upstream responses count toward the failure threshold. A fully validated response resets the counter; for SSE this requires protocol completion, not headers or the first frame. Other statuses, client cancellation, body drop, and the overall deadline are neutral. After the threshold is reached, the backend is skipped for the cooldown. The first eligible request afterward claims a single recovery probe; concurrent requests use other available backends or receive `503`. A successful probe restores service; a failed probe starts another cooldown. A cancelled/dropped probe releases its claim without declaring recovery. If all compatible backends are blocked before an attempt, the response is `503`; after an attempted failure, the last sanitized upstream error is returned.
-
-Health is scoped to a public model and backend identity. The root composition shares it across generations for unchanged provider URL/API/credentials/native mode, upstream model, and health policy; weight or priority changes retain it. A changed binding gets fresh health state. Retired bindings are released after their generations and requests drop. There is no background probe or persistence across process restarts.
-
-Local routing regressions: `cargo test -p nyro-llm --test routing_runtime --test failover_runtime`.
-
-For a protected model, `subjects` must be nonempty and every value must match an `id` in `security.api_keys`. A request without a supported header credential, or with an unknown credential, receives `401`; a known subject not granted that model receives `403`. For an anonymous model, a missing credential is accepted. If a credential is supplied, it must still authenticate, but any known credential may use the anonymous model.
-
-Credential IDs and secrets must be unique and nonempty; IDs cannot be blank. Client secrets must contain only visible ASCII without whitespace so they can be presented as HTTP Bearer credentials. Configuration errors and debug output redact secrets.
-
-| Setting | Default | Effect |
-|---|---:|---|
-| `server.listen` | `127.0.0.1:19530` | Listener address |
-| `server.request_timeout_ms` | `120000` | Whole-request deadline, including a successful response body or SSE stream |
-| `server.max_body_bytes` | `1048576` | Maximum buffered downstream request body |
-| `server.max_response_bytes` | `16777216` | Maximum buffered non-stream upstream response; it is not a cumulative SSE limit |
-| `server.max_frame_bytes` | `1048576` | Maximum upstream SSE frame, emitted conversion batch, and accumulated tool/Responses snapshot state bytes |
-| `limit.concurrency` | `64` | Shared in-flight request cap; excess requests receive `429` |
-
-All numeric limits must be greater than zero. Concurrency must also fit Tokio's supported semaphore capacity. A concurrency permit remains held until the response body completes or is dropped. SSE has a per-frame cap and the whole-request deadline, but no cumulative wire byte cap. Responses additionally retains the full output snapshot within `max_frame_bytes`, including generated text; large Responses streams can therefore hit this limit even with small deltas. Tool fragments may be buffered until complete; accumulation is bounded by `max_frame_bytes`. A protocol terminal must be validated before a successful terminal is emitted; malformed/truncated streams fail without retry.
-
-## Request rate
-
-Each public model can opt into an in-memory token bucket:
-
-```yaml
-rate:
-  requests: 60
-  period_ms: 60000
-  burst: 5
-```
-
-`requests` and `period_ms` are required positive integers; `burst` defaults to `1` and must be positive. Counts and burst fit `u32`; the period must fit the platform's monotonic timer. This example starts with capacity for five immediate requests, then refills continuously at one request per second, up to five. It is a sustained average with a burst allowance, not a strict count in every rolling minute. No refill task or waiting queue is created.
-
-All callers, including anonymous callers, and all supported workloads and ingress protocols share the bucket for that public model. Different aliases have separate buckets even if they route to the same provider or upstream model. Scope is process-local; replicas do not share counters. This limits logical requests, not generated tokens or concurrent streams.
-
-Authentication, authorization, concurrency admission, compatible-backend preparation, and the initial cancellation/deadline check precede rate admission. Those earlier rejections do not consume rate capacity. Once admitted, a request consumes one unit regardless of upstream success, failure, unavailable backends, subsequent cancellation, or response-body drop. Internal retries and failover do not consume additional units, and completed or failed requests do not refund units.
-
-Excess requests receive a sanitized `429` in their native error format and an integer `Retry-After` header rounded up to seconds. Nyro sends no upstream request and immediately releases the acquired concurrency permit, even if the error body is left unread. The delay is advisory: another caller may consume the next unit first. Other `429` causes, such as concurrency rejection or upstream errors, do not acquire this rate header.
-
-The root composition shares rate state across configuration generations. An unchanged public-model rule retains its balance when routes, provider credentials, or other settings change. Changing a rule while its old binding is active rejects candidate construction; restart the process to change its parameters. Removing/disabling a rule lets existing generations finish with their binding, which is released after its last owner drops. A fresh binding or process restart starts with the configured burst capacity; no rate state is persisted. Use SIGHUP on Unix to reload other supported file changes.
-
-The reusable primitive is `nyro_limit::rate::RateLimit`. It accepts counts, a `Duration`, and burst capacity, and returns either admission or a retry delay. It contains no LLM, authentication, HTTP, kernel, or database types; the application owns scope mapping and rejection formatting. Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test rate_runtime`.
-
-## Subject request windows
-
-Configure rolling request limits under `llm.subject_limits`, keyed by an existing `security.api_keys[].id`. Merge this fragment into the same `llm` mapping as `providers` and `models`:
-
-```yaml
-llm:
-  subject_limits:
-    deploy:
-      rpm: 60
-      rpd: 1000
-```
-
-A request-only policy requires `rpm` or `rpd`; a token-only policy is also valid (see below). Each supplied request count is a positive `u32`; zero, explicit `null`, an empty policy, unknown fields, blank IDs and unknown subjects reject configuration. Omitting a subject's policy disables its request windows. Disabled or expired keys remain valid policy references. Limits are LLM policy, separate from authentication fields on an API key.
-
-RPM counts admissions in the preceding 60 seconds; RPD counts admissions in the preceding 24 hours, with an admission expiring at exactly its window duration. RPD does not reset at midnight. These are exact rolling counts using a monotonic clock, so wall-clock adjustments do not refill them. Each window allows its full count immediately when empty. Add a model token bucket when you also need to smooth bursts.
-
-All configured LLM model aliases, supported APIs, workloads, and strict/native paths share the window for that authenticated subject. Different subjects have independent windows. Rotating a secret while preserving its ID preserves the budget; choosing a new ID creates a different subject. Anonymous calls have no subject window and remain subject to the model bucket. Supplied credentials must still authenticate, and an authenticated caller uses its subject windows even on an anonymous model. Model discovery does not consume request limits.
-
-At the existing request-rate admission step, Nyro checks the subject's windows and the model bucket atomically: rejection charges none of these request rules. A native `429` releases concurrency immediately without calling upstream. `Retry-After` rounds up to seconds and reports the longest blocked subject window, or the bucket delay when all subject windows permit admission. It is advisory; after that wait a different rule or caller may still prevent admission. Validation, authentication, authorization, concurrency rejection, incompatible-backend preparation and cancellation/deadline checks before this step consume nothing. Once admitted, a logical request counts once across all retries; upstream errors, no healthy backend, later token-quota rejection, cancellation and body/stream loss do not refund it.
-
-The root proxy shares histories through `runtime::SharedResources` across reloads and overlapping generations. Rotation, disable/re-enable, expiry/renewal and subject/policy removal/re-addition preserve unexpired admissions for the same ID. Removing a policy stops counting new requests against it; it does not erase prior history. A live binding or unexpired history rejects a candidate that changes its window parameters. Restart to change an established rule immediately; inactive histories with all admissions expired are reclaimed on a subsequent policy bind. Failed candidates do not reset active budgets or retain unused bindings indefinitely. An in-flight request keeps its original generation's policies.
-
-Counters are process-local and reset on restart; replicas do not coordinate them. TPM/TPD are configured separately below; persistent counters remain unimplemented. Historical log counts are not imported: this counts logical admissions, not log completions. The shared primitive `nyro_limit::request::RequestLimit` accepts `(count, Duration)` windows and an optional `RateLimit` for atomic composition. `nyro_llm::subject_limit::SubjectLimitRegistry` supplies subject scope. Neither introduces HTTP, LLM or database types into `nyro-limit`, or responsibilities into the kernel. Rust callers constructing `config::Config` must supply `subject_limits` (an empty map preserves prior behavior); callers constructing every `SharedResources` field must also supply its registry or use `..Default::default()`.
-
-Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test rate_runtime`; the root reload smoke covers rotation, rejected changes, disable/re-enable and removal/re-addition.
-
-## Subject token windows
-
-The same `llm.subject_limits` policy can enable TPM/TPD, with or without RPM/RPD:
-
-```yaml
-llm:
-  subject_limits:
-    deploy:
-      tpm: 100000
-      tpd: 1000000
-      reserve_tokens: 4096
-```
-
-`tpm` and `tpd` are optional positive `u64` limits for normalized input plus output tokens. Configuring either requires a positive `reserve_tokens` no greater than every configured token limit. A reservation without a token window, zero, explicit `null`, invalid types and unknown fields reject configuration. Request limits and token limits may coexist; at least one of `rpm`, `rpd`, `tpm` or `tpd` must be configured. Model `quota.reserve_tokens` and subject `reserve_tokens` are separate settings and may differ. Rust `SubjectLimitConfig` literals must provide the new `tpm`, `tpd` and `reserve_tokens` fields; use `None` for existing request-only policies.
-
-Nyro reserves subject tokens immediately before each selected upstream attempt, after logical request-rate admission and backend health selection. All subject token windows and an optional cumulative model quota reserve atomically; rejection leaves both token budgets unchanged, sends no new upstream request and releases concurrency. Already admitted RPM/RPD/model-rate units remain charged. Each retry needs its own token reservation, while its logical request still counts once. A request with no eligible healthy backend has no token reservation.
-
-Pending reservations count against every token window until settled or released. They do not expire while a long request or SSE stream is running. On validated upstream protocol completion, actual usage replaces the reservation, including explicit zero or usage above the reserve. Each positive settlement enters the rolling windows at its settlement time and expires exactly 60 seconds (TPM) or 24 hours (TPD) later. There is no midnight reset. This deliberately measures settled attempt usage plus all pending reservations; it does not pretend to know when each upstream token was generated. A stream that crosses a minute boundary keeps its pending units and starts the settled-usage window when it finishes.
-
-Known connection-establishment failures release both reservations. HTTP errors, transport/protocol failures, cancellation, deadline, truncation and response-body/future drop settle the greater of that budget's reservation and the highest valid observed usage. Complete responses without usage use the same fallback. Model and subject budgets each apply their own reserve, so unknown outcomes can charge different amounts. Complete usage settles each budget to the same actual amount without adding the two together. Cumulative stream snapshots replace prior values rather than accumulating them; invalid/decreasing snapshots cannot reduce an existing charge. Successful protocol completion is final: subsequent downstream delivery loss does not settle twice.
-
-The reservation is an operator-selected provision, not a trusted upper bound on vendor consumption. Actual usage may exceed a window limit; Nyro records the debt and blocks later reservations until enough settled usage expires. It does not truncate an admitted stream merely because observed usage exceeds its reserve. Unknown outcomes can be overcounted. These windows control admission using reported or fallback usage, not a hard cap on actual upstream token generation.
-
-Subject token rejection uses the native `429` format (`rate_limit_exceeded` for OpenAI APIs). When settled usage can expire to make room, `Retry-After` is the longest wait needed across blocked windows, rounded up to seconds; it may need several settlement records to expire. When pending units alone prevent admission, the header is omitted because their completion time is unknown. A later retry may still be blocked by new traffic or settlements. Cumulative model quota rejection retains `quota_exceeded` with no retry header. Anthropic uses `rate_limit_error`; Gemini uses `RESOURCE_EXHAUSTED`.
-
-Subject scope and lifecycle match request windows: all model aliases, supported APIs/workloads and strict/native paths share the authenticated subject's state. Anonymous calls have no subject token budget, and supplying a valid credential on an anonymous model still applies its policy. Reload, secret rotation, disable/re-enable, expiry/renewal and removal/re-addition retain pending tokens and unexpired settled usage. Any active binding, pending receipt or unexpired request/token history prevents changing that subject's policy parameters, including adding a token rule to an active request-only policy; the candidate is rejected. Restart to change such a policy immediately. An inactive policy is reclaimable on a later bind once both request history and token usage are empty and no reservation remains. Failed candidates cannot reset active counters.
-
-`nyro_limit::window::WindowQuota` is a generic unit budget, with no LLM, authentication, HTTP, storage or kernel types. `SubjectLimitRegistry::token_snapshots` reports configured token windows in TPM-then-TPD order. Request/attempt logs expose `token_window_charged_tokens` separately from `quota_charged_tokens` and reported `total_tokens`; attempt `token_window_outcome` distinguishes `actual`, `fallback`, `released` and `disabled`. A subject charge is counted once even when both TPM and TPD are enabled. Counters remain process-local, reset on restart and are not imported from legacy logs. Persistence and multi-replica coordination remain deferred.
-
-Regression: `cargo test -p nyro-limit`, `cargo test -p nyro-llm --test quota_runtime --test observation_runtime`, and the root reload smoke after building `nyro`.
-
-## Token quota
-
-Add an optional `quota` to a public model:
-
-```yaml
-quota:
-  total_tokens: 1000000
-  reserve_tokens: 4096
-```
-
-Both fields are required positive integers; `reserve_tokens` must not exceed `total_tokens`. Explicit `null` and unknown fields are rejected. All callers, workloads and ingress APIs for that alias share one cumulative budget of input plus output tokens. Different aliases have independent budgets. This is process-local accounting with no periodic refill, persistence, pricing or replica coordination.
-
-After authentication, authorization, concurrency and rate admission, Nyro reserves `reserve_tokens` immediately before each available upstream attempt. Retries each need their own reservation. No available backend means no reservation. Admission atomically checks settled usage plus pending reservations. Insufficient credit returns a native `429`: OpenAI APIs use `quota_exceeded`, Anthropic uses `rate_limit_error`, and Gemini uses `RESOURCE_EXHAUSTED`. There is no `Retry-After` or new upstream call, and the concurrency permit is released immediately. A prior rate admission remains charged even when quota rejects the request. A remaining balance below `reserve_tokens` cannot admit another attempt.
-
-On a valid complete response, Nyro replaces the reservation with reported total usage, including explicit zero and usage above the reservation. For JSON this happens before downstream encoding; for SSE it happens at the validated upstream protocol terminal. Usage snapshots are cumulative, not additive, and must not decrease. Input plus output must equal total without overflow; embeddings require input to equal total. Invalid usage fails the response (`502` before streaming, otherwise stream termination). OpenAI Chat upstream requests ask for stream usage for observation even when the client has not requested usage output; the client's output preference is preserved.
-
-Before settlement, missing usage, upstream HTTP errors, malformed responses, cancellation, deadlines and dropped/truncated streams charge the greater of the reservation and any valid observed usage. Once settled, later downstream failure or body drop does not change the charge. Only an observed connection-establishment failure releases the entire reservation. Each failed HTTP attempt is charged separately before failover. These conservative fallback charges may overcount actual usage. Conversely, `reserve_tokens` is an operator-selected amount, not a trusted upper bound on provider consumption: actual usage can exceed the configured budget, and the resulting debt blocks later admissions. This is not a hard cap on actual upstream tokens.
-
-The root composition retains consumed and pending ledgers across generations, routing changes, and model removal/re-addition. Changing a rule while its binding is live or its ledger has consumed credit rejects candidate construction. Unused, unowned candidate ledgers can be discarded. Retained ledgers last for the registry's lifetime; process restart resets all balances and is required to change an established rule. Other supported file edits can reload with SIGHUP on Unix. Disabling quota stops accounting for new requests; it does not erase an existing ledger.
-
-`nyro_limit::quota::Quota` provides generic atomic reservation, settlement and snapshots without LLM, HTTP, kernel or storage types. `nyro_llm::quota::QuotaRegistry` owns the model mapping and token semantics. Library hosts should reuse `runtime::SharedResources` with `Runtime::with_resources` across generations; `Runtime::new` creates fresh registries and `with_health` shares health only. Regression: `cargo test -p nyro-limit` and `cargo test -p nyro-llm --test quota_runtime`.
-
-## Native clients and conversion limits
-
-| Client API | Endpoint | Credential |
-|---|---|---|
-| OpenAI | `POST /v1/chat/completions`, `POST /v1/responses`, `POST /v1/embeddings` | `Authorization: Bearer …` |
-| Anthropic | `POST /v1/messages` | `x-api-key: …` or Bearer |
-| Gemini | `POST /v1beta/models/{alias}:generateContent`, `:streamGenerateContent?alt=sse` | `x-goog-api-key: …` or Bearer |
-
-Gemini also accepts `/v1/models/…`. Only one credential header may be supplied; duplicate or conflicting sources return `401`. Query-string credentials are rejected, and the only supported query option is `alt=sse` on Gemini streaming requests. Gemini aliases must use a single ASCII letter/digit/`-_.` segment.
-
-```sh
-curl http://127.0.0.1:19530/v1/messages \
-  -H 'x-api-key: replace-with-client-secret' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"claude-default","max_tokens":256,"messages":[{"role":"user","content":"Hello"}]}'
-
-curl http://127.0.0.1:19530/v1beta/models/gemini-default:generateContent \
-  -H 'x-goog-api-key: replace-with-client-secret' \
-  -H 'Content-Type: application/json' \
-  -d '{"contents":[{"role":"user","parts":[{"text":"Hello"}]}],"generationConfig":{"maxOutputTokens":256}}'
-```
-
-An alias selects the configured upstream independently of the client protocol. An Anthropic backend is eligible only with an explicit token limit (`max_tokens`, or a representable equivalent); Nyro does not invent one. Native clients routed to an OpenAI stream request upstream usage automatically. OpenAI Chat Completions clients receive usage only when `stream_options.include_usage` is true.
-
-The strict conversion path is an experimental Chat subset for text, user image inputs and client functions. Cross-protocol audio/video, thinking/signature blocks, unrepresentable content ordering, multiple candidates, and unsupported vendor options or diagnostics remain unsupported. Examples include Anthropic cache-control options, unsupported usage extensions and matched stop-sequence responses; Gemini safety settings, safety ratings, grounding/citations, prompt feedback and structured-output settings; and OpenAI response fingerprint/service-tier/logprob metadata when it cannot be represented by a native output. Supported fields in one protocol are not automatically representable in another: unsupported requests fail before dispatch; unsupported upstream responses fail with `502` or a terminated SSE stream. Native Embedding APIs and full SDK/vendor feature parity remain future work.
-
-Protocol reference: [Anthropic streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [Gemini generateContent](https://ai.google.dev/api/generate-content). Local matrix regression: `cargo test -p nyro-llm --test protocol_matrix`.
-
-## Anthropic thinking in strict mode
-
-Strict Anthropic Messages conversion now preserves `thinking` configuration (`enabled` with `budget_tokens`, `adaptive`, or `disabled`), with optional `display: "summarized"` or `"omitted"` for enabled/adaptive modes. Omission leaves upstream defaults unchanged. Manual budgets must be at least 1,024 tokens; model availability, sampling/tool compatibility and the relationship to `max_tokens` remain upstream checks, including the interleaved-thinking budget exception. See the official [thinking guide](https://platform.claude.com/docs/en/build-with-claude/thinking) and [manual budget rules](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#budget-rules-and-tuning).
-
-Assistant history and generated JSON retain ordered `thinking` blocks with their opaque signatures, `redacted_thinking` data, and following text/function calls. Empty thinking text is valid when a signature is present. SSE retains thinking block boundaries, summary deltas and the final signature delta, including signature-only omitted display and redacted blocks. Strict streams reject type/index mismatches, missing or repeated signatures, text after a signature, incomplete blocks and oversized thinking data. Nyro neither interprets nor verifies encrypted signatures, and does not synthesize reasoning text or token counts. Existing usage totals and conservative settlement on stream failure still apply.
-
-These fields are Anthropic-specific. OpenAI Chat/Responses and Gemini targets reject them; they are not mapped to reasoning-effort controls, ordinary answer text or another provider's signatures. Thinking and text after tool-call blocks are preserved in same-protocol history, JSON and SSE. Beta `display: "updates"`, `output_config`, `output_tokens_details` and other extensions still require matching native mode where supported; caller beta headers are not forwarded. Native mode preserves a wider field set and does not gain strict block reconstruction from this change. This subset is covered by local codec and HTTP mock tests, not live vendor or SDK certification.
-
-## Gemini thinking in strict mode
-
-The existing `generateContent` API supports `generationConfig.thinkingConfig` with `includeThoughts`, `thinkingBudget` (signed integer: `-1`, `0`, or positive) or `thinkingLevel` (`THINKING_LEVEL_UNSPECIFIED`, `MINIMAL`, `LOW`, `MEDIUM`, `HIGH`). Lowercase level names used by the official REST guide are accepted and emitted in uppercase. Budget and level cannot be set together. Omission and optional null fields leave upstream defaults unchanged; explicit false, zero and an empty configuration remain distinct. Model support, budget ceilings and default levels are upstream-owned. See the official [ThinkingConfig reference](https://ai.google.dev/api/generate-content#ThinkingConfig) and [generateContent thinking guide](https://ai.google.dev/gemini-api/docs/generate-content/thinking). Interactions uses a different thought representation and remains outside this increment.
-
-Model text parts preserve `thought` and opaque `thoughtSignature` fields, including empty/absent text with a signature. Signed parts are never joined to adjacent text. Client function-call parts retain their signatures and original optional IDs through history, JSON responses and SSE; synthetic IDs used internally for tool-result correlation are not inserted into signed calls that originally omitted an ID. Signatures are kept as opaque strings without cryptographic validation or substitution. See the official [signature round-trip rules](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures).
-
-This is Gemini-to-Gemini preservation. OpenAI Chat/Responses and Anthropic encoders reject these fields. Text/signature parts after function calls are preserved in same-protocol history, JSON and SSE. Thinking/signature metadata on system/user/tool-result or image parts remains outside the strict subset. Matching native mode preserves the broader JSON field set. In SSE each supported part retains its boundary; finish is emitted at normal EOF, after trailing usage frames. Frame expansion is bounded before repeating response identities. Known frame usage is observed before encoding its first part, so an incompatible output cannot discard already-reported usage. Thought tokens remain included once in IR output totals. Local codec/HTTP regressions cover retry compatibility, credentials, quota and malformed/truncated streams; they do not certify live models or SDK sessions.
-
-## Request cache controls
-
-Cache controls follow the official API definitions; legacy adapters are migration evidence, not a source of defaults or equivalent mappings. The current strict subset is:
-
-| Control | Strict conversion | Matching native forwarding |
-|---|---|---|
-| OpenAI `prompt_cache_options` | Chat Completions ↔ Responses; optional `mode: implicit/explicit` and `ttl: 30m`. | Preserved. |
-| OpenAI `prompt_cache_key` | Preserved between Chat and Responses; Nyro does not generate a key. | Preserved. |
-| OpenAI `prompt_cache_retention` | Compatibility field: `in_memory` or `24h`, preserved between Chat and Responses. | Preserved. |
-| OpenAI per-block `prompt_cache_breakpoint` | Text and user images between Chat and Responses, preserving block positions and `mode: explicit`. | Preserved. |
-| Responses cache comparison/diagnostic controls | Not implemented; rejected before dispatch. | Preserved within the existing stateless native contract. |
-| Anthropic automatic or per-block `cache_control` | Preserved for Anthropic targets in the supported text/image/function subset; other protocols are ineligible. | Preserves position, content order, explicit `5m`/`1h` TTL and omitted TTL. |
-| Gemini `cachedContent` | Not implemented; rejected before dispatch. | Preserves the existing cache resource reference. |
-
-For example, an OpenAI Chat or Responses request can include `"prompt_cache_options":{"mode":"implicit","ttl":"30m"}`. Omitted fields are not filled in by Nyro; an empty options object stays empty, and a null top-level options/retention value normalizes to absence in strict conversion. Nested mode/TTL values must match the supported enum and cannot be null. Model support and defaults remain the upstream's responsibility. In `explicit` mode without explicit breakpoints, OpenAI disables implicit caching; Nyro does not insert breakpoints in either forwarding mode.
-
-Text blocks can carry `"prompt_cache_breakpoint":{"mode":"explicit"}` in system, developer, user, assistant-history and tool-result content. User image markers belong on the outer `image_url` / `input_image` block. Conversion preserves surrounding blocks, order, image detail and tool-call association. TTL is inherited from request options, never attached to the marker. Markers also work without explicit request options; Nyro neither inserts defaults nor drops historical markers beyond four. Upstream cache-write selection remains upstream-owned.
-
-Marked assistant history uses Responses `input_text` for all text in that message; it cannot be combined with refusal content. Generated response content and Responses `output_text` do not accept these input markers. Chat prediction text markers remain in Chat; Responses prediction is unsupported. Audio/file markers remain outside the strict subset. Invalid marker modes, extra fields and explicit null markers are rejected; omit the field when no breakpoint is intended.
-
-The current OpenAI API distinguishes the minimum lifetime in `prompt_cache_options.ttl` from the deprecated maximum retention policy in `prompt_cache_retention`; both fields may be supplied and are preserved independently. Nyro does not replace one with the other, translate them into Anthropic TTLs, or manufacture Gemini cache resources. OpenAI controls make Anthropic/Gemini targets ineligible before dispatch. Native-only controls also exclude strict or incompatible retry candidates. Matching protocol alone does not establish that a referenced cache exists for another upstream credential/model.
-
-Anthropic controls accept `{"type":"ephemeral"}` with optional `ttl: "5m"` or `"1h"`. Supported positions are the request root, system text blocks, tool definitions, user/assistant text, user images, tool-use blocks, outer tool-result blocks and text blocks inside tool results. System text blocks are kept separate; tool batches retain result order and inner/outer boundaries. A null control normalizes to absence, while null TTL, unknown fields and unsupported enum values fail before dispatch. Generated JSON/SSE content cannot carry input cache controls. Native-to-strict Anthropic retries are eligible when the entire request fits this subset; other native-only extensions still require native forwarding.
-
-Nyro preserves automatic caching without choosing a breakpoint. The upstream enforces cache constraints, including the four-breakpoint limit, automatic-cache slot/conflict rules, longer TTLs preceding shorter TTLs in tools → system → messages order, and model-specific eligibility. No TTL is filled in or translated into OpenAI options. Document/thinking blocks, images inside tool results, and `max_tokens: 0` pre-warming remain outside the strict subset.
-
-Responses cache-option envelope echoes are validated and normalized with other request echoes; exact echoes require native forwarding. Cache storage, resource creation/deletion, automatic breakpoint placement and model-specific cache availability are not implemented by Nyro. The corresponding OpenAI `cache_write_tokens` counters are supported by the [usage conversion subset](#cache-usage-accounting); other unimplemented usage extensions still fail strict conversion.
-
-Sources: [OpenAI cache controls](https://developers.openai.com/api/docs/guides/prompt-caching), [Chat API fields](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Responses API fields](https://developers.openai.com/api/reference/cli/resources/responses/methods/create), [Responses assistant input shape](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/easy_input_message_param.py), [Anthropic cache placement](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), [Gemini cached content](https://ai.google.dev/api/generate-content). Tests use local HTTP fixtures and assert sent fields, JSON/SSE completion, rejection before dispatch, retry eligibility and admission release; they do not certify vendor cache hits or billing.
-
-## Cache usage accounting
-
-Strict conversion accepts Anthropic JSON/SSE cache-read and cache-creation token counts. Total input is `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`; output is added once. The optional `cache_creation` five-minute and one-hour counters must sum to cache creation and are not added again. Counts must be nonnegative integers without overflow; supplied nulls and inconsistent breakdowns fail validation. Stream snapshots are cumulative: omitted input/cache fields retain their previous values, and individual counters cannot decrease.
-
-Cache reads map to OpenAI Chat cached prompt tokens, Responses cached input tokens, and Gemini cached content tokens. OpenAI Chat `prompt_tokens_details.cache_write_tokens` and Responses `input_tokens_details.cache_write_tokens` are part of their inclusive input count, not additional tokens. Read plus write counts must fit within input. Writes without TTL details can convert between OpenAI Chat, Responses and Anthropic; Nyro does not infer TTL from request options. Anthropic's optional TTL breakdown is preserved only by Anthropic output, and Gemini output still rejects positive writes. Unsupported output details fail with `502` or a terminated SSE stream, even if OpenAI stream usage output is disabled. Zero writes and valid zero TTL breakdowns normalize away.
-
-Quota and observations use inclusive token totals, without cache pricing discounts or TTL multipliers. Valid usage already received remains chargeable if output conversion fails; failure settlement uses the existing maximum of reserved and known usage. Request `cache_control`, cache placement and cross-protocol cache policy remain unsupported in strict conversion. Matching native forwarding preserves these fields and validates known cache counters and TTL sums without adding the breakdown twice.
-
-References: [OpenAI cache read/write accounting](https://developers.openai.com/api/docs/guides/prompt-caching), [Anthropic prompt cache accounting](https://platform.claude.com/docs/en/build-with-claude/prompt-caching). Local regressions: `cargo test -p nyro-llm --test cache_usage_codec --test native_anthropic_runtime`. These use synthetic local upstreams, not vendor billing certification.
-
-## User image inputs
-
-User-message images reuse the existing Chat IR; this does not introduce an image-generation workload. Supported strict conversions preserve image/text order, URL strings, declared MIME types and base64 content:
-
-| Input form | Eligible destinations |
-|---|---|
-| OpenAI Chat `image_url` data URI, Responses `input_image.image_url` data URI, Anthropic `image` base64 source, Gemini `inlineData` | PNG/JPEG/WebP across all four formats. |
-| GIF data URI or Anthropic base64 source | OpenAI Chat, Responses and Anthropic; Gemini is ineligible. |
-| HTTP(S) image URL in OpenAI Chat, Responses or Anthropic | These three formats; Gemini is ineligible because conversion does not download the image or fabricate `fileData`. |
-| OpenAI Chat/Responses `detail` | `auto` or omitted can use all otherwise eligible destinations. `low`, `high` and `original` are retained only for OpenAI Chat/Responses; they make Anthropic/Gemini ineligible. |
-
-The table above describes user images; tool-result images follow the separate rules below. System/developer/assistant images, vendor file IDs, Gemini `fileData`, HEIC/HEIF, image-specific caching/transformations/resolution extensions and image output conversion are outside this increment. Unsupported source shapes or image roles fail strict decoding; incompatible targets are excluded before dispatch. If none remain, the request returns `400`. Opt-in matching native forwarding keeps its existing contract.
-
-Nyro checks source shape, HTTP(S) URL syntax, the supported MIME label and nonempty standard base64 encoding. It does not fetch URLs, decode pixels, verify bytes against the MIME label, resize, transcode or prove model vision support. Existing request-body limits still apply; the configured upstream validates image contents and model-specific limits. The stricter source/role checks also apply to direct strict OpenAI Chat codec use.
-
-References: [OpenAI image inputs and detail](https://developers.openai.com/api/docs/guides/images-vision), [Anthropic image sources](https://platform.claude.com/docs/en/build-with-claude/vision), [Gemini inline images](https://ai.google.dev/gemini-api/docs/image-understanding). Local regressions: `cargo test -p nyro-llm --test image_codec --test responses_runtime`. These use local mock upstreams, not vendor vision certification.
-
-## Strict tool history and results
-
-When strict conversion selects an Anthropic or Gemini upstream, all results for one assistant tool-call batch are placed in the immediately following single `user` message. Results keep their original order and `tool_call_id`/`tool_use_id` association, even when they return in a different order from the calls. User text immediately following the completed batch is appended after the result blocks. Tool names, parsed object arguments and result text are preserved; Gemini object results without media retain the existing JSON-as-text conversion; media results keep a separate typed representation.
-
-Every call in the batch must have exactly one adjacent result. Duplicate call IDs within a batch, missing/unknown/duplicate results, and user or assistant messages inserted before the batch is complete make that backend ineligible before dispatch. Nyro does not fabricate calls, drop intermediate text or rearrange history to repair it. If no backend can represent the original request, the runtime returns `400`. These are destination-specific checks in the strict Anthropic and Gemini encoders; opt-in matching native forwarding keeps its existing contract.
-
-This covers OpenAI Chat, stateless Responses, Anthropic Messages and Gemini generateContent ingress, with JSON or SSE responses. The strict result boundaries are:
-
-| Result/history form | Supported conversion |
-|---|---|
-| Text result blocks, including an empty array | OpenAI Chat, Responses and Anthropic preserve block boundaries. Gemini accepts at most one text block; multiple blocks make that backend ineligible. |
-| Anthropic omitted result content | Decodes as an empty result, without inventing text. |
-| Anthropic `is_error:true` | Preserved by the typed IR and Anthropic output. OpenAI Chat, Responses and Gemini backends are ineligible because an explicit execution-error flag has no supported lossless mapping. |
-| Responses result string or `input_text`/`input_image` array | Preserves the string or ordered blocks. Files, audio/video, `output_text` and refusal result blocks remain unsupported. |
-| Gemini result object without `parts` | Preserved as an object for Gemini, or serialized as JSON text for other targets. An `error` key remains business data and does not create an execution-error flag. |
-| Gemini missing result ID | Resolved only when the pending function name identifies exactly one call. Explicit IDs must also match the function name; generated missing call IDs avoid explicit IDs anywhere in the history. |
-| Gemini text mixed with function results | Decoded in order into separate IR messages. Anthropic/Gemini targets reject text interrupting an unfinished result batch; compatible OpenAI Chat/Responses targets retain the order. |
-
-No calls are synthesized or content discarded to repair a history. Cross-protocol thinking/signature mapping and non-image media tool results remain unsupported. Function Schema conversion is described below. References: [Anthropic tool results](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls), [Gemini FunctionResponse](https://ai.google.dev/api/generate-content). Local regressions: `cargo test -p nyro-llm --test anthropic_codec --test gemini_codec --test responses_codec --test responses_runtime --test protocol_matrix`.
-
-## Images inside tool results
-
-Strict Anthropic and Responses history accepts ordered text/image result blocks, preserving the call ID and keeping images inside the result. PNG/JPEG/WebP/GIF base64 and HTTP(S) image URLs convert between these APIs without fetching, decoding or transcoding. Responses image `detail` is retained for Responses; non-default detail makes Anthropic ineligible. Anthropic result/block `cache_control` and `is_error:true` remain Anthropic-only; Responses `prompt_cache_breakpoint` remains an OpenAI input control and makes Anthropic ineligible. Complete adjacent result-batch checks still apply.
-
-Gemini preserves `functionResponse.response` together with nested `parts[].inlineData`: PNG/JPEG/WebP, base64 data, optional `displayName` and object references. It validates named references and retains media order; it does not move images to sibling user parts. This structured media result currently converts only to Gemini. Text/image arrays from other APIs are also rejected for Gemini: Nyro does not invent a `response.result` structure or named references to claim equivalence. An explicitly supplied empty `parts` array retains the Gemini representation; an omitted array keeps the existing object-only path.
-
-Chat Completions tool messages remain text-only. Image results make Chat ineligible before dispatch. Vendor file IDs, Gemini `fileData`, documents, audio/video, image outputs and hosted computer-use tools remain outside this increment. Invalid MIME/base64/URL envelopes fail before dispatch; configured body limits still apply. Validation does not establish that the bytes contain a valid image or that a model supports it.
-
-Rust callers can reuse `ContentPart::ImageUrl` for Anthropic/Responses tool images. Gemini media results use `ContentPart::GeminiFunctionResponse`, holding one response object and its ordered media parts; it is valid only as the sole body of a tool-result message. Handle this new enum variant when consuming IR. Direct constructors of `nyro_protocol::gemini::FunctionResponse` must also supply `parts` (`None` when omitted). No new crate or kernel responsibility is introduced.
-
-Sources: [Anthropic result images](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls), [Responses function calling](https://developers.openai.com/api/docs/guides/function-calling), [Chat tool-message schema](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Gemini multimodal results](https://ai.google.dev/gemini-api/docs/generate-content/function-calling). Local codec and HTTP regressions use mock upstreams, not live vendor certification.
-
-## Function parameter schemas
-
-The strict path preserves JSON Schema objects in OpenAI Chat `parameters`, Responses `parameters`, Anthropic `input_schema` and Gemini `parametersJsonSchema`. It does not remove `$ref`, `$defs`, `additionalProperties` or other constraints, resolve references, rewrite defaults, or repair schemas. Missing parameters keep the existing no-parameter conversion. Function names must be nonblank and supplied parameter schemas must be JSON objects; this is envelope validation, not a full JSON Schema validator or a guarantee that every model supports every keyword. Argument execution/validation remains the client's responsibility.
-
-OpenAI Chat `strict:false` is accepted for all four destinations. `strict:true` is preserved for OpenAI Chat/Responses and makes Anthropic/Gemini destinations ineligible in the current strict codecs. Responses ingress still requires an explicit boolean `strict`; outgoing Responses always supplies it, defaulting to `false` when the source does not require strict enforcement. Nyro does not add `required` or `additionalProperties:false` to obtain strict-mode compatibility. See [OpenAI function strict mode](https://developers.openai.com/api/docs/guides/function-calling#strict-mode).
-
-Gemini's native `parameters` uses a different Schema dialect and is converted to JSON Schema before destination selection:
-
-| Native Schema field | Strict conversion |
-|---|---|
-| Known `type` names | Lowercase JSON Schema types; unknown types are rejected. |
-| `properties`, `items`, `anyOf` | Recursively convert only schema positions; `anyOf` must be a nonempty array. |
-| `nullable:true` | Add `null` to the explicit type. Combinations with `enum` or `anyOf` are rejected rather than assuming how the constraints interact. |
-| `minItems`/`maxItems`, `minProperties`/`maxProperties`, `minLength`/`maxLength` | Convert nonnegative int64 decimal strings or integer values to JSON numbers, without rounding. |
-| String `enum`, `required`, `minimum`/`maximum`, `title`, `description`, `format`, `pattern` | Validate field shapes and preserve values. Native enum is supported only for string types. |
-| `default` | Preserve literal JSON data without recursively treating it as a schema. |
-| Other native fields, including `propertyOrdering`, `example`, `$ref` and `additionalProperties` | Reject without pruning. Use `parametersJsonSchema` for JSON Schema objects; matching opt-in native forwarding retains its existing contract. |
-
-These checks do not prove satisfiability, resolve references or emulate vendor enforcement. See [Gemini Schema and FunctionDeclaration](https://ai.google.dev/api/generate-content#Schema). Regressions: `cargo test -p nyro-llm --test tool_schema_codec --test responses_runtime`.
-
-## Opt-in OpenAI Chat native compatibility
-
-Set `native_chat: true` on an OpenAI Chat provider to preserve vendor JSON fields between `POST /v1/chat/completions` and an OpenAI Chat upstream:
-
-```yaml
-llm:
-  providers:
-    example:
-      kind: openai
-      api: chat_completions
-      native_chat: true
-      base_url: https://api.example.com/v1
-      api_key: replace-with-provider-secret
-```
-
-This provider fragment extends your existing configuration. The default is `false`; `true` is supported for OpenAI Chat/Responses, Anthropic Messages and Gemini providers. An OpenAI Chat provider only uses this mode for matching OpenAI Chat ingress; other ingress APIs and Embedding continue through strict codecs.
-
-Nyro preserves request JSON, non-streaming response JSON and SSE data JSON, including nested reasoning/tool history, vendor options and usage details. It rewrites the top-level model to the upstream model on requests and the public alias on responses/chunks. For streams it forces upstream `stream_options.include_usage: true`, preserving other options; downstream usage is included only when requested. When usage is hidden, usage-only chunks are omitted and accounting still observes them.
-
-Native mode validates the routing/control envelope (model, message roles, stream controls), response/chunk envelope, numeric usage counters and bounded SSE framing with an explicit `[DONE]`. It delegates vendor field semantics to the selected upstream. It is JSON field preservation, not byte-for-byte forwarding: serialization and SSE framing may change, comments/IDs/retry fields are discarded, event names must be absent, empty or `message`, and arbitrary headers are not forwarded. Existing authentication, authorization, admission, quota settlement, retry limits, deadlines and cleanup remain mandatory. Failed upstream responses remain sanitized. Changing native mode changes the configuration fingerprint and resets the affected health binding.
-
-For mixed backend pools, a native request can use a strict or different-protocol backend only if the **original** request passes the strict OpenAI codec and the destination can represent it. Nyro never strips extension fields to make failover eligible. Native mode does not promise cross-protocol reasoning/media conversion, complete SDK sessions, or native fidelity across different OpenAI APIs.
-
-Local recorded regression: `python3 tests/proxy_native_replay.py` after `cargo build -p nyro`. It compares complete parsed request/response sequences for eight OpenAI Chat recordings from DeepSeek and Zhipu AI, also replays eight Anthropic Messages recordings, and classifies all sixteen recordings under the default strict mode. These historical fixtures are not live vendor certification.
-
-## Opt-in Anthropic Messages native compatibility
-
-An Anthropic provider can also enable `native_chat: true`. Only matching `POST /v1/messages` ingress and Anthropic upstreams use this mode. Keep `kind: anthropic`, the provider base URL and static API key; do not set the OpenAI-only `api` selector. OpenAI and Anthropic native providers in the same pool are not interchangeable: a request may cross protocols only when its original JSON passes the source strict codec and the destination can represent it.
-
-Requests preserve system/cache options, thinking and signatures, tool history and vendor fields. Nyro validates the model, messages, positive `max_tokens` and stream controls, while the upstream validates vendor semantics. JSON responses preserve content blocks, stop details and usage extensions; only `model` changes to the public alias. SSE preserves event names and data JSON, including pings, thinking/signature deltas and tool fragments; the nested `message_start.message.model` changes to the alias. Framing, comments, IDs and retry fields are not preserved byte-for-byte.
-
-The native stream validates matching event names/types and the lifecycle: one `message_start`, sequential indexed content blocks, message deltas, then `message_stop` after a stop reason and all blocks are closed. Usage-bearing message deltas may repeat. An omitted stop reason retains the earlier value; an explicit null clears it and requires a later nonempty reason before completion. Missing completion, malformed/out-of-order events, unknown top-level event types and upstream error events fail without retry after `2xx`; upstream error text is not forwarded. Content-block extensions remain opaque inside this lifecycle, with basic shape checks for known block/delta fields. Tool fragments are forwarded incrementally without assembling or repairing their final JSON, and thinking signatures are not cryptographically validated. These are upstream semantics, not cross-protocol conversion support.
-
-For quota and observations, total input is `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`; absent cache counters start at zero. `message_delta` counters are cumulative: each message delta must report `output_tokens`, omitted input/cache counters retain their earlier values, and repeated snapshots are not added again. Invalid numeric counters, decreases and overflow fail the response. Output tokens are added once to total input; nested cache-duration breakdowns, service-tier metadata and server-tool counters are preserved but do not add token charges. When a cache-duration breakdown is supplied, both known TTL counters must be nonnegative integers, cannot decrease and must sum to cache creation. Settlement occurs at `message_stop`; failure/drop before then retains the existing conservative fallback charge. See the [Anthropic cache accounting](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#tracking-cache-performance) and [stream event contract](https://platform.claude.com/docs/en/build-with-claude/streaming).
-
-Authentication, authorization, rate/concurrency admission, health, deadlines and generation ownership use the existing shared path. Upstream authentication remains the configured `x-api-key` with `anthropic-version: 2023-06-01`; caller credentials, arbitrary headers and `anthropic-beta` are not forwarded. This increment does not add OAuth/account channels or beta-header configuration.
-
-## Opt-in Gemini generateContent native compatibility
-
-Set `native_chat: true` on a `kind: gemini` provider (without `api`). It applies only to matching Gemini ingress and upstreams; strict source-codec validation still gates fallback to other formats. Both `/v1beta/models/{alias}:generateContent` and `/v1/models/{alias}:generateContent` are accepted, with corresponding `:streamGenerateContent` actions. Streaming permits only `alt=sse`; credentials belong in headers.
-
-The URL determines the public model and streaming mode. Nyro replaces the upstream URL model with the configured `upstream_model`, and never injects `model` or `stream` into the JSON body; client bodies containing either field are rejected, even if null. `modelVersion` is preserved as upstream version metadata, rather than rewritten to an alias. Upstream requests use only the provider's `x-goog-api-key`; caller keys and arbitrary headers are not forwarded.
-
-Native requests/responses preserve JSON fields, including thought signatures, function history, inline/file media data, caching, safety settings/ratings, grounding/citations and structured-output options. These payloads stay private to the runtime. Nyro validates the contents/parts and routing envelopes and basic known field types; vendor semantics and signature verification remain upstream responsibilities. Optional non-accounting fields accept `null` as unset and preserve it in JSON, matching ProtoJSON; this does not relax required usage counters or forbidden body routing fields. This increment retains the single-candidate scope: `candidateCount` must be unset or `1`, response candidates use index `0` or leave it unset, and multiple candidates are rejected. A blocked prompt without candidates is a valid native response when `promptFeedback.blockReason` is a nonempty, non-unspecified value; its JSON feedback is preserved with HTTP `200`.
-
-Gemini SSE uses JSON data frames with no synthetic `[DONE]`. A nonempty, non-unspecified candidate finish reason or blocked-prompt reason establishes a terminal response, but success is settled only at clean EOF. Trailing usage-only frames remain visible and are accounted for. More candidates after a terminal response, mismatched framing, upstream error payloads, transport failures, or EOF without a terminal response fail without another attempt after `2xx`. Unknown nonempty finish/block enum values are retained for forward compatibility; event names must be absent, empty or `message`.
-
-When `usageMetadata` is supplied, `promptTokenCount` and `totalTokenCount` must be nonnegative integers; omitted candidate/thought counts mean zero and must agree with the reported total. Accounting input is prompt tokens (which already include cached tokens), output is candidate plus thought tokens, and total is their checked sum. Cached counts cannot exceed prompt tokens and are not added again. Input, output and total snapshots cannot decrease; changes within the candidate/thought split or cache subset are preserved when those aggregate constraints hold. Nonzero `toolUsePromptTokenCount` is rejected in this increment because separate tool-prompt accounting is not implemented. Detail arrays and other metadata are preserved without adding charges. See the [Gemini response and usage reference](https://ai.google.dev/api/generate-content#UsageMetadata).
-
-If usage is absent throughout, completion retains unknown-usage fallback accounting. If an early usage snapshot was reported, a complete snapshot must also arrive at or after the terminal response; otherwise EOF fails and keeps the conservative fallback charge. An early zero-output snapshot cannot become final usage merely because the connection ended. Deadlines, cancellation, rate/concurrency, health and generation cleanup use the existing shared path.
-
-Run `python3 tests/proxy_gemini_native_smoke.py` after building `nyro`. This is a local mock contract test, not a recording or live SDK/vendor certification; the sixteen historical OpenAI/Anthropic recordings remain separate. Multiple candidates, separate tool-prompt accounting, Gemini Interactions and cross-protocol thinking/media conversion remain outside this increment.
-
-## Opt-in Responses native compatibility
-
-Set `kind: openai`, `api: responses` and `native_chat: true` on the provider to preserve JSON fields between `POST /v1/responses` and a matching Responses upstream. Other formats still require the **original** request to pass the strict source codec before fallback. The flag remains off by default; OpenAI Chat Completions and Responses are distinct formats even within the same provider family.
-
-The native path accepts stateless string input or message, reasoning, function-call and function-result history; an empty input array is also accepted when `instructions` supplies a string prompt. It preserves encrypted reasoning, assistant `phase`, media content parts, function schemas, structured-output options, metadata, response IDs, output items, annotations, logprobs and vendor extensions. Function-result arrays and streaming obfuscation are preserved. Item payloads stay opaque: Nyro validates the routing and lifecycle envelope rather than reconstructing or certifying every vendor item or delta.
-
-Only the request model, the top-level response model and the model inside lifecycle-event `response` snapshots are rewritten. Outbound requests also normalize omitted/null `store` to `false`. `store:true`, `background:true`, non-null `conversation`/`previous_response_id`, item references and non-function tool definitions/choices are rejected before dispatch. Retrieval, deletion, cancellation, hosted tools, background jobs, OAuth/account channels and cross-protocol reasoning/media conversion remain outside this mode. Caller headers are not forwarded; the configured static upstream API key is used.
-
-Completed JSON must have status `completed`, or `incomplete` with a nonempty reason. Failed/nonterminal envelopes and upstream error bodies remain sanitized. If usage is present, `input_tokens`, `output_tokens` and `total_tokens` must be nonnegative integers with checked input-plus-output equality. Cached input and reasoning output detail counters must fit inside their respective totals and are not added again. Missing/null usage uses the existing unknown-usage/reservation fallback.
-
-SSE must begin with `response.created`, keep response ID/model/creation time consistent across lifecycle snapshots and carry contiguous `sequence_number` values starting at zero. An explicit SSE event name must match JSON `type`; data-only events retain their original form. Intermediate `response.*` extension events are preserved, but only `response.completed` or `response.incomplete` establishes a successful protocol terminal. Only terminal usage is used for settlement, so an early snapshot cannot masquerade as final usage. The stream must then reach clean EOF; further events, failed/error events, identity/sequence mismatches or truncation fail without retry after an accepted upstream response. There is no synthetic `[DONE]`. SSE comments/IDs/retry fields and serialization whitespace are not preserved.
-
-References: [OpenAI stateless conversation history](https://developers.openai.com/api/docs/guides/conversation-state), [Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses). Local checks: `cargo test -p nyro-llm --test native_responses_runtime` and `python3 tests/proxy_responses_native_smoke.py` after building the root binary. These are local mock checks, not recorded Responses traffic or full SDK/Codex CLI certification.
-
-## Responses strict conversion subset
-
-`POST /v1/responses` accepts string input or typed message/function items, instructions, common generation controls, and client function tools/results. In this strict conversion path, Responses function definitions must explicitly set `strict`: use `false` for the portable non-strict subset; `true` requires an upstream that can preserve it. It can use any configured Chat upstream. Conversely, all supported Chat ingress APIs can use a provider with `api: responses`. For example:
-
-```sh
-curl http://127.0.0.1:19530/v1/responses \
-  -H 'Authorization: Bearer replace-with-client-secret' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"responses-default","input":"Hello","max_output_tokens":256,"store":false,"stream":true}'
-```
-
-Function results accept a string `function_call_output.output` or an array containing only `input_text` blocks, including an empty array. Conversion preserves block boundaries rather than concatenating them. Multiple result blocks are incompatible with a strict Gemini destination; media and other result block types are rejected.
-
-This strict conversion path is stateless: outbound Responses always sets `store:false`, and Responses ingress translated to Chat Completions also explicitly disables storage. Server conversation state (`conversation`, `previous_response_id`), item references, `store:true`, `background:true`, hosted tools, raw reasoning text, media outside the user-image subset, and response retrieval/deletion/cancellation are unsupported. Meaningful options or output items that the current Chat IR cannot preserve are rejected. Responses envelope echoes are normalized. Same-API conversion preserves message/function/reasoning item IDs and statuses; other APIs normalize container metadata while preserving function call IDs. Exact request echoes are not preserved. Function `call_id`, content order, finish status, and representable usage remain part of the conversion contract.
-
-SSE uses named Responses lifecycle events, stable item IDs, ordered sequence numbers, and a full terminal snapshot, without a `[DONE]` marker. Token-limit/content-filter endings produce `response.incomplete`. Failed, contradictory, malformed, or truncated upstream streams terminate without a fabricated successful completion. Strict Responses upstream streaming disables obfuscation. This subset does not establish full Responses SDK or Codex CLI compatibility.
-
-References: [OpenAI Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses), [Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses). Local regressions: `cargo test -p nyro-llm --test responses_codec --test responses_runtime`.
-
-## Responses reasoning in strict mode
-
-Strict Responses preserves `reasoning.effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), `summary` and deprecated `generate_summary` (`auto`, `concise`, `detailed`), `context` (`auto`, `current_turn`, `all_turns`) and the upstream-defined `mode` string. Nyro does not inject defaults or enforce model-specific combinations. The legacy `include: ["reasoning.encrypted_content"]` is accepted; no include value is added when omitted. The current [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) states that stateless responses return encrypted reasoning by default; the [create schema](https://developers.openai.com/api/reference/python/resources/responses/methods/create) defines the controls.
-
-Assistant history and generated JSON preserve reasoning item IDs, ordered `summary_text` parts (including empty summaries), optional item status and opaque `encrypted_content`. SSE preserves interleaved reasoning/message/function items and summary part/text lifecycle events. The ciphertext in `response.output_item.added` may be partial; the final value from `response.output_item.done` is retained and checked against the terminal snapshot. Summary text and identities must match their streamed deltas. Interrupted summary-part status is preserved. Nyro never decrypts or synthesizes reasoning; `reasoning_tokens` remains a subset of output usage, not an extra charge. Terminal-only snapshots expose known usage before downstream conversion and their expanded deltas are bounded.
-
-Responses reasoning history and generated items remain API-specific. Only an effort-only request configuration can map to OpenAI Chat Completions; other Responses controls and all reasoning items are rejected by Chat Completions, Anthropic and Gemini destinations. Output supports interleaved reasoning, ordinary messages and function calls, including reasoning after calls. Raw `reasoning_text` content/events and unsupported extensions are rejected in strict conversion; matching native mode retains its wider opaque payload support. Empty/null optional raw-content arrays are accepted. Invalid indices, duplicate IDs, conflicting snapshots, unfinished items and oversized streams fail without a fabricated completion. Local tests cover codecs, real loopback HTTP, retries, public model aliases and quota settlement; they do not certify live SDK/client sessions. See the official [streaming events](https://developers.openai.com/api/reference/resources/responses/streaming-events).
-
-## Reasoning conversion and legacy behavior
-
-OpenAI documents `reasoning_effort` in Chat Completions and `reasoning.effort` in Responses as corresponding controls. Strict conversion preserves the exact shared value: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Omission stays omitted; Nyro does not translate effort into a token budget or change it for a different model. Model support remains upstream-owned. See the official [Chat schema](https://developers.openai.com/api/reference/python/resources/chat/subresources/completions/methods/create) and [API mapping example](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2).
-
-| Input or output | Conversion contract |
-|---|---|
-| Chat `reasoning_effort` / Responses configuration containing only `effort` | Bidirectional mapping between the two OpenAI APIs. Unknown effort values are rejected by strict codecs. |
-| Responses `summary`, `generate_summary`, `context`, `mode`, encrypted-content include, or an empty `reasoning` object | Retained for Responses; rejected by other targets, even when effort is also present. |
-| Anthropic thinking budgets/display, Gemini thinking budgets/levels | Retained by the corresponding codec; no automatic cross-vendor mapping. |
-| Reasoning summaries, signatures, encrypted items and history | Retained by the corresponding API within its documented strict subset. No conversion to ordinary answer text, synthesized signatures or generic `reasoning_content`. |
-| Compatible-server `reasoning_content`, `reasoning`, `reasoning_signature` fields | Matching OpenAI Chat native mode preserves these JSON fields. Strict request/response/SSE codecs reject them. |
-| Literal `<think>…</think>` in ordinary text | Preserved as text, including whitespace and tags split across streaming chunks. No automatic extraction, trimming or rewriting. |
-
-Request effort compatibility does **not** guarantee output compatibility: a Responses upstream may return reasoning items even without a summary request. If Chat Completions ingress cannot represent that output, JSON fails or an already-delivered stream terminates without successful completion; known usage remains accounted for. Use matching Responses ingress when reasoning items must be retained. Conflicting effort values in directly constructed IR are rejected; equal values merge without overwriting other Responses controls.
-
-The new proxy deliberately does not migrate the legacy `<think>` heuristics or signature-less thinking synthesis. This is the new path's behavior; legacy entrypoints are unchanged. Vendor history rules differ: [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/) requires its reasoning history for tool-enabled conversations, while [Anthropic thinking](https://platform.claude.com/docs/en/build-with-claude/thinking) and [Gemini thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures) preserve opaque state. These rules do not establish interchangeable signatures or equivalent histories. Native mode is an explicit same-API choice, not an automatic fallback that removes unsupported fields. Local [codec regressions](../../crates/nyro-llm/tests/reasoning_boundary_codec.rs) cover the mapping, rejection and literal-text contracts; full client sessions remain separate migration work.
-
-## Request and usage observations
-
-The LLM runtime emits structured `tracing` events at `INFO`: `nyro::attempt` once per dispatched upstream attempt and `nyro::request` once when a request finishes. The default root filter (`nyro=info`) includes both; `RUST_LOG` controls filtering. Each runtime request gets a random 128-bit `request_id`, returned as 32 hexadecimal characters in `x-request-id`. Supplied client IDs are not adopted or forwarded. Health probes and requests rejected before acquiring a runtime generation are outside this scope.
-
-| Record | Fields and meaning |
-|---|---|
-| Both | `request_id`, configured public `model`, `backend`, API `protocol`, and `duration_ms` |
-| Request | `workload`, `streaming`, `attempts`, HTTP `status` (`0` before a response), `outcome`, `delivery_outcome`, safe `error_code`, usage totals and quota charges |
-| Attempt | One-based `attempt`, configured `provider` ID, `upstream_status` (`0` before headers), `outcome`, usage and quota settlement |
-
-Request `outcome` is `complete`, `error`, `cancelled` or `timeout`. `delivery_outcome` separately describes response-body completion and is `none` if the handler future was dropped before handoff. Reading an error body to EOF does not make a failed request successful. Dropping a decoded JSON response can produce a cancelled request with a completed upstream attempt. Attempt outcomes distinguish `complete`, `http_error`, `connect_error`, `transport_error`, `protocol_error`, `cancelled` and `timeout`. Attempt completion means validated JSON or an SSE protocol terminal; it does not prove that the client received all bytes. Durations measure the corresponding owned lifetime, not network flush or first-token latency. `error_code` records execution failures before handoff; later body failures are represented by the outcome fields.
-
-Usage collection runs even without quota. Streaming OpenAI Chat upstream requests always ask for usage, while downstream usage output follows the client's preference. Each attempt records the last valid cumulative `input_tokens`, `output_tokens` and `total_tokens`; absent fields mean unknown usage, while explicit zero remains known. `usage_state` is `complete`, `partial`, `missing` or `invalid`. Invalid sums or decreasing totals are marked invalid and excluded from observation updates; without quota this introduces no additional protocol rejection. Existing codec validation still applies. With quota, the existing strict accounting checks apply.
-
-Request token totals sum valid observations across attempts, rather than adding repeated stream snapshots. A request with any unknown or incomplete attempt is not reported as complete usage; its totals contain only observed units, so inspect `usage_state` before interpreting them. No attempts yields `not_attempted`. Attempt `quota_charged_tokens` is absent when quota is disabled, and `quota_outcome` distinguishes `actual`, `fallback`, `released` and `disabled`. Request `quota_charged_tokens` sums actual ledger charges, including conservative fallback charges; it is not interchangeable with reported token usage.
-
-Events contain no credentials, provider URLs, request paths, client-supplied IDs, prompts or response bodies. Unknown client model names are not logged. The current sink is the host's tracing subscriber: there is no durable event store, statistics query API, metrics exporter or distributed trace propagation. Crashes, forced termination, filtering and sink failures can lose records; quota settlement does not depend on a log consumer. Regression: `cargo test -p nyro-llm --test observation_runtime`.
-
-## Health and current scope
-
-- `GET /healthz` returns `200` while the HTTP process is serving.
-- `GET /readyz` returns `200` while the kernel host accepts new generation leases and `503` once it does not. This source-built proxy has no database or upstream-backend readiness check.
-
-Retries and passive health are opt-in as described above. File mode has no control plane or Admin API. The separate [experimental `nyro serve`](rust-serve.md) adds SQLite or PostgreSQL configuration management and publication. Persistent/shared quota storage, WebUI and `nyro tool` remain unimplemented. It does not expand environment variables, accept the legacy standalone YAML format, watch the file automatically, or fetch configuration remotely. Unix supports explicit SIGHUP reload; unsupported setting changes require restart.
-
-Contributors can exercise the root process, probes, authentication, Chat, Embedding, SSE, redaction, and graceful termination without a real provider:
-
-```sh
-cargo build -p nyro
-python3 tests/proxy_smoke.py
-```
-
-## Local multi-turn tool session regression
-
-Run `cargo test -p nyro-llm --test responses_runtime multiturn` for the [session matrix](../../crates/nyro-llm/tests/responses_runtime/multiturn.rs). It appends the actual client-visible JSON or assembled SSE output to the next request: two parallel tool calls, results returned in reverse order, another tool call, then a final answer. Coverage includes strict text conversion among all four APIs, Anthropic/Responses image-result conversion, Gemini image results within the same protocol, and proprietary reasoning combined with images in each of those three protocols. All four APIs also have matching native-mode cases. Each successful session makes three requests, using all JSON, all SSE, or either alternating pattern.
-
-Assertions check the subsequent upstream history for content order, call IDs/arguments, result images and Gemini named references, signatures/encrypted reasoning, model aliases, credential isolation, per-turn usage and concurrency permit release. Missing, duplicate or unknown second-turn results are rejected for Anthropic/Gemini destinations that require complete batches. Incompatible image or reasoning history never dispatches; corrected history or the original protocol can still continue.
-
-The matrix uses local HTTP mocks and a test client, without executing real tools, SDKs or vendor calls or verifying signature authenticity. It provides multi-turn composition regression, not complete client compatibility certification. Versioned real clients, vendor sessions and remaining unsupported semantics still need separate acceptance.
-
-## Ordered IR migration for Rust callers
-
-The Rust `nyro-llm` API now stores message bodies in `Message.items` and `ResponseMessage.items`, an ordered `Vec<MessageItem>`. `MessageItem::Content(Content)` retains the existing text/parts representation; `MessageItem::ToolCall(ToolCall)` retains call metadata. `ResponsesMessage` and `ResponsesToolCall` additionally retain optional source container IDs/statuses, independently of function `call_id`; borrowed accessors recognize both generic and Responses variants. Direct callers must replace the old `content`/`tool_calls` fields. Borrowed `content()` and `tool_calls()` views do not store another copy or establish order.
-
-`Delta` now contains `role` and `events: Vec<PositionedDelta>`. Each event carries a typed `PartDelta` and an item/part position. OpenAI Chat uses stable message/tool field slots, preserving the original tool index; it does not claim a total order between fields. Other decoders retain their block/item coordinates or received Gemini Part sequence. Ordinary leaves use `PartDelta::Start(StreamPartKind)` and `End`; Responses adds separate `ResponsesItemStart`/`ResponsesItemEnd` container events. Reasoning retains its own lifecycle. Handle these new enum variants when consuming IR streams; use `openai::StreamEncoder` for stateful Chat projection. Usage and stream completion remain in their existing envelope fields.
-
-Anthropic/Gemini output queues preserve source start order even when parallel calls finish in reverse order or an earlier Responses item has no content yet. Blocked payloads and position state are bounded; unblocked ordinary text streams without accumulating the entire body. Responses retains bounded snapshots for its required final response. Lifecycle mismatches, unfinished parts and budget overflows fail without a fabricated successful terminal event.
-
-Anthropic, Gemini and Responses now consume ordered items throughout history, JSON and SSE, including text/function/text and their own proprietary reasoning interleavings. Plain interleaving converts among these three APIs; signatures and encrypted reasoning retain their protocol-specific rejection rules. Chat static projection still rejects multiple content groups or content after calls; its runtime stream encoder also rejects unrepresentable order across frames. Complete adjacent tool-result batches remain required for Anthropic/Gemini targets. JSON configuration and vendor wire field names are unchanged. Strict Chat conversion normalizes an empty `tool_calls` array to an omitted field; non-assistant request messages still reject that field even when empty. Matching native mode preserves the original array. Regression: [ordered IR codecs](../../crates/nyro-llm/tests/ordered_ir_codec.rs).
+`/healthz` reports process availability. `/readyz` stays unavailable until the first valid snapshot activates. A valid empty snapshot is ready but has no business routes. Disconnection retains the last active in-memory generation; invalid updates leave it running. There is no offline disk cache. See [control-plane deployment](rust-serve.md).

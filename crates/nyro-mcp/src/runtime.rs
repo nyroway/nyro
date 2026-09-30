@@ -8,8 +8,8 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, Response, StatusCode},
 };
+use nyro_authn::Authenticator;
 use nyro_limit::ConcurrencyLimit;
-use nyro_security::ApiKeys;
 use rmcp::{
     model::{ErrorData, ProtocolVersion},
     transport::streamable_http_server::{
@@ -29,9 +29,37 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
+/// Application-owned pool selection state, shared by services and generations.
+#[derive(Clone, Default)]
+pub struct Pools(Arc<std::sync::Mutex<std::collections::HashMap<String, nyro_balance::Balancer>>>);
+#[derive(Clone)]
+pub struct Target {
+    pub id: String,
+    pub weight: u32,
+    pub server: config::Server,
+}
+#[derive(Clone)]
+pub struct ServicePolicy {
+    pub anonymous: bool,
+    pub pool: String,
+    pub strategy: nyro_balance::Strategy,
+    pub targets: Vec<Target>,
+    pub limits: nyro_limit::token::Policy,
+    pub execution: Arc<Config>,
+}
+#[derive(Clone, Default)]
+pub struct Policies {
+    pub registry: nyro_limit::token::Registry,
+    pub consumers: std::collections::BTreeMap<String, nyro_limit::token::Policy>,
+    pub services: std::collections::BTreeMap<String, ServicePolicy>,
+    pub pools: Pools,
+}
+
 pub struct Runtime {
+    policies: Policies,
     config: Arc<Config>,
-    keys: Arc<ApiKeys>,
+    keys: Arc<dyn Authenticator>,
+    authorizer: nyro_authz::Authorizer,
     limit: ConcurrencyLimit,
     http: reqwest::Client,
 }
@@ -45,17 +73,55 @@ pub enum BuildError {
 impl Runtime {
     pub fn new(
         config: Config,
-        keys: Arc<ApiKeys>,
+        keys: Arc<dyn Authenticator>,
         limit: ConcurrencyLimit,
     ) -> Result<Self, BuildError> {
+        Self::with_policies(config, keys, limit, Policies::default())
+    }
+    pub fn with_policies(
+        config: Config,
+        keys: Arc<dyn Authenticator>,
+        limit: ConcurrencyLimit,
+        policies: Policies,
+    ) -> Result<Self, BuildError> {
         config.validate()?;
+        for policy in policies.services.values() {
+            if !matches!(
+                policy.strategy,
+                nyro_balance::Strategy::WeightedRandom | nyro_balance::Strategy::WeightedRoundrobin
+            ) || !policy.targets.iter().any(|t| t.weight > 0)
+            {
+                return Err(BuildError::Config(config::ConfigError("invalid MCP pool")));
+            }
+            policy.execution.validate()?;
+            for target in &policy.targets {
+                let mut cfg = Config::default();
+                cfg.servers.insert("target".into(), target.server.clone());
+                cfg.validate()?;
+            }
+        }
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .retry(reqwest::retry::never())
             .build()
             .map_err(|_| BuildError::Http)?;
+        let authorizer = nyro_authz::Authorizer::new(
+            config
+                .servers
+                .iter()
+                .flat_map(|(id, server)| {
+                    server.subjects.iter().map(|subject| nyro_authz::Grant {
+                        subject: subject.clone(),
+                        action: "invoke".into(),
+                        resource: id.clone(),
+                    })
+                })
+                .collect(),
+        );
         Ok(Self {
+            authorizer,
+            policies,
             config: Arc::new(config),
             keys,
             limit,
@@ -91,7 +157,14 @@ impl Runtime {
         };
         let span = tracing::info_span!("mcp_request", request_id, server_id, operation);
         let start = Instant::now();
-        let deadline = start + self.request_timeout();
+        let timeout = self
+            .policies
+            .services
+            .get(&server_id)
+            .map_or(self.request_timeout(), |p| {
+                Duration::from_millis(p.execution.request_timeout_ms)
+            });
+        let deadline = start + timeout;
         let cancel = cancellation.child_token();
         let guard = cancel.clone().drop_guard();
         let result = tokio::select! {
@@ -150,20 +223,27 @@ impl Runtime {
                 "MCP sessions and stream resumption are not supported",
             );
         }
-        let mut auth = parts.headers.get_all("authorization").iter();
-        let identity = auth
-            .next()
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split_once(' '))
-            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
-            .and_then(|(_, secret)| self.keys.authenticate(secret).ok());
-        let Some(identity) = identity.filter(|_| auth.next().is_none()) else {
-            return error::reject(StatusCode::UNAUTHORIZED, "Authentication failed");
+        let policy = self.policies.services.get(id);
+        let execution = policy.map_or(&self.config, |p| &p.execution);
+        let identity = if policy.is_some_and(|p| p.anonymous) {
+            None
+        } else {
+            let mut auth = parts.headers.get_all("authorization").iter();
+            let identity = auth
+                .next()
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split_once(' '))
+                .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+                .and_then(|(_, secret)| self.keys.authenticate(secret).ok());
+            let Some(identity) = identity.filter(|_| auth.next().is_none()) else {
+                return error::reject(StatusCode::UNAUTHORIZED, "Authentication failed");
+            };
+            if self.authorizer.authorize(&identity, "invoke", id).is_err() {
+                return error::reject(StatusCode::FORBIDDEN, "MCP service access denied");
+            }
+            Some(identity)
         };
-        if !server.subjects.contains(&identity.id) {
-            return error::reject(StatusCode::FORBIDDEN, "MCP service access denied");
-        }
-        let bytes = match to_bytes(body, self.config.max_body_bytes).await {
+        let bytes = match to_bytes(body, execution.max_body_bytes).await {
             Ok(bytes) => bytes,
             Err(_) => {
                 return error::reject(
@@ -273,17 +353,44 @@ impl Runtime {
                 }
             }
         };
+        let limits: Vec<_> = policy
+            .map(|p| &p.limits)
+            .into_iter()
+            .chain(
+                identity
+                    .as_ref()
+                    .and_then(|i| self.policies.consumers.get(&i.id)),
+            )
+            .collect();
+        if self.policies.registry.admit(&limits).is_err() {
+            return error::reject(StatusCode::TOO_MANY_REQUESTS, "Request limit exceeded");
+        }
+        let selected = policy
+            .map(|policy| {
+                let targets: Vec<_> = policy
+                    .targets
+                    .iter()
+                    .map(|t| (t.id.as_str(), t.weight))
+                    .collect();
+                let mut pools = self.policies.pools.0.lock().unwrap();
+                let balancer = pools.entry(policy.pool.clone()).or_default();
+                let choice = balancer
+                    .choose(policy.strategy, &targets, &[], &mut rand::thread_rng())
+                    .expect("validated pool");
+                &policy.targets[choice].server
+            })
+            .unwrap_or(server);
         let handler = Handler {
             http: self.http.clone(),
-            config: self.config.clone(),
-            server: server.clone(),
+            config: execution.clone(),
+            server: selected.clone(),
             deadline,
         };
         let config = StreamableHttpServerConfig::default()
             .with_legacy_session_mode(false)
             .with_stateless_protocol_metadata_required(true)
             .with_json_response(true)
-            .with_max_request_body_bytes(self.config.max_body_bytes)
+            .with_max_request_body_bytes(execution.max_body_bytes)
             .disable_allowed_hosts()
             .with_cancellation_token(cancel.clone());
         let service = StreamableHttpService::new(

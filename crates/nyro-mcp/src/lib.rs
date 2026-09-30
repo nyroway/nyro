@@ -4,6 +4,6 @@ pub mod config;
 mod error;
 mod handler;
 mod headers;
-mod runtime;
+pub mod runtime;
 mod upstream;
 pub use runtime::{BuildError, Runtime};
