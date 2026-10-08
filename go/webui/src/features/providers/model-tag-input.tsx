@@ -67,14 +67,15 @@ export function ModelTagInput({
 
   return (
     <>
-      <div className="v2-model-tag-input" onClick={focusInput}>
-        <ul className="v2-model-tag-input-list" aria-label={listLabel}>
+      {/* §9.2 ④：基线 tags-control/tag-input 词汇（键盘/粘贴/IME 逻辑原样保留）。 */}
+      <div className="field-control tags-control model-tag-input" onClick={focusInput}>
+        <ul className="model-tag-list" aria-label={listLabel}>
           {value.map((model, index) => (
-            <li key={model} className="v2-model-tag-input-tag">
+            <li key={model} className="tag">
               <code>{model}</code>
               <button
                 type="button"
-                className="v2-model-tag-input-remove"
+                className="tag-remove"
                 aria-label={removeLabel(model)}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -90,7 +91,7 @@ export function ModelTagInput({
         <input
           ref={inputRef}
           type="text"
-          className="v2-model-tag-input-field"
+          className="tag-input"
           aria-label={inputLabel}
           aria-describedby={helpId}
           placeholder={value.length === 0 ? placeholder : undefined}
@@ -104,7 +105,7 @@ export function ModelTagInput({
           onBlur={commitDraft}
         />
       </div>
-      <p id={helpId} className="v2-model-tag-input-help">{helpText}</p>
+      <p id={helpId} className="field-hint">{helpText}</p>
     </>
   );
 }

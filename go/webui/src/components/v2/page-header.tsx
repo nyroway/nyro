@@ -8,12 +8,12 @@ export type PageHeaderProps = {
 
 export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
-    <header className="v2-page-header">
+    <header className="page-header">
       <div>
         <h1>{title}</h1>
         {description && <p>{description}</p>}
       </div>
-      {actions && <div className="v2-page-actions">{actions}</div>}
+      {actions && <div className="page-header-actions">{actions}</div>}
     </header>
   );
 }

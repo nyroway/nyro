@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { decodeProviderHealthSSEFrame, decodeRouteImportSSEFrame } from "./backend";
+import { decodeProviderHealthSSEFrame, decodeRouteImportSSEFrame } from "./api/client";
 
-const source = readFileSync(resolve(__dirname, "backend.ts"), "utf8");
+const source = readFileSync(resolve(__dirname, "api/upstreams.ts"), "utf8");
 
 describe("provider draft health SSE decoding", () => {
   it("decodes health events from SSE frames", () => {
@@ -27,17 +27,17 @@ describe("provider draft health SSE decoding", () => {
 
 describe("provider health stream endpoint", () => {
   it("uses the saved provider test URL directly", () => {
-    expect(source).toContain("`/api/v1/upstreams/${id}/test`");
-    expect(source).toContain("`/api/v1/upstreams/${id}/routes/import/stream`");
-    expect(source).toContain("`${base}/upstreams/${args?.id}/routes/import/preview`");
+    expect(source).toContain("`/upstreams/${id}/test`");
+    expect(source).toContain("`/upstreams/${id}/routes/import/stream`");
+    expect(source).toContain("`/upstreams/${id}/routes/import/preview`");
     expect(source).not.toContain("/test/stream");
-    expect(source).not.toContain("case \"test_provider\"");
-    expect(source).not.toContain("case \"copy_provider\"");
+    // Phase 3: the RPC command dispatcher is gone; streaming goes through
+    // the typed api client only.
+    expect(source).not.toContain('case "');
   });
 
   it("maps provider model discovery to the Go upstream models endpoint", () => {
-    expect(source).toContain("case \"get_provider_models\"");
-    expect(source).toContain("`${base}/upstreams/${args?.id}/models`");
+    expect(source).toContain("`/upstreams/${id}/models`");
   });
 });
 

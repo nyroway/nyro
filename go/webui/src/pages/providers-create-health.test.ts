@@ -6,7 +6,7 @@ const source = readFileSync(resolve(__dirname, "providers.tsx"), "utf8");
 
 describe("create provider health gate", () => {
   it("runs draft health streaming before creating a provider", () => {
-    expect(source).toContain("streamProviderDraftHealth(input,");
+    expect(source).toContain("upstreamsApi.testDraft(input,");
     expect(source).toContain("setTestDialogMode(\"create\")");
     expect(source).toContain("setPendingCreateInput(input)");
     expect(source).toContain("setCreateHealthPassed(event.success === true)");
@@ -22,7 +22,7 @@ describe("create provider health gate", () => {
 
 describe("provider list health check", () => {
   it("uses the same streaming health pipeline as create", () => {
-    expect(source).toContain("streamProviderHealth(provider.id,");
+    expect(source).toContain("upstreamsApi.testHealth(provider.id,");
     expect(source).toContain("setTestDialogMode(\"provider\")");
     expect(source).toContain("appendHealthEvent(event)");
     expect(source).not.toContain("backend<TestResult>(\"test_provider\"");

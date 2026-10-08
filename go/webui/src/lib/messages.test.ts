@@ -15,11 +15,11 @@ describe("message catalogs", () => {
   });
 
   it("interpolates named values without changing untranslated enum values", () => {
-    expect(translate("en-US", "nodes.currentVersion", { version: "rev-7" })).toBe(
-      "Current version rev-7",
+    expect(translate("en-US", "nodes.uptimeHint", { host: "web-1" })).toBe(
+      "Longest connection: web-1",
     );
-    expect(translate("zh-CN", "nodes.currentVersion", { version: "rev-7" })).toBe(
-      "当前版本 rev-7",
+    expect(translate("zh-CN", "nodes.uptimeHint", { host: "web-1" })).toBe(
+      "最长连接：web-1",
     );
   });
 });

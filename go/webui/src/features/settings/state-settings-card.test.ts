@@ -67,7 +67,7 @@ describe("state settings card", () => {
     const markup = renderToStaticMarkup(createElement(
       QueryClientProvider,
       { client },
-      createElement(StateSettingsCard, { isZh: false, onError: vi.fn(), builtInRedisURL: null }),
+      createElement(StateSettingsCard, { isZh: false, builtInRedisURL: null }),
     ));
     expect(markup).toContain("could not be loaded");
     expect(markup).not.toContain('type="password"');
@@ -83,7 +83,6 @@ describe("state settings card", () => {
       { client },
       createElement(StateSettingsCard, {
         isZh: false,
-        onError: vi.fn(),
         builtInRedisURL: "redis://127.0.0.1:16379",
       }),
     ));

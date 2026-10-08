@@ -7,9 +7,9 @@ export type PageLayoutProps = {
 
 export function PageLayout({ header, children }: PageLayoutProps) {
   return (
-    <div className="v2-page-layout">
+    <div className="content">
       {header}
-      <div className="v2-page-body">{children}</div>
+      <div className="content-body">{children}</div>
     </div>
   );
 }
