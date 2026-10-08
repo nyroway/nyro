@@ -1,81 +1,72 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
-
-use nyro_config::Config;
+use crate::gateway::GatewayRuntime;
 use nyro_kernel::{Candidate, Context, Host};
 use nyro_limit::ConcurrencyLimit;
-use nyro_llm::runtime::{Options, Runtime, SharedResources};
-use nyro_security::ApiKeys;
+use nyro_llm::{Runtime as LlmRuntime, runtime::SharedResources};
+use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-pub(crate) struct Resources {
-    limit: ConcurrencyLimit,
-    capacity: usize,
-    listen: SocketAddr,
-    shared: SharedResources,
+/// Process-owned state shared across every successfully applied resource generation.
+pub(crate) struct Application {
+    concurrency: ConcurrencyLimit,
+    llm: SharedResources,
+    limits: nyro_limit::token::Registry,
+    pools: nyro_mcp::runtime::Pools,
 }
-
-impl Resources {
-    pub(crate) fn new(config: &Config) -> anyhow::Result<Self> {
-        config.validate()?;
+impl Application {
+    pub(crate) fn new(concurrency: usize) -> anyhow::Result<Self> {
         Ok(Self {
-            limit: ConcurrencyLimit::new(config.limit.concurrency)?,
-            capacity: config.limit.concurrency,
-            listen: config.server.listen,
-            shared: SharedResources::default(),
+            concurrency: ConcurrencyLimit::new(concurrency)?,
+            llm: Default::default(),
+            limits: Default::default(),
+            pools: Default::default(),
         })
     }
-
-    pub(crate) fn check_settings(&self, config: &Config) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            config.server.listen == self.listen,
-            "Changing the listen address requires a process restart"
-        );
-        anyhow::ensure!(
-            config.limit.concurrency == self.capacity,
-            "Changing concurrency capacity requires a process restart"
-        );
-        Ok(())
-    }
-
-    pub(crate) fn candidate(&self, config: &Config) -> anyhow::Result<Candidate<Runtime>> {
-        config.validate()?;
-        self.check_settings(config)?;
-        let options = Options {
-            request_timeout: Duration::from_millis(config.server.request_timeout_ms),
-            max_body_bytes: config.server.max_body_bytes,
-            max_response_bytes: config.server.max_response_bytes,
-            max_frame_bytes: config.server.max_frame_bytes,
-        };
-        let keys = Arc::new(ApiKeys::new(config.security.api_keys.clone())?);
+    pub(crate) fn candidate(
+        &self,
+        snapshot: &nyro_config::compile::Snapshot,
+    ) -> anyhow::Result<Candidate<GatewayRuntime>> {
+        let compiled = snapshot.compile(&self.limits, self.pools.clone())?;
+        let keys = Arc::new(compiled.keys);
         Ok(Candidate {
-            version: "standalone".into(),
-            fingerprint: Some(config.fingerprint()?),
-            value: Runtime::with_resources(
-                config.llm.clone(),
-                keys,
-                self.limit.clone(),
-                options,
-                self.shared.clone(),
-            )?,
-            // Reqwest clients have synchronous RAII cleanup; no background component is needed.
+            version: "resources-v1".into(),
+            fingerprint: Some(nyro_sync::fingerprint(snapshot)?),
+            value: GatewayRuntime {
+                llm: LlmRuntime::with_policies(
+                    compiled.llm,
+                    keys.clone(),
+                    self.concurrency.clone(),
+                    compiled.options,
+                    self.llm.clone(),
+                    compiled.llm_policies,
+                )?,
+                mcp: nyro_mcp::Runtime::with_policies(
+                    compiled.mcp,
+                    keys,
+                    self.concurrency.clone(),
+                    compiled.mcp_policies,
+                )?,
+            },
             components: vec![],
         })
     }
-}
-
-pub(crate) async fn host(
-    config: &Config,
-    resources: &Resources,
-) -> anyhow::Result<Arc<Host<Runtime>>> {
-    let host = Arc::new(Host::new(Default::default()));
-    host.activate(
-        resources.candidate(config)?,
-        Context {
-            deadline: Instant::now() + Duration::from_secs(10),
-            cancellation: CancellationToken::new(),
-        },
-    )
-    .await?;
-    Ok(host)
+    pub(crate) async fn apply(
+        &self,
+        host: &Host<GatewayRuntime>,
+        snapshot: &nyro_config::compile::Snapshot,
+    ) -> Result<(), nyro_sync::ApplyError> {
+        let candidate = self
+            .candidate(snapshot)
+            .map_err(|_| nyro_sync::ApplyError::Rejected("invalid_config"))?;
+        host.activate(
+            candidate,
+            Context {
+                deadline: Instant::now() + Duration::from_secs(10),
+                cancellation: CancellationToken::new(),
+            },
+        )
+        .await
+        .map_err(|_| nyro_sync::ApplyError::Retry("activation_failed"))?;
+        Ok(())
+    }
 }

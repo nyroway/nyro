@@ -1,71 +1,43 @@
-server:
-  listen: 127.0.0.1:19530
-  request_timeout_ms: 120000
-  max_body_bytes: 1048576
-  max_response_bytes: 16777216
-  max_frame_bytes: 1048576
-
-llm:
-  providers:
-    example:
-      kind: openai
-      base_url: https://api.example.com/v1
-      api_key: replace-with-provider-key
-    responses-example:
-      kind: openai
-      api: responses
-      base_url: https://api.example.com/v1
-      api_key: replace-with-responses-key
-    anthropic-example:
-      kind: anthropic
-      base_url: https://api.anthropic.com/v1
-      api_key: replace-with-anthropic-key
-    gemini-example:
-      kind: gemini
-      base_url: https://generativelanguage.googleapis.com/v1beta
-      api_key: replace-with-gemini-key
-  models:
-    responses-default:
-      provider: responses-example
-      upstream_model: example-responses-model
-      workloads: [chat]
-      subjects: [local-client]
-    claude-default:
-      provider: anthropic-example
-      upstream_model: example-claude-model
-      workloads: [chat]
-      subjects: [local-client]
-    gemini-default:
-      provider: gemini-example
-      upstream_model: example-gemini-model
-      workloads: [chat]
-      subjects: [local-client]
-    chat-default:
-      rate: {requests: 60, period_ms: 60000, burst: 5}
-      # Cumulative per-process budget; reserve is not a hard provider token bound.
-      quota: {total_tokens: 1000000, reserve_tokens: 4096}
-      backends:
-        - id: primary
-          provider: example
-          upstream_model: example-chat-model
-          weight: 80
-        - id: secondary
-          provider: responses-example
-          upstream_model: example-responses-model
-          weight: 20
-      workloads: [chat]
-      allow_anonymous: false
-      subjects: [local-client]
-    embed-default:
-      provider: example
-      upstream_model: example-embedding-model
-      workloads: [embedding]
-      allow_anonymous: true
-
-security:
-  api_keys:
-    - id: local-client
-      secret: replace-with-client-secret
-
-limit:
-  concurrency: 64
+version: 1
+upstreams:
+  - id: chat-pool
+    kind: llm
+    balance: weighted-roundrobin
+    targets:
+      - id: primary
+        protocol: openai/chat-completions
+        base_url: https://api.openai.com/v1
+        model: ${UPSTREAM_MODEL}
+        auth:
+          type: key-auth
+          in: header
+          name: Authorization
+          prefix: Bearer
+          secret: ${UPSTREAM_TOKEN}
+        weight: 1
+models:
+  - id: chat
+    name: General chat
+    capability: chat
+    upstream: chat-pool
+    access: {mode: restricted}
+    execution:
+      request_timeout: 120
+      max_attempts: 1
+    limits:
+      request: [{limit: 120, window: 1m}]
+      token: [{limit: 200000, window: 1m}]
+mcps: []
+consumers:
+  - id: application
+    credentials:
+      - id: primary
+        type: key-auth
+        secret: ${NYRO_CLIENT_TOKEN}
+    grants:
+      models: [chat]
+      mcps: []
+    limits:
+      llm:
+        request: [{limit: 1000, window: 24h}]
+        token: [{limit: 1000000, window: 24h}]

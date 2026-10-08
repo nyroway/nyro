@@ -1,0 +1,9 @@
+//! MCP tools gateway, independent of the LLM application and generation host.
+mod body;
+pub mod config;
+mod error;
+mod handler;
+mod headers;
+pub mod runtime;
+mod upstream;
+pub use runtime::{BuildError, Runtime};

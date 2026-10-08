@@ -99,7 +99,7 @@ fn shared(config: Config, resources: &SharedResources, limit: &ConcurrencyLimit)
     Runtime::with_resources(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,
@@ -158,13 +158,43 @@ async fn rejected_quota_keeps_recent_history_and_reload_retains_unchanged_bindin
     let mut config = configuration(&[&first, &second], 1, None);
     let model = config.models.get_mut("public").unwrap();
     model.strategy = Strategy::LeastRecent;
-    model.quota = Some(nyro_llm::config::QuotaConfig {
-        total_tokens: 3,
-        reserve_tokens: 3,
-    });
+    let registry = nyro_limit::token::Registry::default();
+    let policy = registry
+        .bind(
+            "model",
+            vec![],
+            vec![nyro_limit::token::Rule {
+                limit: 3,
+                window: Duration::from_secs(60),
+            }],
+        )
+        .unwrap();
     let resources = SharedResources::default();
     let limit = ConcurrencyLimit::new(1).unwrap();
-    let old = shared(config.clone(), &resources, &limit);
+    let limited = |config| {
+        Runtime::with_policies(
+            config,
+            Arc::new(
+                KeyAuth::new(vec![KeyCredential {
+                    id: "alice".into(),
+                    secret: "client-secret".into(),
+                    enabled: true,
+                    expires_at: None,
+                }])
+                .unwrap(),
+            ),
+            limit.clone(),
+            Options::default(),
+            resources.clone(),
+            nyro_llm::runtime::Policies {
+                registry: registry.clone(),
+                models: std::collections::BTreeMap::from([("public".into(), policy.clone())]),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    let old = limited(config.clone());
     assert!(
         consume(invoke(&old, false).await)
             .await
@@ -172,13 +202,12 @@ async fn rejected_quota_keeps_recent_history_and_reload_retains_unchanged_bindin
     );
     assert_eq!((first.count(), second.count()), (1, 0));
     config.models.get_mut("public").unwrap().backends[1].priority = 0;
-    let candidate = shared(config.clone(), &resources, &limit);
+    let candidate = limited(config.clone());
     assert_eq!(
         invoke(&candidate, false).await.status(),
         StatusCode::TOO_MANY_REQUESTS
     );
     assert_eq!((first.count(), second.count()), (1, 0));
-    config.models.get_mut("public").unwrap().quota = None;
     let published = shared(config.clone(), &resources, &limit);
     assert!(invoke(&published, false).await.status().is_success());
     assert_eq!((first.count(), second.count()), (1, 1));

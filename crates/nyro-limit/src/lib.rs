@@ -1,9 +1,8 @@
 //! nyro-limit.
 
 pub mod quota;
-pub mod rate;
 pub mod request;
-pub mod window;
+pub mod token;
 
 use std::sync::Arc;
 use thiserror::Error;

@@ -1,0 +1,28 @@
+version: 1
+upstreams:
+  - id: tools-pool
+    kind: mcp
+    balance: weighted-roundrobin
+    targets:
+      - id: primary
+        transport: streamable-http
+        url: ${MCP_UPSTREAM_URL}
+        auth:
+          type: key-auth
+          in: header
+          name: Authorization
+          prefix: Bearer
+          secret: ${MCP_UPSTREAM_TOKEN}
+mcps:
+  - id: tools
+    name: Application tools
+    upstream: tools-pool
+    access: {mode: restricted}
+    allowed_tools: [search]
+    execution: {request_timeout: 30}
+    limits: {request: [{limit: 60, window: 1m}]}
+models: []
+consumers:
+  - id: application
+    credentials: [{id: primary, type: key-auth, secret: '${NYRO_CLIENT_TOKEN}'}]
+    grants: {mcps: [tools]}

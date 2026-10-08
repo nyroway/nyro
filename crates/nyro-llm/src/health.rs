@@ -156,6 +156,7 @@ mod tests {
                 priority: 0,
             },
             Provider {
+                auth: None,
                 transport: Default::default(),
                 native_chat: false,
                 kind: ProviderKind::Openai,

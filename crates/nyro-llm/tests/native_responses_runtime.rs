@@ -1,4 +1,5 @@
 //! Stateless Responses native fidelity and lifecycle over real HTTP.
+mod support;
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -6,12 +7,9 @@ use axum::{
     routing::post,
 };
 use futures::StreamExt;
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
-use nyro_llm::{
-    config::Config,
-    runtime::{Options, Runtime},
-};
-use nyro_security::{ApiKey, ApiKeys};
+use nyro_llm::runtime::{Options, Runtime};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -100,11 +98,10 @@ fn config(backends: &[(&Upstream, &str, bool)]) -> Value {
     json!({"providers":providers,"models":{"public":{"max_attempts":backends.len(),"backends":backends,"workloads":["chat"],"subjects":["alice"]}}})
 }
 fn runtime(config: Value, limit: &ConcurrencyLimit, options: Options) -> Runtime {
-    let config: Config = serde_json::from_value(config).unwrap();
-    Runtime::new(
+    support::runtime(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,
@@ -114,8 +111,8 @@ fn runtime(config: Value, limit: &ConcurrencyLimit, options: Options) -> Runtime
         ),
         limit.clone(),
         options,
+        support::SharedResources::default(),
     )
-    .unwrap()
 }
 fn request(body: Value) -> Request<Body> {
     Request::builder()
@@ -363,7 +360,7 @@ async fn native_inputs_can_fall_back_through_the_original_strict_responses_codec
 }
 
 #[tokio::test]
-async fn completed_and_incomplete_responses_allow_missing_usage_with_reservation_fallback() {
+async fn completed_and_incomplete_responses_allow_missing_usage_without_estimates() {
     for streaming in [false, true] {
         for status in ["completed", "incomplete"] {
             let mut end = answer();
@@ -392,7 +389,11 @@ async fn completed_and_incomplete_responses_allow_missing_usage_with_reservation
             assert_eq!(limit.available(), 1);
             assert_eq!(
                 invoke(&gateway, input(false, false)).await.status(),
-                StatusCode::TOO_MANY_REQUESTS
+                if streaming {
+                    StatusCode::BAD_GATEWAY
+                } else {
+                    StatusCode::OK
+                }
             );
         }
     }
@@ -533,7 +534,7 @@ async fn invalid_sse_identity_sequence_terminal_and_truncation_fail_and_release(
 }
 
 #[tokio::test]
-async fn dropped_stream_releases_admission_and_preserves_fallback_charge() {
+async fn dropped_stream_releases_admission_and_charges_only_known_usage() {
     let upstream = spawn_upstream(200, sse(&frames()), true).await;
     let limit = ConcurrencyLimit::new(1).unwrap();
     let mut cfg = config(&[(&upstream, "openai", true)]);
@@ -547,7 +548,7 @@ async fn dropped_stream_releases_admission_and_preserves_fallback_charge() {
     assert_eq!(limit.available(), 1);
     assert_eq!(
         invoke(&gateway, input(false, false)).await.status(),
-        StatusCode::TOO_MANY_REQUESTS
+        StatusCode::BAD_GATEWAY
     );
 }
 
@@ -589,7 +590,7 @@ async fn early_usage_is_not_settled_as_final_when_terminal_usage_is_missing() {
     consume(invoke(&gateway, input(true, true)).await).await;
     assert_eq!(
         invoke(&gateway, input(false, false)).await.status(),
-        StatusCode::TOO_MANY_REQUESTS
+        StatusCode::BAD_GATEWAY
     );
     assert_eq!(limit.available(), 1);
 }
@@ -637,7 +638,7 @@ async fn strict_reasoning_retry_history_final_ciphertext_and_usage() {
             .await;
             let limit = ConcurrencyLimit::new(1).unwrap();
             let mut cfg = config(&[(&failing, "openai", native), (&upstream, "openai", native)]);
-            cfg["models"]["public"]["quota"] = json!({"total_tokens":14,"reserve_tokens":5});
+            cfg["models"]["public"]["quota"] = json!({"total_tokens":4,"reserve_tokens":5});
             let gateway = runtime(cfg, &limit, Options::default());
             let body = strict_reasoning_input(streaming);
             let response = invoke(&gateway, body.clone()).await;

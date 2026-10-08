@@ -1,4 +1,5 @@
 //! Local HTTP matrix: independent native wire fixtures exercise both sides of the IR.
+mod support;
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -6,12 +7,12 @@ use axum::{
     routing::post,
 };
 use futures::StreamExt;
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
 use nyro_llm::{
     config::Config,
     runtime::{Options, Runtime},
 };
-use nyro_security::{ApiKey, ApiKeys};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -425,12 +426,12 @@ async fn chat_rejects_interleaved_output_and_settles_observed_usage_once() {
             if target == "responses" {
                 provider["api"] = json!("responses");
             }
-            let config = serde_json::from_value(json!({"providers":{"p":provider},"models":{"public":{"provider":"p","upstream_model":"internal","workloads":["chat"],"subjects":["alice"],"quota":{"total_tokens":10,"reserve_tokens":1}}}})).unwrap();
+            let config = json!({"providers":{"p":provider},"models":{"public":{"provider":"p","upstream_model":"internal","workloads":["chat"],"subjects":["alice"],"quota":{"total_tokens":10,"reserve_tokens":1}}}});
             let limit = ConcurrencyLimit::new(1).unwrap();
-            let gateway = Runtime::new(
+            let gateway = support::runtime(
                 config,
                 Arc::new(
-                    ApiKeys::new(vec![ApiKey {
+                    KeyAuth::new(vec![KeyCredential {
                         id: "alice".into(),
                         secret: "client-secret".into(),
                         enabled: true,
@@ -440,8 +441,8 @@ async fn chat_rejects_interleaved_output_and_settles_observed_usage_once() {
                 ),
                 limit.clone(),
                 Options::default(),
-            )
-            .unwrap();
+                support::SharedResources::default(),
+            );
             let before = fixture.calls.lock().unwrap().len();
             for i in 0..3 {
                 let response = gateway
@@ -809,7 +810,7 @@ fn runtime_with_native(
     Runtime::new(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,
@@ -2427,12 +2428,12 @@ async fn cache_write_usage_settles_once_even_when_chat_stream_usage_is_hidden() 
             if target == "responses" {
                 provider["api"] = json!("responses");
             }
-            let config = serde_json::from_value(json!({"providers":{"p":provider},"models":{"public":{"provider":"p","upstream_model":"internal","workloads":["chat"],"subjects":["alice"],"quota":{"total_tokens":10,"reserve_tokens":1}}}})).unwrap();
+            let config = json!({"providers":{"p":provider},"models":{"public":{"provider":"p","upstream_model":"internal","workloads":["chat"],"subjects":["alice"],"quota":{"total_tokens":10,"reserve_tokens":1}}}});
             let limit = ConcurrencyLimit::new(1).unwrap();
-            let gateway = Runtime::new(
+            let gateway = support::runtime(
                 config,
                 Arc::new(
-                    ApiKeys::new(vec![ApiKey {
+                    KeyAuth::new(vec![KeyCredential {
                         id: "alice".into(),
                         secret: "client-secret".into(),
                         enabled: true,
@@ -2442,8 +2443,8 @@ async fn cache_write_usage_settles_once_even_when_chat_stream_usage_is_hidden() 
                 ),
                 limit.clone(),
                 Options::default(),
-            )
-            .unwrap();
+                support::SharedResources::default(),
+            );
             let before = fixture.calls.lock().unwrap().len();
             for i in 0..3 {
                 let (parts, body) = request("openai", streaming).into_parts();
@@ -2598,7 +2599,7 @@ async fn breakpoint_retries_skip_incompatible_backends_without_losing_markers() 
     let gateway = Runtime::new(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,

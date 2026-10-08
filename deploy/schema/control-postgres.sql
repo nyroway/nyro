@@ -1,8 +1,38 @@
-CREATE TABLE public.nyro_control_state (
-    singleton BIGINT PRIMARY KEY CHECK (singleton = 1),
-    schema_version BIGINT NOT NULL CHECK (schema_version = 1),
-    draft_revision BIGINT NOT NULL CHECK (draft_revision > 0),
-    draft_json TEXT NOT NULL CHECK (octet_length(draft_json) BETWEEN 1 AND 1048576),
-    published_revision BIGINT NOT NULL CHECK (published_revision > 0 AND published_revision <= draft_revision),
-    published_json TEXT NOT NULL CHECK (octet_length(published_json) BETWEEN 1 AND 1048576)
+CREATE TABLE public.upstreams (
+    uid TEXT PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    balance TEXT NOT NULL,
+    targets JSONB NOT NULL
 );
+CREATE TABLE public.models (
+    uid TEXT PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    upstream_uid TEXT NOT NULL REFERENCES public.upstreams(uid),
+    access JSONB NOT NULL,
+    execution JSONB NOT NULL,
+    limits JSONB NOT NULL
+);
+CREATE TABLE public.mcps (
+    uid TEXT PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    upstream_uid TEXT NOT NULL REFERENCES public.upstreams(uid),
+    allowed_tools JSONB NOT NULL,
+    access JSONB NOT NULL,
+    execution JSONB NOT NULL,
+    limits JSONB NOT NULL
+);
+CREATE TABLE public.consumers (
+    uid TEXT PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    credentials JSONB NOT NULL,
+    grants JSONB NOT NULL,
+    limits JSONB NOT NULL
+);
+CREATE TABLE public.nyro_schema (version INTEGER PRIMARY KEY CHECK (version = 2));
+INSERT INTO public.nyro_schema VALUES (2);

@@ -1,4 +1,6 @@
 //! Anthropic native fidelity, routing, stream validation, and accounting over real HTTP.
+use support::SharedResources;
+mod support;
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -6,12 +8,9 @@ use axum::{
     routing::post,
 };
 use futures::StreamExt;
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
-use nyro_llm::{
-    config::Config,
-    runtime::{Options, Runtime, SharedResources},
-};
-use nyro_security::{ApiKey, ApiKeys};
+use nyro_llm::runtime::{Options, Runtime};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -105,11 +104,10 @@ fn runtime_with_resources(
     options: Options,
     resources: SharedResources,
 ) -> Runtime {
-    let config: Config = serde_json::from_value(config).unwrap();
-    Runtime::with_resources(
+    support::runtime(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,
@@ -121,7 +119,6 @@ fn runtime_with_resources(
         options,
         resources,
     )
-    .unwrap()
 }
 fn request(body: Value) -> Request<Body> {
     Request::builder()
@@ -414,7 +411,7 @@ async fn malformed_native_streams_fail_without_retry_and_release_admission() {
 }
 
 #[tokio::test]
-async fn malformed_json_and_overflow_keep_reserved_quota_and_never_retry() {
+async fn malformed_json_and_overflow_charge_no_unknown_usage_and_never_retry() {
     for (pointer, invalid) in [
         ("/type", json!("wrong")),
         ("/role", json!("user")),
@@ -445,9 +442,9 @@ async fn malformed_json_and_overflow_keep_reserved_quota_and_never_retry() {
         assert!(!output.contains("private-model") && !output.contains("opaque-signature"));
         assert_eq!(
             invoke(&gateway, input(false, false)).await.status(),
-            StatusCode::TOO_MANY_REQUESTS
+            StatusCode::BAD_GATEWAY
         );
-        assert_eq!(first.calls.lock().unwrap().len(), 1);
+        assert_eq!(first.calls.lock().unwrap().len(), 2);
         assert!(backup.calls.lock().unwrap().is_empty());
         assert_eq!(limit.available(), 1);
     }
@@ -473,7 +470,7 @@ async fn dropping_native_stream_releases_permit_and_keeps_unknown_usage_reservat
 }
 
 #[tokio::test]
-async fn portable_requests_fall_back_to_strict_and_charge_failed_attempt_reservations() {
+async fn portable_requests_fall_back_to_strict_and_charge_only_successful_known_usage() {
     let failed = upstream(503, "provider-secret unavailable".into(), false).await;
     let mut plain = answer();
     plain["content"] = json!([{"type":"text","text":"Strict fallback"}]);
@@ -483,7 +480,7 @@ async fn portable_requests_fall_back_to_strict_and_charge_failed_attempt_reserva
     let strict = upstream(200, plain.to_string(), false).await;
     let limit = ConcurrencyLimit::new(1).unwrap();
     let mut config = config(&[(&failed, "anthropic", true), (&strict, "anthropic", false)]);
-    config["models"]["public"]["quota"] = json!({"total_tokens":20,"reserve_tokens":5});
+    config["models"]["public"]["quota"] = json!({"total_tokens":10,"reserve_tokens":5});
     let gateway = runtime(config, &limit, Options::default());
     for _ in 0..2 {
         let response = invoke(&gateway, input(false, false)).await;
@@ -533,7 +530,7 @@ async fn native_requests_validate_routing_controls_before_dispatch() {
 }
 
 #[tokio::test]
-async fn generated_native_stream_requires_delta_output_usage_and_retains_fallback_quota() {
+async fn generated_native_stream_requires_delta_output_usage_and_retains_known_input_usage() {
     for explicit_zero in [false, true] {
         let mut frames = frames();
         for frame in &mut frames {
@@ -558,16 +555,9 @@ async fn generated_native_stream_requires_delta_output_usage_and_retains_fallbac
             explicit_zero,
             "missing output usage must not settle as zero"
         );
-        // Explicit zero charges 12 input tokens; failure keeps the 20-token reservation.
+        // Both cases retain only the 12 known input tokens; unknown output is not estimated.
         let next = invoke(&gateway, input(true, true)).await;
-        assert_eq!(
-            next.status(),
-            if explicit_zero {
-                StatusCode::OK
-            } else {
-                StatusCode::TOO_MANY_REQUESTS
-            }
-        );
+        assert_eq!(next.status(), StatusCode::OK);
         drop(next);
         assert_eq!(limit.available(), 1);
     }
@@ -790,9 +780,9 @@ async fn unrepresentable_cache_writes_fail_without_retry_after_charging_known_us
 }
 
 #[tokio::test]
-async fn invalid_cache_updates_terminate_strict_and_native_streams_with_conservative_quota() {
+async fn invalid_cache_updates_terminate_strict_and_native_streams_with_last_known_usage() {
     for native in [false, true] {
-        for (index, invalid) in [
+        for invalid in [
             json!({"output_tokens":2,"cache_read_input_tokens":-1}),
             json!({"output_tokens":2,"cache_read_input_tokens":u64::MAX}),
             // Total increases, but one cumulative counter decreases.
@@ -800,7 +790,7 @@ async fn invalid_cache_updates_terminate_strict_and_native_streams_with_conserva
             json!({"output_tokens":2,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":4}}),
             // The TTL total remains five, but the one-hour counter decreases.
             json!({"output_tokens":2,"cache_creation":{"ephemeral_5m_input_tokens":3,"ephemeral_1h_input_tokens":2}}),
-        ].into_iter().enumerate() {
+        ] {
             let mut frames = strict_cache_frames();
             frames[4]["usage"] = invalid.clone();
             let first = upstream(200, sse(&frames), true).await;
@@ -810,9 +800,10 @@ async fn invalid_cache_updates_terminate_strict_and_native_streams_with_conserva
                 (&first, "anthropic", native),
                 (&backup, "anthropic", native),
             ]);
-            // The first valid frame knows 12 tokens; interruption charges max(known, reserve).
-            let (reserve, charged) = if index == 0 { (20, 20) } else { (1, 12) };
-            config["models"]["public"]["quota"] = json!({"total_tokens":charged,"reserve_tokens":reserve});
+            // Invalid updates retain exactly the 12 tokens in the last valid frame.
+            let (reserve, charged) = (1, 12);
+            config["models"]["public"]["quota"] =
+                json!({"total_tokens":charged,"reserve_tokens":reserve});
             let resources = SharedResources::default();
             let quotas = resources.quotas.clone();
             let gateway = runtime_with_resources(config, &limit, Options::default(), resources);
@@ -1097,7 +1088,7 @@ async fn thinking_survives_strict_and_native_retry_and_settles_usage_once() {
                 (&incompatible, "gemini", false),
                 (&backup, "anthropic", false),
             ]);
-            config["models"]["public"]["quota"] = json!({"total_tokens":15,"reserve_tokens":1});
+            config["models"]["public"]["quota"] = json!({"total_tokens":14,"reserve_tokens":1});
             let resources = SharedResources::default();
             let quotas = resources.quotas.clone();
             let gateway = runtime_with_resources(config, &limit, Options::default(), resources);
@@ -1125,7 +1116,7 @@ async fn thinking_survives_strict_and_native_retry_and_settles_usage_once() {
                 assert_eq!(calls[0]["headers"]["x-api-key"], "provider-secret");
             }
             let balance = quotas.snapshot("public").unwrap();
-            assert_eq!((balance.used, balance.reserved), (15, 0));
+            assert_eq!((balance.used, balance.reserved), (14, 0));
             assert_eq!(limit.available(), 1);
             assert_eq!(
                 invoke(&gateway, body).await.status(),

@@ -1,0 +1,32 @@
+[package]
+name = "nyro-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Authenticated MCP tools gateway"
+
+[dependencies]
+nyro-balance = { path = "../nyro-balance" }
+rand = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url = "2"
+rmcp = { version = "=3.4.1", default-features = false, features = ["client", "server", "transport-streamable-http-client", "transport-streamable-http-server"] }
+nyro-authn = { path = "../nyro-authn" }
+nyro-authz = { path = "../nyro-authz" }
+nyro-limit = { path = "../nyro-limit" }
+axum.workspace = true
+tokio.workspace = true
+tokio-util = { version = "0.7", features = ["rt"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json"] }
+futures = "0.3"
+http-body = "1"
+bytes = "1"
+base64 = "0.22"
+sse-stream = "0.2.6"
+tracing.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

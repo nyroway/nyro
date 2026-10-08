@@ -7,13 +7,13 @@ use std::{
 };
 use thiserror::Error;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
     pub providers: BTreeMap<String, Provider>,
+    #[serde(default)]
     pub models: BTreeMap<String, Model>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub subject_limits: BTreeMap<String, SubjectLimitConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -45,6 +45,8 @@ pub struct Provider {
     pub base_url: String,
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<nyro_authn::outbound::KeyAuth>,
     #[serde(default)]
     pub transport: Transport,
 }
@@ -73,7 +75,7 @@ pub struct Transport {
         skip_serializing_if = "Option::is_none"
     )]
     pub proxy_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "boolean")]
     pub http1_only: bool,
 }
 
@@ -119,6 +121,7 @@ impl Transport {
 pub enum Strategy {
     #[default]
     Weighted,
+    WeightedRoundrobin,
     LeastRecent,
     Latency,
 }
@@ -130,10 +133,6 @@ pub struct Model {
     pub max_attempts: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub health: Option<HealthConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rate: Option<RateConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quota: Option<QuotaConfig>,
     pub workloads: Vec<Workload>,
     pub allow_anonymous: bool,
     pub subjects: BTreeSet<String>,
@@ -167,92 +166,6 @@ impl Default for HealthConfig {
     }
 }
 
-/// Continuous request refill rate and initial/maximum token capacity.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RateConfig {
-    pub requests: u32,
-    pub period_ms: u64,
-    #[serde(default = "default_burst")]
-    pub burst: u32,
-}
-
-/// Rolling request/token budgets shared by one authenticated subject across LLM models.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SubjectLimitConfig {
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub rpm: Option<u32>,
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub rpd: Option<u32>,
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub tpm: Option<u64>,
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub tpd: Option<u64>,
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub reserve_tokens: Option<u64>,
-}
-
-impl SubjectLimitConfig {
-    pub(crate) fn windows(&self) -> impl Iterator<Item = (u32, Duration)> {
-        [(self.rpm, 60), (self.rpd, 86400)]
-            .into_iter()
-            .filter_map(|(count, seconds)| count.map(|count| (count, Duration::from_secs(seconds))))
-    }
-
-    pub(crate) fn token_windows(&self) -> impl Iterator<Item = (u64, Duration)> {
-        [(self.tpm, 60), (self.tpd, 86400)]
-            .into_iter()
-            .filter_map(|(count, seconds)| count.map(|count| (count, Duration::from_secs(seconds))))
-    }
-
-    pub(crate) fn valid(&self) -> bool {
-        let requests = self.rpm.is_some() || self.rpd.is_some();
-        let tokens = self.tpm.is_some() || self.tpd.is_some();
-        (requests || tokens)
-            && self.windows().all(|(count, _)| count > 0)
-            && match (tokens, self.reserve_tokens) {
-                (true, Some(reserve)) => {
-                    reserve > 0 && self.token_windows().all(|(limit, _)| reserve <= limit)
-                }
-                (false, None) => true,
-                _ => false,
-            }
-    }
-}
-
-/// Process-local cumulative token budget and provision reserved per upstream attempt.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuotaConfig {
-    pub total_tokens: u64,
-    pub reserve_tokens: u64,
-}
-
-const fn default_burst() -> u32 {
-    1
-}
-
 const fn default_max_attempts() -> u32 {
     1
 }
@@ -270,10 +183,6 @@ struct RawModel {
     max_attempts: u32,
     #[serde(default)]
     health: Option<HealthConfig>,
-    #[serde(default, deserialize_with = "present")]
-    rate: Option<RateConfig>,
-    #[serde(default, deserialize_with = "present")]
-    quota: Option<QuotaConfig>,
     #[serde(default, deserialize_with = "present")]
     backends: Option<Vec<Backend>>,
     #[serde(default, deserialize_with = "present")]
@@ -319,8 +228,6 @@ impl<'de> Deserialize<'de> for Model {
             strategy: raw.strategy,
             max_attempts: raw.max_attempts,
             health: raw.health,
-            rate: raw.rate,
-            quota: raw.quota,
             workloads: raw.workloads,
             allow_anonymous: raw.allow_anonymous,
             subjects: raw.subjects,
@@ -330,14 +237,6 @@ impl<'de> Deserialize<'de> for Model {
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error(
-        "subject `{subject}` limits require a nonempty ID, positive bounds, and a valid token reservation"
-    )]
-    InvalidSubjectLimit { subject: String },
-    #[error("LLM configuration must define at least one provider")]
-    NoProviders,
-    #[error("LLM configuration must define at least one model")]
-    NoModels,
     #[error("provider ID must not be empty")]
     EmptyProviderId,
     #[error("provider `{provider}` has an invalid base URL")]
@@ -345,7 +244,7 @@ pub enum ConfigError {
     #[error("provider `{provider}` has invalid transport settings")]
     InvalidProviderTransport { provider: String },
     #[error("provider `{provider}` has an invalid API key")]
-    InvalidProviderApiKey { provider: String },
+    InvalidProviderKeyCredential { provider: String },
     #[error("provider `{provider}` declares an API selector outside the OpenAI family")]
     InvalidProviderApi { provider: String },
     #[error("model ID must not be empty")]
@@ -354,12 +253,6 @@ pub enum ConfigError {
     InvalidMaxAttempts { model: String },
     #[error("model `{model}` health policy requires positive bounds and a representable cooldown")]
     InvalidHealth { model: String },
-    #[error("model `{model}` rate policy requires positive, representable bounds")]
-    InvalidRate { model: String },
-    #[error(
-        "model `{model}` quota policy requires positive bounds and reserve_tokens <= total_tokens"
-    )]
-    InvalidQuota { model: String },
     #[error("model `{model}` must define at least one backend")]
     NoBackends { model: String },
     #[error("model `{model}` has an empty backend ID")]
@@ -384,21 +277,6 @@ pub enum ConfigError {
 
 impl Config {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.providers.is_empty() {
-            return Err(ConfigError::NoProviders);
-        }
-        if self.models.is_empty() {
-            return Err(ConfigError::NoModels);
-        }
-
-        for (id, policy) in &self.subject_limits {
-            if id.trim().is_empty() || !policy.valid() {
-                return Err(ConfigError::InvalidSubjectLimit {
-                    subject: id.clone(),
-                });
-            }
-        }
-
         for (id, provider) in &self.providers {
             if id.trim().is_empty() {
                 return Err(ConfigError::EmptyProviderId);
@@ -434,10 +312,20 @@ impl Config {
                     provider: id.clone(),
                 });
             }
+            if provider
+                .auth
+                .as_ref()
+                .is_some_and(|auth| auth.validate().is_err())
+                || (provider.auth.is_some() && provider.api_key.is_some())
+            {
+                return Err(ConfigError::InvalidProviderKeyCredential {
+                    provider: id.clone(),
+                });
+            }
             if let Some(api_key) = &provider.api_key
                 && (api_key.is_empty() || HeaderValue::try_from(api_key).is_err())
             {
-                return Err(ConfigError::InvalidProviderApiKey {
+                return Err(ConfigError::InvalidProviderKeyCredential {
                     provider: id.clone(),
                 });
             }
@@ -458,23 +346,6 @@ impl Config {
                         .is_none()
             }) {
                 return Err(ConfigError::InvalidHealth { model: id.clone() });
-            }
-            if model.rate.as_ref().is_some_and(|rate| {
-                nyro_limit::rate::RateLimit::new(
-                    rate.requests,
-                    Duration::from_millis(rate.period_ms),
-                    rate.burst,
-                )
-                .is_err()
-            }) {
-                return Err(ConfigError::InvalidRate { model: id.clone() });
-            }
-            if model.quota.as_ref().is_some_and(|quota| {
-                quota.total_tokens == 0
-                    || quota.reserve_tokens == 0
-                    || quota.reserve_tokens > quota.total_tokens
-            }) {
-                return Err(ConfigError::InvalidQuota { model: id.clone() });
             }
             if model.backends.is_empty() {
                 return Err(ConfigError::NoBackends { model: id.clone() });
@@ -542,5 +413,31 @@ impl Config {
         }
 
         Ok(())
+    }
+}
+
+impl From<Strategy> for nyro_balance::Strategy {
+    fn from(value: Strategy) -> Self {
+        match value {
+            Strategy::Weighted => Self::WeightedRandom,
+            Strategy::WeightedRoundrobin => Self::WeightedRoundrobin,
+            Strategy::LeastRecent => Self::LeastRecent,
+            Strategy::Latency => Self::LatencyAware,
+        }
+    }
+}
+
+fn boolean<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Input {
+        Bool(bool),
+        Text(String),
+    }
+    match Input::deserialize(d)? {
+        Input::Bool(b) => Ok(b),
+        Input::Text(s) => s
+            .parse()
+            .map_err(|_| serde::de::Error::custom("invalid boolean")),
     }
 }

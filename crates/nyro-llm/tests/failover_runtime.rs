@@ -14,13 +14,13 @@ use axum::{
     routing::post,
 };
 use futures::StreamExt;
+use nyro_authn::{KeyAuth, KeyCredential};
 use nyro_limit::ConcurrencyLimit;
 use nyro_llm::{
     config::Config,
     health::HealthRegistry,
     runtime::{Options, Runtime},
 };
-use nyro_security::{ApiKey, ApiKeys};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -200,7 +200,7 @@ fn runtime(
     Runtime::with_health(
         config,
         Arc::new(
-            ApiKeys::new(vec![ApiKey {
+            KeyAuth::new(vec![KeyCredential {
                 id: "alice".into(),
                 secret: "client-secret".into(),
                 enabled: true,

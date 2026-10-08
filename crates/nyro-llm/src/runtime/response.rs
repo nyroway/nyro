@@ -26,6 +26,11 @@ impl Runtime {
     ) -> Result<HttpResponse<Body>, Failure> {
         let streaming = request.is_streaming();
         let public_model = request.model().to_owned();
+        let options = self
+            .policies
+            .execution
+            .get(&public_model)
+            .unwrap_or(&self.options);
         let workload = endpoint.workload;
         let include_usage = request.include_usage();
         let native = request.native_for(provider.format) && provider.native_chat;
@@ -47,7 +52,7 @@ impl Runtime {
                 provider.format,
                 endpoint.format,
                 public_model.clone(),
-                self.options.max_frame_bytes,
+                options.max_frame_bytes,
                 include_usage,
                 attempt.take(),
             );
@@ -95,7 +100,7 @@ impl Runtime {
                 }
                 Failure::upstream()
             })?;
-            if chunk.len() > self.options.max_response_bytes.saturating_sub(bytes.len()) {
+            if chunk.len() > options.max_response_bytes.saturating_sub(bytes.len()) {
                 return Err(Failure::upstream());
             }
             bytes.extend_from_slice(&chunk);
