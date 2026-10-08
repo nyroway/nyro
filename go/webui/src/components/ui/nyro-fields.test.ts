@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { helpTipLayout, NyroHelpHint, NyroMultiCheck, NyroSearchSelect, type NyroMultiCheckProps, type NyroSearchSelectProps } from "./nyro-fields";
+import { helpTipLayout } from "@/lib/help-tip-layout";
+import { NyroHelpHint, NyroMultiCheck, NyroSearchSelect, type NyroMultiCheckProps, type NyroSearchSelectProps } from "./nyro-fields";
 
 const source = readFileSync(resolve(__dirname, "nyro-fields.tsx"), "utf8");
 

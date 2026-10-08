@@ -5,6 +5,8 @@ import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObjec
 import clsx from "clsx";
 import { Check, ChevronDown } from "lucide-react";
 
+import { helpTipLayout } from "@/lib/help-tip-layout";
+
 type BaseFieldProps = {
   label?: string;
   className?: string;
@@ -32,24 +34,8 @@ export type NyroTextareaFieldProps = BaseFieldProps &
    提示层悬停时切 fixed 定位并按视口钳制——基线 hover-tip 就是 body 级
    固定层（.drawer-body/.card 的 overflow 会裁掉贴边的绝对定位弹层，
    fixed 脱离裁剪祖先）；.drawer 打开态带 transform 会改写 fixed 的
-   包含块，用“归零读基线再补偿”两遍法保证任何包含块下都落在视口目标。 */
-export function helpTipLayout(
-  icon: { left: number; top: number; right: number; bottom: number },
-  tip: { w: number; h: number },
-  viewport: { w: number; h: number },
-  margin = 8,
-  gap = 6,
-): { left: number; top: number } {
-  // 水平：图标上方居中，越界向内钳进视口（弹层宽过视口时贴左安全界）
-  const left = Math.min(
-    Math.max((icon.left + icon.right) / 2 - tip.w / 2, margin),
-    Math.max(margin, viewport.w - tip.w - margin),
-  );
-  // 垂直：默认浮在图标上方留 gap；上方放不下翻到图标下方
-  const above = icon.top - tip.h - gap;
-  return { left, top: above >= margin ? above : icon.bottom + gap };
-}
-
+   包含块，用“归零读基线再补偿”两遍法保证任何包含块下都落在视口目标。
+   落点几何是纯函数 helpTipLayout（lib/help-tip-layout，可单测）。 */
 export function NyroHelpHint({ text }: { text: string }) {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const tipRef = useRef<HTMLSpanElement | null>(null);
