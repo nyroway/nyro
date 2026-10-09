@@ -411,6 +411,37 @@ button.status-tag,
 
 /* ── Phase 2 逐页竖切：logs（§9.6）────────────────────────────── */
 
+/* 工具条筛选自适应：日志页四个筛选的选项是用户自定义数据（消费者/模型/
+   上游名），长度开放——真源 .toolbar-filter 定宽 148px、.select-menu 又
+   恒等于触发器宽（left:0;right:0），长名在菜单里换两行、触发器截成
+   省略号。变体类做三件事（均为 React 侧适配，真源无此场景）：
+   ① 触发器 width:max-content 在 148px～240px 间自适应，选中值尽量完整
+      显示，封顶后由既有 .selected-value 省略号兜底；
+   ② 菜单与触发器解耦：min-width:100% 保底触发器宽、width:max-content
+      按最长选项自适应、360px 封顶；
+   ③ 封顶后选项省略：min-width:0 让 flex 子项可缩，nowrap+ellipsis 单行。
+   状态筛选的选项是固定短文案，挂同一变体只会落在 148px 下限，行为不变。 */
+.toolbar-filter.toolbar-filter-adaptive {
+  width: max-content;
+  min-width: 148px;
+  max-width: 240px;
+}
+
+.toolbar-filter-adaptive .select-menu {
+  left: 0;
+  right: auto;
+  min-width: 100%;
+  width: max-content;
+  max-width: 360px;
+}
+
+.toolbar-filter-adaptive .select-option > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 协议流向（ingress → egress）：箭头与缺省占位弱化。 */
 .protocol-lane {
   display: inline-flex;
@@ -868,6 +899,18 @@ button.status-tag,
 }
 
 /* ── Phase 2 逐页竖切：providers（§9.2）────────────────────────────── */
+
+/* 工具条协议筛选加宽：真源 .toolbar-filter 定宽 148px，是为「全部状态」
+   这类短文案定的；而 .select-menu 恒等于触发器宽（left:0;right:0），
+   协议显示名最长 "OpenAI Chat Completions" 实测需 ~163px——148px 下
+   菜单选项换两行、选中后触发器截成省略号。协议筛选是 React 侧新增
+   元素（真源无此筛选），在适配层单独定宽 210px（最长文案 + 图标与
+   内边距实测推得）：菜单与触发器两个症状一次修复，菜单=触发器宽的
+   真源语义原样保留；状态筛选仍用真源 148px。双类选择器抬高特异性，
+   不依赖与 nyro-ui.css 的加载顺序。 */
+.toolbar-filter.toolbar-filter-protocol {
+  width: 210px;
+}
 
 /* 品牌标（§9.2 ①）：列表行 provider-name 里的图标回退字标——
    9px 等宽 600（原型字标的 650 收敛到 600）。 */

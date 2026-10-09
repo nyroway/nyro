@@ -1846,7 +1846,7 @@ export default function ProvidersPage() {
                 : protocolDisplayName(value) ?? value}
               searchable={false}
               fullWidth={false}
-              controlClassName="toolbar-filter"
+              controlClassName="toolbar-filter toolbar-filter-protocol"
               leadingIcon={<Filter size={14} aria-hidden="true" />}
               ariaLabel={localizedMessage(isZh, "v2.providers.filterByProtocol")}
             />

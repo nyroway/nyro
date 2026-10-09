@@ -102,6 +102,21 @@ describe("providers page static render", () => {
   });
 });
 
+describe("toolbar protocol filter width (baseline 148px wraps long protocol names)", () => {
+  it("widens only the protocol filter via the app-layer variant class", () => {
+    // 真源 .toolbar-filter 定宽 148px 且 .select-menu 恒等于触发器宽
+    // （left:0;right:0）——"OpenAI Chat Completions"（实测 ~163px）在
+    // 148px 菜单里换两行，选中后触发器也截成省略号。协议筛选（真源没有
+    // 的元素）挂 toolbar-filter-protocol 变体在 nyro-app.css 定宽 210px：
+    // 菜单与触发器两个症状一次修复；状态筛选保持真源 148px（本页恰好
+    // 一处裸 toolbar-filter，防止将来把两个筛选一起加宽）。
+    expect(source).toContain('controlClassName="toolbar-filter toolbar-filter-protocol"');
+    expect(source.match(/controlClassName="toolbar-filter"/g)).toHaveLength(1);
+    const css = readFileSync(resolve(__dirname, "../styles/nyro-app.css"), "utf8");
+    expect(css).toMatch(/\.toolbar-filter\.toolbar-filter-protocol\s*\{[^}]*width:\s*210px/s);
+  });
+});
+
 describe("provider detail drawer body (§9.2 ⑦)", () => {
   it("renders baseline descriptions only — actions live in the drawer footer", async () => {
     const module = await import("./providers");
