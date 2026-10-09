@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Component } from "react";
+import { CircleAlert } from "lucide-react";
 
 interface Props {
   children: ReactNode;
@@ -36,16 +37,21 @@ export class AppErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.hasError) return this.props.children;
 
+    // 兜底屏在 LocaleProvider 之外，无法取 t()——保持硬编码英文（§9.11）。
     return (
-      <div className="v2-error-screen">
-        <div className="v2-error-surface">
-          <span>NYRO CONSOLE</span>
-          <h1>Something went wrong</h1>
+      <div className="error-screen">
+        <div className="empty">
+          <strong>Something went wrong</strong>
           <p>The console stopped this page from crashing. Try again or check the browser console for details.</p>
           {this.state.errorMessage && (
-            <pre>{this.state.errorMessage}</pre>
+            <div className="alert alert-error">
+              <CircleAlert aria-hidden="true" />
+              <span>{this.state.errorMessage}</span>
+            </div>
           )}
-          <button onClick={this.onRetry}>Try again</button>
+          <div>
+            <button type="button" className="button" onClick={this.onRetry}>Try again</button>
+          </div>
         </div>
       </div>
     );

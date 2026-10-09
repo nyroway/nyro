@@ -1,23 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Filter, Trash2 } from "lucide-react";
 
-import { backend } from "@/lib/backend";
+import { consumersApi } from "@/lib/api/consumers";
+import { logsApi } from "@/lib/api/logs";
+import { statsApi } from "@/lib/api/stats";
+import { upstreamsApi } from "@/lib/api/upstreams";
+import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type { Consumer, LogPage, LogQuery, RouteStats, Upstream, RequestLog } from "@/lib/types";
 import { getRouteType } from "@/lib/types";
 import { computeTps, formatDuration, formatKeyPreview, formatLogTime, formatTokenCount, formatTps } from "@/lib/format";
 import { prettyName } from "@/lib/protocol";
 import { useLocale } from "@/lib/i18n";
-import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { LogDetailDialog } from "@/components/log-detail-dialog";
+import { showToast } from "@/lib/toast";
+import { NyroSearchSelect } from "@/components/ui/nyro-fields";
+import { LogDetailDrawer } from "@/components/log-detail-drawer";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DataTable, type DataTableColumn } from "@/components/v2/data-table";
 import { EmptyState } from "@/components/v2/empty-state";
@@ -25,12 +23,17 @@ import { FilterBar } from "@/components/v2/filter-bar";
 import { PageHeader } from "@/components/v2/page-header";
 import { PageLayout } from "@/components/v2/page-layout";
 import { Status } from "@/components/v2/status";
-import { Surface } from "@/components/v2/surface";
 import { applyLogStatusFilter, logStatusFilterValue, type LogStatusFilter } from "@/features/logs/log-filter";
 import { localizedMessage } from "@/lib/messages";
 
 const PAGE_SIZE = 11;
-const ALL_OPTION = "__all__";
+
+interface FilterOption {
+  id: string;
+  label: string;
+}
+
+const optionId = (option: FilterOption | null) => option?.id || "";
 
 export default function LogsPage() {
   const { locale, t } = useLocale();
@@ -45,11 +48,19 @@ export default function LogsPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const clearMut = useMutation({
-    mutationFn: () => backend("clear_logs"),
-    onSuccess: () => {
+    mutationFn: () => logsApi.clear(),
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["logs"] });
       setPage(0);
       setConfirmOpen(false);
+      showToast(localizedMessage(isZh, "common.cleared", { count: result.cleared }));
+    },
+    onError: (error) => {
+      showToast(
+        `${localizedMessage(isZh, "v2.logs.clearAllLogs")} — ${localizeBackendErrorMessage(error, isZh)}`,
+        "error",
+        6000,
+      );
     },
   });
 
@@ -57,20 +68,20 @@ export default function LogsPage() {
 
   const { data, isLoading } = useQuery<LogPage>({
     queryKey: ["logs", query],
-    queryFn: () => backend("query_logs", { query }),
+    queryFn: () => logsApi.query(query),
     refetchInterval: 5_000,
   });
   const { data: upstreams = [] } = useQuery<Upstream[]>({
     queryKey: ["upstreams"],
-    queryFn: () => backend("list_upstreams"),
+    queryFn: () => upstreamsApi.list(),
   });
   const { data: routeStats = [] } = useQuery<RouteStats[]>({
     queryKey: ["stats", "routes", "log-filter"],
-    queryFn: () => backend("get_stats_by_route"),
+    queryFn: () => statsApi.byRoute(),
   });
   const { data: consumers = [] } = useQuery<Consumer[]>({
     queryKey: ["consumers", "log-filter"],
-    queryFn: () => backend("list_consumers"),
+    queryFn: () => consumersApi.list(),
   });
 
   const items = data?.items ?? [];
@@ -78,65 +89,163 @@ export default function LogsPage() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const focusedLogID = new URLSearchParams(location.search).get("focus");
 
-  const upstreamOptions = useMemo(
+  const consumerOptions = useMemo<FilterOption[]>(
     () => [
-      { value: "", label: localizedMessage(isZh, "v2.logs.allUpstreams") },
-      ...upstreams.map((upstream) => ({ value: upstream.id, label: upstream.name })),
-    ],
-    [upstreams, isZh],
-  );
-  const modelOptions = useMemo(
-    () => [
-      { value: "", label: localizedMessage(isZh, "v2.logs.allModels") },
-      ...routeStats
-        .filter((route) => (route.route_model ?? "").trim())
-        .map((route) => ({ value: route.route_id, label: route.route_model })),
-    ],
-    [routeStats, isZh],
-  );
-  const consumerOptions = useMemo(
-    () => [
-      { value: "", label: localizedMessage(isZh, "v2.logs.allConsumers") },
-      ...consumers.map((consumer) => ({ value: consumer.id, label: consumer.name })),
+      { id: "", label: localizedMessage(isZh, "v2.logs.allConsumers") },
+      ...consumers.map((consumer) => ({ id: consumer.id, label: consumer.name })),
     ],
     [consumers, isZh],
   );
+  const modelOptions = useMemo<FilterOption[]>(
+    () => [
+      { id: "", label: localizedMessage(isZh, "v2.logs.allModels") },
+      ...routeStats
+        .filter((route) => (route.route_model ?? "").trim())
+        .map((route) => ({ id: route.route_id, label: route.route_model })),
+    ],
+    [routeStats, isZh],
+  );
+  const upstreamOptions = useMemo<FilterOption[]>(
+    () => [
+      { id: "", label: localizedMessage(isZh, "v2.logs.allUpstreams") },
+      ...upstreams.map((upstream) => ({ id: upstream.id, label: upstream.name })),
+    ],
+    [upstreams, isZh],
+  );
+  const statusOptions = useMemo<FilterOption[]>(
+    () => [
+      { id: "all", label: localizedMessage(isZh, "v2.providers.allStatuses") },
+      { id: "ok", label: localizedMessage(isZh, "v2.logs.2xxOnly2") },
+      { id: "error", label: localizedMessage(isZh, "v2.logs.4xxErrors2") },
+    ],
+    [isZh],
+  );
 
-  const upstreamFilterValue = filter.upstream_id ?? ALL_OPTION;
-  const consumerFilterValue = filter.consumer_id ?? ALL_OPTION;
-  const routeFilterValue = filter.route_id ?? ALL_OPTION;
-  const statusFilterValue = logStatusFilterValue(filter);
+  const findOption = (options: FilterOption[], id: string) =>
+    options.find((option) => option.id === id) ?? options[0];
+
+  const consumerValue = findOption(consumerOptions, filter.consumer_id ?? "");
+  const routeValue = findOption(modelOptions, filter.route_id ?? "");
+  const upstreamValue = findOption(upstreamOptions, filter.upstream_id ?? "");
+  const statusValue = findOption(statusOptions, logStatusFilterValue(filter));
 
   const columns: DataTableColumn<RequestLog>[] = [
-    { key: "time", header: localizedMessage(isZh, "v2.logs.time"), className: "v2-log-time", render: (log) => <code>{formatLogTime(log.created_at)}</code> },
+    { key: "time", header: localizedMessage(isZh, "v2.logs.time"), render: (log) => <code>{formatLogTime(log.created_at)}</code> },
     { key: "status", header: localizedMessage(isZh, "v2.providers.status"), render: (log) => {
       const status = log.response_status_code ?? 0;
       return <Status tone={status < 400 ? "success" : status < 500 ? "warning" : "danger"}>{log.response_status_code ?? "—"}</Status>;
     } },
-    { key: "consumer", header: localizedMessage(isZh, "v2.logs.consumerAndKey"), render: (log) => <div className="v2-log-stack"><strong>{log.consumer_id ?? (localizedMessage(isZh, "v2.logs.anonymous"))}</strong><code>{log.consumer_key_name ? formatKeyPreview(log.consumer_key_name) : "—"}</code></div> },
-    { key: "model", header: localizedMessage(isZh, "v2.logs.modelAndUpstream"), render: (log) => <div className="v2-log-stack"><strong className="v2-mono">{log.client_model ?? "—"}</strong><span>{log.upstream_name ?? log.upstream_id ?? "—"}{log.upstream_model ? ` : ${log.upstream_model}` : ""}</span></div> },
+    { key: "consumer", header: localizedMessage(isZh, "v2.logs.consumerAndKey"), render: (log) => <div className="cell-stack"><strong>{log.consumer_id ?? (localizedMessage(isZh, "v2.logs.anonymous"))}</strong><code>{log.consumer_key_name ? formatKeyPreview(log.consumer_key_name) : "—"}</code></div> },
+    { key: "model", header: localizedMessage(isZh, "v2.logs.modelAndUpstream"), render: (log) => <div className="cell-stack"><strong>{log.client_model ?? "—"}</strong><span>{log.upstream_name ?? log.upstream_id ?? "—"}{log.upstream_model ? ` : ${log.upstream_model}` : ""}</span></div> },
     { key: "protocol", header: localizedMessage(isZh, "v2.logs.protocolFlow"), render: (log) => <ProtocolLane ingress={log.client_protocol} egress={log.upstream_protocol} /> },
-    { key: "latency", header: localizedMessage(isZh, "v2.logs.latency"), render: (log) => <code className="v2-log-value">{formatDuration(log.latency_total_ms)}</code> },
-    { key: "tokens", header: "Token", render: (log) => <div className="v2-log-tokens"><span>IN {formatTokenCount(log.input_tokens)}</span><span>OUT {formatTokenCount(log.output_tokens)}</span></div> },
-    { key: "tps", header: "TPS", render: (log) => <code className="v2-log-value">{formatTps(computeTps(log))}</code> },
-    { key: "type", header: localizedMessage(isZh, "v2.logs.type"), render: (log) => <span className="v2-code-pill">{(log.is_stream ?? (log.stream_chunks_count ?? 0) > 0) ? "SSE" : getRouteType(log) === "embedding" ? "EMB" : "JSON"}</span> },
+    { key: "latency", header: localizedMessage(isZh, "v2.logs.latency"), render: (log) => <code>{formatDuration(log.latency_total_ms)}</code> },
+    { key: "tokens", header: "Token", render: (log) => <div className="cell-stack"><code>IN {formatTokenCount(log.input_tokens)}</code><code>OUT {formatTokenCount(log.output_tokens)}</code></div> },
+    { key: "tps", header: "TPS", render: (log) => <code>{formatTps(computeTps(log))}</code> },
+    { key: "type", header: localizedMessage(isZh, "v2.logs.type"), render: (log) => <span className="tag">{(log.is_stream ?? (log.stream_chunks_count ?? 0) > 0) ? "SSE" : getRouteType(log) === "embedding" ? "EMB" : "JSON"}</span> },
   ];
 
   return (
     <PageLayout header={<PageHeader title={t("page.logs.title")} description={`${t("page.logs.subtitle")} · ${t("page.logs.records", { count: total })}`} />}>
-      <FilterBar summary={localizedMessage(isZh, "common.recordsCount", { count: total })}>
-        <Select value={consumerFilterValue} onValueChange={(value) => { setFilter((current) => ({ ...current, consumer_id: value === ALL_OPTION ? undefined : value })); setPage(0); }}><SelectTrigger aria-label={localizedMessage(isZh, "v2.logs.consumerFilter")}><SelectValue /></SelectTrigger><SelectContent>{consumerOptions.map((option) => <SelectItem key={`consumer-v2-${option.value || "all"}`} value={option.value || ALL_OPTION}>{option.label}</SelectItem>)}</SelectContent></Select>
-        <Select value={routeFilterValue} onValueChange={(value) => { setFilter((current) => ({ ...current, route_id: value === ALL_OPTION ? undefined : value })); setPage(0); }}><SelectTrigger aria-label={localizedMessage(isZh, "v2.logs.modelFilter")}><SelectValue /></SelectTrigger><SelectContent>{modelOptions.map((option) => <SelectItem key={`model-v2-${option.value || "all"}`} value={option.value || ALL_OPTION}>{option.label}</SelectItem>)}</SelectContent></Select>
-        <Select value={upstreamFilterValue} onValueChange={(value) => { setFilter((current) => ({ ...current, upstream_id: value === ALL_OPTION ? undefined : value })); setPage(0); }}><SelectTrigger aria-label={localizedMessage(isZh, "v2.logs.upstreamFilter")}><SelectValue /></SelectTrigger><SelectContent>{upstreamOptions.map((option) => <SelectItem key={`upstream-v2-${option.value || "all"}`} value={option.value || ALL_OPTION}>{option.label}</SelectItem>)}</SelectContent></Select>
-        <Select value={statusFilterValue} onValueChange={(status: LogStatusFilter) => { setFilter((current) => applyLogStatusFilter(current, status)); setPage(0); }}><SelectTrigger aria-label={localizedMessage(isZh, "v2.logs.statusFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{localizedMessage(isZh, "v2.providers.allStatuses")}</SelectItem><SelectItem value="ok">{localizedMessage(isZh, "v2.logs.2xxOnly2")}</SelectItem><SelectItem value="error">{localizedMessage(isZh, "v2.logs.4xxErrors2")}</SelectItem></SelectContent></Select>
-        <Button variant="outline" size="icon" title={localizedMessage(isZh, "v2.logs.clearLogs")} disabled={total === 0} onClick={() => setConfirmOpen(true)}><Trash2 /></Button>
+      <FilterBar>
+        <NyroSearchSelect<FilterOption>
+          options={consumerOptions}
+          value={consumerValue}
+          onChange={(next) => { setFilter((current) => ({ ...current, consumer_id: optionId(next) || undefined })); setPage(0); }}
+          getOptionLabel={(option) => option.label}
+          isOptionEqualToValue={(a, b) => a.id === b.id}
+          searchable={false}
+          fullWidth={false}
+          controlClassName="toolbar-filter"
+          leadingIcon={<Filter size={14} aria-hidden="true" />}
+          ariaLabel={localizedMessage(isZh, "v2.logs.consumerFilter")}
+        />
+        <NyroSearchSelect<FilterOption>
+          options={modelOptions}
+          value={routeValue}
+          onChange={(next) => { setFilter((current) => ({ ...current, route_id: optionId(next) || undefined })); setPage(0); }}
+          getOptionLabel={(option) => option.label}
+          isOptionEqualToValue={(a, b) => a.id === b.id}
+          searchable={false}
+          fullWidth={false}
+          controlClassName="toolbar-filter"
+          leadingIcon={<Filter size={14} aria-hidden="true" />}
+          ariaLabel={localizedMessage(isZh, "v2.logs.modelFilter")}
+        />
+        <NyroSearchSelect<FilterOption>
+          options={upstreamOptions}
+          value={upstreamValue}
+          onChange={(next) => { setFilter((current) => ({ ...current, upstream_id: optionId(next) || undefined })); setPage(0); }}
+          getOptionLabel={(option) => option.label}
+          isOptionEqualToValue={(a, b) => a.id === b.id}
+          searchable={false}
+          fullWidth={false}
+          controlClassName="toolbar-filter"
+          leadingIcon={<Filter size={14} aria-hidden="true" />}
+          ariaLabel={localizedMessage(isZh, "v2.logs.upstreamFilter")}
+        />
+        <NyroSearchSelect<FilterOption>
+          options={statusOptions}
+          value={statusValue}
+          onChange={(next) => { setFilter((current) => applyLogStatusFilter(current, (optionId(next) || "all") as LogStatusFilter)); setPage(0); }}
+          getOptionLabel={(option) => option.label}
+          isOptionEqualToValue={(a, b) => a.id === b.id}
+          searchable={false}
+          fullWidth={false}
+          controlClassName="toolbar-filter"
+          leadingIcon={<Filter size={14} aria-hidden="true" />}
+          ariaLabel={localizedMessage(isZh, "v2.logs.statusFilter")}
+        />
+        <button
+          type="button"
+          className="button button-sm toolbar-end"
+          title={localizedMessage(isZh, "v2.logs.clearLogs")}
+          aria-label={localizedMessage(isZh, "v2.logs.clearLogs")}
+          disabled={total === 0}
+          onClick={() => setConfirmOpen(true)}
+        >
+          <Trash2 aria-hidden="true" />
+        </button>
       </FilterBar>
-      <Surface className="v2-table-surface v2-log-table" title={localizedMessage(isZh, "v2.logs.requestLogs")} description={localizedMessage(isZh, "v2.logs.inspectConsumerModelProtocolFlowAndUpstreamResult")}>
-        <DataTable columns={columns} rows={items} rowKey={(log) => log.id} loading={isLoading} onRowClick={setSelected} empty={<EmptyState title={total ? (localizedMessage(isZh, "v2.logs.noMatchingRequests")) : (localizedMessage(isZh, "v2.logs.noRequestLogsYet"))} description={total ? (localizedMessage(isZh, "v2.logs.adjustTheActiveFilters")) : (localizedMessage(isZh, "v2.logs.logsAppearHereAfterTheGatewayReceivesRequests"))} />} />
-        {totalPages > 1 && <div className="v2-pagination"><span>{localizedMessage(isZh, "common.pagination", { page: page + 1, total: totalPages })}</span><div><Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage((current) => current - 1)}><ChevronLeft /></Button><Button variant="outline" size="icon" disabled={page >= totalPages - 1} onClick={() => setPage((current) => current + 1)}><ChevronRight /></Button></div></div>}
-      </Surface>
+      <DataTable
+        carded
+        className="log-table"
+        columns={columns}
+        rows={items}
+        rowKey={(log) => log.id}
+        loading={isLoading}
+        onRowClick={setSelected}
+        empty={<EmptyState title={total ? (localizedMessage(isZh, "v2.logs.noMatchingRequests")) : (localizedMessage(isZh, "v2.logs.noRequestLogsYet"))} description={total ? (localizedMessage(isZh, "v2.logs.adjustTheActiveFilters")) : (localizedMessage(isZh, "v2.logs.logsAppearHereAfterTheGatewayReceivesRequests"))} />}
+        footer={
+          <>
+            <span className="table-summary">{localizedMessage(isZh, "common.recordsCount", { count: total })}</span>
+            {totalPages > 1 && (
+              <div className="pagination">
+                <span className="table-summary">{localizedMessage(isZh, "common.pagination", { page: page + 1, total: totalPages })}</span>
+                <button
+                  type="button"
+                  className="page-button"
+                  disabled={page === 0}
+                  aria-label={localizedMessage(isZh, "common.prevPage")}
+                  onClick={() => setPage((current) => current - 1)}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="page-button"
+                  disabled={page >= totalPages - 1}
+                  aria-label={localizedMessage(isZh, "common.nextPage")}
+                  onClick={() => setPage((current) => current + 1)}
+                >
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              </div>
+            )}
+          </>
+        }
+      />
 
-      <LogDetailDialog
+      <LogDetailDrawer
         logId={selected?.id ?? focusedLogID}
         summary={selected}
         open={!!selected || !!focusedLogID}
@@ -166,9 +275,9 @@ export default function LogsPage() {
 function ProtocolCell({ value }: { value: string | null | undefined }) {
   const label = prettyName(value);
   if (!label) {
-    return <span className="text-slate-400">–</span>;
+    return <span>–</span>;
   }
-  return <span className="font-medium text-slate-700">{label}</span>;
+  return <code>{label}</code>;
 }
 
 function ProtocolLane({
@@ -179,9 +288,9 @@ function ProtocolLane({
   egress: string | null | undefined;
 }) {
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="protocol-lane">
       <ProtocolCell value={ingress} />
-      <span className="text-slate-300">→</span>
+      <span aria-hidden="true">→</span>
       <ProtocolCell value={egress} />
     </span>
   );

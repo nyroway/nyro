@@ -1,89 +1,110 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
-import { formatKeyPreview } from "@/lib/format";
+import clsx from "clsx";
 import {
   Check,
   ChevronLeft,
   ChevronRight,
   Copy,
-  Info,
+  Filter,
   Pencil,
   Plus,
   RotateCw,
   Search,
   Trash2,
-  ToggleRight,
   ToggleLeft,
+  ToggleRight,
   X,
 } from "lucide-react";
 
-import { backend } from "@/lib/backend";
-import { localizeBackendErrorMessage } from "@/lib/backend-error";
+import { formatKeyPreview } from "@/lib/format";
 import type {
   Consumer,
   ConsumerKey,
-  ConsumerLimits,
-  ConsumerQuota,
   CreateConsumer,
   CreateConsumerKey,
-  CreateConsumerQuota,
   Route,
   UpdateConsumer,
   UpdateConsumerKey,
 } from "@/lib/types";
-import { PROTOCOL_TABLE } from "@/lib/protocol";
+import { PROTOCOL_TABLE, protocolDisplayName } from "@/lib/protocol";
 import { useLocale } from "@/lib/i18n";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { MultiSelect } from "@/components/ui/multi-select";
-import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { NyroHelpHint, NyroMultiCheck, NyroSearchSelect, NyroTextField } from "@/components/ui/nyro-fields";
 import { DataTable, type DataTableColumn } from "@/components/v2/data-table";
 import { EmptyState } from "@/components/v2/empty-state";
 import { FilterBar } from "@/components/v2/filter-bar";
+import { FormSection } from "@/components/v2/form-section";
 import { MetricLedger } from "@/components/v2/metric-ledger";
 import { PageHeader } from "@/components/v2/page-header";
 import { PageLayout } from "@/components/v2/page-layout";
-import { ResourceEditorDialog } from "@/components/v2/resource-editor-dialog";
+import { ResourceEditorDrawer } from "@/components/v2/resource-editor-dialog";
 import { Status } from "@/components/v2/status";
-import { Surface } from "@/components/v2/surface";
 import { filterConsumers, type ConsumerFilters } from "@/features/consumers/consumer-view-model";
+import {
+  buildAccessListPayload,
+  buildLimitsPayload,
+  buildQuotasPayload,
+  digitsOnly,
+  emptyLimitsForm,
+  emptyQuotaForm,
+  expirePresetOptions,
+  formatExpiresText,
+  formatQuotaRule,
+  formatValidityLabel,
+  ipAllowlistToForm,
+  isApiKeyExpired,
+  isValidIPOrCIDR,
+  limitsToForm,
+  quotasToForm,
+  quotaWindowOptions,
+  resolveExpiresAt,
+  resolveExpiresAtForUpdate,
+  type ExpirePreset,
+  type LimitsFormState,
+  type QuotaFormState,
+  type QuotaRuleForm,
+  type RevealedKey,
+} from "@/features/consumers/consumer-form";
+import { RevealKeyDialog } from "@/features/consumers/reveal-key-dialog";
+import { consumersApi } from "@/lib/api/consumers";
+import { routesApi } from "@/lib/api/routes";
+import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import { localizedMessage, type MessageKey } from "@/lib/messages";
 
 const PAGE_SIZE = 7;
+// Sentinel empty arrays: destructuring `data` with `= []` mints a fresh array every
+// render while the query is in flight, destabilizing anything downstream that depends
+// on it (see providers.tsx's React #185 note). Module constants keep it stable.
+const NO_CONSUMERS: Consumer[] = [];
+const NO_ROUTES: Route[] = [];
+
+const expirePresetValues = expirePresetOptions.map((option) => option.value);
+
+function expirePresetLabel(preset: ExpirePreset): MessageKey {
+  return expirePresetOptions.find((option) => option.value === preset)?.label ?? "consumers.expiry.never";
+}
+
+const protocolOptions = PROTOCOL_TABLE.map((p) => p.id);
+
+type WindowOption = { id: string; label: string };
 
 // CopyFullKeyButton copies a recoverable raw key (present only when the admin
 // runs with --plaintext-keys) to the clipboard, briefly swapping its icon to a
 // check as feedback. Module-scope so it can own per-row state without breaking
-// the rules-of-hooks in the renderKeyRow map callback.
+// the rules-of-hooks in the renderKeyRow map callback. §9.4 ⑤：保留逻辑换皮。
 function CopyFullKeyButton({ token, isZh }: { token: string; isZh: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
-      title={copied ? (localizedMessage(isZh, "v2.api-keys.copied")) : localizedMessage(isZh, "v2.api-keys.copyFullKey")}
+      className="icon-action"
+      data-tip={copied ? (localizedMessage(isZh, "v2.api-keys.copied")) : localizedMessage(isZh, "v2.api-keys.copyFullKey")}
       aria-label={localizedMessage(isZh, "v2.api-keys.copyFullKey")}
-      className="inline-flex text-slate-400 transition-colors hover:text-slate-600"
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(token);
@@ -94,258 +115,126 @@ function CopyFullKeyButton({ token, isZh }: { token: string; isZh: boolean }) {
         }
       }}
     >
-      {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
     </button>
   );
 }
 
-type ExpirePreset = "never" | "1d" | "7d" | "30d" | "90d" | "180d" | "1y";
-
-const expirePresetOptions: { value: ExpirePreset; label: MessageKey }[] = [
-  { value: "never", label: "consumers.expiry.never" },
-  { value: "1d", label: "consumers.expiry.1d" },
-  { value: "7d", label: "consumers.expiry.7d" },
-  { value: "30d", label: "consumers.expiry.30d" },
-  { value: "90d", label: "consumers.expiry.90d" },
-  { value: "180d", label: "consumers.expiry.180d" },
-  { value: "1y", label: "consumers.expiry.1y" },
-];
-
-function FieldLabel({
-  children,
-  info,
-  required,
+/* §9.4 ②：配额规则行编辑换基线表格语言（.table + cell-actions/row-actions）。
+   每行 = 上限输入 + 窗口 combobox（可输入自定义窗口）+ 删除/清空；空上限行
+   由 buildQuotasPayload 在提交时丢弃。 */
+function QuotaRuleTable({
+  title,
+  rows,
+  onRowsChange,
+  isZh,
+  windowOptions,
 }: {
-  children: string;
-  info?: string;
-  required?: boolean;
+  title: string;
+  rows: QuotaRuleForm[];
+  onRowsChange: (rows: QuotaRuleForm[]) => void;
+  isZh: boolean;
+  windowOptions: WindowOption[];
 }) {
   return (
-    <label className="ml-1 inline-flex items-center gap-1 text-xs leading-none font-normal text-slate-900">
-      <span>{children}</span>
-      {required ? (
-        <span className="text-red-500">
-          <span aria-hidden="true">*</span>
-          <span className="sr-only">required</span>
-        </span>
-      ) : null}
-      {info ? (
-        <TooltipProvider delayDuration={120}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                className="inline-flex cursor-help text-slate-400 hover:text-slate-600"
-                aria-label={info}
-              >
-                <Info className="h-3.5 w-3.5" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{info}</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      ) : null}
-    </label>
-  );
-}
-
-function SectionTitle({ children, info }: { children: string; info?: string }) {
-  return (
-    <div className="flex items-center gap-1">
-      <p className="text-sm font-semibold text-slate-700">{children}</p>
-      {info ? (
-        <TooltipProvider delayDuration={120}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                className="inline-flex cursor-help text-slate-400 hover:text-slate-600"
-                aria-label={info}
-              >
-                <Info className="h-3.5 w-3.5" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{info}</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      ) : null}
+    <div className="field span-2">
+      <span className="field-label">{title}</span>
+      <table className="table quota-table" aria-label={title}>
+        <thead>
+          <tr>
+            <th>{localizedMessage(isZh, "v2.api-keys.limit")}</th>
+            <th>{localizedMessage(isZh, "v2.api-keys.window")}</th>
+            <th className="cell-actions">
+              <span className="sr-only">{localizedMessage(isZh, "v2.providers.actions")}</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={3} className="quota-table-empty">
+                {localizedMessage(isZh, "v2.api-keys.notSetUnlimited")}
+              </td>
+            </tr>
+          ) : rows.map((row, idx) => {
+            const windowValue = windowOptions.find((option) => option.id === row.window)
+              ?? (row.window ? { id: row.window, label: row.window } : null);
+            return (
+              <tr key={idx}>
+                <td>
+                  <input
+                    className="field-control"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={row.limit}
+                    placeholder={localizedMessage(isZh, "v2.api-keys.limit")}
+                    aria-label={localizedMessage(isZh, "v2.api-keys.limit")}
+                    onChange={(event) => {
+                      const next = rows.slice();
+                      next[idx] = { ...row, limit: digitsOnly(event.target.value) };
+                      onRowsChange(next);
+                    }}
+                  />
+                </td>
+                <td>
+                  <NyroSearchSelect<WindowOption>
+                    options={windowOptions}
+                    value={windowValue}
+                    onChange={(option) => {
+                      const next = rows.slice();
+                      next[idx] = { ...row, window: option?.id ?? "" };
+                      onRowsChange(next);
+                    }}
+                    getOptionLabel={(option) => option.label}
+                    isOptionEqualToValue={(a, b) => a.id === b.id}
+                    createOptionFromInput={(input) => ({ id: input, label: input })}
+                    searchPlaceholder={localizedMessage(isZh, "common.search")}
+                    placeholder={localizedMessage(isZh, "v2.api-keys.window")}
+                    noOptionsText={localizedMessage(isZh, "v2.api-keys.window")}
+                    fullWidth={false}
+                    ariaLabel={localizedMessage(isZh, "v2.api-keys.window")}
+                  />
+                </td>
+                <td className="cell-actions">
+                  <div className="row-actions">
+                    {rows.length > 1 ? (
+                      <button
+                        type="button"
+                        className="icon-action danger"
+                        data-tip={localizedMessage(isZh, "v2.api-keys.removeRule")}
+                        aria-label={localizedMessage(isZh, "v2.api-keys.removeRule")}
+                        onClick={() => onRowsChange(rows.filter((_, i) => i !== idx))}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="icon-action"
+                        data-tip={localizedMessage(isZh, "v2.api-keys.clear")}
+                        aria-label={localizedMessage(isZh, "v2.api-keys.clear")}
+                        onClick={() => onRowsChange([{ limit: "", window: "" }])}
+                      >
+                        <X aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <button
+        type="button"
+        className="button button-sm quota-add"
+        onClick={() => onRowsChange([...rows, { limit: "", window: "" }])}
+      >
+        <Plus aria-hidden="true" />{localizedMessage(isZh, "v2.api-keys.addRule")}
+      </button>
     </div>
   );
-}
-
-
-function formatExpiresText(value: string | null | undefined, isZh: boolean) {
-  if (!value) return localizedMessage(isZh, "v2.api-keys.never");
-  return value.replace("T", " ").slice(0, 19);
-}
-
-function isApiKeyExpired(expiresAt: string | null | undefined) {
-  if (!expiresAt) return false;
-  const normalized = expiresAt.includes("T") ? expiresAt : expiresAt.replace(" ", "T");
-  const utcMillis = Date.parse(normalized.endsWith("Z") ? normalized : `${normalized}Z`);
-  if (!Number.isNaN(utcMillis)) {
-    return utcMillis <= Date.now();
-  }
-  const fallbackMillis = Date.parse(expiresAt);
-  return !Number.isNaN(fallbackMillis) && fallbackMillis <= Date.now();
-}
-
-function formatValidityLabel(expired: boolean, isZh: boolean) {
-  return expired ? (localizedMessage(isZh, "v2.api-keys.expired")) : (localizedMessage(isZh, "v2.api-keys.valid"));
-}
-
-function resolveExpiresAt(preset: ExpirePreset) {
-  if (preset === "never") return undefined;
-  const now = Date.now();
-  const day = 24 * 60 * 60 * 1000;
-  const map: Record<Exclude<ExpirePreset, "never">, number> = {
-    "1d": 1,
-    "7d": 7,
-    "30d": 30,
-    "90d": 90,
-    "180d": 180,
-    "1y": 365,
-  };
-  const date = new Date(now + map[preset] * day);
-  return date.toISOString().slice(0, 19).replace("T", " ");
-}
-
-/** Same preset -> timestamp mapping as `resolveExpiresAt`, but for `UpdateConsumerKey`
- *  where the "not provided" and "clear it" cases are distinct: omitting the field means
- *  "leave unchanged", while an empty string means "clear to never expires". Editing a key's
- *  expiry to "never" must therefore send `""`, not `undefined`. */
-function resolveExpiresAtForUpdate(preset: ExpirePreset) {
-  return preset === "never" ? "" : resolveExpiresAt(preset);
-}
-
-function digitsOnly(value: string) {
-  return value.replace(/[^\d]/g, "");
-}
-
-type QuotaRuleForm = { limit: string; window: string };
-
-type QuotaFormState = {
-  requests: QuotaRuleForm[];
-  tokens: QuotaRuleForm[];
-  concurrency: string;
-};
-
-const emptyQuotaRow: QuotaRuleForm = { limit: "", window: "" };
-
-/** buildQuotasPayload drops any row with an empty limit, so a default blank
- *  row is purely a UI convenience — it never reaches the submitted payload
- *  unless the user actually fills in a limit. */
-const emptyQuotaForm: QuotaFormState = { requests: [{ ...emptyQuotaRow }], tokens: [{ ...emptyQuotaRow }], concurrency: "" };
-
-function quotasToForm(quotas: ConsumerQuota[] | undefined): QuotaFormState {
-  const form: QuotaFormState = { requests: [], tokens: [], concurrency: "" };
-  for (const q of quotas ?? []) {
-    if (q.quota_type === "requests") {
-      form.requests.push({ limit: String(q.quota_limit), window: q.window ?? "" });
-    } else if (q.quota_type === "tokens") {
-      form.tokens.push({ limit: String(q.quota_limit), window: q.window ?? "" });
-    } else if (q.quota_type === "concurrency") {
-      form.concurrency = String(q.quota_limit);
-    }
-  }
-  if (form.requests.length === 0) form.requests.push({ ...emptyQuotaRow });
-  if (form.tokens.length === 0) form.tokens.push({ ...emptyQuotaRow });
-  return form;
-}
-
-function buildQuotasPayload(form: QuotaFormState): CreateConsumerQuota[] {
-  const quotas: CreateConsumerQuota[] = [];
-  for (const row of form.requests) {
-    if (!row.limit) continue;
-    quotas.push({
-      quota_type: "requests",
-      quota_limit: Number.parseInt(row.limit, 10),
-      window: row.window || undefined,
-    });
-  }
-  for (const row of form.tokens) {
-    if (!row.limit) continue;
-    quotas.push({
-      quota_type: "tokens",
-      quota_limit: Number.parseInt(row.limit, 10),
-      window: row.window || undefined,
-    });
-  }
-  if (form.concurrency) {
-    quotas.push({ quota_type: "concurrency", quota_limit: Number.parseInt(form.concurrency, 10) });
-  }
-  return quotas;
-}
-
-type LimitsFormState = { maxInputTokens: string; maxOutputTokens: string; maxRequestBodyBytes: string };
-
-const emptyLimitsForm: LimitsFormState = { maxInputTokens: "", maxOutputTokens: "", maxRequestBodyBytes: "" };
-
-function limitsToForm(limits: ConsumerLimits | undefined): LimitsFormState {
-  return {
-    maxInputTokens: limits?.max_input_tokens ? String(limits.max_input_tokens) : "",
-    maxOutputTokens: limits?.max_output_tokens ? String(limits.max_output_tokens) : "",
-    maxRequestBodyBytes: limits?.max_request_body_bytes ? String(limits.max_request_body_bytes) : "",
-  };
-}
-
-/** Returns undefined (omit `limits` entirely) when every field is empty, rather
- *  than sending an all-zero object — zero on a single field already means "no
- *  limit" for that dimension, so an empty form should not touch the others. */
-function buildLimitsPayload(form: LimitsFormState): ConsumerLimits | undefined {
-  if (!form.maxInputTokens && !form.maxOutputTokens && !form.maxRequestBodyBytes) return undefined;
-  return {
-    max_input_tokens: form.maxInputTokens ? Number.parseInt(form.maxInputTokens, 10) : undefined,
-    max_output_tokens: form.maxOutputTokens ? Number.parseInt(form.maxOutputTokens, 10) : undefined,
-    max_request_body_bytes: form.maxRequestBodyBytes ? Number.parseInt(form.maxRequestBodyBytes, 10) : undefined,
-  };
-}
-
-/** access.ip_allowlist is edited as one input row per entry (like the
- *  requests/tokens quota rows), each holding a single IP or CIDR block. */
-function ipAllowlistToForm(list: string[] | undefined): string[] {
-  return list && list.length > 0 ? [...list] : [""];
-}
-
-/** buildAccessListPayload drops blank rows, mirroring buildQuotasPayload's
- *  skip-empty-limit behavior — an untouched blank row never reaches the
- *  submitted payload. */
-function buildAccessListPayload(rows: string[]): string[] {
-  return rows.map((r) => r.trim()).filter(Boolean);
-}
-
-function isValidIPv4(addr: string): boolean {
-  const parts = addr.split(".");
-  if (parts.length !== 4) return false;
-  return parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) >= 0 && Number(p) <= 255);
-}
-
-function isValidIPv6(addr: string): boolean {
-  if (!/^[0-9a-fA-F:]+$/.test(addr)) return false;
-  if ((addr.match(/::/g) ?? []).length > 1) return false;
-  const groups = addr.split(":").filter((g, i, arr) => !(g === "" && (i === 0 || i === arr.length - 1)));
-  return groups.length > 0 && groups.length <= 8 && groups.every((g) => /^[0-9a-fA-F]{1,4}$/.test(g));
-}
-
-/** Accepts a bare IP (v4 or v6) or a CIDR block (IP + "/" + prefix length).
- *  An empty string is treated as valid — blank rows are filtered out at
- *  submit time by buildAccessListPayload, not flagged as errors while typing. */
-function isValidIPOrCIDR(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed) return true;
-  const [addr, prefix, ...rest] = trimmed.split("/");
-  if (rest.length > 0) return false;
-  if (isValidIPv4(addr)) {
-    return prefix === undefined || (/^\d{1,2}$/.test(prefix) && Number(prefix) <= 32);
-  }
-  if (isValidIPv6(addr)) {
-    return prefix === undefined || (/^\d{1,3}$/.test(prefix) && Number(prefix) <= 128);
-  }
-  return false;
-}
-
-const protocolOptions: ComboboxOption[] = PROTOCOL_TABLE.map((p) => ({ value: p.id, label: p.displayName }));
-
-function formatQuotaRule(q: ConsumerQuota) {
-  return q.window ? `${q.quota_limit}/${q.window}` : `${q.quota_limit}`;
 }
 
 function QuotaEditor({
@@ -357,223 +246,225 @@ function QuotaEditor({
   value: QuotaFormState;
   onChange: (next: QuotaFormState) => void;
   isZh: boolean;
-  windowOptions: ComboboxOption[];
+  windowOptions: WindowOption[];
 }) {
   function updateRows(kind: "requests" | "tokens", rows: QuotaRuleForm[]) {
     onChange({ ...value, [kind]: rows });
   }
 
-  function renderGroup(kind: "requests" | "tokens", title: string) {
-    const rows = value[kind];
-    return (
-      <div className="space-y-2">
-        <FieldLabel>{title}</FieldLabel>
-        {rows.length === 0 && (
-          <p className="text-xs text-slate-400">{localizedMessage(isZh, "v2.api-keys.notSetUnlimited")}</p>
-        )}
-        {rows.map((row, idx) => (
-          <div key={idx} className="flex items-center gap-2">
-            <Input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={row.limit}
-              onChange={(e) => {
-                const next = rows.slice();
-                next[idx] = { ...row, limit: digitsOnly(e.target.value) };
-                updateRows(kind, next);
-              }}
-              placeholder={localizedMessage(isZh, "v2.api-keys.limit")}
-              className="flex-1"
-            />
-            <div className="w-32 shrink-0">
-              <Combobox
-                options={windowOptions}
-                value={row.window}
-                onValueChange={(w) => {
-                  const next = rows.slice();
-                  next[idx] = { ...row, window: w };
-                  updateRows(kind, next);
-                }}
-                allowCustom
-                placeholder={localizedMessage(isZh, "v2.api-keys.window")}
-              />
-            </div>
-            {rows.length > 1 ? (
-              <button
-                type="button"
-                onClick={() => updateRows(kind, rows.filter((_, i) => i !== idx))}
-                className="cursor-pointer p-1 text-slate-400 hover:text-red-500"
-                title={localizedMessage(isZh, "v2.api-keys.removeRule")}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => updateRows(kind, [{ limit: "", window: "" }])}
-                className="cursor-pointer p-1 text-slate-400 hover:text-slate-600"
-                title={localizedMessage(isZh, "v2.api-keys.clear")}
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-        ))}
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => updateRows(kind, [...rows, { limit: "", window: "" }])}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {localizedMessage(isZh, "v2.api-keys.addRule")}
-        </Button>
-      </div>
-    );
-  }
-
   return (
-    <div className="grid grid-cols-2 items-start gap-4">
-      {renderGroup("requests", localizedMessage(isZh, "v2.api-keys.rateLimit"))}
-      {renderGroup("tokens", localizedMessage(isZh, "v2.api-keys.tokenQuota"))}
-      <div className="space-y-2">
-        <FieldLabel
-          info={
-            localizedMessage(isZh, "v2.api-keys.capsTheNumberOfRequestsProcessedAtThe")
-          }
-        >
-          {localizedMessage(isZh, "v2.api-keys.concurrencyLimit")}
-        </FieldLabel>
-        <Input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          value={value.concurrency}
-          onChange={(e) => onChange({ ...value, concurrency: digitsOnly(e.target.value) })}
-          placeholder={localizedMessage(isZh, "v2.api-keys.eG10")}
-        />
-      </div>
-    </div>
+    <>
+      <QuotaRuleTable
+        title={localizedMessage(isZh, "v2.api-keys.rateLimit")}
+        rows={value.requests}
+        onRowsChange={(rows) => updateRows("requests", rows)}
+        isZh={isZh}
+        windowOptions={windowOptions}
+      />
+      <QuotaRuleTable
+        title={localizedMessage(isZh, "v2.api-keys.tokenQuota")}
+        rows={value.tokens}
+        onRowsChange={(rows) => updateRows("tokens", rows)}
+        isZh={isZh}
+        windowOptions={windowOptions}
+      />
+      <NyroTextField
+        label={localizedMessage(isZh, "v2.api-keys.concurrencyLimit")}
+        help={localizedMessage(isZh, "v2.api-keys.capsTheNumberOfRequestsProcessedAtThe")}
+        numbersOnly
+        value={value.concurrency}
+        placeholder={localizedMessage(isZh, "v2.api-keys.eG10")}
+        onChange={(event) => onChange({ ...value, concurrency: event.target.value })}
+      />
+    </>
   );
 }
 
-function LimitsEditor({
-  value,
-  onChange,
-  isZh,
-}: {
-  value: LimitsFormState;
-  onChange: (next: LimitsFormState) => void;
-  isZh: boolean;
-}) {
-  return (
-    <div className="grid grid-cols-3 gap-4">
-      <div className="space-y-2">
-        <FieldLabel>{localizedMessage(isZh, "v2.api-keys.maxInputTokens")}</FieldLabel>
-        <Input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          value={value.maxInputTokens}
-          onChange={(e) => onChange({ ...value, maxInputTokens: digitsOnly(e.target.value) })}
-          placeholder={localizedMessage(isZh, "v2.api-keys.eG4000")}
-        />
-      </div>
-      <div className="space-y-2">
-        <FieldLabel>{localizedMessage(isZh, "v2.api-keys.maxOutputTokens")}</FieldLabel>
-        <Input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          value={value.maxOutputTokens}
-          onChange={(e) => onChange({ ...value, maxOutputTokens: digitsOnly(e.target.value) })}
-          placeholder={localizedMessage(isZh, "v2.api-keys.eG2000")}
-        />
-      </div>
-      <div className="space-y-2">
-        <FieldLabel>{localizedMessage(isZh, "v2.api-keys.maxRequestBodyBytes")}</FieldLabel>
-        <Input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          value={value.maxRequestBodyBytes}
-          onChange={(e) => onChange({ ...value, maxRequestBodyBytes: digitsOnly(e.target.value) })}
-          placeholder={localizedMessage(isZh, "v2.api-keys.eG1048576")}
-        />
-      </div>
-    </div>
-  );
-}
-
+/** access.ip_allowlist is edited as one input row per entry, each holding a
+ *  single IP or CIDR block; invalid rows flag an error without blocking typing. */
 function IPAllowlistEditor({
   value,
   onChange,
   isZh,
+  help,
 }: {
   value: string[];
   onChange: (next: string[]) => void;
   isZh: boolean;
+  help: string;
 }) {
-  function updateRows(rows: string[]) {
-    onChange(rows);
-  }
-
+  const hasInvalid = value.some((ip) => ip.trim() !== "" && !isValidIPOrCIDR(ip));
   return (
-    <div className="space-y-2">
-      {value.map((ip, idx) => {
-        const invalid = ip.trim() !== "" && !isValidIPOrCIDR(ip);
-        return (
-          <div key={idx} className="flex items-center gap-2">
-            <Input
-              value={ip}
-              onChange={(e) => {
-                const next = value.slice();
-                next[idx] = e.target.value;
-                updateRows(next);
-              }}
-              placeholder={localizedMessage(isZh, "v2.api-keys.eG100008Or")}
-              className={invalid ? "border-red-400 focus-visible:ring-red-400" : ""}
-            />
-            {value.length > 1 ? (
-              <button
-                type="button"
-                onClick={() => updateRows(value.filter((_, i) => i !== idx))}
-                className="cursor-pointer p-1 text-slate-400 hover:text-red-500"
-                title={localizedMessage(isZh, "v2.api-keys.remove")}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => updateRows([""])}
-                className="cursor-pointer p-1 text-slate-400 hover:text-slate-600"
-                title={localizedMessage(isZh, "v2.api-keys.clear")}
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-        );
-      })}
-      <Button type="button" variant="secondary" size="sm" onClick={() => updateRows([...value, ""])}>
-        <Plus className="h-3.5 w-3.5" />
-        {localizedMessage(isZh, "v2.api-keys.addRule")}
-      </Button>
+    <div className="field span-2">
+      <span className="field-label">
+        {localizedMessage(isZh, "v2.api-keys.ipAllowlist")}
+        <NyroHelpHint text={help} />
+      </span>
+      <div className="ip-rows">
+        {value.map((ip, idx) => {
+          const invalid = ip.trim() !== "" && !isValidIPOrCIDR(ip);
+          return (
+            <div className="ip-row" key={idx}>
+              <input
+                className={clsx("field-control", invalid && "is-error")}
+                value={ip}
+                placeholder={localizedMessage(isZh, "v2.api-keys.eG100008Or")}
+                aria-label={localizedMessage(isZh, "v2.api-keys.ipAllowlist")}
+                onChange={(event) => {
+                  const next = value.slice();
+                  next[idx] = event.target.value;
+                  onChange(next);
+                }}
+              />
+              {value.length > 1 ? (
+                <button
+                  type="button"
+                  className="icon-action danger"
+                  data-tip={localizedMessage(isZh, "v2.api-keys.remove")}
+                  aria-label={localizedMessage(isZh, "v2.api-keys.remove")}
+                  onClick={() => onChange(value.filter((_, i) => i !== idx))}
+                >
+                  <Trash2 aria-hidden="true" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="icon-action"
+                  data-tip={localizedMessage(isZh, "v2.api-keys.clear")}
+                  aria-label={localizedMessage(isZh, "v2.api-keys.clear")}
+                  onClick={() => onChange([""])}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+        <button type="button" className="button button-sm quota-add" onClick={() => onChange([...value, ""])}>
+          <Plus aria-hidden="true" />{localizedMessage(isZh, "v2.api-keys.addRule")}
+        </button>
+      </div>
+      {hasInvalid && (
+        <span className="field-hint error">{localizedMessage(isZh, "v2.api-keys.invalidIpOrCidr")}</span>
+      )}
     </div>
   );
 }
 
-type CreateForm = {
+type ConsumerFormValues = {
   name: string;
   routes: string[];
   protocols: string[];
   ipAllowlist: string[];
   quotas: QuotaFormState;
   limits: LimitsFormState;
-  keyExpiresPreset: ExpirePreset;
 };
+
+/* §9.4：创建向导四段 form-section（基本信息/访问权限/访问配额/资源限制），
+   创建与编辑共用；基本信息一栏的第二控件由 basicsExtra 注入
+   （创建 = key 有效期，编辑 = 启用状态）。 */
+function ConsumerEditor({
+  form,
+  onChange,
+  isZh,
+  routeOptions,
+  windowOptions,
+  basicsExtra,
+}: {
+  form: ConsumerFormValues;
+  onChange: (patch: Partial<ConsumerFormValues>) => void;
+  isZh: boolean;
+  routeOptions: string[];
+  windowOptions: WindowOption[];
+  basicsExtra: ReactNode;
+}) {
+  return (
+    <div>
+      <FormSection title={localizedMessage(isZh, "v2.api-keys.1BasicInformation")}>
+        <NyroTextField
+          label={localizedMessage(isZh, "v2.providers.name")}
+          required
+          value={form.name}
+          placeholder={localizedMessage(isZh, "v2.api-keys.eGProduction")}
+          onChange={(event) => onChange({ name: event.target.value })}
+        />
+        {basicsExtra}
+      </FormSection>
+
+      <FormSection title={localizedMessage(isZh, "v2.api-keys.2AccessPermission")}>
+        <NyroMultiCheck<string>
+          label={localizedMessage(isZh, "v2.api-keys.bindModels")}
+          help={localizedMessage(isZh, "v2.api-keys.whenLeftUnboundAllProtectedModelsAreAccessible")}
+          options={routeOptions}
+          selected={form.routes}
+          onChange={(next) => onChange({ routes: next })}
+          getOptionValue={(model) => model}
+          getOptionLabel={(model) => model}
+          placeholder={localizedMessage(isZh, "v2.api-keys.selectProtectedModelsThisKeyCanAccess")}
+        />
+        <NyroMultiCheck<string>
+          label={localizedMessage(isZh, "v2.api-keys.allowedProtocols")}
+          help={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoProtocolRestriction")}
+          options={protocolOptions}
+          selected={form.protocols}
+          onChange={(next) => onChange({ protocols: next })}
+          getOptionValue={(protocol) => protocol}
+          getOptionLabel={(protocol) => protocolDisplayName(protocol) ?? protocol}
+          placeholder={localizedMessage(isZh, "v2.api-keys.selectAllowedProtocols")}
+        />
+        <IPAllowlistEditor
+          value={form.ipAllowlist}
+          onChange={(ipAllowlist) => onChange({ ipAllowlist })}
+          isZh={isZh}
+          help={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoRestrictionOnSource")}
+        />
+      </FormSection>
+
+      <FormSection title={localizedMessage(isZh, "v2.api-keys.3AccessQuota")}>
+        <QuotaEditor
+          value={form.quotas}
+          onChange={(quotas) => onChange({ quotas })}
+          isZh={isZh}
+          windowOptions={windowOptions}
+        />
+      </FormSection>
+
+      <FormSection
+        title={localizedMessage(isZh, "v2.api-keys.4ResourceLimits")}
+        description={localizedMessage(isZh, "v2.api-keys.allOptionalLeaveEmptyForNoLimit")}
+      >
+        <div className="span-2 form-grid cols-3">
+          <NyroTextField
+            label={localizedMessage(isZh, "v2.api-keys.maxInputTokens")}
+            numbersOnly
+            fullWidth={false}
+            value={form.limits.maxInputTokens}
+            placeholder={localizedMessage(isZh, "v2.api-keys.eG4000")}
+            onChange={(event) => onChange({ limits: { ...form.limits, maxInputTokens: event.target.value } })}
+          />
+          <NyroTextField
+            label={localizedMessage(isZh, "v2.api-keys.maxOutputTokens")}
+            numbersOnly
+            fullWidth={false}
+            value={form.limits.maxOutputTokens}
+            placeholder={localizedMessage(isZh, "v2.api-keys.eG2000")}
+            onChange={(event) => onChange({ limits: { ...form.limits, maxOutputTokens: event.target.value } })}
+          />
+          <NyroTextField
+            label={localizedMessage(isZh, "v2.api-keys.maxRequestBodyBytes")}
+            numbersOnly
+            fullWidth={false}
+            value={form.limits.maxRequestBodyBytes}
+            placeholder={localizedMessage(isZh, "v2.api-keys.eG1048576")}
+            onChange={(event) => onChange({ limits: { ...form.limits, maxRequestBodyBytes: event.target.value } })}
+          />
+        </div>
+      </FormSection>
+    </div>
+  );
+}
+
+type CreateForm = ConsumerFormValues & { keyExpiresPreset: ExpirePreset };
 
 const emptyCreate: CreateForm = {
   name: "",
@@ -585,18 +476,9 @@ const emptyCreate: CreateForm = {
   keyExpiresPreset: "never",
 };
 
-type EditForm = {
-  id: string;
-  name: string;
-  enabled: boolean;
-  routes: string[];
-  protocols: string[];
-  ipAllowlist: string[];
-  quotas: QuotaFormState;
-  limits: LimitsFormState;
-};
+type EditForm = ConsumerFormValues & { id: string; enabled: boolean };
 
-type RevealedKey = { name: string; token: string };
+type StatusOption = { id: string; label: string };
 
 export default function ApiKeysPage() {
   const { locale, t } = useLocale();
@@ -605,30 +487,18 @@ export default function ApiKeysPage() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const windowOptions = useMemo<ComboboxOption[]>(
-    () => [
-      { value: "", label: localizedMessage(isZh, "v2.api-keys.noWindow") },
-      { value: "1m", label: "1m" },
-      { value: "5m", label: "5m" },
-      { value: "15m", label: "15m" },
-      { value: "1h", label: "1h" },
-      { value: "6h", label: "6h" },
-      { value: "12h", label: "12h" },
-      { value: "1d", label: "1d" },
-    ],
-    [isZh],
-  );
+  const windowOptions = useMemo(() => quotaWindowOptions(isZh), [isZh]);
 
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreate);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [page, setPage] = useState(0);
   const [filters, setFilters] = useState<ConsumerFilters>({ query: "", status: "all" });
 
+  // §9.4 注意（安全）：创建响应里的 raw token 只存在这一份状态；对话框
+  // 关闭即清空，之后无法再取（列表里只有 key_preview）。
   const [revealedKey, setRevealedKey] = useState<RevealedKey | null>(null);
-  const [showRevealDialog, setShowRevealDialog] = useState(false);
-  const [copiedRevealKey, setCopiedRevealKey] = useState(false);
 
   const [addKeyDialogFor, setAddKeyDialogFor] = useState<Consumer | null>(null);
   const [addKeyForm, setAddKeyForm] = useState<{ name: string; expiresPreset: ExpirePreset }>({
@@ -663,19 +533,13 @@ export default function ApiKeysPage() {
     });
   }
 
-  function openRevealDialog(key: RevealedKey) {
-    setRevealedKey(key);
-    setCopiedRevealKey(false);
-    setShowRevealDialog(true);
-  }
-
-  const { data: consumers = [], isLoading } = useQuery<Consumer[]>({
+  const { data: consumers = NO_CONSUMERS, isLoading } = useQuery<Consumer[]>({
     queryKey: ["consumers"],
-    queryFn: () => backend("list_consumers"),
+    queryFn: () => consumersApi.list(),
   });
-  const { data: routes = [] } = useQuery<Route[]>({
+  const { data: routes = NO_ROUTES } = useQuery<Route[]>({
     queryKey: ["routes"],
-    queryFn: () => backend("list_routes"),
+    queryFn: () => routesApi.list(),
   });
 
   function invalidateConsumers() {
@@ -683,14 +547,14 @@ export default function ApiKeysPage() {
   }
 
   const createMut = useMutation({
-    mutationFn: (input: CreateConsumer) => backend<Consumer>("create_consumer", { input }),
+    mutationFn: (input: CreateConsumer) => consumersApi.create(input),
     onSuccess: (created) => {
       invalidateConsumers();
       setShowForm(false);
       setCreateForm(emptyCreate);
       const firstKey = created.keys?.[0];
       if (firstKey?.token) {
-        openRevealDialog({ name: firstKey.name, token: firstKey.token });
+        setRevealedKey({ name: firstKey.name, token: firstKey.token });
       }
     },
     onError: (error: unknown) => {
@@ -699,8 +563,7 @@ export default function ApiKeysPage() {
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: UpdateConsumer }) =>
-      backend<Consumer>("update_consumer", { id, input }),
+    mutationFn: ({ id, input }: { id: string; input: UpdateConsumer }) => consumersApi.update(id, input),
     onSuccess: () => {
       invalidateConsumers();
       setEditingId(null);
@@ -712,7 +575,7 @@ export default function ApiKeysPage() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: string) => backend("delete_consumer", { id }),
+    mutationFn: (id: string) => consumersApi.remove(id),
     onSuccess: () => invalidateConsumers(),
     onError: (error: unknown) => {
       showErrorDialog("consumers.error.delete", error);
@@ -720,8 +583,7 @@ export default function ApiKeysPage() {
   });
 
   const toggleConsumerEnabledMut = useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      backend("update_consumer", { id, input: { enabled } }),
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => consumersApi.update(id, { enabled }),
     onSuccess: () => invalidateConsumers(),
     onError: (error: unknown) => {
       showErrorDialog("consumers.error.operation", error);
@@ -730,12 +592,12 @@ export default function ApiKeysPage() {
 
   const addKeyMut = useMutation({
     mutationFn: ({ consumerId, input }: { consumerId: string; input: CreateConsumerKey }) =>
-      backend<ConsumerKey>("add_consumer_key", { id: consumerId, input }),
+      consumersApi.addKey(consumerId, input),
     onSuccess: (created) => {
       invalidateConsumers();
       setAddKeyDialogFor(null);
       if (created.token) {
-        openRevealDialog({ name: created.name, token: created.token });
+        setRevealedKey({ name: created.name, token: created.token });
       }
     },
     onError: (error: unknown) => {
@@ -752,7 +614,7 @@ export default function ApiKeysPage() {
       consumerId: string;
       keyId: string;
       input: UpdateConsumerKey;
-    }) => backend<ConsumerKey>("update_consumer_key", { id: consumerId, keyId, input }),
+    }) => consumersApi.updateKey(consumerId, keyId, input),
     onSuccess: () => invalidateConsumers(),
     onError: (error: unknown) => {
       showErrorDialog("consumers.error.updateKey", error);
@@ -767,22 +629,18 @@ export default function ApiKeysPage() {
       // before delete, so a failed add leaves the old key intact), delete the
       // old key, then rename the replacement back to the original name.
       const tempName = `${key.name}~regen~${crypto.randomUUID()}`;
-      const created = await backend<ConsumerKey>("add_consumer_key", {
-        id: consumerId,
-        input: { name: tempName, expires_at: key.expires_at },
+      const created = await consumersApi.addKey(consumerId, {
+        name: tempName,
+        expires_at: key.expires_at,
       });
-      await backend("delete_consumer_key", { id: consumerId, keyId: key.id });
-      await backend<ConsumerKey>("update_consumer_key", {
-        id: consumerId,
-        keyId: created.id,
-        input: { name: key.name },
-      });
+      await consumersApi.removeKey(consumerId, key.id);
+      await consumersApi.updateKey(consumerId, created.id, { name: key.name });
       return { ...created, name: key.name };
     },
     onSuccess: (created) => {
       invalidateConsumers();
       if (created.token) {
-        openRevealDialog({ name: created.name, token: created.token });
+        setRevealedKey({ name: created.name, token: created.token });
       }
     },
     onError: (error: unknown) => {
@@ -792,7 +650,7 @@ export default function ApiKeysPage() {
 
   const deleteKeyMut = useMutation({
     mutationFn: ({ consumerId, keyId }: { consumerId: string; keyId: string }) =>
-      backend("delete_consumer_key", { id: consumerId, keyId }),
+      consumersApi.removeKey(consumerId, keyId),
     onSuccess: () => invalidateConsumers(),
     onError: (error: unknown) => {
       showErrorDialog("consumers.error.deleteKey", error);
@@ -817,11 +675,15 @@ export default function ApiKeysPage() {
   // `string[]` of model names, so the option value here must be `route.model`.
   const routeOptions = useMemo(
     () =>
-      routes.map((route) => ({
-        value: route.model,
-        label: route.model,
-      })),
+      routes.map((route) => route.model),
     [routes],
+  );
+
+  // Derive the editing consumer from live query data (not a stale snapshot), so
+  // the keys section reflects add/delete/regenerate without reopening the dialog.
+  const editingConsumer = useMemo(
+    () => consumers.find((item) => item.id === editingId) ?? null,
+    [consumers, editingId],
   );
 
   const startEdit = useCallback((item: Consumer) => {
@@ -842,6 +704,7 @@ export default function ApiKeysPage() {
     const params = new URLSearchParams(location.search);
     if (params.get("action") === "create") {
       setEditingId(null);
+      setEditForm(null);
       setShowForm(true);
       navigate(location.pathname, { replace: true });
       return;
@@ -870,71 +733,71 @@ export default function ApiKeysPage() {
     setEditKeyDialogFor({ consumer, key });
   }
 
-  // Single-key simplification: the backend keeps keys[] as 1:N, but the UI
-  // always operates on the consumer's primary key (keys[0]) and never exposes
-  // per-key add/delete.
   function renderKeyRow(consumer: Consumer, key: ConsumerKey) {
     const keyExpired = isApiKeyExpired(key.expires_at);
     // key.token is only present on read when admin runs with --plaintext-keys
     // (recoverable storage); otherwise the full key is shown once at creation.
     const recoverableToken = key.token;
     return (
-      <div key={key.id} className="flex items-center justify-between rounded-xl bg-slate-50/60 p-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="inline-flex h-5 items-center text-xs text-slate-800">{key.name}</span>
+      <div key={key.id} className="key-row">
+        <div className="key-row-copy">
+          <strong>{key.name}</strong>
           <code
             title={
               recoverableToken
                 ? (localizedMessage(isZh, "v2.api-keys.plaintextStorageIsOnTheFullKeyCan"))
                 : localizedMessage(isZh, "v2.api-keys.fullKeyIsShownOnceOnCreateAdd")
             }
-            className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600"
           >
             {formatKeyPreview(key.key_preview)}
           </code>
           {recoverableToken && <CopyFullKeyButton token={recoverableToken} isZh={isZh} />}
-          {!key.enabled && (
-            <Badge variant="danger" className="connect-label-badge">
-              {localizedMessage(isZh, "v2.providers.disabled2")}
-            </Badge>
-          )}
-          <Badge variant={keyExpired ? "danger" : "success"} className="connect-label-badge">
-            {formatValidityLabel(keyExpired, isZh)}
-          </Badge>
-          <span className="text-xs text-slate-500">{formatExpiresText(key.expires_at, isZh)}</span>
         </div>
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="key-row-meta">
+          {!key.enabled && (
+            <Status tone="danger">{localizedMessage(isZh, "v2.providers.disabled2")}</Status>
+          )}
+          <Status tone={keyExpired ? "danger" : "success"}>
+            {formatValidityLabel(keyExpired, isZh)}
+          </Status>
+          <span>{formatExpiresText(key.expires_at, isZh)}</span>
+        </div>
+        <div className="row-actions">
           <button
+            type="button"
+            className="icon-action"
+            data-tip={key.enabled ? (localizedMessage(isZh, "v2.providers.disable")) : (localizedMessage(isZh, "v2.providers.enable"))}
+            aria-label={key.enabled ? (localizedMessage(isZh, "v2.providers.disable")) : (localizedMessage(isZh, "v2.providers.enable"))}
             onClick={() => updateKeyMut.mutate({ consumerId: consumer.id, keyId: key.id, input: { enabled: !key.enabled } })}
-            title={key.enabled ? (localizedMessage(isZh, "v2.providers.disable")) : (localizedMessage(isZh, "v2.providers.enable"))}
-            className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
           >
-            {key.enabled ? (
-              <ToggleRight className="h-4 w-4 text-green-500" />
-            ) : (
-              <ToggleLeft className="h-4 w-4 text-slate-400" />
-            )}
+            {key.enabled ? <ToggleRight aria-hidden="true" /> : <ToggleLeft aria-hidden="true" />}
           </button>
           <button
+            type="button"
+            className="icon-action"
+            data-tip={localizedMessage(isZh, "v2.api-keys.editNameValidity")}
+            aria-label={localizedMessage(isZh, "v2.api-keys.editNameValidity")}
             onClick={() => openEditKeyDialog(consumer, key)}
-            title={localizedMessage(isZh, "v2.api-keys.editNameValidity")}
-            className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
           >
-            <Pencil className="h-4 w-4" />
+            <Pencil aria-hidden="true" />
           </button>
           <button
+            type="button"
+            className="icon-action"
+            data-tip={localizedMessage(isZh, "v2.api-keys.regenerateKeyOldKeyIsInvalidatedImmediately")}
+            aria-label={localizedMessage(isZh, "v2.api-keys.regenerateKeyOldKeyIsInvalidatedImmediately")}
             onClick={() => setKeyToRegenerate({ consumer, key })}
-            title={localizedMessage(isZh, "v2.api-keys.regenerateKeyOldKeyIsInvalidatedImmediately")}
-            className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
           >
-            <RotateCw className="h-4 w-4" />
+            <RotateCw aria-hidden="true" />
           </button>
           <button
+            type="button"
+            className="icon-action danger"
+            data-tip={localizedMessage(isZh, "v2.api-keys.deleteKey")}
+            aria-label={localizedMessage(isZh, "v2.api-keys.deleteKey")}
             onClick={() => setKeyToDelete({ consumer, key })}
-            title={localizedMessage(isZh, "v2.api-keys.deleteKey")}
-            className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -945,18 +808,15 @@ export default function ApiKeysPage() {
     const keys = consumer.keys ?? [];
     if (keys.length === 0) {
       return (
-        <div className="flex items-center justify-between rounded-xl bg-slate-50/60 p-3">
-          <p className="text-xs text-slate-400">
-            {localizedMessage(isZh, "v2.api-keys.noKeyYetCannotAuthenticate")}
-          </p>
-          <Button type="button" size="sm" variant="secondary" onClick={() => openAddKeyDialog(consumer)}>
-            <Plus className="h-3.5 w-3.5" />
-            {localizedMessage(isZh, "v2.api-keys.addKey")}
-          </Button>
+        <div className="key-row key-row-empty">
+          <p>{localizedMessage(isZh, "v2.api-keys.noKeyYetCannotAuthenticate")}</p>
+          <button type="button" className="button button-sm" onClick={() => openAddKeyDialog(consumer)}>
+            <Plus aria-hidden="true" />{localizedMessage(isZh, "v2.api-keys.addKey")}
+          </button>
         </div>
       );
     }
-    return <div className="space-y-1.5">{keys.map((key) => renderKeyRow(consumer, key))}</div>;
+    return keys.map((key) => renderKeyRow(consumer, key));
   }
 
   const keyCount = consumers.reduce((sum, consumer) => sum + (consumer.keys?.length ?? 0), 0);
@@ -970,40 +830,47 @@ export default function ApiKeysPage() {
     return Number.isFinite(expires) && expires - Date.now() <= 10 * 24 * 60 * 60 * 1000;
   }).length, 0);
 
+  const statusOptions = useMemo<StatusOption[]>(() => [
+    { id: "all", label: localizedMessage(isZh, "v2.providers.allStatuses") },
+    { id: "enabled", label: localizedMessage(isZh, "v2.api-keys.enabled") },
+    { id: "disabled", label: localizedMessage(isZh, "v2.api-keys.disabled") },
+  ], [isZh]);
+  const statusValue = statusOptions.find((option) => option.id === filters.status) ?? statusOptions[0];
+
   const consumerColumns: DataTableColumn<Consumer>[] = [
     {
       key: "consumer",
       header: localizedMessage(isZh, "v2.api-keys.consumer"),
       render: (consumer) => (
-        <div className="v2-consumer-cell">
-          <span>{consumer.name.slice(0, 2).toLocaleUpperCase()}</span>
-          <div><strong>{consumer.name}</strong><code>{consumer.id}</code></div>
+        <div className="cell-stack">
+          <strong>{consumer.name}</strong>
+          <code>{consumer.id}</code>
         </div>
       ),
     },
     {
       key: "keys",
-      header: "Key",
+      header: localizedMessage(isZh, "v2.api-keys.keys"),
       render: (consumer) => {
         const keys = consumer.keys ?? [];
         const invalid = keys.filter((key) => !key.enabled || isApiKeyExpired(key.expires_at)).length;
-        return <div className="v2-key-count"><strong>{keys.length}</strong><span>{invalid ? localizedMessage(isZh, "common.unavailableCount", { count: invalid }) : localizedMessage(isZh, "v2.api-keys.allValid")}</span></div>;
+        return <div className="cell-stack"><strong>{keys.length}</strong><span>{invalid ? localizedMessage(isZh, "common.unavailableCount", { count: invalid }) : localizedMessage(isZh, "v2.api-keys.allValid")}</span></div>;
       },
     },
     {
       key: "routes",
       header: localizedMessage(isZh, "v2.api-keys.modelAccess"),
       render: (consumer) => consumer.routes?.length
-        ? <div className="v2-tag-list">{consumer.routes.slice(0, 2).map((route) => <code key={route}>{route}</code>)}{consumer.routes.length > 2 && <span>+{consumer.routes.length - 2}</span>}</div>
-        : <span className="v2-unrestricted">{localizedMessage(isZh, "v2.api-keys.allModels")}</span>,
+        ? <div className="cell-tags">{consumer.routes.slice(0, 2).map((route) => <span className="tag" key={route}>{route}</span>)}{consumer.routes.length > 2 && <span className="cell-tags-more">+{consumer.routes.length - 2}</span>}</div>
+        : <span className="cell-note">{localizedMessage(isZh, "v2.api-keys.allModels")}</span>,
     },
     {
       key: "restrictions",
       header: localizedMessage(isZh, "v2.api-keys.restrictions"),
       render: (consumer) => (
-        <div className="v2-access-cell">
+        <div className="cell-stack">
           <strong>{consumer.protocols?.length ? consumer.protocols.join(" / ") : (localizedMessage(isZh, "v2.providers.allProtocols"))}</strong>
-          <span>{consumer.ip_allowlist?.length ? localizedMessage(isZh, "consumers.ipRules", { count: consumer.ip_allowlist.length }) : localizedMessage(isZh, "v2.api-keys.anySourceIp")}</span>
+          <span>{consumer.ip_allowlist?.length ? localizedMessage(isZh, "consumers.ipRules", { count: consumer.ip_allowlist.length }) : (localizedMessage(isZh, "v2.api-keys.anySourceIp"))}</span>
         </div>
       ),
     },
@@ -1011,8 +878,8 @@ export default function ApiKeysPage() {
       key: "quotas",
       header: localizedMessage(isZh, "v2.api-keys.quotas"),
       render: (consumer) => consumer.quotas?.length
-        ? <div className="v2-access-cell"><strong>{formatQuotaRule(consumer.quotas[0])}</strong><span>{consumer.quotas.length > 1 ? localizedMessage(isZh, "common.additionalRules", { count: consumer.quotas.length - 1 }) : localizedMessage(isZh, "v2.api-keys.1Rule")}</span></div>
-        : <span className="v2-unrestricted">{localizedMessage(isZh, "v2.api-keys.unlimited")}</span>,
+        ? <div className="cell-stack"><strong>{formatQuotaRule(consumer.quotas[0])}</strong><span>{consumer.quotas.length > 1 ? localizedMessage(isZh, "common.additionalRules", { count: consumer.quotas.length - 1 }) : (localizedMessage(isZh, "v2.api-keys.1Rule"))}</span></div>
+        : <span className="cell-note">{localizedMessage(isZh, "v2.api-keys.unlimited")}</span>,
     },
     {
       key: "status",
@@ -1022,13 +889,13 @@ export default function ApiKeysPage() {
     {
       key: "actions",
       header: <span className="sr-only">{localizedMessage(isZh, "v2.providers.actions")}</span>,
-      className: "v2-table-actions v2-consumer-actions",
+      className: "cell-actions",
       render: (consumer) => (
-        <div className="v2-row-actions">
-          <button type="button" onClick={(event) => { event.stopPropagation(); toggleConsumerEnabledMut.mutate({ id: consumer.id, enabled: !consumer.enabled }); }} title={consumer.enabled ? (localizedMessage(isZh, "v2.api-keys.disable")) : (localizedMessage(isZh, "v2.providers.enable"))}>{consumer.enabled ? <ToggleRight /> : <ToggleLeft />}</button>
-          <button type="button" onClick={(event) => { event.stopPropagation(); openAddKeyDialog(consumer); }} title={localizedMessage(isZh, "v2.api-keys.addKey")}><Plus /></button>
-          <button type="button" onClick={(event) => { event.stopPropagation(); startEdit(consumer); }} title={localizedMessage(isZh, "v2.providers.edit")}><Pencil /></button>
-          <button type="button" onClick={(event) => { event.stopPropagation(); setConsumerToDelete(consumer); }} title={localizedMessage(isZh, "v2.providers.delete")}><Trash2 /></button>
+        <div className="row-actions">
+          <button type="button" className="icon-action" data-tip={consumer.enabled ? (localizedMessage(isZh, "v2.api-keys.disable")) : (localizedMessage(isZh, "v2.providers.enable"))} aria-label={consumer.enabled ? (localizedMessage(isZh, "v2.api-keys.disable")) : (localizedMessage(isZh, "v2.providers.enable"))} onClick={(event) => { event.stopPropagation(); toggleConsumerEnabledMut.mutate({ id: consumer.id, enabled: !consumer.enabled }); }}>{consumer.enabled ? <ToggleRight aria-hidden="true" /> : <ToggleLeft aria-hidden="true" />}</button>
+          <button type="button" className="icon-action" data-tip={localizedMessage(isZh, "v2.api-keys.addKey")} aria-label={localizedMessage(isZh, "v2.api-keys.addKey")} onClick={(event) => { event.stopPropagation(); openAddKeyDialog(consumer); }}><Plus aria-hidden="true" /></button>
+          <button type="button" className="icon-action" data-tip={localizedMessage(isZh, "v2.providers.edit")} aria-label={localizedMessage(isZh, "v2.providers.edit")} onClick={(event) => { event.stopPropagation(); startEdit(consumer); }}><Pencil aria-hidden="true" /></button>
+          <button type="button" className="icon-action danger" data-tip={localizedMessage(isZh, "v2.providers.delete")} aria-label={localizedMessage(isZh, "v2.providers.delete")} onClick={(event) => { event.stopPropagation(); setConsumerToDelete(consumer); }}><Trash2 aria-hidden="true" /></button>
         </div>
       ),
     },
@@ -1040,7 +907,6 @@ export default function ApiKeysPage() {
         <PageHeader
           title={t("page.apiKeys.title")}
           description={t("page.apiKeys.subtitle")}
-          actions={<Button onClick={() => { setEditingId(null); setEditForm(null); setShowForm(true); }}><Plus />{localizedMessage(isZh, "v2.api-keys.addConsumer")}</Button>}
         />
       )}
     >
@@ -1052,392 +918,219 @@ export default function ApiKeysPage() {
         { key: "restricted", label: localizedMessage(isZh, "v2.api-keys.withQuotas"), value: consumers.filter((item) => item.quotas?.length).length, detail: localizedMessage(isZh, "v2.api-keys.consumerLevelLimits") },
       ]} />
 
-      <ResourceEditorDialog
+      <FilterBar>
+        <label className="toolbar-search">
+          <Search aria-hidden="true" />
+          <input
+            aria-label={localizedMessage(isZh, "v2.api-keys.searchConsumers")}
+            placeholder={localizedMessage(isZh, "v2.api-keys.searchConsumerModelOrProtocol")}
+            value={filters.query}
+            onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+          />
+        </label>
+        <NyroSearchSelect<StatusOption>
+          options={statusOptions}
+          value={statusValue}
+          onChange={(next) => { setFilters((current) => ({ ...current, status: (next?.id ?? "all") as ConsumerFilters["status"] })); }}
+          getOptionLabel={(option) => option.label}
+          isOptionEqualToValue={(a, b) => a.id === b.id}
+          searchable={false}
+          fullWidth={false}
+          controlClassName="toolbar-filter"
+          leadingIcon={<Filter size={14} aria-hidden="true" />}
+          ariaLabel={localizedMessage(isZh, "v2.providers.filterByStatus")}
+        />
+        <button
+          type="button"
+          className="button button-primary button-sm toolbar-add"
+          onClick={() => { setEditingId(null); setEditForm(null); setCreateForm(emptyCreate); setShowForm(true); }}
+        >
+          {localizedMessage(isZh, "v2.api-keys.addConsumer")}
+        </button>
+      </FilterBar>
+
+      <DataTable
+        carded
+        columns={consumerColumns}
+        rows={pagedConsumers}
+        rowKey={(consumer) => consumer.id}
+        loading={isLoading}
+        onRowClick={startEdit}
+        empty={<EmptyState
+          title={consumers.length ? (localizedMessage(isZh, "v2.api-keys.noMatchingConsumers")) : (localizedMessage(isZh, "v2.api-keys.noConsumersYet"))}
+          description={consumers.length ? (localizedMessage(isZh, "v2.api-keys.adjustTheSearchOrStatusFilter")) : (localizedMessage(isZh, "v2.api-keys.createAConsumerToGenerateItsFirstApi"))}
+          action={!consumers.length ? (
+            <button type="button" className="button button-primary" onClick={() => setShowForm(true)}>
+              {localizedMessage(isZh, "v2.api-keys.addConsumer")}
+            </button>
+          ) : undefined}
+        />}
+        footer={<>
+          <span className="table-summary">{localizedMessage(isZh, "common.showing", { visible: filteredConsumers.length, total: consumers.length })}</span>
+          {totalPages > 1 && (
+            <div className="pagination">
+              <span className="table-summary">{localizedMessage(isZh, "common.pagination", { page: page + 1, total: totalPages })}</span>
+              <button type="button" className="page-button" disabled={page === 0} aria-label={localizedMessage(isZh, "common.prevPage")} onClick={() => setPage((current) => current - 1)}>
+                <ChevronLeft aria-hidden="true" />
+              </button>
+              <button type="button" className="page-button" disabled={page >= totalPages - 1} aria-label={localizedMessage(isZh, "common.nextPage")} onClick={() => setPage((current) => current + 1)}>
+                <ChevronRight aria-hidden="true" />
+              </button>
+            </div>
+          )}
+        </>}
+      />
+
+      <ResourceEditorDrawer
         open={showForm}
         title={localizedMessage(isZh, "v2.api-keys.addConsumer2")}
         description={localizedMessage(isZh, "v2.api-keys.createAnIdentityWithModelAccessRestrictionsAnd")}
         onClose={() => { setShowForm(false); setCreateForm(emptyCreate); }}
-        footer={(
-          <div className="v2-inspector-footer-actions">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setShowForm(false);
-                setCreateForm(emptyCreate);
-              }}
-            >
-              {localizedMessage(isZh, "v2.providers.cancel")}
-            </Button>
-            <Button
-              onClick={() =>
-                createMut.mutate({
-                  name: createForm.name.trim(),
-                  routes: createForm.routes,
-                  protocols: createForm.protocols,
-                  ip_allowlist: buildAccessListPayload(createForm.ipAllowlist),
-                  quotas: buildQuotasPayload(createForm.quotas),
-                  limits: buildLimitsPayload(createForm.limits),
-                  keys: [
-                    {
-                      name: "default",
-                      expires_at: resolveExpiresAt(createForm.keyExpiresPreset),
-                    },
-                  ],
-                })
-              }
-              disabled={
-                createMut.isPending ||
-                !createForm.name.trim() ||
-                createForm.ipAllowlist.some((ip) => !isValidIPOrCIDR(ip))
-              }
-            >
-              {createMut.isPending ? (localizedMessage(isZh, "v2.providers.creating")) : (localizedMessage(isZh, "v2.api-keys.create"))}
-            </Button>
-          </div>
-        )}
-      >
-        <div className="v2-consumer-form">
-          <div className="space-y-5">
-            <div className="space-y-3">
-              <SectionTitle>{localizedMessage(isZh, "v2.api-keys.1BasicInformation")}</SectionTitle>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel>
-                  <Input
-                    value={createForm.name}
-                    onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
-                    placeholder={localizedMessage(isZh, "v2.api-keys.eGProduction")}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel>{localizedMessage(isZh, "v2.api-keys.keyValidity")}</FieldLabel>
-                  <Select
-                    value={createForm.keyExpiresPreset}
-                    onValueChange={(value: ExpirePreset) =>
-                      setCreateForm((prev) => ({ ...prev, keyExpiresPreset: value }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {expirePresetOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {localizedMessage(isZh, option.label)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <p className="text-xs text-slate-500">
-                {localizedMessage(isZh, "v2.api-keys.theKeyValueIsAutoGeneratedAndShown")}
-              </p>
-            </div>
-
-            <div className="h-px bg-slate-200/70" />
-
-            <div className="space-y-3">
-              <SectionTitle>{localizedMessage(isZh, "v2.api-keys.2AccessPermission")}</SectionTitle>
-              <div className="grid grid-cols-2 items-start gap-4">
-                <div className="space-y-2">
-                  <FieldLabel
-                    info={
-                      localizedMessage(isZh, "v2.api-keys.whenLeftUnboundAllProtectedModelsAreAccessible")
-                    }
-                  >
-                    {localizedMessage(isZh, "v2.api-keys.bindModels")}
-                  </FieldLabel>
-                  <MultiSelect
-                    options={routeOptions}
-                    values={createForm.routes}
-                    placeholder={
-                      localizedMessage(isZh, "v2.api-keys.selectProtectedModelsThisKeyCanAccess")
-                    }
-                    searchPlaceholder={localizedMessage(isZh, "v2.api-keys.searchModels")}
-                    emptyText={localizedMessage(isZh, "v2.api-keys.noMatchingModels")}
-                    onChange={(next) => setCreateForm((prev) => ({ ...prev, routes: next }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel
-                    info={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoProtocolRestriction")}
-                  >
-                    {localizedMessage(isZh, "v2.api-keys.allowedProtocols")}
-                  </FieldLabel>
-                  <MultiSelect
-                    options={protocolOptions}
-                    values={createForm.protocols}
-                    placeholder={localizedMessage(isZh, "v2.api-keys.selectAllowedProtocols")}
-                    searchPlaceholder={localizedMessage(isZh, "v2.api-keys.searchProtocols")}
-                    emptyText={localizedMessage(isZh, "v2.api-keys.noMatchingProtocols")}
-                    onChange={(next) => setCreateForm((prev) => ({ ...prev, protocols: next }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel
-                    info={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoRestrictionOnSource")}
-                  >
-                    {localizedMessage(isZh, "v2.api-keys.ipAllowlist")}
-                  </FieldLabel>
-                  <IPAllowlistEditor
-                    value={createForm.ipAllowlist}
-                    onChange={(next) => setCreateForm((prev) => ({ ...prev, ipAllowlist: next }))}
-                    isZh={isZh}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="h-px bg-slate-200/70" />
-
-            <div className="space-y-3">
-              <SectionTitle>{localizedMessage(isZh, "v2.api-keys.3AccessQuota")}</SectionTitle>
-              <QuotaEditor
-                value={createForm.quotas}
-                onChange={(next) => setCreateForm((prev) => ({ ...prev, quotas: next }))}
-                isZh={isZh}
-                windowOptions={windowOptions}
-              />
-            </div>
-
-            <div className="h-px bg-slate-200/70" />
-
-            <div className="space-y-3">
-              <SectionTitle info={localizedMessage(isZh, "v2.api-keys.allOptionalLeaveEmptyForNoLimit")}>{localizedMessage(isZh, "v2.api-keys.4ResourceLimits")}</SectionTitle>
-              <LimitsEditor
-                value={createForm.limits}
-                onChange={(next) => setCreateForm((prev) => ({ ...prev, limits: next }))}
-                isZh={isZh}
-              />
-            </div>
-          </div>
-        </div>
-      </ResourceEditorDialog>
-
-      <FilterBar summary={localizedMessage(isZh, "common.showing", { visible: filteredConsumers.length, total: consumers.length })}>
-        <label className="v2-search-field"><Search /><Input aria-label={localizedMessage(isZh, "v2.api-keys.searchConsumers")} placeholder={localizedMessage(isZh, "v2.api-keys.searchConsumerModelOrProtocol")} value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>
-        <Select value={filters.status} onValueChange={(status) => setFilters((current) => ({ ...current, status: status as ConsumerFilters["status"] }))}>
-          <SelectTrigger aria-label={localizedMessage(isZh, "v2.providers.filterByStatus")}><SelectValue /></SelectTrigger>
-          <SelectContent><SelectItem value="all">{localizedMessage(isZh, "v2.providers.allStatuses")}</SelectItem><SelectItem value="enabled">{localizedMessage(isZh, "v2.api-keys.enabled")}</SelectItem><SelectItem value="disabled">{localizedMessage(isZh, "v2.api-keys.disabled")}</SelectItem></SelectContent>
-        </Select>
-      </FilterBar>
-
-      <Surface className="v2-table-surface" title={localizedMessage(isZh, "v2.api-keys.consumersAndKeys")} description={localizedMessage(isZh, "v2.api-keys.manageIdentityPermissionsAndQuotasAtTheConsumer")}>
-        <DataTable
-          columns={consumerColumns}
-          rows={pagedConsumers}
-          rowKey={(consumer) => consumer.id}
-          loading={isLoading}
-          onRowClick={startEdit}
-          empty={<EmptyState title={consumers.length ? (localizedMessage(isZh, "v2.api-keys.noMatchingConsumers")) : (localizedMessage(isZh, "v2.api-keys.noConsumersYet"))} description={consumers.length ? (localizedMessage(isZh, "v2.api-keys.adjustTheSearchOrStatusFilter")) : (localizedMessage(isZh, "v2.api-keys.createAConsumerToGenerateItsFirstApi"))} action={!consumers.length ? <Button onClick={() => setShowForm(true)}><Plus />{localizedMessage(isZh, "v2.api-keys.addConsumer")}</Button> : undefined} />}
-        />
-        {filteredConsumers.length > PAGE_SIZE && <div className="v2-pagination"><span>{localizedMessage(isZh, "common.pagination", { page: page + 1, total: totalPages })}</span><div><Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage((current) => current - 1)}><ChevronLeft /></Button><Button variant="outline" size="icon" disabled={page >= totalPages - 1} onClick={() => setPage((current) => current + 1)}><ChevronRight /></Button></div></div>}
-      </Surface>
-
-          {pagedConsumers.map((item) => {
-            const isEditing = editingId === item.id && editForm;
-
-            if (isEditing && editForm) {
-              return (
-                <ResourceEditorDialog
-                  key={item.id}
-                  open
-                  title={localizedMessage(isZh, "consumers.edit")}
-                  description={item.name}
-                  onClose={() => {
-                    setEditingId(null);
-                    setEditForm(null);
-                  }}
-                  footer={(
-                    <div className="v2-inspector-footer-actions">
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setEditingId(null);
-                          setEditForm(null);
-                        }}
-                      >
-                        {localizedMessage(isZh, "v2.providers.cancel")}
-                      </Button>
-                      <Button
-                        onClick={() =>
-                          updateMut.mutate({
-                            id: editForm.id,
-                            input: {
-                              name: editForm.name.trim(),
-                              enabled: editForm.enabled,
-                              routes: editForm.routes,
-                              protocols: editForm.protocols,
-                              ip_allowlist: buildAccessListPayload(editForm.ipAllowlist),
-                              quotas: buildQuotasPayload(editForm.quotas),
-                              limits: buildLimitsPayload(editForm.limits),
-                            },
-                          })
-                        }
-                        disabled={updateMut.isPending || editForm.ipAllowlist.some((ip) => !isValidIPOrCIDR(ip))}
-                      >
-                        {updateMut.isPending ? (localizedMessage(isZh, "v2.providers.saving")) : (localizedMessage(isZh, "v2.api-keys.save"))}
-                      </Button>
-                    </div>
-                  )}
-                >
-                  <div className="v2-consumer-form">
-                    <div className="space-y-5">
-                      <div className="space-y-3">
-                      <SectionTitle>{localizedMessage(isZh, "v2.api-keys.1BasicInformation")}</SectionTitle>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel>
-                          <Input
-                            value={editForm.name}
-                            onChange={(e) => setEditForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <FieldLabel>{localizedMessage(isZh, "v2.providers.status")}</FieldLabel>
-                          <button
-                            type="button"
-                            onClick={() => setEditForm((prev) => (prev ? { ...prev, enabled: !prev.enabled } : prev))}
-                            className="flex h-10 w-full cursor-pointer items-center gap-2 rounded-md border border-input px-3 text-sm"
-                          >
-                            {editForm.enabled ? (
-                              <ToggleRight className="h-4 w-4 text-green-500" />
-                            ) : (
-                              <ToggleLeft className="h-4 w-4 text-slate-400" />
-                            )}
-                            {editForm.enabled ? (localizedMessage(isZh, "v2.providers.enabled")) : (localizedMessage(isZh, "v2.providers.disabled2"))}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                      <div className="h-px bg-slate-200/70" />
-
-                      <div className="space-y-3">
-                      <SectionTitle>{localizedMessage(isZh, "v2.api-keys.2AccessPermission")}</SectionTitle>
-                      <div className="grid grid-cols-2 items-start gap-4">
-                        <div className="space-y-2">
-                          <FieldLabel
-                    info={
-                      localizedMessage(isZh, "v2.api-keys.whenLeftUnboundAllProtectedModelsAreAccessible")
-                    }
-                  >
-                    {localizedMessage(isZh, "v2.api-keys.bindModels")}
-                  </FieldLabel>
-                          <MultiSelect
-                            options={routeOptions}
-                            values={editForm.routes}
-                            placeholder={
-                              localizedMessage(isZh, "v2.api-keys.selectProtectedModelsThisKeyCanAccess")
-                            }
-                            searchPlaceholder={localizedMessage(isZh, "v2.api-keys.searchModels")}
-                            emptyText={localizedMessage(isZh, "v2.api-keys.noMatchingModels")}
-                            onChange={(next) => setEditForm((prev) => (prev ? { ...prev, routes: next } : prev))}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <FieldLabel
-                            info={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoProtocolRestriction")}
-                          >
-                            {localizedMessage(isZh, "v2.api-keys.allowedProtocols")}
-                          </FieldLabel>
-                          <MultiSelect
-                            options={protocolOptions}
-                            values={editForm.protocols}
-                            placeholder={localizedMessage(isZh, "v2.api-keys.selectAllowedProtocols")}
-                            searchPlaceholder={localizedMessage(isZh, "v2.api-keys.searchProtocols")}
-                            emptyText={localizedMessage(isZh, "v2.api-keys.noMatchingProtocols")}
-                            onChange={(next) => setEditForm((prev) => (prev ? { ...prev, protocols: next } : prev))}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <FieldLabel
-                            info={localizedMessage(isZh, "v2.api-keys.leavingThisEmptyAppliesNoRestrictionOnSource")}
-                          >
-                            {localizedMessage(isZh, "v2.api-keys.ipAllowlist")}
-                          </FieldLabel>
-                          <IPAllowlistEditor
-                            value={editForm.ipAllowlist}
-                            onChange={(next) => setEditForm((prev) => (prev ? { ...prev, ipAllowlist: next } : prev))}
-                            isZh={isZh}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                      <div className="h-px bg-slate-200/70" />
-
-                      <div className="space-y-3">
-                      <SectionTitle>{localizedMessage(isZh, "v2.api-keys.3AccessQuota")}</SectionTitle>
-                      <QuotaEditor
-                        value={editForm.quotas}
-                        onChange={(next) => setEditForm((prev) => (prev ? { ...prev, quotas: next } : prev))}
-                        isZh={isZh}
-                        windowOptions={windowOptions}
-                      />
-                    </div>
-
-                      <div className="h-px bg-slate-200/70" />
-
-                      <div className="space-y-3">
-                      <SectionTitle info={localizedMessage(isZh, "v2.api-keys.allOptionalLeaveEmptyForNoLimit")}>{localizedMessage(isZh, "v2.api-keys.4ResourceLimits")}</SectionTitle>
-                      <LimitsEditor
-                        value={editForm.limits}
-                        onChange={(next) => setEditForm((prev) => (prev ? { ...prev, limits: next } : prev))}
-                        isZh={isZh}
-                      />
-                      </div>
-                    </div>
-                    <div className="h-px bg-slate-200/70" />
-                    {renderKeysSection(item)}
-                  </div>
-                </ResourceEditorDialog>
-              );
+        footer={<>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => {
+              setShowForm(false);
+              setCreateForm(emptyCreate);
+            }}
+          >
+            {localizedMessage(isZh, "v2.providers.cancel")}
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() =>
+              createMut.mutate({
+                name: createForm.name.trim(),
+                routes: createForm.routes,
+                protocols: createForm.protocols,
+                ip_allowlist: buildAccessListPayload(createForm.ipAllowlist),
+                quotas: buildQuotasPayload(createForm.quotas),
+                limits: buildLimitsPayload(createForm.limits),
+                keys: [
+                  {
+                    name: "default",
+                    expires_at: resolveExpiresAt(createForm.keyExpiresPreset),
+                  },
+                ],
+              })
             }
-
-            return null;
-          })}
-
-      <Dialog
-        open={showRevealDialog}
-        onOpenChange={(open) => {
-          setShowRevealDialog(open);
-          if (!open) setCopiedRevealKey(false);
-        }}
+            disabled={
+              createMut.isPending ||
+              !createForm.name.trim() ||
+              createForm.ipAllowlist.some((ip) => !isValidIPOrCIDR(ip))
+            }
+          >
+            {createMut.isPending ? (localizedMessage(isZh, "v2.providers.creating")) : (localizedMessage(isZh, "v2.api-keys.create"))}
+          </button>
+        </>}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{localizedMessage(isZh, "v2.api-keys.keyGenerated")}</DialogTitle>
-            <DialogDescription>
-              {localizedMessage(isZh, "consumers.revealOnce", { name: revealedKey?.name ?? "" })}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="rounded-xl bg-slate-900 px-4 py-3 text-sm break-all text-green-400">
-            {revealedKey?.token ?? "-"}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setShowRevealDialog(false);
-                setCopiedRevealKey(false);
-              }}
-            >
-              {localizedMessage(isZh, "v2.providers.close")}
-            </Button>
-            <Button
-              onClick={async () => {
-                if (!revealedKey?.token) return;
-                await navigator.clipboard.writeText(revealedKey.token);
-                setCopiedRevealKey(true);
-              }}
-            >
-              {copiedRevealKey ? (localizedMessage(isZh, "v2.api-keys.copied")) : (localizedMessage(isZh, "v2.api-keys.copy"))}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <ConsumerEditor
+          form={createForm}
+          onChange={(patch) => setCreateForm((prev) => ({ ...prev, ...patch }))}
+          isZh={isZh}
+          routeOptions={routeOptions}
+          windowOptions={windowOptions}
+          basicsExtra={(
+            <NyroSearchSelect<ExpirePreset>
+              label={localizedMessage(isZh, "v2.api-keys.keyValidity")}
+              options={expirePresetValues}
+              value={createForm.keyExpiresPreset}
+              onChange={(preset) => setCreateForm((prev) => ({ ...prev, keyExpiresPreset: preset ?? "never" }))}
+              getOptionLabel={(preset) => localizedMessage(isZh, expirePresetLabel(preset))}
+              isOptionEqualToValue={(a, b) => a === b}
+              searchable={false}
+              hint={localizedMessage(isZh, "v2.api-keys.theKeyValueIsAutoGeneratedAndShown")}
+            />
+          )}
+        />
+      </ResourceEditorDrawer>
+
+      <ResourceEditorDrawer
+        open={Boolean(editingConsumer && editForm)}
+        title={localizedMessage(isZh, "consumers.edit")}
+        description={editingConsumer?.name}
+        onClose={() => {
+          setEditingId(null);
+          setEditForm(null);
+        }}
+        footer={editForm ? (<>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => {
+              setEditingId(null);
+              setEditForm(null);
+            }}
+          >
+            {localizedMessage(isZh, "v2.providers.cancel")}
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() =>
+              updateMut.mutate({
+                id: editForm.id,
+                input: {
+                  name: editForm.name.trim(),
+                  enabled: editForm.enabled,
+                  routes: editForm.routes,
+                  protocols: editForm.protocols,
+                  ip_allowlist: buildAccessListPayload(editForm.ipAllowlist),
+                  quotas: buildQuotasPayload(editForm.quotas),
+                  limits: buildLimitsPayload(editForm.limits),
+                },
+              })
+            }
+            disabled={
+              updateMut.isPending ||
+              !editForm.name.trim() ||
+              editForm.ipAllowlist.some((ip) => !isValidIPOrCIDR(ip))
+            }
+          >
+            {updateMut.isPending ? (localizedMessage(isZh, "v2.providers.saving")) : (localizedMessage(isZh, "v2.api-keys.save"))}
+          </button>
+        </>) : undefined}
+      >
+        {editForm && (
+          <>
+            <ConsumerEditor
+              form={editForm}
+              onChange={(patch) => setEditForm((prev) => (prev ? { ...prev, ...patch } : prev))}
+              isZh={isZh}
+              routeOptions={routeOptions}
+              windowOptions={windowOptions}
+              basicsExtra={(
+                <div className="field full">
+                  <div className="switch-row">
+                    <div className="switch-copy">
+                      <strong>{localizedMessage(isZh, "v2.providers.status")}</strong>
+                      <span>{editForm.enabled ? (localizedMessage(isZh, "v2.providers.enabled")) : (localizedMessage(isZh, "v2.providers.disabled2"))}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className={clsx("switch-control", editForm.enabled && "on")}
+                      aria-pressed={editForm.enabled}
+                      aria-label={localizedMessage(isZh, "v2.providers.status")}
+                      onClick={() => setEditForm((prev) => (prev ? { ...prev, enabled: !prev.enabled } : prev))}
+                    />
+                  </div>
+                </div>
+              )}
+            />
+            {editingConsumer && (
+              <FormSection title={localizedMessage(isZh, "v2.api-keys.keys")}>
+                <div className="span-2 key-list">
+                  {renderKeysSection(editingConsumer)}
+                </div>
+              </FormSection>
+            )}
+          </>
+        )}
+      </ResourceEditorDrawer>
+
+      <RevealKeyDialog revealed={revealedKey} onClose={() => setRevealedKey(null)} />
 
       <ConfirmDialog
         open={Boolean(consumerToDelete)}
@@ -1504,134 +1197,103 @@ export default function ApiKeysPage() {
         }}
       />
 
-      <Dialog
+      <ResourceEditorDrawer
         open={Boolean(addKeyDialogFor)}
-        onOpenChange={(open) => {
-          if (!open) setAddKeyDialogFor(null);
-        }}
+        title={localizedMessage(isZh, "v2.api-keys.addKey2")}
+        description={localizedMessage(isZh, "v2.api-keys.theKeyValueIsAutoGeneratedAndShown")}
+        onClose={() => setAddKeyDialogFor(null)}
+        footer={<>
+          <button type="button" className="button button-secondary" onClick={() => setAddKeyDialogFor(null)}>
+            {localizedMessage(isZh, "v2.providers.cancel")}
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={addKeyMut.isPending || !addKeyForm.name.trim()}
+            onClick={() => {
+              if (!addKeyDialogFor) return;
+              addKeyMut.mutate({
+                consumerId: addKeyDialogFor.id,
+                input: {
+                  name: addKeyForm.name.trim(),
+                  expires_at: resolveExpiresAt(addKeyForm.expiresPreset),
+                },
+              });
+            }}
+          >
+            {addKeyMut.isPending ? (localizedMessage(isZh, "v2.api-keys.adding")) : (localizedMessage(isZh, "v2.api-keys.add"))}
+          </button>
+        </>}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{localizedMessage(isZh, "v2.api-keys.addKey2")}</DialogTitle>
-            <DialogDescription>
-              {localizedMessage(isZh, "v2.api-keys.theKeyValueIsAutoGeneratedAndShown")}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel>
-              <Input
-                value={addKeyForm.name}
-                onChange={(e) => setAddKeyForm((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder={localizedMessage(isZh, "v2.api-keys.eGDefault")}
-              />
-            </div>
-            <div className="space-y-2">
-              <FieldLabel>{localizedMessage(isZh, "v2.api-keys.validity")}</FieldLabel>
-              <Select
-                value={addKeyForm.expiresPreset}
-                onValueChange={(value: ExpirePreset) => setAddKeyForm((prev) => ({ ...prev, expiresPreset: value }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {expirePresetOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {localizedMessage(isZh, option.label)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setAddKeyDialogFor(null)}>
-              {localizedMessage(isZh, "v2.providers.cancel")}
-            </Button>
-            <Button
-              disabled={addKeyMut.isPending || !addKeyForm.name.trim()}
-              onClick={() => {
-                if (!addKeyDialogFor) return;
-                addKeyMut.mutate({
-                  consumerId: addKeyDialogFor.id,
-                  input: {
-                    name: addKeyForm.name.trim(),
-                    expires_at: resolveExpiresAt(addKeyForm.expiresPreset),
-                  },
-                });
-              }}
-            >
-              {addKeyMut.isPending ? (localizedMessage(isZh, "v2.api-keys.adding")) : (localizedMessage(isZh, "v2.api-keys.add"))}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <div className="form-grid">
+          <NyroTextField
+            label={localizedMessage(isZh, "v2.providers.name")}
+            required
+            value={addKeyForm.name}
+            placeholder={localizedMessage(isZh, "v2.api-keys.eGDefault")}
+            onChange={(event) => setAddKeyForm((prev) => ({ ...prev, name: event.target.value }))}
+          />
+          <NyroSearchSelect<ExpirePreset>
+            label={localizedMessage(isZh, "v2.api-keys.validity")}
+            options={expirePresetValues}
+            value={addKeyForm.expiresPreset}
+            onChange={(preset) => setAddKeyForm((prev) => ({ ...prev, expiresPreset: preset ?? "never" }))}
+            getOptionLabel={(preset) => localizedMessage(isZh, expirePresetLabel(preset))}
+            isOptionEqualToValue={(a, b) => a === b}
+            searchable={false}
+          />
+        </div>
+      </ResourceEditorDrawer>
 
-      <Dialog
+      <ResourceEditorDrawer
         open={Boolean(editKeyDialogFor)}
-        onOpenChange={(open) => {
-          if (!open) setEditKeyDialogFor(null);
-        }}
+        title={localizedMessage(isZh, "v2.api-keys.editKey2")}
+        description={editKeyDialogFor?.key.name}
+        onClose={() => setEditKeyDialogFor(null)}
+        footer={<>
+          <button type="button" className="button button-secondary" onClick={() => setEditKeyDialogFor(null)}>
+            {localizedMessage(isZh, "v2.providers.cancel")}
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={updateKeyMut.isPending || !editKeyForm.name.trim()}
+            onClick={() => {
+              if (!editKeyDialogFor) return;
+              const input: UpdateConsumerKey = { name: editKeyForm.name.trim() };
+              if (editKeyForm.expiresTouched) {
+                input.expires_at = resolveExpiresAtForUpdate(editKeyForm.expiresPreset);
+              }
+              updateKeyMut.mutate({
+                consumerId: editKeyDialogFor.consumer.id,
+                keyId: editKeyDialogFor.key.id,
+                input,
+              });
+              setEditKeyDialogFor(null);
+            }}
+          >
+            {updateKeyMut.isPending ? (localizedMessage(isZh, "v2.providers.saving")) : (localizedMessage(isZh, "v2.api-keys.save"))}
+          </button>
+        </>}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{localizedMessage(isZh, "v2.api-keys.editKey2")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <FieldLabel required>{localizedMessage(isZh, "v2.providers.name")}</FieldLabel>
-              <Input
-                value={editKeyForm.name}
-                onChange={(e) => setEditKeyForm((prev) => ({ ...prev, name: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <FieldLabel>{localizedMessage(isZh, "v2.api-keys.validity")}</FieldLabel>
-              <Select
-                value={editKeyForm.expiresPreset}
-                onValueChange={(value: ExpirePreset) =>
-                  setEditKeyForm((prev) => ({ ...prev, expiresPreset: value, expiresTouched: true }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {expirePresetOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {localizedMessage(isZh, option.label)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setEditKeyDialogFor(null)}>
-              {localizedMessage(isZh, "v2.providers.cancel")}
-            </Button>
-            <Button
-              disabled={updateKeyMut.isPending || !editKeyForm.name.trim()}
-              onClick={() => {
-                if (!editKeyDialogFor) return;
-                const input: UpdateConsumerKey = { name: editKeyForm.name.trim() };
-                if (editKeyForm.expiresTouched) {
-                  input.expires_at = resolveExpiresAtForUpdate(editKeyForm.expiresPreset);
-                }
-                updateKeyMut.mutate({
-                  consumerId: editKeyDialogFor.consumer.id,
-                  keyId: editKeyDialogFor.key.id,
-                  input,
-                });
-                setEditKeyDialogFor(null);
-              }}
-            >
-              {updateKeyMut.isPending ? (localizedMessage(isZh, "v2.providers.saving")) : (localizedMessage(isZh, "v2.api-keys.save"))}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <div className="form-grid">
+          <NyroTextField
+            label={localizedMessage(isZh, "v2.providers.name")}
+            required
+            value={editKeyForm.name}
+            onChange={(event) => setEditKeyForm((prev) => ({ ...prev, name: event.target.value }))}
+          />
+          <NyroSearchSelect<ExpirePreset>
+            label={localizedMessage(isZh, "v2.api-keys.validity")}
+            options={expirePresetValues}
+            value={editKeyForm.expiresPreset}
+            onChange={(preset) => setEditKeyForm((prev) => (preset ? { ...prev, expiresPreset: preset, expiresTouched: true } : prev))}
+            getOptionLabel={(preset) => localizedMessage(isZh, expirePresetLabel(preset))}
+            isOptionEqualToValue={(a, b) => a === b}
+            searchable={false}
+          />
+        </div>
+      </ResourceEditorDrawer>
 
       <ConfirmDialog
         open={Boolean(errorDialog)}

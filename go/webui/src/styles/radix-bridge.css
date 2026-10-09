@@ -1,0 +1,100 @@
+/* Radix 原语 ↔ nyro-ui.css 桥接层（go-webui-改造方案.md §6.3）。
+   Radix 只负责行为（焦点圈定/ESC/portal/aria），外观全部走 nyro 类；
+   Radix 用 data-state 属性驱动显隐，这里把它翻译成基线的 .open 语义。
+   约束：只做行为→样式翻译，不定义任何新的视觉。 */
+
+/* nyro-app.css 的 :root color-scheme:light 会被暗色主题继承，按主题翻转。 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Radix Select 弹层挂在 body 下，需盖过抽屉(z-31)与模态(z-40)。 */
+[data-radix-popper-content-wrapper] {
+  z-index: 41 !important;
+}
+
+/* 抽屉遮罩：基线 .drawer-mask 默认 display:none，由 data-state 接管。 */
+.drawer-mask[data-state="open"] {
+  display: block;
+  animation: mask-fade-in 0.2s ease;
+}
+
+.drawer-mask[data-state="closed"] {
+  display: block;
+  animation: mask-fade-out 0.2s ease;
+}
+
+/* 抽屉本体：进场收在 translateX(0)，退场滑出。 */
+.drawer[data-state="open"] {
+  transform: translateX(0);
+  animation: drawer-slide-in 0.2s ease;
+}
+
+.drawer[data-state="closed"] {
+  animation: drawer-slide-out 0.2s ease;
+}
+
+@keyframes drawer-slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes drawer-slide-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+
+@keyframes mask-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes mask-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* 模态遮罩显隐：对齐基线 .modal-mask.open 行为。 */
+.modal-mask[data-state="open"] {
+  display: flex;
+}
+
+.modal-mask[data-state="closed"] {
+  display: flex;
+  animation: mask-fade-out 0.2s ease;
+}
+
+/* Radix 把 Overlay 与 Content 渲染为兄弟节点，而基线 HTML 里 modal 是
+   modal-mask 的子元素——基线的 flex 居中与层叠上下文都来自那个父子结构，
+   兄弟形态的 modal 会落进文档流并被遮罩盖住（活体浏览器验收发现）。
+   这里补上等价物：居中定位 + 层级 + 进出场动画；关键帧必须携带
+   translate(-50%, -50%)，否则动画期间会丢掉居中。 */
+.modal-mask[data-state] ~ .modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 30;
+}
+
+.modal-mask.over-drawer[data-state] ~ .modal {
+  z-index: 40;
+}
+
+.modal-mask[data-state="open"] ~ .modal {
+  animation: modal-in-centered 0.2s ease;
+}
+
+.modal-mask[data-state="closed"] ~ .modal {
+  animation: modal-out-centered 0.2s ease;
+}
+
+@keyframes modal-in-centered {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+@keyframes modal-out-centered {
+  from { opacity: 1; transform: translate(-50%, -50%); }
+  to { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+}

@@ -142,17 +142,14 @@ export function ProviderIcon({
 
   return (
     <span
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-white/85 text-[10px] font-semibold text-slate-500",
-        className,
-      )}
+      className={cn("provider-icon", className)}
       style={{ width: size, height: size }}
       title={name || protocol || "provider"}
     >
       {iconMarkup ? (
         <span
           aria-hidden="true"
-          className={cn("provider-icon-markup", fill ? "h-full w-full" : "h-[78%] w-[78%]")}
+          className={cn("provider-icon-markup", fill && "full")}
           dangerouslySetInnerHTML={{ __html: iconMarkup }}
         />
       ) : (

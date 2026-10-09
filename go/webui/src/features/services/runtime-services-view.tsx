@@ -1,7 +1,13 @@
-import { Copy, RefreshCw } from "lucide-react";
+import { Check, Copy, RefreshCw } from "lucide-react";
+import { useState } from "react";
 
 import type { MessageKey } from "@/lib/i18n";
 import type { RuntimeService, RuntimeServiceID } from "@/lib/types";
+import { DataTable, type DataTableColumn } from "@/components/v2/data-table";
+import { EmptyState } from "@/components/v2/empty-state";
+import { MetricLedger } from "@/components/v2/metric-ledger";
+import { Notice } from "@/components/v2/notice";
+import { Status } from "@/components/v2/status";
 
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
@@ -66,135 +72,129 @@ export function RuntimeServicesView({
   const runningCount = services.filter((service) => service.status === "running").length;
   const disabledCount = services.filter((service) => service.status === "disabled").length;
   const pending = isLoading && services.length === 0;
-  const summaryTitle = isError
-    ? t("services.statusUnavailable")
-    : pending
-      ? t("common.loading")
-      : t("services.instanceHealthy");
-  const summaryDetail = isError ? t("services.none") : t("services.instanceHealthyDetail");
+
+  const columns: DataTableColumn<RuntimeService>[] = [
+    {
+      key: "service",
+      header: t("services.service"),
+      render: (service) => {
+        const meta = SERVICE_META[service.id];
+        return (
+          <div className="provider-name">
+            <span className="provider-logo" aria-hidden="true">{meta.mark}</span>
+            <div>
+              <strong>{t(meta.name)}</strong>
+              <small>{t(meta.technical)} · {t(meta.role)}</small>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      key: "status",
+      header: t("services.status"),
+      render: (service) => (
+        <Status tone={service.status === "running" ? "success" : "neutral"}>
+          {service.status === "running" ? t("common.running") : t("common.disabled")}
+        </Status>
+      ),
+    },
+    {
+      key: "address",
+      header: t("services.address"),
+      render: (service) => service.listen ? (
+        <span className="cell-copy">
+          <code>{service.listen}</code>
+          <CopyValue value={service.listen} label={t("common.copy")} />
+        </span>
+      ) : "—",
+    },
+    {
+      key: "data",
+      header: t("services.localData"),
+      render: (service) => service.data_path ? (
+        <div className="cell-stack">
+          <code>{service.data_path}</code>
+          {service.storage_backend && <small>{service.storage_backend}</small>}
+        </div>
+      ) : "—",
+    },
+    {
+      key: "flag",
+      header: t("services.flag"),
+      render: (service) => <code>{SERVICE_META[service.id].flags}</code>,
+    },
+  ];
 
   return (
     <>
-      <section
-        className={`v2-status-ribbon v2-services-ribbon${isError || pending ? " state-unknown" : ""}`}
-        aria-live="polite"
-      >
-        <div className="v2-status-ribbon-main">
-          <h2>{summaryTitle}</h2>
-          <p>{summaryDetail}</p>
-        </div>
-        <ServiceStat label={t("services.runningCount")} value={pending ? "—" : String(runningCount)} />
-        <ServiceStat label={t("services.disabledCount")} value={pending ? "—" : String(disabledCount)} />
-        <ServiceStat
-          label={t("services.checkedAt")}
-          value={isFetching ? t("common.loading") : isError ? "—" : t("services.justNow")}
-        />
-      </section>
+      <MetricLedger
+        items={[
+          { key: "running", label: t("services.runningCount"), value: pending ? "—" : String(runningCount), tone: "success" },
+          { key: "disabled", label: t("services.disabledCount"), value: pending ? "—" : String(disabledCount) },
+          { key: "checked", label: t("services.checkedAt"), value: isFetching ? t("common.loading") : isError ? "—" : t("services.justNow") },
+        ]}
+      />
 
-      <section className="v2-surface v2-service-table" aria-busy={isFetching}>
-        <div className="v2-surface-head">
-          <div>
-            <h2>{t("services.tableTitle")}</h2>
-            <p>{t("services.tableDetail")}</p>
-          </div>
-          <button
-            type="button"
-            className="v2-button v2-button-icon"
-            disabled={isFetching}
-            onClick={onRefresh}
-          >
-            <RefreshCw aria-hidden="true" />
-            {t("common.refresh")}
-          </button>
-        </div>
-        <div className="v2-table-wrap">
-          <table className="v2-data-table">
-            <thead>
-              <tr>
-                <th>{t("services.service")}</th>
-                <th>{t("services.status")}</th>
-                <th>{t("services.address")}</th>
-                <th>{t("services.localData")}</th>
-                <th>{t("services.flag")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {services.map((service) => {
-                const meta = SERVICE_META[service.id];
-                return (
-                  <tr key={service.id}>
-                    <td>
-                      <div className="v2-service-name">
-                        <span className="v2-service-mark" aria-hidden="true">{meta.mark}</span>
-                        <span>
-                          <strong>{t(meta.name)}</strong>
-                          <small>{t(meta.technical)} · {t(meta.role)}</small>
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`v2-status status-${service.status}`}>
-                        <i aria-hidden="true" />
-                        {service.status === "running" ? t("common.running") : t("common.disabled")}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="v2-service-address">
-                        <code>{service.listen || "—"}</code>
-                        <CopyValue value={service.listen} label={t("common.copy")} />
-                      </span>
-                    </td>
-                    <td>
-                      <span className="v2-service-data">
-                        <code>{service.data_path || "—"}</code>
-                        {service.storage_backend && <small>{service.storage_backend}</small>}
-                      </span>
-                    </td>
-                    <td><code className="v2-service-flag">{meta.flags}</code></td>
-                  </tr>
-                );
-              })}
-              {!isLoading && (isError || services.length === 0) && (
-                <tr><td colSpan={5}><div className="v2-inline-empty">{t("services.none")}</div></td></tr>
-              )}
-              {pending && (
-                <tr><td colSpan={5}><div className="v2-inline-empty">{t("common.loading")}</div></td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div className="v2-surface-foot">
-          <span>{t("services.scope")}</span>
-          <button type="button" onClick={onShowNodes}>{t("services.viewNodes")} →</button>
-        </div>
-      </section>
+      <DataTable
+        carded
+        columns={columns}
+        rows={services}
+        rowKey={(service) => service.id}
+        loading={isLoading}
+        empty={<EmptyState title={t("services.none")} />}
+        toolbar={
+          <>
+            <Status tone={isError ? "danger" : pending ? "neutral" : "success"}>
+              {isError ? t("services.statusUnavailable") : pending ? t("common.loading") : t("services.instanceHealthy")}
+            </Status>
+            <span className="table-summary">
+              {isError ? t("services.none") : t("services.instanceHealthyDetail")}
+            </span>
+            <button
+              type="button"
+              className="button button-sm toolbar-end"
+              disabled={isFetching}
+              onClick={onRefresh}
+            >
+              <RefreshCw aria-hidden="true" />
+              {t("common.refresh")}
+            </button>
+          </>
+        }
+        footer={
+          <>
+            <span className="table-summary">{t("services.scope")}</span>
+            <button type="button" className="button button-text button-sm" onClick={onShowNodes}>
+              {t("services.viewNodes")} →
+            </button>
+          </>
+        }
+      />
 
-      <section className="v2-service-note">
-        <span aria-hidden="true">i</span>
-        <div>
-          <strong>{t("services.noteTitle")}</strong>
-          <p>{t("services.noteDetail")}</p>
-        </div>
+      <Notice tone="info" title={t("services.noteTitle")}>
+        <p>{t("services.noteDetail")}</p>
         <code>nyro serve --help</code>
-      </section>
+      </Notice>
     </>
   );
 }
 
-function ServiceStat({ label, value }: { label: string; value: string }) {
-  return <div className="v2-status-ribbon-stat"><span>{label}</span><strong>{value}</strong></div>;
-}
-
-function CopyValue({ value, label }: { value?: string; label: string }) {
-  if (!value) return null;
+function CopyValue({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
-      className="v2-copy-button"
+      className="icon-button"
       title={label}
-      onClick={() => void navigator.clipboard.writeText(value)}
+      aria-label={label}
+      onClick={() => {
+        void navigator.clipboard.writeText(value);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      }}
     >
-      <Copy aria-hidden="true" />
+      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
     </button>
   );
 }

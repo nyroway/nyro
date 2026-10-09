@@ -10,14 +10,19 @@ export type MetricLedgerItem = {
 
 export function MetricLedger({ items }: { items: MetricLedgerItem[] }) {
   return (
-    <section className="v2-metric-ledger" aria-label="Metrics">
-      {items.map((item) => (
-        <div className={`v2-ledger-item tone-${item.tone ?? "default"}`} key={item.key}>
-          <span>{item.label}</span>
-          <strong>{item.value}</strong>
-          {item.detail && <small>{item.detail}</small>}
-        </div>
-      ))}
+    <section className="metric-strip" aria-label="Metrics">
+      <div className={`metric-strip-stats${items.length !== 5 ? ` cols-${items.length}` : ""}`}>
+        {items.map((item) => (
+          <div
+            className={`metric-cell${item.tone && item.tone !== "default" ? ` tone-${item.tone}` : ""}`}
+            key={item.key}
+          >
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            {item.detail && <i className="metric-hint">{item.detail}</i>}
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

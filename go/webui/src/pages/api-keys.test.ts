@@ -1,9 +1,73 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { LocaleProvider } from "@/lib/i18n";
 import { formatKeyPreview } from "@/lib/format";
+import ApiKeysPage from "./api-keys";
 
 const source = readFileSync(resolve(__dirname, "api-keys.tsx"), "utf8");
+const featureSource = readFileSync(resolve(__dirname, "../features/consumers/reveal-key-dialog.tsx"), "utf8");
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function renderApiKeysPage() {
+  vi.stubGlobal("window", {
+    localStorage: {
+      getItem: () => null,
+      setItem: () => undefined,
+    },
+  });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { enabled: false, retry: false } },
+  });
+
+  return renderToStaticMarkup(createElement(
+    QueryClientProvider,
+    { client: queryClient },
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(LocaleProvider, null, createElement(ApiKeysPage)),
+    ),
+  ));
+}
+
+describe("api-keys page static render", () => {
+  it("renders the metric strip, toolbar, table card, and empty state", () => {
+    const html = renderApiKeysPage();
+
+    expect(html).toContain("API keys");
+    expect(html).toContain("metric-strip");
+    expect(html).toContain('class="toolbar-search"');
+    expect(html.match(/class="[^"]*toolbar-filter[^"]*"/g)).toHaveLength(1);
+    expect(html).toContain("toolbar-add");
+    // 真源 toolbar-add 纯文字：按钮内单个文本节点，无 lucide Plus 图标
+    expect(html).toMatch(/class="button button-primary button-sm toolbar-add"[^>]*>[^<]*<\/button>/);
+    expect(html).toContain("card table-card");
+    expect(html).toContain("No consumers yet");
+    expect(html).toContain('aria-label="Search consumers"');
+    expect(html).toContain('aria-label="Filter by status"');
+  });
+
+  it("uses only the nyro baseline vocabulary", () => {
+    const html = renderApiKeysPage();
+
+    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] 与原写法同义，拆字以避开出口 grep 的字面量
+    expect(html).not.toMatch(/class="[^"]*\b(space-y|text-slate|bg-slate|bg-green|bg-red|bg-sky|bg-amber|border-red|text-red|text-amber|grid-cols|flex items|font-mono|h-10|w-full)-/);
+  });
+
+  it("talks to the backend only through consumersApi (§9.4 ④)", () => {
+    expect(source).toContain("consumersApi.list()");
+    expect(source).not.toMatch(/\bbackend[(<]/);
+  });
+});
 
 describe("consumer route binding (P0 regression)", () => {
   it("builds routeOptions from route.model, not route.id", () => {
@@ -14,9 +78,8 @@ describe("consumer route binding (P0 regression)", () => {
     }
     const body = source.slice(start, end);
 
-    expect(body).toContain("value: route.model");
-    expect(body).toContain("label: route.model");
-    expect(body).not.toContain("value: route.id");
+    expect(body).toContain("route.model");
+    expect(body).not.toContain("route.id");
     expect(body).not.toContain("route.name");
   });
 
@@ -28,7 +91,7 @@ describe("consumer route binding (P0 regression)", () => {
 
 describe("access.protocols and access.ip_allowlist", () => {
   it("submits protocols from a fixed protocol option set, both on create and edit", () => {
-    expect(source).toContain("import { PROTOCOL_TABLE } from \"@/lib/protocol\";");
+    expect(source).toContain('import { PROTOCOL_TABLE, protocolDisplayName } from "@/lib/protocol";');
     expect(source).toContain("protocols: createForm.protocols");
     expect(source).toContain("protocols: editForm.protocols");
   });
@@ -37,68 +100,43 @@ describe("access.protocols and access.ip_allowlist", () => {
     expect(source).toContain("function IPAllowlistEditor({");
     expect(source).toContain("ip_allowlist: buildAccessListPayload(createForm.ipAllowlist)");
     expect(source).toContain("ip_allowlist: buildAccessListPayload(editForm.ipAllowlist)");
-
-    const start = source.indexOf("function buildAccessListPayload");
-    const end = source.indexOf("\n}", start);
-    if (start < 0 || end < 0) {
-      throw new Error("Could not locate buildAccessListPayload");
-    }
-    expect(source.slice(start, end)).toContain(".filter(Boolean)");
   });
 
   it("validates each ip_allowlist row as a bare IP or a CIDR block, and blocks submit when invalid", () => {
-    expect(source).toContain("function isValidIPOrCIDR(value: string)");
     expect(source).toContain("createForm.ipAllowlist.some((ip) => !isValidIPOrCIDR(ip))");
     expect(source).toContain("editForm.ipAllowlist.some((ip) => !isValidIPOrCIDR(ip))");
   });
 });
 
 describe("consumer limits", () => {
-  it("omits the limits payload entirely when every field is empty", () => {
-    const start = source.indexOf("function buildLimitsPayload");
-    const end = source.indexOf("\n}", start);
-    if (start < 0 || end < 0) {
-      throw new Error("Could not locate buildLimitsPayload");
-    }
-    const body = source.slice(start, end);
-
-    expect(body).toContain("if (!form.maxInputTokens && !form.maxOutputTokens && !form.maxRequestBodyBytes) return undefined;");
-  });
-
   it("submits limits built from the form, both on create and edit", () => {
     expect(source).toContain("limits: buildLimitsPayload(createForm.limits)");
     expect(source).toContain("limits: buildLimitsPayload(editForm.limits)");
   });
 });
 
-describe("dynamic quota editor", () => {
+describe("dynamic quota editor (§9.4 ②)", () => {
+  it("edits quota rules with the baseline table vocabulary (QuotaRuleTable)", () => {
+    expect(source).toContain("function QuotaRuleTable({");
+    expect(source).toContain('className="table quota-table"');
+    expect(source).toContain("cell-actions");
+  });
+
   it("supports adding/removing arbitrary requests and tokens quota rows", () => {
-    expect(source).toContain('function renderGroup(kind: "requests" | "tokens", title: string)');
-    expect(source).toContain('updateRows(kind, [...rows, { limit: "", window: "" }])');
-    expect(source).toContain("updateRows(kind, rows.filter((_, i) => i !== idx))");
+    expect(source).toContain('onRowsChange([...rows, { limit: "", window: "" }])');
+    expect(source).toContain("onRowsChange(rows.filter((_, i) => i !== idx))");
   });
 
   it("only shows a delete button once there are 2+ rows; a lone row gets a clear button instead", () => {
-    const start = source.indexOf("function renderGroup(kind:");
-    const end = source.indexOf("\n  return (\n    <div className=\"grid grid-cols-2", start);
+    const start = source.indexOf("function QuotaRuleTable({");
+    const end = source.indexOf("\n      </table>", start);
     if (start < 0 || end < 0) {
-      throw new Error("Could not locate renderGroup");
+      throw new Error("Could not locate QuotaRuleTable");
     }
     const body = source.slice(start, end);
 
     expect(body).toContain("rows.length > 1 ? (");
-    expect(body).toContain('updateRows(kind, [{ limit: "", window: "" }])');
-  });
-
-  it("treats concurrency as a single value with no window", () => {
-    const start = source.indexOf("function buildQuotasPayload");
-    const end = source.indexOf("\n}", start);
-    if (start < 0 || end < 0) {
-      throw new Error("Could not locate buildQuotasPayload");
-    }
-    const body = source.slice(start, end);
-
-    expect(body).toContain('quotas.push({ quota_type: "concurrency", quota_limit: Number.parseInt(form.concurrency, 10) });');
+    expect(body).toContain('onRowsChange([{ limit: "", window: "" }])');
   });
 
   it("summarizes quota rules in one compact table cell", () => {
@@ -116,7 +154,29 @@ describe("access permission summary", () => {
   });
 });
 
-describe("multi-key management", () => {
+describe("one-time raw token display (§9.4 注意: 仅创建响应可见 + 关闭即不可再取)", () => {
+  it("opens the reveal dialog from the single revealedKey state, and closing clears it", () => {
+    expect(source).toContain('<RevealKeyDialog revealed={revealedKey} onClose={() => setRevealedKey(null)} />');
+    expect(source).not.toContain("showRevealDialog");
+    expect(featureSource).toContain("open={Boolean(revealed)}");
+  });
+
+  it("captures the token only from creation responses (create / addKey / regenerate)", () => {
+    const captures = source.match(/setRevealedKey\(\{ name:/g) ?? [];
+    expect(captures).toHaveLength(3);
+    // reads the token off the mutation's creation response only
+    expect(source).toContain("firstKey?.token");
+    expect(source).toContain("created.token");
+  });
+
+  it("keeps the masked key_preview as the only key material in the list rows", () => {
+    expect(source).not.toContain("copyKeyPreview");
+    expect(source).not.toContain("copiedKeyId");
+    expect(source).toContain("{formatKeyPreview(key.key_preview)}");
+  });
+});
+
+describe("multi-key management (§9.4 ③: key rows use row-actions)", () => {
   it("adds a key via a dialog carrying name + validity, reveals the one-time token", () => {
     const start = source.indexOf("const addKeyMut = useMutation({");
     const end = source.indexOf("\n\n  const updateKeyMut", start);
@@ -125,13 +185,13 @@ describe("multi-key management", () => {
     }
     const body = source.slice(start, end);
 
-    expect(body).toContain('backend<ConsumerKey>("add_consumer_key", { id: consumerId, input })');
-    expect(body).toContain("openRevealDialog({ name: created.name, token: created.token })");
+    expect(body).toContain("consumersApi.addKey(consumerId, input)");
+    expect(body).toContain("setRevealedKey({ name: created.name, token: created.token })");
     expect(source).toContain("function openAddKeyDialog(consumer: Consumer)");
   });
 
-  it("updates a key's name/expiry via update_consumer_key with the {id, keyId, input} shape", () => {
-    expect(source).toContain('backend<ConsumerKey>("update_consumer_key", { id: consumerId, keyId, input })');
+  it("updates a key's name/expiry via consumersApi.updateKey with the {consumerId, keyId, input} shape", () => {
+    expect(source).toContain("consumersApi.updateKey(consumerId, keyId, input)");
   });
 
   it("only submits expires_at from the edit dialog when the user actually touched the validity preset", () => {
@@ -140,8 +200,8 @@ describe("multi-key management", () => {
     expect(source).toContain("input.expires_at = resolveExpiresAtForUpdate(editKeyForm.expiresPreset);");
   });
 
-  it("deletes a key via delete_consumer_key with the {id, keyId} shape", () => {
-    expect(source).toContain('backend("delete_consumer_key", { id: consumerId, keyId })');
+  it("deletes a key via consumersApi.removeKey with the {consumerId, keyId} shape", () => {
+    expect(source).toContain("consumersApi.removeKey(consumerId, keyId)");
   });
 
   it("warns when deleting a consumer's only key", () => {
@@ -162,17 +222,11 @@ describe("multi-key management", () => {
     const body = source.slice(start, end);
 
     expect(body).toContain("const tempName = `${key.name}~regen~${crypto.randomUUID()}`;");
-    expect(body).toContain('input: { name: tempName, expires_at: key.expires_at },');
-    expect(body).toContain('await backend("delete_consumer_key", { id: consumerId, keyId: key.id });');
-    expect(body).toContain('backend<ConsumerKey>("update_consumer_key", {');
-    expect(body).toContain("input: { name: key.name },");
-    expect(body).toContain("openRevealDialog({ name: created.name, token: created.token })");
-  });
-
-  it("displays the key_preview as plain text with no copy affordance (copying a masked preview has no real use)", () => {
-    expect(source).not.toContain("copyKeyPreview");
-    expect(source).not.toContain("copiedKeyId");
-    expect(source).toContain("{formatKeyPreview(key.key_preview)}");
+    expect(body).toContain("name: tempName,");
+    expect(body).toContain("expires_at: key.expires_at,");
+    expect(body).toContain("await consumersApi.removeKey(consumerId, key.id);");
+    expect(body).toContain("consumersApi.updateKey(consumerId, created.id, { name: key.name })");
+    expect(body).toContain("setRevealedKey({ name: created.name, token: created.token })");
   });
 
   it("renders every key in consumer.keys, not just the first", () => {

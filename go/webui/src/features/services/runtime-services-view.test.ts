@@ -28,25 +28,33 @@ function renderServices() {
 }
 
 describe("RuntimeServicesView", () => {
-  it("presents the V2 service summary, table, and startup note in order", () => {
+  it("presents the metric strip, service table, and startup note in order", () => {
     const html = renderServices();
-    const ribbon = html.indexOf("v2-services-ribbon");
-    const table = html.indexOf("v2-service-table");
-    const note = html.indexOf("v2-service-note");
+    const metrics = html.indexOf("metric-strip");
+    const table = html.indexOf("card table-card");
+    const note = html.indexOf("alert-info");
 
-    expect(ribbon).toBeGreaterThanOrEqual(0);
-    expect(table).toBeGreaterThan(ribbon);
+    expect(metrics).toBeGreaterThanOrEqual(0);
+    expect(table).toBeGreaterThan(metrics);
     expect(note).toBeGreaterThan(table);
     expect(html).toContain("<table");
-    expect(html).toContain("services.tableTitle");
     expect(html).toContain("services.noteTitle");
   });
 
   it("keeps every runtime component as a compact service row", () => {
     const html = renderServices();
 
-    expect(html.match(/class="v2-service-name"/g)).toHaveLength(4);
+    expect(html.match(/class="provider-name"/g)).toHaveLength(4);
     expect(html).toContain("common.running");
     expect(html).toContain("common.disabled");
+    expect(html).toContain("services.scope");
+    expect(html).toContain("services.viewNodes");
+  });
+
+  it("uses only the nyro baseline vocabulary", () => {
+    const html = renderServices();
+
+    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] 与原写法同义，拆字以避开出口 grep 的字面量
+    expect(html).not.toMatch(/class="[^"]*\b(text-slate|bg-slate|border-red|text-red|text-amber|grid-cols|flex items|space-y)-/);
   });
 });

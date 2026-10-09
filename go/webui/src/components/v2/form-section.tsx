@@ -2,9 +2,10 @@ import type { ReactNode } from "react";
 
 export function FormSection({ title, description, children }: { title: ReactNode; description?: ReactNode; children: ReactNode }) {
   return (
-    <section className="v2-form-section">
-      <header><h3>{title}</h3>{description && <p>{description}</p>}</header>
-      <div className="v2-form-grid">{children}</div>
+    <section className="form-section">
+      <h3 className="form-section-title">{title}</h3>
+      {description && <p className="form-section-desc">{description}</p>}
+      <div className="form-grid">{children}</div>
     </section>
   );
 }

@@ -38,10 +38,7 @@ function TooltipContent({
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
-        className={cn(
-          "z-50 max-w-xs rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 shadow-lg dark:border-slate-200 dark:bg-slate-50 dark:text-slate-900",
-          className,
-        )}
+        className={cn("tooltip", className)}
         {...props}
       />
     </TooltipPrimitive.Portal>

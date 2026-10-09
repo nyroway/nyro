@@ -1,415 +1,58 @@
-import { Suspense, lazy, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy } from "lucide-react";
+import { Copy } from "lucide-react";
+import clsx from "clsx";
 
-import { backend } from "@/lib/backend";
-import type { Consumer, Route } from "@/lib/types";
+import type { Route } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 import { formatKeyPreview } from "@/lib/format";
-import { Combobox } from "@/components/ui/combobox";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+import { NyroSearchSelect, NyroTextField } from "@/components/ui/nyro-fields";
 import { ProviderIcon } from "@/components/ui/provider-icon";
+import { SecretValue } from "@/components/ui/secret-value";
 import { Notice } from "@/components/v2/notice";
 import { PageHeader } from "@/components/v2/page-header";
 import { PageLayout } from "@/components/v2/page-layout";
 import { Status } from "@/components/v2/status";
-import { Surface } from "@/components/v2/surface";
+import {
+  API_KEY_ENV,
+  CODE_LANGS,
+  CODE_PROTOCOLS,
+  codeTemplate,
+  flattenKeys,
+  languageLabel,
+  protocolLabel,
+  syntaxLanguage,
+  tokenizeCode,
+  type CodeLanguage,
+  type CodeProtocol,
+  type FlatKey,
+  type SyntaxLanguage,
+} from "@/features/connect/connect-code";
+import { consumersApi } from "@/lib/api/consumers";
+import { routesApi } from "@/lib/api/routes";
+import { settingsApi } from "@/lib/api/settings";
 import { localizedMessage } from "@/lib/messages";
-
-const CodeHighlighter = lazy(() => import("@/components/ui/code-highlighter"));
+import { showToast } from "@/lib/toast";
 
 const PUBLIC_GATEWAY_URL_KEY = "gateway.public_url";
 const DEFAULT_MAX_TOKENS = "1024";
 // Fixed local base_url used in samples when gateway.public_url is not set.
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:19530";
-// Environment variable the samples read the key from when the full key is not
-// available to fill in (i.e. admin is not running with --plaintext-keys).
-const API_KEY_ENV = "NYRO_API_KEY";
 
-type CodeLanguage = "python" | "typescript" | "curl";
-type CodeProtocol = "openai-compatible" | "openai-responses" | "anthropic-messages" | "gemini-generatecontent";
-
-type CodeProtocolOption = {
-  id: CodeProtocol;
-  name: string;
-  iconKey: string;
-  apiPath: string;
-};
-
-const CODE_LANGS: CodeLanguage[] = ["python", "typescript", "curl"];
-const CODE_PROTOCOLS: CodeProtocolOption[] = [
-  { id: "openai-compatible", name: "OpenAI Compatible", iconKey: "openai", apiPath: "/v1/chat/completions" },
-  { id: "openai-responses", name: "OpenAI Responses", iconKey: "openai", apiPath: "/v1/responses" },
-  { id: "anthropic-messages", name: "Anthropic Messages", iconKey: "anthropic", apiPath: "/v1/messages" },
-  { id: "gemini-generatecontent", name: "Google Gemini", iconKey: "gemini", apiPath: "/v1beta/models/{model}:generateContent" },
-];
-
-// A consumer key flattened with its owning consumer's route grants, so the
-// Connect page can decide which keys apply to the selected model. token is set
-// only when the admin runs with --plaintext-keys (recoverable storage).
-type FlatKey = {
-  id: string;
-  name: string;
-  keyPreview: string;
-  token?: string;
-  grantsAll: boolean;
-  routes: string[];
-};
-
-function flattenKeys(consumers: Consumer[]): FlatKey[] {
-  const out: FlatKey[] = [];
-  for (const c of consumers) {
-    if (c.enabled === false) continue;
-    const routes = c.routes ?? [];
-    const grantsAll = routes.length === 0; // empty grant = access to all routes
-    for (const k of c.keys ?? []) {
-      if (k.enabled === false) continue;
-      out.push({ id: k.id, name: k.name, keyPreview: k.key_preview, token: k.token, grantsAll, routes });
-    }
-  }
-  return out;
-}
-
-function protocolLabel(protocol: CodeProtocol) {
-  if (protocol === "openai-compatible") return "OpenAI Compatible";
-  if (protocol === "openai-responses") return "OpenAI Responses";
-  if (protocol === "anthropic-messages") return "Anthropic Messages";
-  return "Google Gemini";
-}
-
-function jsonText(input: unknown) {
-  return JSON.stringify(input, null, 2);
-}
-
-function encodeGeminiModelForPath(model: string) {
-  // Keep ":" readable for model variants like gemma3:1b.
-  return encodeURIComponent(model).replace(/%3A/gi, ":");
-}
-
-function syntaxLanguage(language: CodeLanguage) {
-  if (language === "python") return "python";
-  if (language === "typescript") return "typescript";
-  return "bash";
-}
-
-function languageLabel(language: CodeLanguage) {
-  if (language === "python") return "Python";
-  if (language === "typescript") return "TypeScript";
-  return "cURL";
-}
-
-// Exported for deterministic sample-generation tests; the page remains the only runtime consumer.
-// eslint-disable-next-line react-refresh/only-export-components
-export function codeTemplate(params: {
-  protocol: CodeProtocol;
-  model: string;
-  host: string;
-  language: CodeLanguage;
-  stream: boolean;
-  maxTokens?: number;
-  // apiKeyLiteral is the full recoverable key to inline as a string literal;
-  // when useEnvVar is true it is ignored and the sample reads the key from the
-  // API_KEY_ENV environment variable instead.
-  apiKeyLiteral: string;
-  useEnvVar: boolean;
-}) {
-  const { protocol, model, host, language, stream, maxTokens, apiKeyLiteral, useEnvVar } = params;
-
-  // Per-language rendering of the API key: an environment-variable reference
-  // (non-plaintext mode) or an inlined string literal (recoverable key).
-  const pyKey = useEnvVar ? `os.environ["${API_KEY_ENV}"]` : `"${apiKeyLiteral}"`;
-  const tsKey = useEnvVar ? `process.env.${API_KEY_ENV}` : `"${apiKeyLiteral}"`;
-  const shKey = useEnvVar ? `$${API_KEY_ENV}` : apiKeyLiteral;
-  const pyOsImport = useEnvVar ? "import os\n" : "";
-
-  // ── cURL ──────────────────────────────────────────────────────────────
-  if (language === "curl") {
-    const streamFlag = stream ? "-N \\\n  " : "";
-    if (protocol === "openai-compatible") {
-      const body: Record<string, unknown> = { model, messages: [{ role: "user", content: "Hello" }] };
-      if (maxTokens) body.max_tokens = maxTokens;
-      if (stream) body.stream = true;
-      return `curl ${host}/v1/chat/completions \\
-  ${streamFlag}-H "Authorization: Bearer ${shKey}" \\
-  -H "Content-Type: application/json" \\
-  -d '${jsonText(body)}'`;
-    }
-    if (protocol === "openai-responses") {
-      const body: Record<string, unknown> = { model, input: "Hello" };
-      if (maxTokens) body.max_output_tokens = maxTokens;
-      if (stream) body.stream = true;
-      return `curl ${host}/v1/responses \\
-  ${streamFlag}-H "Authorization: Bearer ${shKey}" \\
-  -H "Content-Type: application/json" \\
-  -d '${jsonText(body)}'`;
-    }
-    if (protocol === "anthropic-messages") {
-      const body: Record<string, unknown> = {
-        model,
-        max_tokens: maxTokens ?? 1024,
-        messages: [{ role: "user", content: "Hello" }],
-      };
-      if (stream) body.stream = true;
-      return `curl ${host}/v1/messages \\
-  ${streamFlag}-H "x-api-key: ${shKey}" \\
-  -H "anthropic-version: 2023-06-01" \\
-  -H "Content-Type: application/json" \\
-  -d '${jsonText(body)}'`;
-    }
-    const geminiBody: Record<string, unknown> = { contents: [{ role: "user", parts: [{ text: "Hello" }] }] };
-    if (maxTokens) geminiBody.generationConfig = { maxOutputTokens: maxTokens };
-    const method = stream ? "streamGenerateContent" : "generateContent";
-    return `curl ${host}/v1beta/models/${encodeGeminiModelForPath(model)}:${method}${stream ? "?alt=sse" : ""} \\
-  ${streamFlag}-H "x-goog-api-key: ${shKey}" \\
-  -H "Content-Type: application/json" \\
-  -d '${jsonText(geminiBody)}'`;
-  }
-
-  // ── Python ────────────────────────────────────────────────────────────
-  if (language === "python") {
-    if (protocol === "openai-compatible") {
-      const kw = maxTokens ? `\n    max_tokens=${maxTokens},` : "";
-      const head = `# pip install openai
-${pyOsImport}from openai import OpenAI
-
-client = OpenAI(
-    api_key=${pyKey},
-    base_url="${host}/v1"
-)`;
-      if (stream) {
-        return `${head}
-
-stream = client.chat.completions.create(
-    model="${model}",
-    messages=[{"role": "user", "content": "Hello"}],${kw}
-    stream=True
-)
-
-for chunk in stream:
-    print(chunk.choices[0].delta.content or "", end="", flush=True)`;
-      }
-      return `${head}
-
-response = client.chat.completions.create(
-    model="${model}",
-    messages=[{"role": "user", "content": "Hello"}],${kw}
-)
-
-print(response.choices[0].message.content)`;
-    }
-    if (protocol === "openai-responses") {
-      const kw = maxTokens ? `\n    max_output_tokens=${maxTokens},` : "";
-      const head = `# pip install openai
-${pyOsImport}from openai import OpenAI
-
-client = OpenAI(
-    api_key=${pyKey},
-    base_url="${host}/v1"
-)`;
-      if (stream) {
-        return `${head}
-
-stream = client.responses.create(
-    model="${model}",
-    input="Hello",${kw}
-    stream=True
-)
-
-for event in stream:
-    if event.type == "response.output_text.delta":
-        print(event.delta, end="", flush=True)`;
-      }
-      return `${head}
-
-response = client.responses.create(
-    model="${model}",
-    input="Hello",${kw}
-)
-
-print(response.output_text)`;
-    }
-    if (protocol === "anthropic-messages") {
-      const mt = maxTokens ?? 1024;
-      const head = `# pip install anthropic
-${pyOsImport}from anthropic import Anthropic
-
-client = Anthropic(
-    api_key=${pyKey},
-    base_url="${host}"
-)`;
-      if (stream) {
-        return `${head}
-
-with client.messages.stream(
-    model="${model}",
-    max_tokens=${mt},
-    messages=[{"role": "user", "content": "Hello"}]
-) as stream:
-    for text in stream.text_stream:
-        print(text, end="", flush=True)`;
-      }
-      return `${head}
-
-response = client.messages.create(
-    model="${model}",
-    max_tokens=${mt},
-    messages=[{"role": "user", "content": "Hello"}]
-)
-
-print(response.content[0].text)`;
-    }
-    const cfg = maxTokens ? `\n    config={"max_output_tokens": ${maxTokens}},` : "";
-    const head = `# pip install google-genai
-${pyOsImport}from google import genai
-
-client = genai.Client(
-    api_key=${pyKey},
-    http_options={"base_url": "${host}"}
-)`;
-    if (stream) {
-      return `${head}
-
-for chunk in client.models.generate_content_stream(
-    model="${model}",
-    contents="Hello",${cfg}
-):
-    print(chunk.text, end="", flush=True)`;
-    }
-    return `${head}
-
-response = client.models.generate_content(
-    model="${model}",
-    contents="Hello",${cfg}
-)
-
-print(response.text)`;
-  }
-
-  // ── TypeScript ──────────────────────────────────────────────────────────
-  if (protocol === "openai-compatible") {
-    const mt = maxTokens ? `\n  max_tokens: ${maxTokens},` : "";
-    const head = `// npm install openai
-import OpenAI from "openai";
-
-const client = new OpenAI({
-  apiKey: ${tsKey},
-  baseURL: "${host}/v1",
-});`;
-    if (stream) {
-      return `${head}
-
-const stream = await client.chat.completions.create({
-  model: "${model}",
-  messages: [{ role: "user", content: "Hello" }],${mt}
-  stream: true,
-});
-
-for await (const chunk of stream) {
-  process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
-}`;
-    }
-    return `${head}
-
-const response = await client.chat.completions.create({
-  model: "${model}",
-  messages: [{ role: "user", content: "Hello" }],${mt}
-});
-
-console.log(response.choices[0]?.message?.content);`;
-  }
-  if (protocol === "openai-responses") {
-    const mt = maxTokens ? `\n  max_output_tokens: ${maxTokens},` : "";
-    const head = `// npm install openai
-import OpenAI from "openai";
-
-const client = new OpenAI({
-  apiKey: ${tsKey},
-  baseURL: "${host}/v1",
-});`;
-    if (stream) {
-      return `${head}
-
-const stream = await client.responses.create({
-  model: "${model}",
-  input: "Hello",${mt}
-  stream: true,
-});
-
-for await (const event of stream) {
-  if (event.type === "response.output_text.delta") process.stdout.write(event.delta);
-}`;
-    }
-    return `${head}
-
-const response = await client.responses.create({
-  model: "${model}",
-  input: "Hello",${mt}
-});
-
-console.log(response.output_text);`;
-  }
-  if (protocol === "anthropic-messages") {
-    const mt = maxTokens ?? 1024;
-    const head = `// npm install @anthropic-ai/sdk
-import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic({
-  apiKey: ${tsKey},
-  baseURL: "${host}",
-});`;
-    if (stream) {
-      return `${head}
-
-const stream = client.messages.stream({
-  model: "${model}",
-  max_tokens: ${mt},
-  messages: [{ role: "user", content: "Hello" }],
-});
-
-for await (const event of stream) {
-  if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-    process.stdout.write(event.delta.text);
-  }
-}`;
-    }
-    return `${head}
-
-const response = await client.messages.create({
-  model: "${model}",
-  max_tokens: ${mt},
-  messages: [{ role: "user", content: "Hello" }],
-});
-
-console.log(response.content[0]);`;
-  }
-  const cfg = maxTokens ? `\n  config: { maxOutputTokens: ${maxTokens} },` : "";
-  const head = `// npm install @google/genai
-import { GoogleGenAI } from "@google/genai";
-const client = new GoogleGenAI({
-  apiKey: ${tsKey},
-  baseUrl: "${host}",
-});`;
-  if (stream) {
-    return `${head}
-
-const stream = await client.models.generateContentStream({
-  model: "${model}",
-  contents: "Hello",${cfg}
-});
-
-for await (const chunk of stream) {
-  process.stdout.write(chunk.text ?? "");
-}`;
-  }
-  return `${head}
-
-const response = await client.models.generateContent({
-  model: "${model}",
-  contents: "Hello",${cfg}
-});
-
-console.log(response.text);`;
+/* §9.5 ①：代码块降级为纯 pre + token 着色（tokenizeCode），不再走
+   react-syntax-highlighter。 */
+function CodeTokens({ code, language }: { code: string; language: SyntaxLanguage }) {
+  return (
+    <>
+      {tokenizeCode(code, language).map((token, index) =>
+        token.kind === "plain" ? (
+          token.text
+        ) : (
+          <span key={index} className={`tok-${token.kind}`}>{token.text}</span>
+        ),
+      )}
+    </>
+  );
 }
 
 export default function ConnectPage() {
@@ -422,19 +65,18 @@ export default function ConnectPage() {
   const [selectedKeyId, setSelectedKeyId] = useState("");
   const [stream, setStream] = useState(false);
   const [maxTokensInput, setMaxTokensInput] = useState(DEFAULT_MAX_TOKENS);
-  const [copied, setCopied] = useState(false);
 
   const { data: routes = [] } = useQuery<Route[]>({
     queryKey: ["routes"],
-    queryFn: () => backend("list_routes"),
+    queryFn: () => routesApi.list(),
   });
-  const { data: consumers = [] } = useQuery<Consumer[]>({
+  const { data: consumers = [] } = useQuery({
     queryKey: ["consumers"],
-    queryFn: () => backend("list_consumers"),
+    queryFn: () => consumersApi.list(),
   });
   const { data: publicUrl } = useQuery<string | null>({
     queryKey: ["setting", PUBLIC_GATEWAY_URL_KEY],
-    queryFn: () => backend("get_setting", { key: PUBLIC_GATEWAY_URL_KEY }),
+    queryFn: () => settingsApi.get(PUBLIC_GATEWAY_URL_KEY),
   });
 
   const effectiveRouteID = routes.some((route) => route.id === selectedRouteId) ? selectedRouteId : "";
@@ -486,11 +128,14 @@ export default function ConnectPage() {
     useEnvVar,
   });
 
-  async function copyCode() {
+  const enabledRoutes = useMemo(() => routes.filter((route) => route.enabled), [routes]);
+  const selectedProtocolOption = CODE_PROTOCOLS.find((option) => option.id === selectedProtocol) ?? CODE_PROTOCOLS[0];
+
+  // §9.5 ③：复制反馈统一走 Toast（端点 / 密钥 / 代码）。
+  async function copyText(text: string) {
     try {
-      await navigator.clipboard.writeText(generatedCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      await navigator.clipboard.writeText(text);
+      showToast(localizedMessage(isZh, "v2.api-keys.copied"));
     } catch {
       // Clipboard may be unavailable (insecure context); ignore silently.
     }
@@ -498,72 +143,226 @@ export default function ConnectPage() {
 
   return (
     <PageLayout header={<PageHeader title={t("page.connect.title")} description={t("page.connect.subtitle")} />}>
-      <Notice title={localizedMessage(isZh, "v2.connect.gatewayEndpoint")}>
-        <code>{host}</code>{localizedMessage(isZh, "v2.connect.samplesReadTheKeyFromAnEnvironmentVariable")}
-      </Notice>
+      {/* §9.5 ②：网关端点 + 令牌展示卡（descriptions + secret-control）。 */}
+      <section className="card">
+        <div className="card-body">
+          <dl className="descriptions">
+            <dt>{localizedMessage(isZh, "v2.connect.gatewayEndpoint")}</dt>
+            <dd>
+              <span className="copy-value">
+                <code>{host}</code>
+                <button
+                  type="button"
+                  aria-label={localizedMessage(isZh, "common.copy")}
+                  title={localizedMessage(isZh, "common.copy")}
+                  onClick={() => void copyText(host)}
+                >
+                  <Copy aria-hidden="true" />
+                </button>
+              </span>
+            </dd>
+            <dt>{localizedMessage(isZh, "v2.connect.apiKey")}</dt>
+            <dd>
+              {realKey ? (
+                <SecretValue value={realKey} ariaLabel={localizedMessage(isZh, "v2.connect.apiKey")} />
+              ) : selectedRoute && !selectedRoute.enable_auth ? (
+                localizedMessage(isZh, "v2.connect.notRequired")
+              ) : (
+                <>
+                  <code>{API_KEY_ENV}</code>
+                  {localizedMessage(isZh, "v2.connect.samplesReadTheKeyFromAnEnvironmentVariable")}
+                </>
+              )}
+            </dd>
+          </dl>
+        </div>
+      </section>
 
-      <div className="v2-connect-workspace">
-        <Surface className="v2-connect-config" title={localizedMessage(isZh, "v2.connect.requestConfiguration")} description={localizedMessage(isZh, "v2.connect.changesUpdateTheCodeSampleImmediately")}>
-          <div className="v2-connect-form">
-            <div className="v2-connect-field">
-              <label>{localizedMessage(isZh, "v2.connect.ingressProtocol")}</label>
-              <div className="v2-protocol-options">
-                {CODE_PROTOCOLS.map((protocol) => (
-                  <button key={protocol.id} type="button" className={protocol.id === selectedProtocol ? "active" : ""} onClick={() => setSelectedProtocol(protocol.id)}>
-                    <ProviderIcon iconKey={protocol.iconKey} name={protocol.name} protocol={protocol.id} size={22} />
-                    <span><strong>{protocol.name}</strong><code>{protocol.apiPath}</code></span>
-                  </button>
-                ))}
-              </div>
+      <div className="connect-workspace">
+        <section className="card">
+          <header className="card-header">
+            <div className="card-header-copy">
+              <h2 className="card-title">{localizedMessage(isZh, "v2.connect.requestConfiguration")}</h2>
+              <p className="card-subtitle">{localizedMessage(isZh, "v2.connect.changesUpdateTheCodeSampleImmediately")}</p>
             </div>
-            <div className="v2-connect-field">
-              <label>{localizedMessage(isZh, "v2.connect.model")}</label>
-              <Combobox
-                value={effectiveRouteID}
-                onValueChange={(value) => { setSelectedRouteId(value); setSelectedKeyId(""); }}
-                options={routes.filter((route) => route.enabled).map((route) => ({ value: route.id, label: route.model }))}
-                placeholder={routes.length ? (localizedMessage(isZh, "v2.connect.selectModel")) : (localizedMessage(isZh, "v2.connect.createAModelFirst"))}
-                searchPlaceholder={localizedMessage(isZh, "v2.connect.searchModels")}
-                emptyText={localizedMessage(isZh, "v2.connect.noModelsAvailable")}
-              />
-              <small>{localizedMessage(isZh, "v2.connect.onlyEnabledModelRoutesAreShown")}</small>
-            </div>
-            {showKeyPicker ? (
-              <div className="v2-connect-field">
-                <label>API Key</label>
-                <Combobox value={effectiveKeyID} onValueChange={setSelectedKeyId} options={availableKeys.map((key) => ({ value: key.id, label: `${key.name} · ${formatKeyPreview(key.keyPreview)}` }))} placeholder={localizedMessage(isZh, "v2.connect.selectApiKey")} searchPlaceholder={localizedMessage(isZh, "v2.connect.searchApiKeys")} emptyText={localizedMessage(isZh, "v2.connect.noApiKeysAvailable")} />
-                <small>{localizedMessage(isZh, "v2.connect.theKeyMustBeAllowedToAccessThe")}</small>
-              </div>
-            ) : (
-              <Notice title={localizedMessage(isZh, "v2.connect.apiKey")}>{localizedMessage(isZh, "connect.keyFromEnvironment", { name: API_KEY_ENV })}</Notice>
-            )}
-            <div className="v2-connect-grid">
-              <div className="v2-connect-field"><label>{localizedMessage(isZh, "v2.api-keys.maxOutputTokens")}</label><Input type="number" min={1} inputMode="numeric" value={maxTokensInput} onChange={(event) => setMaxTokensInput(event.target.value)} /></div>
-              <div className="v2-connect-field"><label>{localizedMessage(isZh, "v2.connect.streaming")}</label><div className="v2-connect-switch"><span>{stream ? (localizedMessage(isZh, "v2.connect.enabled")) : (localizedMessage(isZh, "v2.settings.disabled"))}</span><Switch checked={stream} onCheckedChange={setStream} /></div></div>
-            </div>
-          </div>
-        </Surface>
-
-        <section className="v2-code-surface">
-          <header>
-            <div className="v2-code-tabs">{CODE_LANGS.map((language) => <button type="button" key={language} className={codeLang === language ? "active" : ""} onClick={() => setCodeLang(language)}>{languageLabel(language)}</button>)}</div>
-            <button type="button" className="v2-copy-code" onClick={copyCode}>{copied ? <Check /> : <Copy />}{copied ? (localizedMessage(isZh, "v2.api-keys.copied")) : (localizedMessage(isZh, "v2.connect.copyCode"))}</button>
           </header>
-          <div className="v2-code-body">
-            {selectedRoute ? <Suspense fallback={<pre>{generatedCode}</pre>}><CodeHighlighter code={generatedCode} language={syntaxLanguage(codeLang)} dark padding={0} /></Suspense> : <div className="v2-code-empty">{localizedMessage(isZh, "v2.connect.selectAModelToGenerateCodeHere")}</div>}
+          <div className="card-body connect-form">
+            {/* §9.5 目标：协议切换 tabs。 */}
+            <div className="field">
+              <span className="field-label">{localizedMessage(isZh, "v2.connect.ingressProtocol")}</span>
+              <div
+                className="tabs tabs-inline"
+                role="tablist"
+                aria-label={localizedMessage(isZh, "v2.connect.ingressProtocol")}
+                onKeyDown={(event) => {
+                  const ids = CODE_PROTOCOLS.map((option) => option.id);
+                  const current = Math.max(0, ids.indexOf(selectedProtocol));
+                  if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setSelectedProtocol(ids[(current + 1) % ids.length]);
+                  } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setSelectedProtocol(ids[(current - 1 + ids.length) % ids.length]);
+                  }
+                }}
+              >
+                {CODE_PROTOCOLS.map((option) => {
+                  const active = option.id === selectedProtocol;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      className={clsx("tab", active && "active")}
+                      onClick={() => setSelectedProtocol(option.id)}
+                    >
+                      <ProviderIcon iconKey={option.iconKey} name={option.name} protocol={option.id} size={16} />
+                      <span>{option.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="field-hint"><code>{selectedProtocolOption.apiPath}</code></span>
+            </div>
+
+            <NyroSearchSelect<Route>
+              label={localizedMessage(isZh, "v2.connect.model")}
+              options={enabledRoutes}
+              value={selectedRoute}
+              onChange={(route) => { setSelectedRouteId(route?.id ?? ""); setSelectedKeyId(""); }}
+              getOptionLabel={(route) => route.model}
+              isOptionEqualToValue={(a, b) => a.id === b.id}
+              placeholder={routes.length ? (localizedMessage(isZh, "v2.connect.selectModel")) : (localizedMessage(isZh, "v2.connect.createAModelFirst"))}
+              searchPlaceholder={localizedMessage(isZh, "common.search")}
+              noOptionsText={localizedMessage(isZh, "v2.connect.noModelsAvailable")}
+              hint={localizedMessage(isZh, "v2.connect.onlyEnabledModelRoutesAreShown")}
+            />
+
+            {showKeyPicker ? (
+              <NyroSearchSelect<FlatKey>
+                label={localizedMessage(isZh, "v2.connect.apiKey")}
+                options={availableKeys}
+                value={selectedKey}
+                onChange={(key) => setSelectedKeyId(key?.id ?? "")}
+                getOptionLabel={(key) => `${key.name} · ${formatKeyPreview(key.keyPreview)}`}
+                isOptionEqualToValue={(a, b) => a.id === b.id}
+                placeholder={localizedMessage(isZh, "v2.connect.selectApiKey")}
+                searchPlaceholder={localizedMessage(isZh, "common.search")}
+                noOptionsText={localizedMessage(isZh, "v2.connect.noApiKeysAvailable")}
+                hint={localizedMessage(isZh, "v2.connect.theKeyMustBeAllowedToAccessThe")}
+              />
+            ) : (
+              <Notice title={localizedMessage(isZh, "v2.connect.apiKey")}>
+                {localizedMessage(isZh, "connect.keyFromEnvironment", { name: API_KEY_ENV })}
+              </Notice>
+            )}
+
+            <div className="form-grid">
+              <NyroTextField
+                label={localizedMessage(isZh, "v2.api-keys.maxOutputTokens")}
+                type="number"
+                min={1}
+                value={maxTokensInput}
+                onChange={(event) => setMaxTokensInput(event.target.value)}
+              />
+              <div className="field">
+                <div className="switch-row">
+                  <div className="switch-copy">
+                    <strong>{localizedMessage(isZh, "v2.connect.streaming")}</strong>
+                    <span>{stream ? (localizedMessage(isZh, "v2.connect.enabled")) : (localizedMessage(isZh, "v2.settings.disabled"))}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className={clsx("switch-control", stream && "on")}
+                    aria-pressed={stream}
+                    aria-label={localizedMessage(isZh, "v2.connect.streaming")}
+                    onClick={() => setStream((current) => !current)}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
-          <footer>{selectedRoute ? `${protocolLabel(selectedProtocol)} · ${selectedRoute.model}` : (localizedMessage(isZh, "v2.connect.waitingForAModel"))}</footer>
+        </section>
+
+        {/* §9.5 ①：code-output / code-output-bar / code-copy 三件套。 */}
+        <section className="code-output connect-code">
+          <div className="code-output-bar">
+            <div
+              className="discover-switch"
+              role="tablist"
+              aria-label={localizedMessage(isZh, "v2.connect.codeLanguage")}
+              onKeyDown={(event) => {
+                const current = Math.max(0, CODE_LANGS.indexOf(codeLang));
+                if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setCodeLang(CODE_LANGS[(current + 1) % CODE_LANGS.length]);
+                } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setCodeLang(CODE_LANGS[(current - 1 + CODE_LANGS.length) % CODE_LANGS.length]);
+                }
+              }}
+            >
+              {CODE_LANGS.map((language) => (
+                <button
+                  key={language}
+                  type="button"
+                  role="tab"
+                  aria-selected={codeLang === language}
+                  className={clsx(codeLang === language && "selected")}
+                  onClick={() => setCodeLang(language)}
+                >
+                  {languageLabel(language)}
+                </button>
+              ))}
+            </div>
+            <span className="code-output-meta">
+              {selectedRoute ? `${protocolLabel(selectedProtocol)} · ${selectedRoute.model}` : (localizedMessage(isZh, "v2.connect.waitingForAModel"))}
+            </span>
+            <button type="button" className="button button-sm" onClick={() => void copyText(generatedCode)}>
+              <Copy aria-hidden="true" />{localizedMessage(isZh, "v2.connect.copyCode")}
+            </button>
+          </div>
+          <pre className={clsx("code-output-body", !selectedRoute && "is-empty")}>
+            {selectedRoute
+              ? <CodeTokens code={generatedCode} language={syntaxLanguage(codeLang)} />
+              : localizedMessage(isZh, "v2.connect.selectAModelToGenerateCodeHere")}
+          </pre>
         </section>
       </div>
 
-      <Surface title={localizedMessage(isZh, "v2.connect.integrationChecklist")} description={localizedMessage(isZh, "v2.connect.confirmTheseItemsBeforeRunningTheSample")}>
-        <div className="v2-connect-checks">
-          <div><span>{localizedMessage(isZh, "v2.connect.gatewayEndpoint")}</span><Status tone="success">{localizedMessage(isZh, "v2.connect.configured")}</Status></div>
-          <div><span>{localizedMessage(isZh, "v2.connect.modelRoute")}</span><Status tone={selectedRoute ? "success" : "warning"}>{selectedRoute?.model ?? (localizedMessage(isZh, "v2.connect.notSelected"))}</Status></div>
-          <div><span>{localizedMessage(isZh, "v2.connect.consumerKey")}</span><Status tone={!selectedRoute?.enable_auth || !showKeyPicker || selectedKey ? "success" : "warning"}>{!selectedRoute?.enable_auth ? (localizedMessage(isZh, "v2.connect.notRequired")) : useEnvVar ? API_KEY_ENV : (selectedKey?.name ?? (localizedMessage(isZh, "v2.connect.notSelected")))}</Status></div>
-          <div><span>{localizedMessage(isZh, "v2.connect.protocolTranslation")}</span><Status tone="info">{protocolLabel(selectedProtocol)}</Status></div>
+      <section className="card">
+        <header className="card-header">
+          <div className="card-header-copy">
+            <h2 className="card-title">{localizedMessage(isZh, "v2.connect.integrationChecklist")}</h2>
+            <p className="card-subtitle">{localizedMessage(isZh, "v2.connect.confirmTheseItemsBeforeRunningTheSample")}</p>
+          </div>
+        </header>
+        <div className="card-body">
+          <dl className="descriptions">
+            <dt>{localizedMessage(isZh, "v2.connect.gatewayEndpoint")}</dt>
+            <dd><Status tone="success">{localizedMessage(isZh, "v2.connect.configured")}</Status></dd>
+            <dt>{localizedMessage(isZh, "v2.connect.modelRoute")}</dt>
+            <dd>
+              <Status tone={selectedRoute ? "success" : "warning"}>
+                {selectedRoute?.model ?? (localizedMessage(isZh, "v2.connect.notSelected"))}
+              </Status>
+            </dd>
+            <dt>{localizedMessage(isZh, "v2.connect.consumerKey")}</dt>
+            <dd>
+              <Status tone={!selectedRoute?.enable_auth || !showKeyPicker || selectedKey ? "success" : "warning"}>
+                {!selectedRoute?.enable_auth
+                  ? (localizedMessage(isZh, "v2.connect.notRequired"))
+                  : useEnvVar
+                    ? API_KEY_ENV
+                    : (selectedKey?.name ?? (localizedMessage(isZh, "v2.connect.notSelected")))}
+              </Status>
+            </dd>
+            <dt>{localizedMessage(isZh, "v2.connect.protocolTranslation")}</dt>
+            <dd><Status tone="info">{protocolLabel(selectedProtocol)}</Status></dd>
+          </dl>
         </div>
-      </Surface>
+      </section>
     </PageLayout>
   );
 }

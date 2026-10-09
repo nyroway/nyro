@@ -499,6 +499,10 @@ func Mount(r chi.Router, s storage.Storage, logs LogSource, stats StatsSource, p
 			}
 			webutil.JSON(w, http.StatusOK, out)
 		})
+		// Not consumed by the WebUI: the frontend renders protocol credential
+		// schemas from its own static table (go/webui src/lib/protocol.ts, kept
+		// in sync by protocol.contract.test.ts). This endpoint stays as the
+		// future OpenAPI-style entry point (go-webui-改造方案.md §8.5).
 		g.Get("/protocol-credentials", func(w http.ResponseWriter, r *http.Request) {
 			protocols := []string{
 				provider.ProtocolOpenAIChatCompletions,
