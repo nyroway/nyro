@@ -16,7 +16,7 @@ func TestNewLLMProviderCatalogComposesBuiltinsExplicitly(t *testing.T) {
 	for _, definition := range definitions {
 		got = append(got, definition.ID)
 	}
-	want := []string{"anthropic", "openai", "gemini", "deepseek", "openrouter"}
+	want := []string{"anthropic", "openai", "gemini", "deepseek", "openrouter", "requesty"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("provider IDs = %v, want %v", got, want)
 	}
