@@ -49,7 +49,7 @@ describe("logs page", () => {
   it("uses only the nyro baseline vocabulary", () => {
     const html = renderLogsPage();
 
-    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] 与原写法同义，拆字以避开出口 grep 的字面量
+    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] is synonymous with the original spelling, split to avoid the exit grep's literal
     expect(html).not.toMatch(/class="[^"]*\b(space-y|text-slate|bg-slate|bg-green|bg-red|bg-sky|bg-amber|border-red|text-red|text-amber|grid-cols|flex items|font-mono)-/);
   });
 });
@@ -58,12 +58,14 @@ describe("toolbar filters adapt to user-defined option text (§9.6)", () => {
   const source = readFileSync(resolve(__dirname, "logs.tsx"), "utf8");
 
   it("gives all four filters the adaptive variant and decouples menus from the 148px trigger", () => {
-    // 日志页四个筛选的选项是用户自定义数据（消费者/模型/上游名，长度开放）：
-    // 真源 .toolbar-filter 定宽 148px 且 .select-menu 恒等于触发器宽
-    // （left:0;right:0）——长名在菜单里换两行、触发器截成省略号。变体类
-    // toolbar-filter-adaptive 在适配层做三件事：触发器自适应封顶 240px、
-    // 菜单解耦后按最长选项自适应封顶 360px、封顶后选项省略不换行。
-    // 状态筛选选项是固定短文案，挂同一变体只会落在 148px 下限，行为不变。
+    // The four filters on the logs page take user-defined data as options (consumer/model/
+    // upstream names, unbounded length): the baseline .toolbar-filter is fixed at 148px and
+    // .select-menu is always exactly as wide as the trigger (left:0;right:0) — long names
+    // wrap into two lines in the menu and the trigger truncates to an ellipsis. The variant
+    // class toolbar-filter-adaptive does three things in the adaptation layer: the trigger
+    // sizes to content capped at 240px, the decoupled menu sizes to the longest option capped
+    // at 360px, and once capped the options ellipsize instead of wrapping. The status filter's
+    // options are fixed short labels; the same variant merely lands on the 148px floor, no behavior change.
     expect(source.match(/controlClassName="toolbar-filter toolbar-filter-adaptive"/g)).toHaveLength(4);
     const css = readFileSync(resolve(__dirname, "../styles/nyro-app.css"), "utf8");
     expect(css).toMatch(/\.toolbar-filter\.toolbar-filter-adaptive\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*148px;[^}]*max-width:\s*240px;/s);
@@ -72,9 +74,10 @@ describe("toolbar filters adapt to user-defined option text (§9.6)", () => {
   });
 
   it("makes the three user-data filters searchable, keeps the status filter plain", () => {
-    // 模型列表可能有几十个长名字——宽度解决不了「找」的问题；消费者/模型/
-    // 上游三个筛选开 searchable（真源 waf-gateway 菜单内检索框模式），
-    // 状态筛选的选项是固定短文案，保持非检索。
+    // The model list can hold dozens of long names — width cannot solve the "find" problem;
+    // the consumer/model/upstream filters enable searchable (the baseline waf-gateway
+    // in-menu search-box pattern), while the status filter's options are fixed short
+    // labels and it stays non-searchable.
     expect(source.match(/\bsearchable\b(?!=)/g)).toHaveLength(3);
     expect(source.match(/searchable=\{false\}/g)).toHaveLength(1);
     expect(source.match(/searchPlaceholder=\{localizedMessage\(isZh, "common\.search"\)\}/g)).toHaveLength(3);

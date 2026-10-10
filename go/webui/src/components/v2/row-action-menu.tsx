@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MoreHorizontal } from "lucide-react";
 
-/* 行内“更多”菜单（真源 .action-menu / .row-menu）：点图标展开小菜单，
-   点菜单项或外部即收起；显隐交给 nyro-ui.css 的 .open 语义，
-   这里只负责开合状态、外点关闭与贴底翻转。 */
+/* Inline "More" menu (baseline .action-menu / .row-menu): clicking the icon opens a small menu,
+   clicking a menu item or outside collapses it; show/hide is left to nyro-ui.css's .open semantics,
+   and this component only handles open/close state, outside-click closing, and bottom-edge flip. */
 export function RowActionMenu({ label, children }: { label: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -19,8 +19,8 @@ export function RowActionMenu({ label, children }: { label: string; children: Re
 
   useEffect(() => {
     if (!open) return;
-    // 真源 toggleRowMenu：展开后量面板底缘，越出视口 12px 安全界即翻到
-    // 图标上方（.row-menu.flip-up，nyro-ui.css）。
+    // Baseline toggleRowMenu: after expanding, measure the panel's bottom edge; if it exceeds
+    // the viewport's 12px safety margin, flip it above the icon (.row-menu.flip-up, nyro-ui.css).
     const panel = rootRef.current?.querySelector(".row-menu");
     if (!panel) return;
     panel.classList.remove("flip-up");
@@ -44,7 +44,7 @@ export function RowActionMenu({ label, children }: { label: string; children: Re
       >
         <MoreHorizontal aria-hidden="true" />
       </button>
-      {/* 菜单项自带 onClick：先执行动作，随后这里收起菜单并挡住行点击。 */}
+      {/* Menu items carry their own onClick: run the action first, then collapse the menu here and block the row click. */}
       <div
         className="row-menu row-menu-wide"
         role="menu"

@@ -53,7 +53,7 @@ describe("connect page", () => {
   it("uses only the nyro baseline vocabulary", () => {
     const html = renderConnectPage();
 
-    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] 与原写法同义，拆字以避开出口 grep 的字面量
+    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] is synonymous with the original spelling, split to avoid the exit grep's literal
     expect(html).not.toMatch(/class="[^"]*\b(space-y|text-slate|bg-slate|bg-green|bg-red|bg-sky|bg-amber|border-red|text-red|text-amber|grid-cols|flex items|font-mono|h-10|w-full|inline-flex|shrink-0|overflow-hidden|rounded-md)-/);
   });
 });

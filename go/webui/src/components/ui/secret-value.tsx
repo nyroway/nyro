@@ -5,9 +5,11 @@ import { useLocale } from "@/lib/i18n";
 import { localizedMessage } from "@/lib/messages";
 import { showToast } from "@/lib/toast";
 
-/* 只读密文展示（go-webui-改造方案.md §9.5 ②）：基线 secret-control 词汇
-   ——密码形态输入框 + 显隐切换（secret-toggle），附内联复制；复制成功经
-   Toast 反馈（§9.5 ③）。api-keys 页的一次性令牌展示复用同一组件。 */
+/* Read-only secret display: the baseline
+   secret-control vocabulary — a password-style input + show/hide toggle
+   (secret-toggle), plus inline copy; a successful copy is acknowledged via
+   Toast (§9.5 ③). The api-keys page's one-time token display reuses the same
+   component. */
 export function SecretValue({ value, ariaLabel }: { value: string; ariaLabel: string }) {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";

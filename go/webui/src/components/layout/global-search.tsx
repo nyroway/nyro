@@ -25,9 +25,9 @@ import { upstreamsApi } from "@/lib/api/upstreams";
 import { useLocale } from "@/lib/i18n";
 import type { Consumer, Route as RouteType, Upstream } from "@/lib/types";
 
-/* 全局检索（真源 new-webui #globalSearch）：不是弹层，而是顶栏搜索框原位
-   展开的下拉面板——label.global-search-field 真输入框，聚焦展开，输入即
-   过滤，命中按组呈现（.search-group / .search-hit），空结果显示 .search-empty。 */
+/* Global search (baseline new-webui #globalSearch): not a popup, but a dropdown panel expanded in
+   place from the top bar search box — label.global-search-field is a real input, focus expands it,
+   typing filters immediately, hits are presented by group (.search-group / .search-hit), and an empty result shows .search-empty. */
 
 type Hit = {
   id: string;
@@ -106,7 +106,7 @@ export function GlobalSearch() {
     ].map((group) => ({ ...group, hits: group.hits.filter(matches) })).filter((group) => group.hits.length > 0);
   }, [query, resources, t]);
 
-  /* 点击面板外关闭（真源 openGlobalSearch/closeGlobalSearch 的等价物）。 */
+  /* Close when clicking outside the panel (the equivalent of the baseline's openGlobalSearch/closeGlobalSearch). */
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       if (open && rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
@@ -115,7 +115,7 @@ export function GlobalSearch() {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
 
-  /* ⌘K / Ctrl+K 聚焦顶栏搜索框。 */
+  /* ⌘K / Ctrl+K focuses the top bar search box. */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {

@@ -178,22 +178,22 @@ describe("dashboard page static render (§9.8)", () => {
     expect(html).toContain('aria-label="Runtime status"');
     expect(html).toContain('class="health-strip"');
     expect(html).toContain("Gateway runtime healthy");
-    // 基线把配置版本放进摘要文字（“配置版本 rev-7 已同步”），不再单列一行
+    // The baseline puts the config version inside the summary text ("config version rev-7 synced") instead of on its own line
     expect(html).toContain("config version rev-7 synced");
     expect(html).toContain('class="health-caps"');
-    // caps 合并：提供商/模型/成功率 + 工作节点/运行中服务 + 密钥
+    // caps merged: providers/models/success rate + worker nodes/running services + API keys
     expect(html.match(/class="health-cap"/g)).toHaveLength(6);
     expect(html).toContain("Worker nodes");
     expect(html).toContain("Running services");
     expect(html).toContain("API Keys");
-    // 基线 metric-strip 无顶行（指标行上方没有横线）
+    // The baseline metric-strip has no top row (no horizontal rule above the metric row)
     expect(html).not.toContain("metric-strip-top");
     expect(html).not.toContain("metric-strip-live");
     expect(html).not.toContain("metric-strip-rev");
     expect(html).not.toContain("metric-strip-health");
     expect(html.match(/class="metric-cell"/g)).toHaveLength(5);
     expect(html.match(/class="metric-hint"/g)).toHaveLength(5);
-    // 24 小时请求是完整千分位数字；Token hint 是真实输入/输出拆分；错误率阈值带 < 号
+    // The 24-hour request count is a full thousands-separated number; the token hint is the real input/output split; the error-rate threshold carries a < sign
     expect(html).toContain("1,234");
     expect(html).toContain("Input 90K · Output 45K");
     expect(html).toContain("Target threshold &lt; 1.00%");
@@ -238,7 +238,7 @@ describe("dashboard page static render (§9.8)", () => {
   it("uses only the nyro baseline vocabulary", () => {
     const html = renderDashboardPage();
 
-    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] 与原写法同义，拆字以避开出口 grep 的字面量
+    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] means the same as the original spelling, split apart to keep the literal out of the exit grep
     expect(html).not.toMatch(/class="[^"]*\b(space-y|text-slate|bg-slate|grid-cols|flex items|font-mono|h-10|w-full|pr-10|min-h-32)-/);
   });
 });

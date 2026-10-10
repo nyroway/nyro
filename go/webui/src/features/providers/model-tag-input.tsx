@@ -67,7 +67,7 @@ export function ModelTagInput({
 
   return (
     <>
-      {/* §9.2 ④：基线 tags-control/tag-input 词汇（键盘/粘贴/IME 逻辑原样保留）。 */}
+      {/* §9.2 ④: baseline tags-control/tag-input vocabulary (keyboard/paste/IME logic kept as-is). */}
       <div className="field-control tags-control model-tag-input" onClick={focusInput}>
         <ul className="model-tag-list" aria-label={listLabel}>
           {value.map((model, index) => (

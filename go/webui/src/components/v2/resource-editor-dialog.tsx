@@ -2,13 +2,13 @@ import type { ReactNode } from "react";
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 
-/* 浮层两态（对齐真源 new-webui）：
-   · 新增/编辑表单 → 右侧抽屉（providers.html #addProviderDrawer、
-     waf-gateway.html #createDrawer：drawer drawer-wide 720px）；
-   · 探测/一次性令牌等结果型浮层 → 居中 modal over-drawer
-     （providers.html #probeModal，可叠在抽屉之上，z-40）。
-   Radix 只负责行为（焦点圈定/ESC/portal/aria），data-state 显隐
-   由 radix-bridge.css 翻译成基线的 .open 语义。 */
+/* Two popup states (aligned with the baseline new-webui):
+   · Add/edit forms → right-side drawer (providers.html #addProviderDrawer,
+     waf-gateway.html #createDrawer: drawer drawer-wide 720px);
+   · Result-style popups such as probe/one-time tokens → centered modal over-drawer
+     (providers.html #probeModal, can stack above the drawer, z-40).
+   Radix only handles behavior (focus trap/ESC/portal/aria); data-state show/hide
+   is translated by radix-bridge.css into the baseline's .open semantics. */
 
 export type ResourceEditorDialogProps = {
   open: boolean;
@@ -23,8 +23,9 @@ export type ResourceEditorDialogProps = {
 type ResourceEditorFrameProps = Omit<ResourceEditorDialogProps, "open" | "className">;
 
 /**
- * 模态三段式骨架（头部/滚动卡体/操作脚）。
- * 直接使用 Radix 原语，使骨架可脱离完整对话框单独静态渲染（测试用）。
+ * Three-section modal skeleton (header/scrollable card body/action footer).
+ * Uses Radix primitives directly so the skeleton can be statically rendered
+ * standalone, detached from the full dialog (for tests).
  */
 export function ResourceEditorFrame({
   title,
@@ -49,7 +50,7 @@ export function ResourceEditorFrame({
 }
 
 /**
- * 结果/探测模态：over-drawer 层级保证能从编辑抽屉之上打开。
+ * Result/probe modal: the over-drawer layer guarantees it can open above the edit drawer.
  */
 export function ResourceEditorDialog({
   open,
@@ -80,8 +81,9 @@ export function ResourceEditorDialog({
 }
 
 /**
- * 抽屉三段式骨架（drawer-header/滚动体/drawer-footer-end 操作脚）。
- * 与 Inspector 同一套 drawer 词汇，可脱离 Portal 单独静态渲染（测试用）。
+ * Three-section drawer skeleton (drawer-header/scrollable body/drawer-footer-end action footer).
+ * Shares the same drawer vocabulary as Inspector; can be statically rendered
+ * standalone without the Portal (for tests).
  */
 export function ResourceEditorDrawerFrame({
   title,
@@ -110,8 +112,8 @@ export function ResourceEditorDrawerFrame({
 }
 
 /**
- * 资源编辑抽屉：新增/编辑表单从右侧滑入（drawer-wide 720px，全高、
- * 卡体独立滚动），遮罩 drawer-mask。
+ * Resource editor drawer: add/edit forms slide in from the right (drawer-wide 720px,
+ * full height, card body scrolls independently), masked by drawer-mask.
  */
 export function ResourceEditorDrawer({
   open,

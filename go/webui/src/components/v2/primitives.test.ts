@@ -52,7 +52,7 @@ describe("RowActionMenu (baseline .action-menu / .row-menu)", () => {
   const menuSource = readFileSync(resolve(__dirname, "row-action-menu.tsx"), "utf8");
 
   it("renders the kebab trigger on data-tip with menu semantics, no native title", () => {
-    // 真源 #hoverTip 固定层读 data-tip（回退 aria-label）；title 会叠原生提示。
+    // The baseline #hoverTip fixed layer reads data-tip (falling back to aria-label); title stacks a native tooltip.
     const html = renderToStaticMarkup(
       createElement(RowActionMenu, {
         label: "更多",
@@ -67,7 +67,7 @@ describe("RowActionMenu (baseline .action-menu / .row-menu)", () => {
   });
 
   it("flips the panel up when it would cross the viewport bottom (toggleRowMenu)", () => {
-    // 真源 toggleRowMenu：展开后量底缘，越出视口 12px 安全界即加 .flip-up。
+    // Baseline toggleRowMenu: after expanding, measure the bottom edge; if it exceeds the viewport's 12px safety margin, add .flip-up.
     expect(menuSource).toContain('panel.classList.remove("flip-up")');
     expect(menuSource).toContain('panel.getBoundingClientRect()');
     expect(menuSource).toContain("box.bottom > window.innerHeight - 12");

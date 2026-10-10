@@ -2,8 +2,8 @@ import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import { localizedMessage, type MessageKey } from "@/lib/messages";
 import { showToast } from "@/lib/toast";
 
-/* 设置页统一保存反馈（改造方案 §9.1 ④ / §8.3）：
-   错误 = 标题 + 后端消息合成一条 toast，成功 = 通用已保存。 */
+/* Unified save feedback for the settings pages (redesign plan §9.1 ④ / §8.3):
+   error = title + backend message combined into a single toast; success = the generic "Saved" message. */
 export function reportSettingsError(
   isZh: boolean,
   titleKey: MessageKey,

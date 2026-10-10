@@ -62,8 +62,8 @@ describe("providers page static render", () => {
     expect(html).toContain('class="resource-summary"');
     expect(html).toContain("toolbar-add");
     expect(html).toContain("Add Provider");
-    // 真源 toolbar-add 纯文字（providers.html:290 无图标）——按钮内只渲染
-    // 一个文本节点，不再叠 lucide Plus（+ 与 12px 文案视觉重心不一致）。
+    // The baseline toolbar-add is text-only (providers.html:290 has no icon) — the button renders
+    // only a single text node, no longer stacking lucide Plus (the + and the 12px label differ in visual weight).
     expect(html).toMatch(/class="button button-primary button-sm toolbar-add"[^>]*>[^<]*<\/button>/);
     expect(source).not.toMatch(/\bPlus\b/);
     expect(html).toContain('tabindex="0"');
@@ -73,7 +73,7 @@ describe("providers page static render", () => {
     expect(html).toContain("cell-actions");
     expect(html).toContain("row-actions");
     expect(html).toContain("action-menu");
-    // 操作 icon 提示走真源 #hoverTip 固定层（data-tip），不再有原生 title
+    // Action icon tooltips go through the baseline #hoverTip fixed layer (data-tip); no more native title
     expect(html).toContain('data-tip="Probe"');
     expect(html).toContain('data-tip="Edit"');
     expect(html).toContain('data-tip="More"');
@@ -85,7 +85,7 @@ describe("providers page static render", () => {
   it("uses only the nyro baseline vocabulary", () => {
     const html = renderToStaticMarkup(shell(createElement(ProvidersPage)));
 
-    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] 与原写法同义，拆字以避开出口 grep 的字面量
+    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] is synonymous with the original spelling, split to avoid the exit grep's literal
     expect(html).not.toMatch(/class="[^"]*\b(space-y|text-slate|bg-slate|grid-cols|flex items|font-mono|h-10|w-full|pr-10|min-h-32)-/);
   });
 
@@ -104,12 +104,13 @@ describe("providers page static render", () => {
 
 describe("toolbar protocol filter width (baseline 148px wraps long protocol names)", () => {
   it("widens only the protocol filter via the app-layer variant class", () => {
-    // 真源 .toolbar-filter 定宽 148px 且 .select-menu 恒等于触发器宽
-    // （left:0;right:0）——"OpenAI Chat Completions"（实测 ~163px）在
-    // 148px 菜单里换两行，选中后触发器也截成省略号。协议筛选（真源没有
-    // 的元素）挂 toolbar-filter-protocol 变体在 nyro-app.css 定宽 210px：
-    // 菜单与触发器两个症状一次修复；状态筛选保持真源 148px（本页恰好
-    // 一处裸 toolbar-filter，防止将来把两个筛选一起加宽）。
+    // The baseline .toolbar-filter is fixed at 148px and .select-menu is always exactly
+    // as wide as the trigger (left:0;right:0) — "OpenAI Chat Completions" (measured ~163px)
+    // wraps into two lines in the 148px menu, and once selected the trigger also truncates
+    // to an ellipsis. The protocol filter (an element the baseline does not have) uses the
+    // toolbar-filter-protocol variant fixed at 210px in nyro-app.css: both symptoms, menu
+    // and trigger, fixed in one go; the status filter keeps the baseline 148px (this page
+    // has exactly one bare toolbar-filter, guarding against widening both filters together).
     expect(source).toContain('controlClassName="toolbar-filter toolbar-filter-protocol"');
     expect(source.match(/controlClassName="toolbar-filter"/g)).toHaveLength(1);
     const css = readFileSync(resolve(__dirname, "../styles/nyro-app.css"), "utf8");
@@ -138,14 +139,14 @@ describe("provider detail drawer body (§9.2 ⑦)", () => {
     expect(html).toContain('class="descriptions"');
     expect(html).toContain("243ms");
     expect(html).toContain('class="health"');
-    // 动作按钮随基线 #providerDrawer 移入抽屉 footer，卡体不再渲染按钮
+    // Action buttons moved into the drawer footer per the baseline #providerDrawer; the card body no longer renders buttons
     expect(html).not.toContain("Test connection");
     expect(html).not.toContain("Edit configuration");
     expect(html).not.toContain("provider-detail-actions");
   });
 
   it("composes the detail drawer footer like the baseline (start: delete/import, end: close/test/edit)", () => {
-    // 基线 #providerDrawer 的 footer：左 text 系删除/导入，右 关闭/测试/编辑配置
+    // Baseline #providerDrawer footer: text-family delete/import on the left, close/test/edit-config on the right
     expect(source).toContain('className="drawer-footer-start"');
     expect(source).toContain("button-text button-danger-text");
     expect(source).toContain('className="drawer-footer-end"');
@@ -204,8 +205,8 @@ describe("provider create/edit form sections (§9.2 ②③④)", () => {
   });
 
   it("pairs name+protocol and base+proxy per row in both drawers (baseline form-grid)", () => {
-    // 基线 #addProviderDrawer 的 form-grid（1fr 1fr）：名称+协议一行、
-    // Base URL+代理地址一行——四个字段都是半宽，新增/编辑两个抽屉一致。
+    // The baseline #addProviderDrawer form-grid (1fr 1fr): name+protocol on one row,
+    // Base URL+proxy URL on one row — all four fields are half-width, consistent across the add/edit drawers.
     expect(source.match(/v2\.providers\.name"\)\}\s*\n\s*required\s*\n\s*fullWidth=\{false\}/g)).toHaveLength(2);
     expect(source.match(/v2\.providers\.protocol"\)\}\s*\n\s*required\s*\n\s*fullWidth=\{false\}/g)).toHaveLength(2);
     expect(source.match(/label="Base URL"\s*\n\s*required\s*\n\s*fullWidth=\{false\}/g)).toHaveLength(2);
@@ -319,10 +320,12 @@ describe("SSE handlers keep their cancellation and completion semantics", () => 
 
 describe("deep-link focus effect (React #185 regression)", () => {
   it("keeps query fallback identities stable so the effect cannot churn mid-navigation", () => {
-    // 回归：全局检索命中点击会预热 providers 缓存后跳转 /providers?focus=…，此时
-    // presets 仍在途中——解构默认值 = [] 每渲染刷新数组，令依赖它的 providerPresets/
-    // startEdit/深链 effect 反复重跑，与 navigate 的提交竞态成环，触发 React #185
-    //（最大更新深度，页面整树卸载）。模块级哨兵数组锁死回退标识。
+    // Regression: clicking a global-search hit warms the providers cache then navigates to
+    // /providers?focus=…, at which point presets are still in flight — a destructuring default
+    // of = [] refreshes the array every render, so the providerPresets/startEdit/deep-link
+    // effects that depend on it re-run endlessly, forming a race loop with navigate's commit
+    // and triggering React #185 (max update depth, the whole page tree unmounts). A module-level
+    // sentinel array pins the fallback identity.
     expect(source).toContain("const NO_UPSTREAMS: Upstream[] = []");
     expect(source).toContain("const NO_PRESET_DTOS: ProviderPresetDTO[] = []");
     expect(source).toContain("data: providers = NO_UPSTREAMS");
@@ -330,8 +333,8 @@ describe("deep-link focus effect (React #185 regression)", () => {
   });
 
   it("handles each deep link exactly once and re-arms after the param is stripped", () => {
-    // 同一深链在 navigate(replace) 提交前可能因依赖结算再次触发——handled ref 保证
-    // 只执行一次；参数消失后复位，允许用户再次点击同一命中。
+    // The same deep link may fire again from dependency settling before navigate(replace) commits — the
+    // handled ref guarantees it runs exactly once; it re-arms once the param disappears, letting the user click the same hit again.
     expect(source).toContain("deepLinkHandledRef");
     expect(source).toContain("deepLinkHandledRef.current = linkKey");
     expect(source).toContain("deepLinkHandledRef.current = null");
@@ -340,9 +343,10 @@ describe("deep-link focus effect (React #185 regression)", () => {
 
 describe("model discovery help hint alignment (baseline field-label structure)", () => {
   it("keeps the help hint a direct child of the discover label in both drawers", () => {
-    // "?" 帮助钮必须是 .field-label.discover-label 的直接子元素（flex + gap
-    // 居中，同基线 waf-gateway 的 label 结构）。包进文本 span 会掉进行内
-    // 基线对齐 → icon 错位；新增/编辑两个抽屉都要守住这个结构。
+    // The "?" help button must be a direct child of .field-label.discover-label (flex + gap
+    // centering, same label structure as the baseline waf-gateway). Wrapping it in a text
+    // span drops it into inline baseline alignment → icon misalignment; both the add and
+    // edit drawers must hold this structure.
     const direct = source.match(/modelDiscovery2"\)\}\s*<\/span>\s*<NyroHelpHint/g) ?? [];
     const inline = source.match(/modelDiscovery2"\)\}\s*<NyroHelpHint/g) ?? [];
     expect(direct.length).toBe(2);
@@ -352,8 +356,8 @@ describe("model discovery help hint alignment (baseline field-label structure)",
 
 describe("probe action uses the baseline heartbeat icon (§v2 providers)", () => {
   it("renders the baseline #test EKG path instead of the lucide Zap bolt", () => {
-    // 真源 providers.html 的探测按钮用 #test「心跳」symbol（EKG 折线、
-    // 1.7 描边、圆角连接）；闪电是 lucide Zap，非基线形态。
+    // The baseline providers.html probe button uses the #test "Heartbeat" symbol (EKG polyline,
+    // 1.7 stroke, round joins); the bolt is lucide Zap, not the baseline form.
     expect(source).toContain("M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36");
     expect(source).toContain("strokeWidth={1.7}");
     expect(source).toContain("<HeartbeatIcon aria-hidden=\"true\" />");

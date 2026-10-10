@@ -39,8 +39,8 @@ const DEFAULT_MAX_TOKENS = "1024";
 // Fixed local base_url used in samples when gateway.public_url is not set.
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:19530";
 
-/* §9.5 ①：代码块降级为纯 pre + token 着色（tokenizeCode），不再走
-   react-syntax-highlighter。 */
+/* §9.5 ①: the code block is downgraded to a plain pre + token coloring (tokenizeCode),
+   no longer going through react-syntax-highlighter. */
 function CodeTokens({ code, language }: { code: string; language: SyntaxLanguage }) {
   return (
     <>
@@ -131,7 +131,7 @@ export default function ConnectPage() {
   const enabledRoutes = useMemo(() => routes.filter((route) => route.enabled), [routes]);
   const selectedProtocolOption = CODE_PROTOCOLS.find((option) => option.id === selectedProtocol) ?? CODE_PROTOCOLS[0];
 
-  // §9.5 ③：复制反馈统一走 Toast（端点 / 密钥 / 代码）。
+  // §9.5 ③: copy feedback goes through the Toast uniformly (endpoint / key / code).
   async function copyText(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -143,7 +143,7 @@ export default function ConnectPage() {
 
   return (
     <PageLayout header={<PageHeader title={t("page.connect.title")} description={t("page.connect.subtitle")} />}>
-      {/* §9.5 ②：网关端点 + 令牌展示卡（descriptions + secret-control）。 */}
+      {/* §9.5 ②: gateway endpoint + token display card (descriptions + secret-control). */}
       <section className="card">
         <div className="card-body">
           <dl className="descriptions">
@@ -187,7 +187,7 @@ export default function ConnectPage() {
             </div>
           </header>
           <div className="card-body connect-form">
-            {/* §9.5 目标：协议切换 tabs。 */}
+            {/* §9.5 goal: protocol-switching tabs. */}
             <div className="field">
               <span className="field-label">{localizedMessage(isZh, "v2.connect.ingressProtocol")}</span>
               <div
@@ -285,7 +285,7 @@ export default function ConnectPage() {
           </div>
         </section>
 
-        {/* §9.5 ①：code-output / code-output-bar / code-copy 三件套。 */}
+        {/* §9.5 ①: the code-output / code-output-bar / code-copy trio. */}
         <section className="code-output connect-code">
           <div className="code-output-bar">
             <div

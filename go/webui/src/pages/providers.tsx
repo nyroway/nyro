@@ -53,8 +53,8 @@ import { normalizeModelTags } from "@/features/providers/model-tags";
 import { filterProviders, type ProviderFilters } from "@/features/providers/provider-view-model";
 import { localizedMessage, type MessageKey } from "@/lib/messages";
 
-/* 真源 #test「心跳」图标（providers.html symbol）：探测动作的 EKG 折线，
-   替代此前的 lucide 闪电——path/描边(1.7)/圆角连接与基线逐项一致。 */
+/* The baseline #test "Heartbeat" icon (providers.html symbol): the EKG polyline
+   for the probe action, replacing the previous lucide bolt — path/stroke(1.7)/round joins match the baseline item by item. */
 function HeartbeatIcon({ ...props }: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
@@ -250,8 +250,8 @@ type ProviderDetailContentProps = {
   result?: TestResult;
 };
 
-/* 详情抽屉的主体（§9.2 ⑦，真源 #providerDrawer）：基线 descriptions 键值栅格；
-   动作按钮一律放抽屉 footer（drawer-footer-start/end），不留在卡体里。 */
+/* The detail drawer's body (§9.2 ⑦, baseline #providerDrawer): the baseline descriptions key-value grid;
+   action buttons always go in the drawer footer (drawer-footer-start/end), never left in the card body. */
 export function ProviderDetailContent({ provider, result }: ProviderDetailContentProps) {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
@@ -304,8 +304,8 @@ export function ProviderDetailContent({ provider, result }: ProviderDetailConten
   );
 }
 
-/* 创建/编辑表单的三段骨架（§9.2 ②③④）：基线 form-section/form-grid。
-   add-provider-form 外壳让基线的紧凑 tags-control 等表单内规则生效。 */
+/* The three-section skeleton of the create/edit form (§9.2 ②③④): baseline form-section/form-grid.
+   The add-provider-form shell lets in-form baseline rules such as the compact tags-control take effect. */
 export function ProviderFormSections({
   connection,
   credentials,
@@ -550,7 +550,7 @@ function credentialFieldLabel(field: ProviderCredentialField): string {
 
 // CredentialFieldInput renders one input for a provider credential field,
 // keyed by the Go backend's field `type` ("string" | "secret" | "enum") —
-// §9.2 ③：基线 form-grid + secret-control/secret-toggle 词汇。Secret fields
+// §9.2 ③: baseline form-grid + secret-control/secret-toggle vocabulary. Secret fields
 // whose name looks like a JSON blob (e.g. gcp-vertex's
 // `service_account_json`) get a multi-line textarea instead of a single-line
 // password input, since pasting a service-account JSON document into a
@@ -656,9 +656,9 @@ type TestLogEntry = {
   message: string;
 };
 
-/* SSE 流式帧的步进视图（§9.2 ⑤）：waf-gateway 的 probe-steps 模式。
-   每步 idle（空心圆）/running（旋转）/passed（对勾）/failed（叉），
-   meta 显示等待/时延/数量/错误。 */
+/* The step view driven by SSE streaming frames (§9.2 ⑤): the probe-steps pattern from waf-gateway.
+   Each step is idle (hollow circle)/running (spinning)/passed (checkmark)/failed (cross),
+   and meta shows waiting/latency/count/error. */
 export type ProbeStepStatus = "idle" | "running" | "passed" | "failed";
 
 export type ProbeStepView = {
@@ -694,7 +694,7 @@ export function ProbeSteps({ steps, waitingLabel }: { steps: ProbeStepView[]; wa
   );
 }
 
-/* 测试/导入全量日志（§9.2 ⑤）：基线 code-output 卡 + 每行级别着色。 */
+/* Full test/import log (§9.2 ⑤): the baseline code-output card + per-line level coloring. */
 export function ProviderTestLog({
   logs,
   emptyLabel,
@@ -725,7 +725,7 @@ export function ProviderTestLog({
   );
 }
 
-/* 路由导入预览（§9.2 ⑥）：汇总指标 + 逐模型动作表（创建/跳过）。 */
+/* Route import preview (§9.2 ⑥): summary metrics + a per-model action table (create/skip). */
 export function RouteImportSummary({ preview }: { preview: RouteImportPreview }) {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
@@ -771,13 +771,13 @@ export function RouteImportSummary({ preview }: { preview: RouteImportPreview })
   );
 }
 
-// SSE 帧驱动的步进状态：健康检查 4 步 / 路由导入 2 阶段，同一份状态表。
+// Step state driven by SSE frames: 4 health-check steps / 2 route-import stages, one shared state table.
 type ProbeStepState = { status: ProbeStepStatus; meta?: string };
 
 const HEALTH_CHECK_KEYS: Exclude<ProviderHealthEvent["check"], undefined>[] = ["config", "credentials", "models", "model_request"];
 const ROUTE_STAGE_KEYS: Exclude<RouteImportEvent["stage"], undefined>[] = ["models", "creating"];
 
-// 路由导入的逐模型结果行（§9.2 ⑥ 的导入结果表）。
+// Per-model result rows for route import (the import result table of §9.2 ⑥).
 type RouteResultRow = {
   model: string;
   status: "created" | "skipped" | "failed";
@@ -954,8 +954,8 @@ export default function ProvidersPage() {
     setProbeSteps((prev) => ({ ...prev, [key]: state }));
   }
 
-  // complete(success) 意味着整条流水线通过：未收到独立事件的步骤一并置为
-  // passed（failed 的保持失败，如实反映）。
+  // complete(success) means the whole pipeline passed: steps that received no
+  // individual event are set to passed together (failed ones stay failed, as they were).
   function promoteProbeSteps(keys: string[]) {
     setProbeSteps((prev) => {
       const next = { ...prev };
@@ -1517,7 +1517,7 @@ export default function ProvidersPage() {
     });
   }, [isLoading, providers]);
 
-  // 步进视图：健康模式 4 检查项 / 导入模式 2 阶段。
+  // Step view: 4 check items in health mode / 2 stages in import mode.
   function probeStepView(key: string, label: string): ProbeStepView {
     const state = probeSteps[key];
     return { key, label, status: state?.status ?? "idle", meta: state?.meta };
@@ -1652,7 +1652,7 @@ export default function ProvidersPage() {
         />
       )}
     >
-      {/* 统计条（真源 .resource-summary）：卡外内联数字条，新增按钮移入工具条。 */}
+      {/* Stats bar (baseline .resource-summary): an inline number strip outside the cards; the Add button moved into the toolbar. */}
       <div className="resource-summary">
         <span><strong>{providers.length}</strong><span>{localizedMessage(isZh, "v2.providers.summaryProviders")}</span></span>
         <span><strong>{providers.filter((provider) => provider.enabled).length}</strong><span>{localizedMessage(isZh, "v2.providers.summaryEnabled")}</span></span>
@@ -1778,9 +1778,9 @@ export default function ProvidersPage() {
           discovery={(
             <div className="field full">
               <div className="field-label discover-label">
-                {/* "?" 帮助钮必须是 field-label 的直接子元素（flex + gap 居中对齐，
-                    同基线 waf-gateway 的 label 结构）；包进文本 span 会掉进行内
-                    基线对齐导致 icon 错位。 */}
+                {/* The "?" help button must be a direct child of field-label (flex + gap center
+                    alignment, same label structure as the baseline waf-gateway); wrapping it in a
+                    text span drops it into inline baseline alignment and misaligns the icon. */}
                 <span>
                   <span className="required" aria-hidden="true">*</span>
                   {localizedMessage(isZh, "v2.providers.modelDiscovery2")}
@@ -1942,7 +1942,7 @@ export default function ProvidersPage() {
         onClose={() => setSelectedProviderId(null)}
         footer={selectedProvider ? (
           <>
-            {/* 基线 #providerDrawer footer：左侧删除/导入（text 系），右侧关闭/测试/编辑配置。 */}
+            {/* Baseline #providerDrawer footer: delete/import on the left (the text family), close/test/edit-config on the right. */}
             <div className="drawer-footer-start">
               <button
                 type="button"
@@ -2102,7 +2102,7 @@ export default function ProvidersPage() {
               discovery={(
                 <div className="field full">
                   <div className="field-label discover-label">
-                    {/* 同上：帮助钮作为 field-label 直接子元素参与 flex 对齐。 */}
+                    {/* Same as above: the help button participates in flex alignment as a direct child of field-label. */}
                     <span>
                       <span className="required" aria-hidden="true">*</span>
                       {localizedMessage(isZh, "v2.providers.modelDiscovery2")}
@@ -2144,7 +2144,7 @@ export default function ProvidersPage() {
         );
       })}
 
-      {/* SSE 测试/导入进度（§9.2 ⑤⑥）：步进面板 + 导入结果表 + 全量日志。 */}
+      {/* SSE test/import progress (§9.2 ⑤⑥): step panel + import result table + full log. */}
       <ResourceEditorDialog
         open={testDialogOpen}
         title={

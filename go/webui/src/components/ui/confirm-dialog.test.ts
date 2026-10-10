@@ -7,9 +7,11 @@ const providersSource = readFileSync(resolve(__dirname, "../../pages/providers.t
 
 describe("ConfirmDialog confirm button variant", () => {
   it("lets confirmClassName replace (not stack on) the default danger variant", () => {
-    // 回归：旧写法 `button button-danger${confirmClassName ? ...}` 把 danger 与
-    // 传入类叠加到同一按钮，两个背景类谁在样式表靠后谁生效——导入模型弹层
-    // 传 button-primary 时确认按钮仍是红色。改为整体替换语义。
+    // Regression: the old form `button button-danger${confirmClassName ? ...}`
+    // stacked danger and the passed-in class on the same button; with two
+    // background classes, whichever comes later in the stylesheet wins — when
+    // the import-models dialog passed button-primary the confirm button stayed
+    // red. Changed to full-replacement semantics.
     expect(source).toContain('className={`button ${confirmClassName ?? "button-danger"}`}');
     expect(source).not.toMatch(/button-danger\$\{confirmClassName/);
   });
@@ -20,7 +22,7 @@ describe("ConfirmDialog confirm button variant", () => {
   });
 
   it("renders the import-models confirm as primary blue via confirmClassName", () => {
-    // 用户口径：确认导入＝蓝色，与新增提供商按钮同色（button-primary）。
+    // User expectation: confirm import = blue, same color as the add-provider button (button-primary).
     expect(providersSource).toContain('confirmClassName="button-primary"');
   });
 });
