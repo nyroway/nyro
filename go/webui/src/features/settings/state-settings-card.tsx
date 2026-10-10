@@ -91,7 +91,7 @@ function StateSettingsForm({
   const invalid = validateStateSettings(draft) !== null;
   const dirty = !sameStateSettings(draft, baseline);
   const saveMutation = useMutation({
-    // state.type/state.url 必须同批提交（PUT /settings，§8.4）
+    // state.type/state.url must be submitted in the same batch (PUT /settings, §8.4)
     mutationFn: (values: Record<string, string>) => settingsApi.setBulk(values),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["setting", STATE_TYPE_KEY] });

@@ -200,7 +200,7 @@ export interface ProviderPresetDTO {
 
 export interface RequestLog {
   id: string;
-  /** Unix 毫秒时间戳 */
+  /** Unix timestamp in milliseconds */
   created_at: number;
 	consumer_id?: string;
 	consumer_key_name?: string;

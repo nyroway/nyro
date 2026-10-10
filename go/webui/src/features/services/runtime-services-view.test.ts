@@ -54,7 +54,7 @@ describe("RuntimeServicesView", () => {
   it("uses only the nyro baseline vocabulary", () => {
     const html = renderServices();
 
-    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] 与原写法同义，拆字以避开出口 grep 的字面量
+    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] means the same as the original spelling, split up to avoid the literal in the exit grep
     expect(html).not.toMatch(/class="[^"]*\b(text-slate|bg-slate|border-red|text-red|text-amber|grid-cols|flex items|space-y)-/);
   });
 });

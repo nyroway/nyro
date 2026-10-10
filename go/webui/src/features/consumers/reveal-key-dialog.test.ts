@@ -7,9 +7,9 @@ import { RevealKeyDialogBody } from "./reveal-key-dialog";
 
 const TOKEN = "nyro-live-token-abc123";
 
-/* §9.4 注意：raw token 仅创建响应可见。这里静态渲染对话框 body，锁定
-   “密码形态遮罩 + alert-warning 仅此一次警示 + 内联复制”的呈现，
-   以及 token 不以其他明文形态泄漏到 DOM。 */
+/* §9.4 note: the raw token is visible only in the creation response. This test statically renders the dialog body to lock in
+   the "password-style masking + alert-warning shown-only-once notice + inline copy" presentation,
+   and to ensure the token does not leak into the DOM in any other plaintext form. */
 
 function renderBody() {
   vi.stubGlobal("window", {

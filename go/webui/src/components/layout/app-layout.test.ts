@@ -70,7 +70,7 @@ describe("application shell", () => {
     const github = html.indexOf("GitHub");
     const documentation = html.indexOf("Documentation");
 
-    // nyro 壳设计：版本随品牌锁定在侧栏顶部，外链收在侧栏底部。
+    // Nyro shell design: the version is locked with the brand at the top of the sidebar, and external links are kept at the bottom of the sidebar.
     expect(brand).toBeGreaterThanOrEqual(0);
     expect(versionLabel).toBeGreaterThan(brand);
     expect(version).toBeGreaterThan(versionLabel);
@@ -93,7 +93,7 @@ describe("application shell", () => {
   it("groups the sidebar like the baseline (overview | upstream | runtime | divider | settings) with icons", () => {
     const html = renderAppLayout("zh-CN");
 
-    // 基线分组（真源 providers.html .nav）：概览（无组名）→ 上游 → 运行 → nav-divider → 设置（无组名）
+    // Baseline grouping (baseline providers.html .nav): Overview (no group name) → Upstream → Runtime → nav-divider → Settings (no group name)
     const overview = html.indexOf("<span>概览</span>");
     const upstream = html.indexOf(">上游</p>");
     const runtime = html.indexOf(">运行</p>");
@@ -105,9 +105,9 @@ describe("application shell", () => {
     expect(runtime).toBeGreaterThan(upstream);
     expect(divider).toBeGreaterThan(runtime);
     expect(settings).toBeGreaterThan(divider);
-    // 每个导航项都带基线 nav-icon（lucide 会附加 lucide-* 库标记类）
+    // Every nav item carries the baseline nav-icon (lucide appends lucide-* library marker classes)
     expect(html).toMatch(/class="[^"]*\bnav-icon\b/);
-    // 旧四组分组（配置/访问/可观测/系统）不再出现
+    // The old four-group layout (Config/Access/Observability/System) no longer appears
     expect(html).not.toContain(">配置</p>");
     expect(html).not.toContain(">访问</p>");
     expect(html).not.toContain(">可观测</p>");
@@ -115,8 +115,8 @@ describe("application shell", () => {
   });
 
   it("keeps the topbar from shrinking inside the fixed-shell flex column (live-verified)", () => {
-    // 固定壳列里 topbar 是 flex 子项，默认 flex-shrink:1 会在内容超高时被压扁
-    // （基线 56px → 39.75px，与侧栏 brand 错位）——必须锁死不收缩。
+    // In the fixed shell column the topbar is a flex child, and the default flex-shrink:1 squashes it when content is too tall
+    // (baseline 56px → 39.75px, misaligned with the sidebar brand) — it must be locked so it never shrinks.
     expect(appCss).toMatch(/\.app-shell \.main > \.topbar\s*\{[^}]*flex:\s*0 0 auto/s);
   });
 
@@ -128,12 +128,12 @@ describe("application shell", () => {
   });
 
   it("mirrors data-theme onto <body> so baseline body-prefixed dark rules apply", () => {
-    // 真源的暗色开关规则写在 body[data-theme="dark"] 前缀上（nyro-ui.css 里
-    // 仅有的 4 条 body 前缀规则）；data-theme 只挂 <html> 时它们全部失配，
-    // 暗色下开关仍呈亮色（ON 态白轨白钮、滑块不可见）。壳须同步镜像到 <body>。
+    // The baseline's dark-mode switch rules are written with a body[data-theme="dark"] prefix (the only 4
+    // body-prefixed rules in nyro-ui.css); with data-theme set on <html> alone they all fail to match, so
+    // in dark mode the switch still renders light (white track and knob when ON, slider invisible). The shell must mirror it onto <body>.
     expect(shellSource).toContain("document.documentElement.dataset.theme = theme");
     expect(shellSource).toContain("document.body.dataset.theme = theme");
-    // 同步副本必须保有这些真源规则（挂载点修复依赖它们，防手工漂移）
+    // The synced copy must keep these baseline rules (the mount-point fix depends on them; guards against manual drift)
     expect(uiCss).toContain('body[data-theme="dark"] .switch-control.on { background: #ffffff; }');
     expect(uiCss).toContain('body[data-theme="dark"] .switch-control.on::after { background: #000000; }');
   });
@@ -153,20 +153,20 @@ describe("application shell API migration (Phase 3)", () => {
 
 describe("action-icon hover tips follow the baseline hover-tip layer", () => {
   it("mounts the body-level #hoverTip fixed layer and drives it by delegation", () => {
-    // 真源 providers.html：.icon-action 的提示走 body 级 .hover-tip 固定层
-    // （syncActionTips + 委托 mouseover），不用原生 title。
+    // Baseline providers.html: .icon-action tips go through the body-level .hover-tip fixed layer
+    // (syncActionTips + delegated mouseover), not the native title.
     expect(shellSource).toContain('<div className="hover-tip" id="hoverTip" hidden />');
     expect(shellSource).toContain('closest?.(".icon-action")');
     expect(shellSource).toContain('button.dataset.tip || button.getAttribute("aria-label")');
     expect(shellSource).toContain('box.left + box.width / 2');
     expect(shellSource).toContain('if (!next || !next.closest?.(".icon-action")) tip.hidden = true;');
-    // 固定层样式来自同步的 nyro-ui.css（fixed + 上浮 transform），锁依赖防漂移
+    // The fixed layer's styles come from the synced nyro-ui.css (fixed + upward transform); lock the dependency against drift
     expect(uiCss).toMatch(/\.hover-tip\s*\{[^}]*position:\s*fixed/s);
     expect(uiCss).toMatch(/\.hover-tip\s*\{[^}]*transform:\s*translate\(-50%,\s*calc\(-100% - 6px\)\)/s);
   });
 
   it("keeps every icon-action button on data-tip, never the native title", () => {
-    // 真源终态：aria-label + data-tip、无 title（原生提示会和固定层叠加）。
+    // Baseline end state: aria-label + data-tip, no title (native tips would stack on top of the fixed layer).
     const files = [
       "pages/providers.tsx",
       "pages/models-v2.tsx",
@@ -175,14 +175,14 @@ describe("action-icon hover tips follow the baseline hover-tip layer", () => {
     ];
     for (const file of files) {
       const src = readFileSync(resolve(__dirname, "../../" + file), "utf8");
-      // 每个按钮标签开头（到首个 ">" 前）都带 data-tip 且无 title
+      // The head of every button tag (up to the first ">") carries data-tip and no title
       const tags = src.match(/<button[^>]*icon-action[^>]*/gs) ?? [];
       expect(tags.length, `${file} has icon-action buttons`).toBeGreaterThan(0);
       for (const tag of tags) {
         expect(tag.includes("data-tip="), `${file}: ${tag.slice(0, 80)}…`).toBe(true);
         expect(tag.includes("title="), `${file}: ${tag.slice(0, 80)}…`).toBe(false);
       }
-      // 总量核对：data-tip 数不少于 icon-action 数（防漏改新按钮）
+      // Total count check: the number of data-tip is no less than the number of icon-action (guards against missing newly added buttons)
       const icons = (src.match(/icon-action/g) ?? []).length;
       const tips = (src.match(/data-tip=/g) ?? []).length;
       expect(tips, file).toBeGreaterThanOrEqual(icons);
@@ -192,17 +192,17 @@ describe("action-icon hover tips follow the baseline hover-tip layer", () => {
 
 describe("row menus overflow the list card without scrollbars (baseline)", () => {
   it("lets page-level table cards overflow like .content > .table-card in the baseline", () => {
-    // 真源 nyro-ui.css 的 .content > .table-card { overflow: visible } 让行内
-    // 菜单自由溢出卡缘；app 的 PageLayout 多一层 .content-body，等价改写。
+    // The baseline nyro-ui.css rule .content > .table-card { overflow: visible } lets row menus
+    // overflow the card edge freely; the app's PageLayout adds a .content-body layer, so this is the equivalent rewrite.
     expect(appCss).toMatch(/\.content-body > \.table-card\s*\{[^}]*overflow:\s*visible/s);
   });
 
   it("scopes the log-table horizontal scroll so menus never grow scrollHeight", () => {
-    // overflow-x:auto 会把 overflow-y:visible 计算成 auto——全表生效时
-    // “更多”菜单下探即撑出竖向滚动条；只能挂在 .log-table 上。
+    // overflow-x:auto computes overflow-y:visible as auto — applied to the whole
+    // table, the "More" menu reaching down would stretch out a vertical scrollbar; it can only hang on .log-table.
     expect(appCss).toMatch(/\.table-card\.log-table \.table-scroll\s*\{[^}]*overflow-x:\s*auto/s);
     expect(appCss).not.toMatch(/^\.table-card \.table-scroll\s*\{/m);
-    // 翻转类与行内菜单定位来自同步的 nyro-ui.css，锁依赖
+    // The flip class and row-menu positioning come from the synced nyro-ui.css; lock the dependency
     expect(uiCss).toMatch(/\.row-menu\.flip-up\s*\{[^}]*bottom:\s*calc\(100% \+ 4px\)/s);
     expect(uiCss).toMatch(/\.action-menu\.open \.row-menu\s*\{[^}]*display:\s*flex/s);
   });
@@ -210,9 +210,9 @@ describe("row menus overflow the list card without scrollbars (baseline)", () =>
 
 describe("toolbar add buttons follow the baseline text-only form", () => {
   it("renders toolbar-add without icons on every list page (providers.html:290)", () => {
-    // 真源的 toolbar-add 是纯文字按钮（<span>新增提供商</span>，三处出现均无
-    // 图标）；app 曾自行叠加 lucide Plus——16px/描边 2 的 + 与 12px 文案的
-    // 视觉重心不一致，正是“+号与文案不在同一行”的观感来源。统一还原纯文字。
+    // The baseline's toolbar-add is a text-only button (<span>Add provider</span>, all three occurrences carry
+    // no icon); the app had layered lucide Plus on top — the 16px/stroke-2 + and the 12px label have
+    // mismatched visual weight, which is exactly the source of the "+ and label not on one line" look. Uniformly restore text-only.
     const files = [
       "pages/providers.tsx",
       "pages/models-v2.tsx",

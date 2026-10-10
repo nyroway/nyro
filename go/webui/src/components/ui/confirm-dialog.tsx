@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 
 /**
- * 确认/警示对话框：Radix 负责行为（焦点圈定/ESC/portal/aria），
- * 外观走 nyro 的 modal 词汇（go-webui-改造方案.md §6.3 / §9.6④）。
+ * Confirm/alert dialog: Radix owns the behavior (focus trapping/ESC/portal/aria),
+ * the look follows nyro's modal vocabulary.
  */
 type ConfirmDialogProps = {
   open: boolean;
@@ -57,9 +57,11 @@ function ConfirmDialog({
             )}
             <button
               type="button"
-              /* confirmClassName 是完整类名（如 "button-primary"）：整体替换默认的
-                 button-danger，而非叠加——叠加会让两个背景类同时落在按钮上，
-                 red/蓝谁后定义谁生效（导入模型弹层的确认按钮因此一直是红色）。 */
+              /* confirmClassName is a full class name (e.g. "button-primary"): it
+                 replaces the default button-danger entirely rather than stacking —
+                 stacking would leave two background classes on the button at once,
+                 and whichever of red/blue is defined later wins (the import-models
+                 dialog's confirm button was therefore always red). */
               className={`button ${confirmClassName ?? "button-danger"}`}
               onClick={onConfirm}
             >

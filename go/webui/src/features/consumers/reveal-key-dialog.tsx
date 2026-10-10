@@ -7,8 +7,8 @@ import { Notice } from "@/components/v2/notice";
 import { ResourceEditorDialog } from "@/components/v2/resource-editor-dialog";
 import type { RevealedKey } from "./consumer-form";
 
-/* §9.4 注意（安全）：创建成功返回的 raw token 只在创建响应里出现一次。
-   对话框 body 单独导出，使其可脱离 Radix Portal 做静态渲染测试。 */
+/* §9.4 note (security): the raw token returned on successful creation appears exactly once, in the creation response.
+   The dialog body is exported separately so it can be statically rendered for tests without the Radix Portal. */
 
 export function RevealKeyDialogBody({ revealed }: { revealed: RevealedKey }) {
   const { locale } = useLocale();
@@ -24,9 +24,9 @@ export function RevealKeyDialogBody({ revealed }: { revealed: RevealedKey }) {
 }
 
 /**
- * 一次性令牌展示（§9.4）：modal 内 secret-control + 复制按钮 + “仅此一次”
- * alert-warning 警示。`revealed` 为 null 时对话框关闭——调用方必须在关闭时
- * 清空该状态，保证“关闭即不可再取”。
+ * One-time token reveal (§9.4): secret-control + copy button + "shown only once"
+ * alert-warning notice inside the modal. When `revealed` is null the dialog is closed — the caller must
+ * clear that state on close, guaranteeing "once closed, it can never be fetched again".
  */
 export function RevealKeyDialog({
   revealed,

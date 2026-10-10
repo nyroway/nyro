@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import { messageCatalogs, type MessageKey } from "./messages";
 
-/* §12 双语言验收：t() 裸键渲染检查。
-   类型系统已保证键存在（MessageKey + 零强转），这里补两层兜底：
-   ① 词表本身：两个语言包的值非空、且没有把键名当值写进去；
-   ② 调用点：源码里所有字面量键（t()/localizedMessage()/translate()）
-      都真实存在于两个语言包——防止“加了键但只加了一个语言”这类漏网。 */
+/* §12 bilingual acceptance: bare-key rendering checks for t().
+   The type system already guarantees keys exist (MessageKey + zero casts); this test adds two safety nets:
+   ① the catalogs themselves: values in both language packs are non-empty, and no key was written in as its own value;
+   ② call sites: every literal key in the source (t()/localizedMessage()/translate())
+      really exists in both language packs — guarding against "added the key but only to one language" slips. */
 
 const enKeys = Object.keys(messageCatalogs["en-US"]) as MessageKey[];
 const zhKeys = Object.keys(messageCatalogs["zh-CN"]) as MessageKey[];
@@ -62,7 +62,7 @@ describe("literal key call sites (both locales)", () => {
   }
 
   it("finds a meaningful number of literal call sites", () => {
-    // 防扫描正则本身失效：调用点数量级必须对得上（10 页 + 壳层 + 命令面板）。
+    // Guard against the scan regex itself going stale: the call-site count must be in the right ballpark (10 pages + the shell + the command palette).
     expect(usedKeys.size).toBeGreaterThan(200);
   });
 

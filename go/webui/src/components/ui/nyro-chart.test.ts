@@ -8,9 +8,11 @@ import { NyroChart, buildTicks, chartTooltipLayout, monotonePath } from "./nyro-
 
 const source = readFileSync(resolve(__dirname, "nyro-chart.tsx"), "utf8");
 
-/* NyroChart 是 waf-gateway.html 754–880 行图表算法的 TS 化（§7.4 / D5）：
-   几何走纯函数（可精确断言），组件静态渲染只验支架——路径绘制依赖
-   ResizeObserver 量得的容器尺寸，仅浏览器环境发生。 */
+/* NyroChart is the TS-ification of the chart algorithm at waf-gateway.html
+   lines 754–880 (§7.4 / D5): geometry goes through pure functions (exactly
+   assertable), and the component's static render only verifies the scaffold —
+   path drawing depends on the container size measured by ResizeObserver and
+   only happens in a browser environment. */
 
 describe("monotonePath (Fritsch–Carlson monotone cubic)", () => {
   it("interpolates a straight segment with its own tangent", () => {
@@ -51,8 +53,9 @@ describe("buildTicks", () => {
 });
 
 describe("chartTooltipLayout (edge-aware tooltip anchoring)", () => {
-  // 真源几何：.chart-wrap { padding: 16px 20px 12px 12px }，.chart 高 218px →
-  // wrap ≈ 600×246；弹层 min-width 128px、三行文案 ≈ 72px 高。
+  // Baseline geometry: .chart-wrap { padding: 16px 20px 12px 12px }, .chart
+  // height 218px → wrap ≈ 600×246; popup min-width 128px, three lines of copy
+  // ≈ 72px tall.
   const wrap = { width: 600, height: 246, padL: 12, padT: 16 };
   const tip = { w: 128, h: 72 };
 
@@ -65,7 +68,7 @@ describe("chartTooltipLayout (edge-aware tooltip anchoring)", () => {
   });
 
   it("slides the tooltip inward when the point hugs the left edge", () => {
-    // 稀疏数据只剩两点时首点贴 plotL=46：居中会让左半出卡片 → 钳到 margin + w/2
+    // Sparse data reduced to two points puts the first point at plotL=46: centering would push the left half out of the card → clamp to margin + w/2
     const layout = chartTooltipLayout({ x: 46, y: 120 }, wrap, tip);
     expect(layout.left).toBe(8 + 64);
     expect(layout.left - tip.w / 2).toBeGreaterThanOrEqual(8 - 0.5);
@@ -79,15 +82,15 @@ describe("chartTooltipLayout (edge-aware tooltip anchoring)", () => {
   });
 
   it("flips below the point when there is no room above", () => {
-    // 点贴近绘图区顶部（plotT=14）：上方放不下 -110% 的弹层 → 翻到点下方
+    // Point near the top of the plot area (plotT=14): no room above for the -110% popup → flip below the point
     const layout = chartTooltipLayout({ x: 288, y: 14 }, wrap, tip);
     expect(layout.transform).toBe("translate(-50%, 14px)");
-    expect(layout.top).toBe(30); // padT + 14，下方空间充足无需上移
+    expect(layout.top).toBe(30); // padT + 14; ample room below, no need to move up
     expect(layout.top + 14 + tip.h).toBeLessThanOrEqual(wrap.height - 8 + 0.5);
   });
 
   it("keeps the box inside the wrap across the whole plot plane", () => {
-    // 全平面扫描：任何点位的弹层四条边都落在容器（margin 8px）内
+    // Whole-plane scan: at any point, all four edges of the popup fall inside the container (margin 8px)
     for (let x = 0; x <= 600; x += 37) {
       for (let y = 0; y <= 246; y += 23) {
         const { left, top, transform } = chartTooltipLayout({ x, y }, wrap, tip);
@@ -126,11 +129,13 @@ describe("NyroChart static render", () => {
   });
 
   it("wires the tooltip to the measured edge-aware layout in pixels", () => {
-    // 回归：基线 demo 的 % 定位（按 SVG 宽度算、解析在 wrap padding box 上，
-    // 自带几像素偏差且贴边必被 .card overflow:hidden 裁掉）已换成像素锚定。
+    // Regression: the baseline demo's % positioning (computed against the SVG
+    // width, resolved on the wrap padding box — already off by a few pixels,
+    // and always clipped by .card overflow:hidden at the edges) has been
+    // replaced with pixel anchoring.
     expect(source).toContain("chartTooltipLayout(");
     expect(source).not.toContain("* 100}%");
-    // 实测容器/弹层尺寸而非硬编码真源 padding
+    // Measure the container/popup sizes instead of hardcoding the baseline padding
     expect(source).toContain("getBoundingClientRect()");
     expect(source).toContain("offsetWidth");
     expect(source).toContain("offsetHeight");

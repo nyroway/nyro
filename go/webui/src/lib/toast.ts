@@ -1,6 +1,6 @@
-// 轻量 toast 状态（go-webui-改造方案.md §7.4）：模块级单例，
-// 最新一条直接顶替上一条（基线 .toast 就是右下角单元素形态），
-// 到期由 ToastHost（components/ui/toast.tsx）播放退场动画后摘除。
+// Lightweight toast state: a module-level singleton,
+// where the newest message directly replaces the previous one (the baseline .toast is a single bottom-right element),
+// and on expiry ToastHost (components/ui/toast.tsx) plays the exit animation and then removes it.
 
 export type ToastTone = "success" | "error";
 
@@ -31,7 +31,7 @@ export function readToast(): ToastMessage | null {
   return current;
 }
 
-/** 显示一条 toast；错误类消息传更长的停留时间，给阅读留余量。 */
+/** Show a toast; error-tone messages pass a longer dwell time, leaving headroom for reading. */
 export function showToast(text: string, tone: ToastTone = "success", duration = 4000) {
   if (dismissTimer) clearTimeout(dismissTimer);
   publish({ id: ++sequence, tone, text });

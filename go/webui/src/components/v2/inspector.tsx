@@ -14,8 +14,8 @@ export type InspectorProps = {
 };
 
 /**
- * 详情抽屉：Radix 负责行为（焦点圈定/ESC/portal/aria），外观走 nyro 的
- * drawer 词汇（go-webui-改造方案.md §6.3 / §7.1）。
+ * Details drawer: Radix handles behavior (focus trap/ESC/portal/aria), while the look
+ * follows nyro's drawer vocabulary.
  */
 export function Inspector({ open, title, description, onClose, children, footer, className = "" }: InspectorProps) {
   return (

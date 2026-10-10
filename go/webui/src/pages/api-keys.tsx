@@ -96,7 +96,7 @@ type WindowOption = { id: string; label: string };
 // CopyFullKeyButton copies a recoverable raw key (present only when the admin
 // runs with --plaintext-keys) to the clipboard, briefly swapping its icon to a
 // check as feedback. Module-scope so it can own per-row state without breaking
-// the rules-of-hooks in the renderKeyRow map callback. §9.4 ⑤：保留逻辑换皮。
+// the rules-of-hooks in the renderKeyRow map callback. §9.4 ⑤: keep the logic, reskin only.
 function CopyFullKeyButton({ token, isZh }: { token: string; isZh: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -120,9 +120,9 @@ function CopyFullKeyButton({ token, isZh }: { token: string; isZh: boolean }) {
   );
 }
 
-/* §9.4 ②：配额规则行编辑换基线表格语言（.table + cell-actions/row-actions）。
-   每行 = 上限输入 + 窗口 combobox（可输入自定义窗口）+ 删除/清空；空上限行
-   由 buildQuotasPayload 在提交时丢弃。 */
+/* §9.4 ②: quota rule row editing switches to the baseline table vocabulary (.table + cell-actions/row-actions).
+   Each row = a limit input + a window combobox (custom windows can be typed in) + delete/clear; rows with an
+   empty limit are dropped by buildQuotasPayload at submit time. */
 function QuotaRuleTable({
   title,
   rows,
@@ -360,9 +360,9 @@ type ConsumerFormValues = {
   limits: LimitsFormState;
 };
 
-/* §9.4：创建向导四段 form-section（基本信息/访问权限/访问配额/资源限制），
-   创建与编辑共用；基本信息一栏的第二控件由 basicsExtra 注入
-   （创建 = key 有效期，编辑 = 启用状态）。 */
+/* §9.4: the create wizard's four form-sections (basic info/access permissions/access quotas/resource limits),
+   shared by create and edit; the second control in the basic-info section is injected via basicsExtra
+   (create = key validity period, edit = enabled status). */
 function ConsumerEditor({
   form,
   onChange,
@@ -496,8 +496,8 @@ export default function ApiKeysPage() {
   const [page, setPage] = useState(0);
   const [filters, setFilters] = useState<ConsumerFilters>({ query: "", status: "all" });
 
-  // §9.4 注意（安全）：创建响应里的 raw token 只存在这一份状态；对话框
-  // 关闭即清空，之后无法再取（列表里只有 key_preview）。
+  // §9.4 note (security): the raw token from the create response lives only in this one piece of state; closing
+  // the dialog clears it, after which it can never be fetched again (the list only has key_preview).
   const [revealedKey, setRevealedKey] = useState<RevealedKey | null>(null);
 
   const [addKeyDialogFor, setAddKeyDialogFor] = useState<Consumer | null>(null);

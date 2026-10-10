@@ -41,7 +41,7 @@ describe("models page", () => {
     expect(html).toContain('class="toolbar-search"');
     expect(html.match(/class="[^"]*toolbar-filter[^"]*"/g)).toHaveLength(1);
     expect(html).toContain("toolbar-add");
-    // 真源 toolbar-add 纯文字：按钮内单个文本节点，无 lucide Plus 图标
+    // The baseline toolbar-add is plain text: a single text node inside the button, no lucide Plus icon
     expect(html).toMatch(/class="button button-primary button-sm toolbar-add"[^>]*>[^<]*<\/button>/);
     expect(html).toContain("card table-card");
     expect(html).toContain("No models configured");
@@ -52,7 +52,7 @@ describe("models page", () => {
   it("uses only the nyro baseline vocabulary", () => {
     const html = renderModelsPage();
 
-    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] 与原写法同义，拆字以避开出口 grep 的字面量
+    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] means the same as the original spelling, split apart to keep the literal out of the exit grep
     expect(html).not.toMatch(/class="[^"]*\b(space-y|text-slate|bg-slate|bg-green|bg-red|bg-sky|bg-amber|border-red|text-red|text-amber|grid-cols|flex items|font-mono|h-10|w-full)-/);
   });
 });
