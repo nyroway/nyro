@@ -14,8 +14,8 @@ export type RouteTargetDraft = {
   enabled: boolean;
 };
 
-/* 上游多选驱动目标增删：勾选的提供商保留/追加目标卡，取消勾选的移除
-   其全部目标（一个提供商可有多张不同模型的目标卡）。 */
+/* Upstream multi-select drives target add/remove: checked providers keep/append target cards, while unchecked ones
+   have all of their targets removed (one provider can have multiple target cards with different models). */
 export function toggleTargetsProviders(
   targets: readonly RouteTargetDraft[],
   next: readonly Upstream[],

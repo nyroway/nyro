@@ -37,7 +37,7 @@ export class AppErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.hasError) return this.props.children;
 
-    // 兜底屏在 LocaleProvider 之外，无法取 t()——保持硬编码英文（§9.11）。
+    // The fallback screen sits outside LocaleProvider and cannot call t() — keep hardcoded English (§9.11).
     return (
       <div className="error-screen">
         <div className="empty">

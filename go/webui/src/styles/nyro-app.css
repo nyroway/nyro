@@ -1,10 +1,10 @@
-/* React 侧对 nyro-ui.css 的最小适配胶水（Phase 0/1）。
-   规则：只做布局接线与类补全，色值/字重一律走 nyro token；
-   Phase 2/3 随逐页竖切逐步吸收或删除（go-webui-改造方案.md §6.5）。 */
+/* Minimal adaptation glue on the React side over nyro-ui.css (Phase 0/1).
+   Rules: layout wiring and class completion only; colors/weights always go through nyro tokens;
+   Phase 2/3 absorbs or deletes this progressively with the per-page vertical slices. */
 
-/* ── 壳层（Phase 0）────────────────────────────────────────────── */
+/* ── Shell (Phase 0) ─────────────────────────────────────────────── */
 
-/* 基线是滚动文档流；控制台是固定壳应用——主区改为独立滚动列。 */
+/* The baseline is a scrolling document flow; the console is a fixed-shell app — the main area becomes an independently scrolling column. */
 .app-shell .main {
   height: 100vh;
   display: flex;
@@ -17,21 +17,21 @@
   overflow-y: auto;
 }
 
-/* 顶栏在固定壳列里是 flex 子项，默认 flex-shrink:1 会在内容超高时被压扁
-   （活体测量：基线 56px 被压到 39.75px，与侧栏 brand 错位）——锁死不收缩。 */
+/* The topbar is a flex child inside the fixed shell column; the default flex-shrink:1 squashes it when content is too tall
+   (live measurement: the baseline's 56px was squashed to 39.75px, misaligning with the sidebar brand) — locked to no shrink. */
 .app-shell .main > .topbar {
   flex: 0 0 auto;
 }
 
-/* 就绪徽标可点击。 */
+/* The readiness tag is clickable. */
 button.status-tag,
 .app-shell .topbar-actions .tag {
   cursor: pointer;
 }
 
-/* ── Phase 1 接缝替换：包装组件所需的基线缺类（§10.1 / §7.1）────── */
+/* ── Phase 1 seams: baseline classes missing for wrappers (§10.1 / §7.1) ── */
 
-/* 基线 .card 没有通用卡体（领域卡各自定义 padding），在此补全。 */
+/* Baseline .card has no generic card body (domain cards each define their own padding); completed here. */
 .card-body {
   padding: 20px 24px;
 }
@@ -40,8 +40,8 @@ button.status-tag,
   min-width: 0;
 }
 
-/* 页面主体（PageLayout 的 .content-body）：统一 16px 网格间距，
-   并抵消基线组件自带的 margin，避免间距叠加。 */
+/* Page body (PageLayout's .content-body): a unified 16px grid gap,
+   which also offsets the margins baseline components carry so spacing doesn't double up. */
 .content-body {
   display: grid;
   gap: 16px;
@@ -65,17 +65,17 @@ button.status-tag,
   margin-top: 0;
 }
 
-/* 真源 .content > .table-card { overflow: visible }（nyro-ui.css）：页面级
-   列表卡不裁行内“更多”菜单（.row-menu 下探/上翻都允许溢出卡缘）。
-   app 的 PageLayout 多一层 .content-body，等价改写为直接子选择器——
-   五个列表页（providers/models/nodes/api-keys/logs）的 DataTable 都是
-   它的直接子级。 */
+/* Baseline .content > .table-card { overflow: visible } (nyro-ui.css): page-level
+   list cards don't clip the inline "More" menu (.row-menu may overflow the card edge opening down or up).
+   The app's PageLayout adds a .content-body layer, so this is equivalently rewritten as a direct-child selector —
+   the DataTables of the five list pages (providers/models/nodes/api-keys/logs) are all
+   its direct children. */
 .content-body > .table-card {
   overflow: visible;
 }
 
-/* 基线 .table-card tbody tr 一律 pointer；控制台多数表格整行不可点，
-   恢复默认光标，可点行由 DataTable 显式加 .clickable。 */
+/* Baseline .table-card tbody tr is always pointer; most console tables are not row-clickable,
+   so restore the default cursor — DataTable adds .clickable explicitly to clickable rows. */
 .table-card tbody tr {
   cursor: default;
 }
@@ -84,13 +84,13 @@ button.status-tag,
   cursor: pointer;
 }
 
-/* 卡内空态收窄（EmptyState 的 min-height 180px 是整页空态尺寸）。 */
+/* Narrower empty state inside cards (EmptyState's min-height 180px is the full-page empty-state size). */
 .table-card .empty {
   min-height: 120px;
   padding: 20px;
 }
 
-/* MetricLedger 的语气色与列数变体（v2 ledger 语义）。 */
+/* MetricLedger tone colors and column-count variants (v2 ledger semantics). */
 .metric-cell.tone-success strong { color: var(--success); }
 .metric-cell.tone-danger strong { color: var(--danger); }
 .metric-cell.tone-warning strong { color: var(--warning); }
@@ -99,14 +99,14 @@ button.status-tag,
 .metric-strip-stats.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .metric-strip-stats.cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 
-/* Notice 的标题行（基线 alert 无标题结构）。 */
+/* Notice's title row (baseline alert has no title structure). */
 .alert-title {
   display: block;
   color: var(--ink-strong);
   font-weight: 500;
 }
 
-/* FormSection：首段不吃上边距；描述行。 */
+/* FormSection: the first section takes no top margin; description row. */
 .form-section:first-child {
   margin-top: 0;
 }
@@ -118,7 +118,7 @@ button.status-tag,
   font-weight: var(--weight-caption);
 }
 
-/* Drawer 标题（基线 drawer-header-copy 用 strong/span，Radix Title 渲染 h2）。 */
+/* Drawer title (baseline drawer-header-copy uses strong/span; Radix Title renders an h2). */
 .drawer-title {
   display: block;
   margin: 0;
@@ -135,7 +135,7 @@ button.status-tag,
   font-weight: var(--weight-caption);
 }
 
-/* 模态在控制台承载长表单：限高 + 卡体独立滚动（基线无 max-height）。 */
+/* Modals in the console host long forms: capped height + independently scrolling card body (the baseline has no max-height). */
 .modal {
   display: flex;
   flex-direction: column;
@@ -153,7 +153,7 @@ button.status-tag,
   overflow-y: auto;
 }
 
-/* NyroSearchSelect combobox：内嵌无边框输入（对齐基线 secret-control 模式）。 */
+/* NyroSearchSelect combobox: embedded borderless input (aligned with the baseline secret-control pattern). */
 .field-control > input {
   width: 100%;
   min-width: 0;
@@ -164,16 +164,16 @@ button.status-tag,
   font: inherit;
 }
 
-/* combobox 菜单的键盘高亮项与空态展示。 */
+/* Keyboard-highlighted item and empty-state display in the combobox menu. */
 .select-option.active {
   color: var(--ink-strong);
   background: var(--surface-soft);
 }
 
-/* 基线选项是块级 div（自然撑满菜单宽、背景透明）；React 侧用 button 承载
-   键盘/焦点语义，button 默认收缩为内容宽且带 UA 的 buttonface 浅灰底——
-   未选中项会整体发灰。显式拉满 + 透明：未选中=菜单白底，仅 .selected /
-   :hover / 键盘 .active 才有灰底（surface-soft）。 */
+/* Baseline options are block-level divs (naturally fill the menu width, transparent background); the React side uses button to carry
+   keyboard/focus semantics, and button by default shrinks to content width and gets the UA's light-gray buttonface —
+   unselected items would gray out entirely. Explicit full width + transparent: unselected = the menu's white background; only .selected /
+   :hover / keyboard .active get the gray background (surface-soft). */
 .select-option,
 .custom-multi-option {
   width: 100%;
@@ -185,8 +185,8 @@ button.status-tag,
   display: block;
 }
 
-/* 单选触发器的当前值：占满触发器行、超长省略；未选中时回落到输入框
-   占位符配色（基线 select 恒有值，无占位形态，此为 React 侧补齐）。 */
+/* Single-select trigger's current value: fills the trigger row, ellipsizes when too long; with nothing selected it falls back to the
+   input placeholder color (the baseline select always has a value, no placeholder state — completed here on the React side). */
 .select-control .selected-value {
   flex: 1;
   min-width: 0;
@@ -200,18 +200,18 @@ button.status-tag,
   color: var(--placeholder);
 }
 
-/* 基线菜单不限高；长选项列表（密钥绑模型等）在原位菜单内限高滚动，
-   避免菜单撑爆抽屉滚动区（正常长度的列表不受影响）。 */
+/* Baseline menus have no height cap; long option lists (key-to-model bindings etc.) scroll in place inside a capped menu,
+   so the menu can't blow up the drawer's scroll area (normal-length lists are unaffected). */
 .select-menu,
 .custom-multi-options {
   max-height: 280px;
   overflow-y: auto;
 }
 
-/* ── Phase 2 逐页竖切：settings（§9.1）─────────────────────────── */
+/* ── Phase 2 per-page vertical slice: settings (§9.1) ────────────── */
 
-/* 设置页骨架：左侧分组导航 + 右侧表单卡。导航项复用基线 nav-item/nav-label
-   （侧栏同款语言），外框做成卡。 */
+/* Settings page skeleton: grouped nav on the left + form cards on the right. Nav items reuse baseline nav-item/nav-label
+   (the same language as the sidebar), with the outer frame made into a card. */
 .settings-layout {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -246,7 +246,7 @@ button.status-tag,
   cursor: pointer;
 }
 
-/* config-actions 左侧的保存提示（基线动作行只有右对齐按钮）。 */
+/* Save note on the left of config-actions (the baseline action row only has right-aligned buttons). */
 .config-note {
   margin-right: auto;
   color: var(--ink-soft);
@@ -254,32 +254,32 @@ button.status-tag,
   font-weight: var(--weight-caption);
 }
 
-/* 三列窄表单（保留天数等短数字字段）。 */
+/* Three-column narrow form (short numeric fields such as retention days). */
 .form-grid.cols-3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-/* 表单卡里 grid 与提示条之间的间距。 */
+/* Spacing between the grid and the alert inside a form card. */
 .form > .alert {
   margin-top: 16px;
 }
 
-/* 状态码等短标签输入：收窄 tags-control（对齐基线 add-provider-form 变体）。 */
+/* Short-tag input like status codes: narrowed tags-control (aligned with the baseline add-provider-form variant). */
 .form .tags-control {
   min-height: 40px;
   padding: 4px 12px;
 }
 
-/* field-control 内嵌的操作按钮（"Use built-in" 快捷键，secret-toggle 同位）。 */
+/* Action button embedded in field-control ("Use built-in" shortcut, same slot as secret-toggle). */
 .field-control > .button {
   flex: 0 0 auto;
   margin-left: auto;
 }
 
-/* "?" 帮助按钮的 CSS-only 悬停提示（配色同基线 hover-tip，支持换行）。
-   基线 .help 是 <span>（16px 圆、12px 问号），这里换成可聚焦的 <button>：
-   全局 *{box-sizing:border-box} 下按钮的 UA 默认 padding(1px 6px) 会把
-   内容盒挤到 2px 宽、问号溢出圆外——必须归零 padding 并压平行高。 */
+/* CSS-only hover tip for the "?" help button (colors match the baseline hover-tip, wrapping supported).
+   Baseline .help is a <span> (16px circle, 12px question mark); here it becomes a focusable <button>:
+   under the global *{box-sizing:border-box}, the button's UA default padding(1px 6px) would squeeze the
+   content box to 2px wide and push the question mark outside the circle — padding must be zeroed and line-height flattened. */
 .help {
   position: relative;
   flex: 0 0 auto;
@@ -287,10 +287,10 @@ button.status-tag,
   line-height: 1;
 }
 
-/* "?" 帮助按钮的悬停提示（配色同基线 hover-tip，支持换行）。
-   这里是“未定位”兜底形态；悬停/聚焦时 NyroHelpHint 会切 fixed 定位并按
-   视口钳制（helpTipLayout）——绝对定位会被 .drawer-body/.card 的
-   overflow 裁掉贴边弹层，fixed 固定层同基线 hover-tip 机制。 */
+/* Hover tip for the "?" help button (colors match the baseline hover-tip, wrapping supported).
+   This is the "unpositioned" fallback form; on hover/focus NyroHelpHint switches to fixed positioning and clamps
+   against the viewport (helpTipLayout) — absolute positioning would have edge-hugging popups clipped by
+   .drawer-body/.card overflow; the fixed layer matches the baseline hover-tip mechanism. */
 .help-tip {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -321,8 +321,8 @@ button.status-tag,
   background: #f4f6fb;
 }
 
-/* Toast：基线 z-20 会被弹层盖住，控制台的保存反馈需浮在 modal/drawer 之上；
-   错误态图标换危险色。 */
+/* Toast: the baseline's z-20 would be covered by popups; the console's save feedback must float above modal/drawer;
+   the error state swaps the icon to the danger color. */
 .toast {
   z-index: 60;
   max-width: min(420px, calc(100vw - 48px));
@@ -348,20 +348,20 @@ button.status-tag,
   }
 }
 
-/* ── Phase 2 逐页竖切：services（§9.10）────────────────────────── */
+/* ── Phase 2 per-page vertical slice: services (§9.10) ───────────── */
 
-/* 工具条右缘动作：基线 .toolbar-add 的 margin-left:auto 语义，
-   用于刷新/清空这类非新增动作。 */
+/* Toolbar right-edge actions: the margin-left:auto semantics of the baseline's .toolbar-add,
+   used for non-add actions like refresh/clear. */
 .table-toolbar .toolbar-end {
   margin-left: auto;
 }
 
-/* provider-logo 承载文本标识（服务缩写 CP/DP/ST/OT）时的字体。 */
+/* Font for provider-logo when it carries a text mark (service abbreviations CP/DP/ST/OT). */
 .provider-logo {
   font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* 表格单元词汇：两行堆叠（首行主值，后续行弱化注解）。 */
+/* Table cell vocabulary: two stacked rows (primary value first, de-emphasized annotation rows after). */
 .cell-stack {
   min-width: 0;
 }
@@ -409,9 +409,40 @@ button.status-tag,
   background: var(--surface-soft);
 }
 
-/* ── Phase 2 逐页竖切：logs（§9.6）────────────────────────────── */
+/* ── Phase 2 per-page vertical slice: logs (§9.6) ────────────────── */
 
-/* 协议流向（ingress → egress）：箭头与缺省占位弱化。 */
+/* Adaptive toolbar filters: the four filters on the logs page hold user-defined data (consumer/model/
+   upstream names) with open-ended lengths — the baseline .toolbar-filter is fixed at 148px and .select-menu in turn is
+   always exactly the trigger's width (left:0;right:0), so long names wrap to two lines in the menu and the trigger truncates to
+   an ellipsis. The variant class does three things (all React-side adaptations; the baseline has no such case):
+   ① The trigger's width:max-content adapts between 148px and 240px, showing the selected value as fully as possible;
+      past the cap, the existing .selected-value ellipsis is the fallback;
+   ② Decouple menu from trigger: min-width:100% guarantees at least the trigger's width, width:max-content
+      adapts to the longest option, capped at 360px;
+   ③ Ellipsize options past the cap: min-width:0 lets the flex child shrink, nowrap+ellipsis keeps it one line.
+   The status filter's options are fixed short labels; attaching the same variant only lands it at the 148px floor — no behavior change. */
+.toolbar-filter.toolbar-filter-adaptive {
+  width: max-content;
+  min-width: 148px;
+  max-width: 240px;
+}
+
+.toolbar-filter-adaptive .select-menu {
+  left: 0;
+  right: auto;
+  min-width: 100%;
+  width: max-content;
+  max-width: 360px;
+}
+
+.toolbar-filter-adaptive .select-option > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Protocol lane (ingress → egress): arrow and default placeholder de-emphasized. */
 .protocol-lane {
   display: inline-flex;
   align-items: center;
@@ -422,12 +453,12 @@ button.status-tag,
   color: var(--ink-soft);
 }
 
-/* 日志表 9 列：给足最小宽度，超出部分在卡内横向滚动（旧日志表兼容规则的
-   基线化，滚动容器挂在 .table-card.log-table .table-scroll）。
-   选择器必须带 .log-table 收窄——全表 .table-card 生效时 overflow-x:auto
-   会把 overflow-y:visible 计算成 auto，行内“更多”菜单（.row-menu）下探
-   就撑出竖向滚动条；真源列表卡的 .table-scroll 是 overflow:visible
-   （nyro-ui.css），菜单自由溢出卡外。 */
+/* Log table's 9 columns: give enough min-width; the overflow scrolls horizontally inside the card (the baselined form
+   of the old log-table compatibility rule; the scroll container hangs on .table-card.log-table .table-scroll).
+   The selector must be narrowed with .log-table — if it applied to every .table-card, overflow-x:auto would compute
+   overflow-y:visible into auto, and the inline "More" menu (.row-menu) dropping down
+   would push out a vertical scrollbar; the baseline list card's .table-scroll is overflow:visible
+   (nyro-ui.css), so the menu freely overflows the card. */
 .table-card.log-table .table-scroll {
   overflow-x: auto;
 }
@@ -436,13 +467,13 @@ button.status-tag,
   min-width: 1080px;
 }
 
-/* 分页按钮内仅图标（基线 page-button 为文字按钮设计）。 */
+/* Icon only inside pagination buttons (the baseline page-button is designed as a text button). */
 .page-button svg {
   width: 14px;
   height: 14px;
 }
 
-/* 抽屉详情的元信息行：标签/代码混排，下载动作靠右（同 code-output-bar）。 */
+/* Drawer detail meta row: labels and code mixed, download action flush right (same as code-output-bar). */
 .drawer-meta {
   display: flex;
   flex-wrap: wrap;
@@ -459,23 +490,23 @@ button.status-tag,
   margin-left: auto;
 }
 
-/* ── Phase 2 逐页竖切：models（§9.3）────────────────────────────── */
+/* ── Phase 2 per-page vertical slice: models (§9.3) ──────────────── */
 
-/* 模型 ID 一类代码值用等宽字体（挂在 .field 或 .select-control 上）：
-   触发器当前值、菜单选项与菜单内检索框同用等宽（searchable 的检索框
-   在菜单内，不再是触发器输入框）。 */
+/* Code values like model IDs use a monospace font (attached via .field or .select-control):
+   the trigger's current value, menu options, and the in-menu search box all use monospace (the searchable's search box
+   sits inside the menu, no longer in the trigger input). */
 .input-mono input,
 .input-mono .selected-value,
 .input-mono .select-option {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* 多选触发器空态占位（基线只定义了 .selected-value 的结构，无配色）。 */
+/* Multi-select trigger empty-state placeholder (the baseline only defines the .selected-value structure, no color). */
 .multi-display .selected-value {
   color: var(--placeholder);
 }
 
-/* 后端目标列表：多选上游后逐卡填写。 */
+/* Backend target list: pick multiple upstreams, then fill in one card per upstream. */
 .target-list {
   display: grid;
   gap: 12px;
@@ -534,13 +565,13 @@ button.status-tag,
   padding: 12px;
 }
 
-/* 冷却/延迟策略无权重可填：以 descriptions 说明自动排序。 */
+/* Cooldown/latency strategies have no weight to fill in: descriptions explain the automatic ordering. */
 .target-editor-body .descriptions {
   align-self: center;
   margin: 0;
 }
 
-/* 表格操作列表头视觉隐藏（通用 a11y 工具，屏幕阅读器可读）。 */
+/* Visually hidden header for the table's actions column (generic a11y utility, readable by screen readers). */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -560,9 +591,9 @@ button.status-tag,
 }
 
 
-/* ── Phase 2 逐页竖切：connect（§9.5）────────────────────────────── */
+/* ── Phase 2 per-page vertical slice: connect (§9.5) ─────────────── */
 
-/* 接入页工作区：左配置卡 + 右代码块（基线无对应布局，用 token 组合）。 */
+/* Connect page workspace: config card on the left + code block on the right (no baseline counterpart; composed from tokens). */
 .connect-workspace {
   display: grid;
   grid-template-columns: minmax(360px, 5fr) minmax(0, 7fr);
@@ -580,15 +611,15 @@ button.status-tag,
   gap: 16px;
 }
 
-/* 协议 tabs 里的提供商图标对齐（基线 .tab 为纯文本按钮）。 */
+/* Provider icon alignment inside protocol tabs (the baseline .tab is a plain text button). */
 .tabs .tab {
   display: inline-flex;
   align-items: center;
   gap: 7px;
 }
 
-/* 代码卡：bar 内分段切换语言，代码区撑满剩余高度（基线 body 限高 220px，
-   接入页示例较长，放开并给最小高度）。 */
+/* Code card: segmented language switching inside the bar, code area fills the remaining height (the baseline body caps
+   at 220px; the connect page examples run long, so lift the cap and give a min-height). */
 .connect-code {
   display: flex;
   flex-direction: column;
@@ -611,7 +642,7 @@ button.status-tag,
   color: var(--placeholder);
 }
 
-/* §9.5 ①：纯 pre + token 着色（替代 react-syntax-highlighter）。 */
+/* §9.5 ①: plain pre + token coloring (replaces react-syntax-highlighter). */
 .code-output-body .tok-comment {
   color: var(--ink-soft);
 }
@@ -628,7 +659,7 @@ button.status-tag,
   color: var(--blue-600);
 }
 
-/* descriptions 行内的值 + 复制（端点地址）。 */
+/* Value + copy inside a descriptions row (endpoint address). */
 .copy-value {
   display: inline-flex;
   min-width: 0;
@@ -665,8 +696,8 @@ button.status-tag,
   height: 14px;
 }
 
-/* 提供商图标（provider-icon.tsx 换皮）：基线 provider-logo 形态——
-   软底圆角格 + 内缩图形，尺寸由组件内联控制。 */
+/* Provider icon (provider-icon.tsx reskin): the baseline provider-logo form —
+   soft-background rounded tile + inset glyph, size controlled inline by the component. */
 .provider-icon {
   display: inline-flex;
   flex: 0 0 auto;
@@ -700,11 +731,11 @@ button.status-tag,
   }
 }
 
-/* ── Phase 2 逐页竖切：api-keys（§9.4）────────────────────────────── */
+/* ── Phase 2 per-page vertical slice: api-keys (§9.4) ────────────── */
 
-/* 配额规则行编辑（§9.4 ②）：换基线表格语言。表单内的窄表不吃整页列表
-   表的 12px/24px 单元格节奏、表头底色与整行 hover，改紧凑内边距；
-   控件同步收窄（基线 field-control 的 40px 是整行表单节奏）。 */
+/* Quota rule row editing (§9.4 ②): speaks the baseline table language. A narrow table inside a form skips the full-page
+   list table's 12px/24px cell rhythm, header background, and whole-row hover, using compact padding instead;
+   controls narrow to match (the baseline field-control's 40px is the full-row form rhythm). */
 .quota-table th {
   padding: 0 8px 6px;
   background: transparent;
@@ -737,7 +768,7 @@ button.status-tag,
   margin-top: 8px;
 }
 
-/* IP 白名单行编辑：一行 = 输入 + 行动作，行间距对齐 form-grid 节奏。 */
+/* IP allowlist row editing: one row = input + row action; row spacing aligned with the form-grid rhythm. */
 .ip-rows {
   display: grid;
   gap: 8px;
@@ -754,9 +785,9 @@ button.status-tag,
   min-width: 0;
 }
 
-/* key 列表与轮换 UI（§9.4 ③）：行卡 + row-actions。每个 key 一张小卡
-   （名称 + 掩码预览 + 复制），右侧有效性徽标与有效期，动作收进
-   row-actions（toggle/编辑/轮换/删除）。 */
+/* Key list and rotation UI (§9.4 ③): row cards + row-actions. One small card per key
+   (name + masked preview + copy), validity tag and expiry on the right, actions tucked into
+   row-actions (toggle/edit/rotate/delete). */
 .key-list {
   display: grid;
   gap: 8px;
@@ -811,7 +842,7 @@ button.status-tag,
   white-space: nowrap;
 }
 
-/* 行卡内的图标动作比表格行（32px）更收敛。 */
+/* Icon actions inside row cards are tighter than in table rows (32px). */
 .key-row .icon-action {
   width: 26px;
   height: 26px;
@@ -832,7 +863,7 @@ button.status-tag,
   font-size: 13px;
 }
 
-/* 列表单元词汇：模型/协议胶囊串（截断 + "+N"）与弱化注解。 */
+/* List cell vocabulary: model/protocol pill runs (truncate + "+N") and de-emphasized annotations. */
 .cell-tags {
   display: flex;
   flex-wrap: wrap;
@@ -857,7 +888,7 @@ button.status-tag,
   font-size: 12px;
 }
 
-/* 一次性令牌展示（§9.4 注意）：警示条 + 等宽密文输入。 */
+/* One-time token reveal (§9.4 note): warning strip + monospace secret input. */
 .reveal-key {
   display: grid;
   gap: 12px;
@@ -867,17 +898,29 @@ button.status-tag,
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* ── Phase 2 逐页竖切：providers（§9.2）────────────────────────────── */
+/* ── Phase 2 per-page vertical slice: providers (§9.2) ───────────── */
 
-/* 品牌标（§9.2 ①）：列表行 provider-name 里的图标回退字标——
-   9px 等宽 600（原型字标的 650 收敛到 600）。 */
+/* Widened toolbar protocol filter: the baseline .toolbar-filter is fixed at 148px, sized for short labels like "All statuses";
+   and .select-menu is always exactly the trigger's width (left:0;right:0),
+   while the longest protocol display name, "OpenAI Chat Completions", measured needs ~163px — at 148px
+   the menu option wraps to two lines, and after selection the trigger truncates to an ellipsis. The protocol filter is a
+   React-side addition (the baseline has no such filter), so the adaptation layer gives it its own fixed 210px width (derived
+   from measurement: longest label + icon and padding): both symptoms — menu and trigger — are fixed at once, and the
+   baseline semantics of menu = trigger width stay untouched; the status filter keeps the baseline's 148px. The two-class
+   selector raises specificity, independent of load order versus nyro-ui.css. */
+.toolbar-filter.toolbar-filter-protocol {
+  width: 210px;
+}
+
+/* Brand mark (§9.2 ①): the icon-fallback wordmark inside provider-name in list rows —
+   9px monospace 600 (the prototype wordmark's 650 tightened to 600). */
 .provider-name .provider-icon {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 9px;
   font-weight: 600;
 }
 
-/* 行内代码值（协议 / Base URL / 模型 ID）：软底等宽小胶囊。 */
+/* Inline code values (protocol / Base URL / model ID): soft-background monospace mini pill. */
 .code-pill {
   display: inline-block;
   max-width: 100%;
@@ -892,12 +935,12 @@ button.status-tag,
   white-space: nowrap;
 }
 
-/* 未测过的健康位：灰态（基线 .health 只有 success 默认色 + warn/danger 变体）。 */
+/* Untested health state: gray (the baseline .health only has the default success color + warn/danger variants). */
 .health.is-idle {
   color: var(--ink-soft);
 }
 
-/* 列表脚注：可用计数 + 两条静态说明（分页在 .table-footer 右侧）。 */
+/* List footnote: available count + two static notes (pagination sits on the right of .table-footer). */
 .provider-table-meta {
   display: flex;
   flex-direction: column;
@@ -913,7 +956,7 @@ button.status-tag,
   font-size: 12px;
 }
 
-/* 探测面板（§9.2 ⑤）：测试弹窗里步进 / 导入结果 / 日志分段的间距。 */
+/* Probe panel (§9.2 ⑤): spacing between the steps / import results / log sections in the test modal. */
 .probe-panel {
   display: grid;
   gap: 12px;
@@ -932,7 +975,7 @@ button.status-tag,
   animation: spin .7s linear infinite;
 }
 
-/* 全量日志（§9.2 ⑤）：code-output 卡内逐行级别着色，时间列固定宽。 */
+/* Full log (§9.2 ⑤): per-line level coloring inside the code-output card; fixed-width time column. */
 .provider-test-log p {
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
@@ -960,7 +1003,7 @@ button.status-tag,
   min-height: 176px;
 }
 
-/* 导入结果 / 预览表（§9.2 ⑥）：表单内窄表不吃整页列表表的节奏（同 quota-table）。 */
+/* Import results / preview table (§9.2 ⑥): a narrow table inside a form skips the full-page list table's rhythm (same as quota-table). */
 .provider-route-table th,
 .provider-import-table th {
   padding: 0 8px 6px;
@@ -977,8 +1020,8 @@ button.status-tag,
   background: transparent;
 }
 
-/* 导入预览汇总（§9.2 ⑥）：紧凑指标行（metric-strip 的 32px 数字是整页节奏，
-   弹窗内改 16px，形态同基线 health-cap）。 */
+/* Import preview summary (§9.2 ⑥): compact metric rows (metric-strip's 32px figures are the full-page rhythm;
+   16px inside the modal, same form as the baseline health-cap). */
 .provider-import-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1000,7 +1043,7 @@ button.status-tag,
   font-variant-numeric: tabular-nums;
 }
 
-/* 编辑表单的内联校验错误。 */
+/* Inline validation error for the edit form. */
 .provider-form-error {
   margin: 12px 0 0;
   padding: 10px 12px;
@@ -1011,8 +1054,8 @@ button.status-tag,
   font-size: 12px;
 }
 
-/* 模型标签输入（§9.2 ④）：基线 tags-control/tag 之上的等宽 code 与
-   图标化移除按钮（基线 .tag button 是文本 × 的设计）。 */
+/* Model tag input (§9.2 ④): monospace code and an iconized remove button on top of the
+   baseline tags-control/tag (the baseline .tag button is designed as a text ×). */
 .model-tag-list {
   display: contents;
   margin: 0;
@@ -1055,21 +1098,21 @@ button.status-tag,
   height: 12px;
 }
 
-/* 编辑态锁定的预设项（§9.2 ②）。 */
+/* Preset items locked in edit mode (§9.2 ②). */
 .provider-pick-item:disabled {
   opacity: .55;
   cursor: not-allowed;
 }
 
-/* JSON 凭据等长文本域沿用 input-mono 等宽约定（§9.2 ③）。 */
+/* Long textareas like JSON credentials follow the input-mono monospace convention (§9.2 ③). */
 .input-mono textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* ── Phase 2 逐页竖切：dashboard（§9.8）────────────────────────────── */
+/* ── Phase 2 per-page vertical slice: dashboard (§9.8) ───────────── */
 
-/* 运行态横幅三态（§9.8 ①）：healthy 用基线默认（success 软底圆标），
-   degraded / unknown 分别映射 warning 与中性灰。 */
+/* Runtime banner's three states (§9.8 ①): healthy uses the baseline default (success soft-background round badge);
+   degraded / unknown map to warning and neutral gray respectively. */
 .health-strip.warn .health-icon {
   color: var(--warning);
   background: var(--warning-soft);
@@ -1080,8 +1123,8 @@ button.status-tag,
   background: var(--surface-soft);
 }
 
-/* 基线区块走文档流 margin 间距；content-body 是 16px 网格，抵消叠加
-   （同上方 metric-strip 接缝）。 */
+/* Baseline blocks are spaced by document-flow margins; content-body is a 16px grid, so offset the doubled spacing
+   (same seam as the metric-strip above). */
 .content-body > .health-strip {
   margin: 0;
 }
@@ -1090,8 +1133,8 @@ button.status-tag,
   margin-top: 0;
 }
 
-/* 列表行用 button 承载（键盘可达）：去按钮 chrome、继承行排版与配色。
-   末行去线的 .upstream-item/:last-child（0,2,0）仍在基线生效。 */
+/* List rows carried by button (keyboard reachable): strip the button chrome, inherit row typography and colors.
+   The baseline's last-row border-removing .upstream-item/:last-child (0,2,0) still applies. */
 button.upstream-item,
 button.sample-item {
   width: 100%;
@@ -1116,14 +1159,14 @@ button.sample-item:focus-visible {
   outline-offset: -2px;
 }
 
-/* 基线行内容为 div；button 内容模型改用 span，块级化补齐。 */
+/* Baseline row content is div; button's content model calls for span instead, made block-level to compensate. */
 .upstream-item .upstream-name,
 .upstream-item .upstream-meta {
   display: block;
 }
 
-/* 性能表整行点击跳转模型页（§9.8 ⑥）：基线 .table 无行交互语义，
-   作用域限定 split-grid，不影响已竖切页面的表格。 */
+/* Performance table rows click through to the models page (§9.8 ⑥): the baseline .table has no row interaction
+   semantics, so scope is limited to split-grid — tables on already-sliced pages are unaffected. */
 .split-grid .table tbody tr.clickable {
   cursor: pointer;
 }
@@ -1137,14 +1180,14 @@ button.sample-item:focus-visible {
   outline-offset: -2px;
 }
 
-/* ── Phase 2 逐页竖切：stats（§9.7）────────────────────────────── */
+/* ── Phase 2 per-page vertical slice: stats (§9.7) ───────────────── */
 
-/* 排名条（基线 priority-list 原生长在表单字段里，卡内使用补四周留白）。 */
+/* Ranking bars (the baseline priority-list natively lives in form fields; padding added around it for in-card use). */
 .card > .priority-list {
   padding: 12px 20px 20px;
 }
 
-/* 排名行主标签：模型名可能很长，省略号截断，share 不被挤走。 */
+/* Ranking row's primary label: model names can be long, truncate with an ellipsis so the share isn't squeezed out. */
 .priority-item .priority-label {
   min-width: 0;
   overflow: hidden;
@@ -1152,39 +1195,39 @@ button.sample-item:focus-visible {
   white-space: nowrap;
 }
 
-/* 基线 .table-card 自带文档流 margin（含相邻叠加）；网格内由 gap 分隔。 */
+/* Baseline .table-card carries its own document-flow margin (adjacent collapsing included); inside grids, gap does the separating. */
 .section-grid .table-card {
   margin-top: 0;
 }
 
-/* 排名表 6 列：给足最小宽度，超出部分在卡内横向滚动（旧排名网格规则）。 */
+/* Ranking table's 6 columns: give enough min-width; the overflow scrolls horizontally inside the card (old ranking-grid rule). */
 .stats-table .table {
   min-width: 600px;
 }
 
-/* ── Phase 2 逐页竖切：nodes（§9.9）────────────────────────────── */
+/* ── Phase 2 per-page vertical slice: nodes (§9.9) ───────────────── */
 
-/* 空态引导：基线 .info-callout 自带 margin-bottom，content-body 是 16px 网格，
-   抵消叠加（同 §9.8 health-strip 处理）。 */
+/* Empty-state callout: the baseline .info-callout carries its own margin-bottom; content-body is a 16px grid,
+   so offset the doubled spacing (same treatment as the §9.8 health-strip). */
 .content-body > .info-callout {
   margin-bottom: 0;
 }
 
-/* 在线时长单元格：悬停出完整时间戳（Radix Tooltip），help 光标提示可悬停。 */
+/* Uptime cell: hover shows the full timestamp (Radix Tooltip); the help cursor hints it is hoverable. */
 .table .help-value {
   cursor: help;
 }
 
-/* ── Phase 3 清退：基础与收编（§10.1 / D4 / D6）────────────────── */
+/* ── Phase 3 cleanup: basics and absorbed rules (§10.1 / D4 / D6) ── */
 
-/* 浅色为默认；暗色由 radix-bridge.css 的 :root[data-theme="dark"] 翻转
-   （其特异性更高，与加载顺序无关）。 */
+/* Light is the default; dark is flipped by radix-bridge.css's :root[data-theme="dark"]
+   (its specificity is higher, independent of load order). */
 :root {
   color-scheme: light;
 }
 
-/* 滚动架构：壳层（.app-shell .main）已是固定高度的 flex 列，内部 main 自滚；
-   这里只保留 html/body 的满高与禁滚，兜住壳层之外的整页视图。 */
+/* Scroll architecture: the shell (.app-shell .main) is already a fixed-height flex column whose inner main scrolls itself;
+   here we only keep html/body full-height and scroll-locked, to catch full-page views outside the shell. */
 html,
 body,
 #root {
@@ -1195,8 +1238,8 @@ body {
   overflow: hidden;
 }
 
-/* 屏幕阅读器专用文本（原 Tailwind 工具类，自托管以免依赖；
-   models / api-keys / 命令面板在用，保留类名）。 */
+/* Screen-reader-only text (formerly a Tailwind utility, self-hosted to drop the dependency;
+   used by models / api-keys / the command palette — class name kept). */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1220,7 +1263,7 @@ body {
   }
 }
 
-/* provider-icon 内联标记（自 index.css 收编）。 */
+/* provider-icon inline markup (absorbed from index.css). */
 .provider-icon-markup {
   display: inline-flex;
   align-items: center;
@@ -1233,7 +1276,7 @@ body {
   display: block;
 }
 
-/* 跳转链接：平时移出视口，聚焦时落回左上（自旧壳层收编，色值换 nyro token）。 */
+/* Skip link: parked off-viewport, drops back to the top-left on focus (absorbed from the old shell; colors swapped to nyro tokens). */
 .skip-link {
   position: fixed;
   left: 16px;
@@ -1249,12 +1292,12 @@ body {
   top: 12px;
 }
 
-/* 表单区跨列（自兼容层收编；models / api-keys 在用）。 */
+/* Form section spanning columns (absorbed from the compatibility layer; used by models / api-keys). */
 .form-grid > .span-2 {
   grid-column: 1 / -1;
 }
 
-/* ── Phase 3 清退：Tooltip 内容皮（Radix 原语，§9.9 起 nodes 在用）── */
+/* ── Phase 3 cleanup: Tooltip content skin (Radix primitive; nodes since §9.9) ── */
 .tooltip {
   z-index: 50;
   max-width: 280px;
@@ -1268,7 +1311,7 @@ body {
   line-height: 1.5;
 }
 
-/* ── Phase 3 清退：错误兜底屏（§9.11：empty + alert-error）──────── */
+/* ── Phase 3 cleanup: error fallback screen (§9.11: empty + alert-error) ── */
 .error-screen {
   min-height: 100vh;
   display: grid;
@@ -1280,12 +1323,12 @@ body {
   width: min(480px, 100%);
 }
 
-/* 错误信息可能是一条极长的单行堆栈，防撑破卡片。 */
+/* The error message can be an extremely long single-line stack trace; keep it from bursting the card. */
 .error-screen .alert {
   overflow-wrap: anywhere;
 }
 
-/* 懒加载兜底（main.tsx Suspense fallback）。 */
+/* Lazy-load fallback (main.tsx Suspense fallback). */
 .app-loading {
   min-height: 100vh;
   display: grid;

@@ -153,9 +153,10 @@ export default function LogsPage() {
           onChange={(next) => { setFilter((current) => ({ ...current, consumer_id: optionId(next) || undefined })); setPage(0); }}
           getOptionLabel={(option) => option.label}
           isOptionEqualToValue={(a, b) => a.id === b.id}
-          searchable={false}
+          searchable
+          searchPlaceholder={localizedMessage(isZh, "common.search")}
           fullWidth={false}
-          controlClassName="toolbar-filter"
+          controlClassName="toolbar-filter toolbar-filter-adaptive"
           leadingIcon={<Filter size={14} aria-hidden="true" />}
           ariaLabel={localizedMessage(isZh, "v2.logs.consumerFilter")}
         />
@@ -165,9 +166,10 @@ export default function LogsPage() {
           onChange={(next) => { setFilter((current) => ({ ...current, route_id: optionId(next) || undefined })); setPage(0); }}
           getOptionLabel={(option) => option.label}
           isOptionEqualToValue={(a, b) => a.id === b.id}
-          searchable={false}
+          searchable
+          searchPlaceholder={localizedMessage(isZh, "common.search")}
           fullWidth={false}
-          controlClassName="toolbar-filter"
+          controlClassName="toolbar-filter toolbar-filter-adaptive"
           leadingIcon={<Filter size={14} aria-hidden="true" />}
           ariaLabel={localizedMessage(isZh, "v2.logs.modelFilter")}
         />
@@ -177,9 +179,10 @@ export default function LogsPage() {
           onChange={(next) => { setFilter((current) => ({ ...current, upstream_id: optionId(next) || undefined })); setPage(0); }}
           getOptionLabel={(option) => option.label}
           isOptionEqualToValue={(a, b) => a.id === b.id}
-          searchable={false}
+          searchable
+          searchPlaceholder={localizedMessage(isZh, "common.search")}
           fullWidth={false}
-          controlClassName="toolbar-filter"
+          controlClassName="toolbar-filter toolbar-filter-adaptive"
           leadingIcon={<Filter size={14} aria-hidden="true" />}
           ariaLabel={localizedMessage(isZh, "v2.logs.upstreamFilter")}
         />
@@ -191,7 +194,7 @@ export default function LogsPage() {
           isOptionEqualToValue={(a, b) => a.id === b.id}
           searchable={false}
           fullWidth={false}
-          controlClassName="toolbar-filter"
+          controlClassName="toolbar-filter toolbar-filter-adaptive"
           leadingIcon={<Filter size={14} aria-hidden="true" />}
           ariaLabel={localizedMessage(isZh, "v2.logs.statusFilter")}
         />

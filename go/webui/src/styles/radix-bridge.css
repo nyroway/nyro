@@ -1,19 +1,19 @@
-/* Radix 原语 ↔ nyro-ui.css 桥接层（go-webui-改造方案.md §6.3）。
-   Radix 只负责行为（焦点圈定/ESC/portal/aria），外观全部走 nyro 类；
-   Radix 用 data-state 属性驱动显隐，这里把它翻译成基线的 .open 语义。
-   约束：只做行为→样式翻译，不定义任何新的视觉。 */
+/* Radix primitives ↔ nyro-ui.css bridge layer.
+   Radix only handles behavior (focus trapping/ESC/portal/aria); all looks go through nyro classes.
+   Radix drives show/hide with the data-state attribute, translated here into the baseline's .open semantics.
+   Constraint: behavior→style translation only — no new visuals are defined. */
 
-/* nyro-app.css 的 :root color-scheme:light 会被暗色主题继承，按主题翻转。 */
+/* nyro-app.css's :root color-scheme:light would be inherited by the dark theme; flip it per theme. */
 :root[data-theme="dark"] {
   color-scheme: dark;
 }
 
-/* Radix Select 弹层挂在 body 下，需盖过抽屉(z-31)与模态(z-40)。 */
+/* Radix Select popups mount under body and must sit above the drawer (z-31) and modal (z-40). */
 [data-radix-popper-content-wrapper] {
   z-index: 41 !important;
 }
 
-/* 抽屉遮罩：基线 .drawer-mask 默认 display:none，由 data-state 接管。 */
+/* Drawer mask: the baseline's .drawer-mask defaults to display:none; data-state takes over. */
 .drawer-mask[data-state="open"] {
   display: block;
   animation: mask-fade-in 0.2s ease;
@@ -24,7 +24,7 @@
   animation: mask-fade-out 0.2s ease;
 }
 
-/* 抽屉本体：进场收在 translateX(0)，退场滑出。 */
+/* Drawer body: entry settles at translateX(0), exit slides out. */
 .drawer[data-state="open"] {
   transform: translateX(0);
   animation: drawer-slide-in 0.2s ease;
@@ -54,7 +54,7 @@
   to { opacity: 0; }
 }
 
-/* 模态遮罩显隐：对齐基线 .modal-mask.open 行为。 */
+/* Modal mask show/hide: aligned with the baseline's .modal-mask.open behavior. */
 .modal-mask[data-state="open"] {
   display: flex;
 }
@@ -64,11 +64,11 @@
   animation: mask-fade-out 0.2s ease;
 }
 
-/* Radix 把 Overlay 与 Content 渲染为兄弟节点，而基线 HTML 里 modal 是
-   modal-mask 的子元素——基线的 flex 居中与层叠上下文都来自那个父子结构，
-   兄弟形态的 modal 会落进文档流并被遮罩盖住（活体浏览器验收发现）。
-   这里补上等价物：居中定位 + 层级 + 进出场动画；关键帧必须携带
-   translate(-50%, -50%)，否则动画期间会丢掉居中。 */
+/* Radix renders Overlay and Content as sibling nodes, while in the baseline HTML the modal is
+   a child of modal-mask — the baseline's flex centering and stacking context both come from that parent-child structure,
+   so a sibling-form modal falls into the document flow and gets covered by the mask (found during live browser acceptance).
+   The equivalent is added here: centered positioning + stacking level + entry/exit animations; the keyframes must carry
+   translate(-50%, -50%), otherwise centering is lost mid-animation. */
 .modal-mask[data-state] ~ .modal {
   position: fixed;
   top: 50%;

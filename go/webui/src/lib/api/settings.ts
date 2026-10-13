@@ -1,7 +1,7 @@
 import { get, put } from "./client";
 
 // Settings are scalar key/value pairs. State-family keys must be committed
-// together through setBulk — see lib/state-settings.ts and 改造方案 §8.4.
+// together through setBulk — see lib/state-settings.ts and the redesign plan §8.4.
 export const settingsApi = {
   get: (key: string) =>
     get<{ value?: string | null }>(`/settings/${key}`).then((value) => value.value ?? null),

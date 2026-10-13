@@ -41,7 +41,7 @@ export default function NodesPage() {
   const remoteCount = nodes.filter((node) => normalizeNodeConnectionMode(node) !== "inprocess").length;
   const embeddedCount = nodes.length - remoteCount;
   const unverifiedCount = nodes.filter((node) => !isNodeConnectionVerified(node)).length;
-  // ISO 时间戳可按字典序比较：取最早接入的节点作为“最长连接”。
+  // ISO timestamps compare lexicographically: take the earliest-connected node as the "Longest connection".
   const longest = nodes.reduce<GatewayNode | undefined>(
     (best, node) => (!best || node.connected_at < best.connected_at ? node : best),
     undefined,

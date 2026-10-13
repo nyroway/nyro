@@ -119,8 +119,8 @@ export default function DashboardPage() {
     : runtimeState === "degraded"
       ? t("dashboard.runtimeDegraded")
       : t("dashboard.runtimeUnknown");
-  // 基线把配置版本放在健康条摘要文字里（“配置版本 rev-99 已同步”）；
-  // 节点版本不一致（mixed）时“已同步”不成立，回落到无版本文案。
+  // The baseline puts the config version inside the health-strip summary text ("config version rev-99 synced");
+  // when node versions are inconsistent (mixed), "synced" no longer holds, so fall back to the version-less copy.
   const stateSummary = runtimeState === "healthy"
     ? (configVersion.startsWith("rev-")
         ? t("dashboard.runtimeSummaryVersioned", { services: runningServices, nodes: nodes.length, rev: configVersion })
@@ -144,8 +144,8 @@ export default function DashboardPage() {
   const providerByID = new Map(providers.map((provider) => [provider.id, provider]));
   const routeByID = new Map(routes.map((route) => [route.id, route]));
 
-  // 基线指标带：24 小时请求是完整千分位数字（2,847,291），Token 用紧凑格式（43.8M），
-  // Token 的 hint 是真实的输入/输出拆分，错误率 hint 带 < 号和两位小数。
+  // Baseline metric strip: the 24-hour request count is a full thousands-separated number (2,847,291), tokens use the compact format (43.8M),
+  // the token hint is the real input/output split, and the error-rate hint carries a < sign with two decimal places.
   const inputTokens = overview?.total_input_tokens ?? 0;
   const outputTokens = overview?.total_output_tokens ?? 0;
   const metrics = [

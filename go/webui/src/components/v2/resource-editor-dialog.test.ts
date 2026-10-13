@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import { ResourceEditorDrawerFrame, ResourceEditorFrame } from "./resource-editor-dialog";
 
-/* 浮层两态：编辑/新增表单 = 右侧抽屉（真源 #addProviderDrawer/#createDrawer），
-   探测/一次性令牌 = 居中 modal over-drawer（真源 #probeModal）。 */
+/* Two popup states: edit/add forms = right-side drawer (baseline #addProviderDrawer/#createDrawer),
+   probe/one-time tokens = centered modal over-drawer (baseline #probeModal). */
 
 describe("resource editor dialog frame (modal)", () => {
   it("keeps the title, scrolling body, and actions in separate regions", () => {
@@ -92,7 +92,7 @@ describe("resource editor drawer frame (edit/create)", () => {
     expect(html).toContain("Configure connection credentials");
     expect(html).toContain("Save");
     expect(html).toContain('aria-label="Close"');
-    // 抽屉骨架不得再出现模态词汇
+    // The drawer skeleton must not contain modal vocabulary
     expect(html).not.toContain("modal-header");
     expect(html).not.toContain("modal-body");
     expect(html).not.toContain("modal-footer");

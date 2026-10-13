@@ -20,15 +20,15 @@ import StatsPage from "@/pages/stats-v2";
 import SettingsPage from "@/pages/settings";
 import type { GatewayNode, Route, Upstream } from "@/lib/types";
 
-/* §12 视觉验收的结构化等价检查（go-webui-改造方案.md §12）：
-   ① 每页静态渲染出的 class 都必须能在三份 CSS（nyro-ui / nyro-app /
-      radix-bridge）里找到定义——渲染输出是 DOM 真值，零解析误报；
-   ② 反向：nyro-app.css 定义的 class 不允许无人使用（防死 CSS 累积）。
-      这一向用“渲染输出 ∪ 源码静态扫描（含测试断言）”，静态侧的枚举值
-      误报只会多白名单、不会漏报。
-   nyro-ui.css 是共享基线（真源同步），允许存在我们未用的类，不做反向检查。 */
+/* §12 structured equivalence checks for visual acceptance:
+   ① Every class each page renders statically must have a definition in one of the three CSS
+      files (nyro-ui / nyro-app / radix-bridge) — rendered output is DOM ground truth, zero parser false positives;
+   ② Reverse: a class defined in nyro-app.css may not go unused (guards against dead CSS piling up).
+      This direction uses "rendered output ∪ static source scan (incl. test assertions)"; enum-value false
+      positives on the static side only grow the whitelist, never miss.
+   nyro-ui.css is the shared baseline (kept in sync with the baseline source); it may hold classes we don't use, so no reverse check. */
 
-// ── CSS 侧：选择器里出现的全部 class ─────────────────────────────
+// ── CSS side: every class that appears in selectors ──────────────
 function cssClasses(css: string): Set<string> {
   const noComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
   return new Set(
@@ -42,7 +42,7 @@ const uiCss = readFileSync(resolve(styleDir, "nyro-ui.css"), "utf8");
 const bridgeCss = readFileSync(resolve(styleDir, "radix-bridge.css"), "utf8");
 const defined = new Set<string>([...cssClasses(appCss), ...cssClasses(uiCss), ...cssClasses(bridgeCss)]);
 
-// ── 渲染侧：10 页 + 壳层，全部静态渲染后抽 class ──────────────────
+// ── Render side: 10 pages + the shell, statically rendered, classes pulled ──
 const provider: Upstream = {
   id: "up-openai",
   name: "OpenAI Production",
@@ -149,7 +149,7 @@ function seedAll(queryClient: QueryClient) {
   queryClient.setQueryData(["nodes"], [node]);
   queryClient.setQueryData(["runtime-services"], [{ id: "control-plane", status: "running" }]);
   queryClient.setQueryData(["gateway-status"], { status: "ok", version: "2.0.0" });
-  // dashboard 与 stats 两页的键一个带 hours 一个不带，都铺上
+  // dashboard and stats use one key with hours and one without — seed both
   for (const key of [["stats-overview"], ["stats-overview", 24]]) {
     queryClient.setQueryData(key, overview);
   }
@@ -188,7 +188,7 @@ function renderAll(): string {
       ),
     )),
   );
-  // 壳层与命令面板（关闭态）也走一遍
+  // The shell and the command palette (closed state) go through the same pass
   parts.push(renderToStaticMarkup(createElement(
     QueryClientProvider,
     { client: queryClient },
@@ -209,7 +209,7 @@ function htmlClasses(html: string): Set<string> {
   return names;
 }
 
-// ── 静态侧：源码（含测试断言）里的 class 字面量，仅用于反向死 CSS 检查 ──
+// ── Static side: class literals in source (incl. test assertions), reverse dead-CSS check only ──
 function collectSourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -220,13 +220,13 @@ function collectSourceFiles(dir: string): string[] {
   return out;
 }
 
-/** 平衡花括号抽取 className={...} 表达式文本。 */
+/** Extract className={...} expression text by balancing braces. */
 function classNameExpressions(text: string): string[] {
   const exprs: string[] = [];
   for (const m of text.matchAll(/className=\{/g)) {
     let depth = 1;
     let i = m.index! + m[0].length;
-    let templateDepth = 0; // >0 表示在模板串的 ${} 里
+    let templateDepth = 0; // >0 means we are inside a ${} of a template literal
     let inString: string | null = null;
     while (i < text.length && depth > 0) {
       const ch = text[i];
@@ -253,7 +253,7 @@ function classNameExpressions(text: string): string[] {
   return exprs;
 }
 
-/** class 词元形状：小写开头 kebab（过滤 locale 枚举、数字、运算符等非类字面量）。 */
+/** Class token shape: lowercase-initial kebab (filters out non-class literals such as locale enums, numbers, operators). */
 const CLASS_TOKEN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 function staticClassNames(): Set<string> {
@@ -286,15 +286,15 @@ function staticClassNames(): Set<string> {
 const renderedClasses = htmlClasses(renderAll());
 const usedClasses = new Set<string>([...renderedClasses, ...staticClassNames()]);
 
-/** 动态词干：`tok-${kind}`、`cols-${n}`、`tone-${tone}` 这类模板拼接前缀。
-    以词干开头的已定义类视为可达——组件 API 允许任意值，样式侧备好变体
-    （如 cols-6 当前没有页面用，但 MetricLedger 传 6 项时就会命中）。 */
+/** Dynamic stems: template-concatenation prefixes like `tok-${kind}`, `cols-${n}`, `tone-${tone}`.
+    A defined class starting with a stem counts as reachable — the component API allows arbitrary values,
+    and the style side keeps variants ready (e.g. no page uses cols-6 today, but it hits once MetricLedger is passed 6 items). */
 function dynamicStems(): Set<string> {
   const stems = new Set<string>();
   for (const file of collectSourceFiles(resolve(styleDir, ".."))) {
     const text = readFileSync(file, "utf8");
-    // 直接匹配模板串开头的动态词干（允许前导空格），嵌套模板同样命中：
-    // `tok-${kind}`、` cols-${n}`、` tone-${tone}`。
+    // Match dynamic stems at the start of template literals directly (leading spaces allowed); nested templates hit too:
+    // `tok-${kind}`, ` cols-${n}`, ` tone-${tone}`.
     for (const m of text.matchAll(/`\s*([a-z][a-z0-9-]*-)\$\{/g)) {
       stems.add(m[1]);
     }
@@ -306,8 +306,8 @@ const stems = dynamicStems();
 const reachableViaStem = (name: string) =>
   [...stems].some((stem) => name.startsWith(stem));
 
-/** lucide-react 给每个图标 SVG 打的库内标记类（lucide、lucide-check…），
-    图标外观由 svg 选择器控制，这些类本身无需样式定义。 */
+/** Library marker classes lucide-react stamps on every icon SVG (lucide, lucide-check, ...);
+    icon looks are controlled by svg selectors, so these classes themselves need no style definitions. */
 const LIBRARY_MARKER = /^lucide(-|$)/;
 
 describe("class vocabulary completeness (§12)", () => {

@@ -1,5 +1,5 @@
 // Typed HTTP client for the Go admin API (/api/v1).
-// Phase 0 of the nyro transformation — see go-webui-改造方案.md §8.
+// Phase 0 of the nyro transformation
 // The legacy command dispatcher (lib/backend.ts) was removed in Phase 3,
 // after the last callers moved to the typed api modules. Conventions:
 //   - success: raw JSON, or a {"data": ...} envelope unwrapped transparently

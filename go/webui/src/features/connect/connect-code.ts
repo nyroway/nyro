@@ -386,10 +386,10 @@ const response = await client.models.generateContent({
 console.log(response.text);`;
 }
 
-// ── 轻量语法着色（§9.5 ①：降级为纯 pre + token 着色，移除
-//    react-syntax-highlighter 依赖）─────────────────────────────────────
-// 只覆盖三类示例代码里实际出现的形态：注释、字符串、数字、保留字。
-// 字符串先于注释匹配，URL 里的 "//" 都在引号内，不会被当成 TS 注释。
+// ── Lightweight syntax highlighting (§9.5 ①: downgraded to plain pre + token coloring,
+//    removing the react-syntax-highlighter dependency)─────────────────────────────────────
+// Covers only the shapes that actually appear in the three kinds of example code: comments, strings, numbers, keywords.
+// Strings are matched before comments; the "//" in URLs is inside quotes, so it is never treated as a TS comment.
 
 export type CodeTokenKind = "comment" | "string" | "number" | "keyword";
 

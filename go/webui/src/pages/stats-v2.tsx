@@ -22,7 +22,7 @@ function latency(value: number | null | undefined) {
   return value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 1 : 2)}s` : `${Math.round(value)}ms`;
 }
 
-/** 时间窗分段（基线 period-button 形态）；窗口驱动本页全部查询。 */
+/** Time-window segments (the baseline period-button form); the selected window drives every query on this page. */
 const RANGES = [
   { hours: 6, label: "6H", key: "v2.stats.last6Hours" },
   { hours: 24, label: "24H", key: "v2.stats.last24Hours" },

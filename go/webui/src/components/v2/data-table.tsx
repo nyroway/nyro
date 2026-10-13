@@ -16,11 +16,11 @@ export type DataTableProps<T> = {
   empty: ReactNode;
   onRowClick?: (row: T) => void;
   className?: string;
-  /** 工具条内容：渲染在卡内表格上方的 .table-toolbar（基线 table-card 形态）。 */
+  /** Toolbar content: rendered in .table-toolbar above the in-card table (baseline table-card shape). */
   toolbar?: ReactNode;
-  /** 页脚内容：渲染在表格下方的 .table-footer（计数/分页等）。 */
+  /** Footer content: rendered in .table-footer below the table (counts/pagination, etc.). */
   footer?: ReactNode;
-  /** 整卡形态：根节点发 card table-card（工具条 + 表格 + 页脚同一张卡）。 */
+  /** Full-card shape: the root node emits card table-card (toolbar + table + footer in one card). */
   carded?: boolean;
 };
 

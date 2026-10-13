@@ -23,8 +23,8 @@ import { useLocale, type MessageKey } from "@/lib/i18n";
 import { openExternalUrl } from "@/lib/open-external";
 import { GlobalSearch } from "./global-search";
 
-/* 侧栏分组（真源 new-webui providers.html .nav）：概览（无组名）｜上游｜运行，
-   之后一条 nav-divider，再接设置（无组名）；每项带 nav-icon。 */
+/* Sidebar grouping (baseline new-webui providers.html .nav): Overview (no group name) | Upstream | Runtime,
+   then a nav-divider, followed by Settings (no group name); every item carries a nav-icon. */
 type NavEntry = { path: string; label: MessageKey; icon: typeof Server };
 type NavGroup = { label?: MessageKey; entries: NavEntry[] };
 type NavSection = NavGroup | "divider";
@@ -96,9 +96,9 @@ export function NyroAppShell({
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    // 真源的暗色开关规则写在 body[data-theme="dark"] 前缀上（nyro-ui.css
-    // 仅有的 4 条 body 前缀规则），data-theme 只挂 <html> 时它们全部失配——
-    // 暗色下开关仍呈亮色（ON 态白轨白钮、滑块不可见）。同步镜像到 <body>。
+    // The baseline's dark-mode switch rules are written with a body[data-theme="dark"] prefix (the only 4
+    // body-prefixed rules in nyro-ui.css); with data-theme set on <html> alone they all fail to match, so
+    // in dark mode the switch still renders light (white track and knob when ON, slider invisible). Mirror it onto <body> in sync.
     document.body.dataset.theme = theme;
     try {
       localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -110,9 +110,9 @@ export function NyroAppShell({
   useEffect(() => {
     const tip = document.getElementById("hoverTip");
     if (!tip) return;
-    // 真源 hover-tip（providers.html 的 syncActionTips + 委托 mouseover）：
-    // .icon-action 的悬停提示走 body 级固定层（.hover-tip，nyro-ui.css），
-    // 文案取 data-tip，缺省回退 aria-label，居中浮在图标上方 6px。
+    // Baseline hover-tip (providers.html's syncActionTips + delegated mouseover):
+    // .icon-action hover tips go through the body-level fixed layer (.hover-tip, nyro-ui.css),
+    // text comes from data-tip, falling back to aria-label when absent, floating centered 6px above the icon.
     const onOver = (event: MouseEvent) => {
       const button = (event.target as Element | null)?.closest?.(".icon-action");
       if (!(button instanceof HTMLElement)) { tip.hidden = true; return; }
@@ -122,8 +122,8 @@ export function NyroAppShell({
       tip.style.top = `${box.top}px`;
       tip.hidden = !tip.textContent;
       if (!tip.hidden) {
-        // 真源不做视口钳制；这里补左右安全界（操作列贴表右缘，窄窗口下
-        // 居中弹层会出视口——同 help-tip 的免裁剪原则），正常位置不变。
+        // The baseline does no viewport clamping; this adds left/right safety bounds (the action column hugs the
+        // table's right edge, and in narrow windows a centered popup would leave the viewport — same no-clipping principle as help-tip); the normal position is unchanged.
         const rect = tip.getBoundingClientRect();
         const margin = 8;
         if (rect.left < margin) tip.style.left = `${margin + rect.width / 2}px`;
@@ -239,9 +239,9 @@ export function NyroAppShell({
           <Outlet />
         </main>
       </div>
-      {/* 真源 body 级悬停提示层（providers.html #hoverTip）：.hover-tip 为
-          fixed 固定层，由上方委托监听驱动，app-shell 链上无 transform，
-          left/top 即视口坐标。 */}
+      {/* Baseline body-level hover tip layer (providers.html #hoverTip): .hover-tip is a
+          fixed layer driven by the delegated listeners above; the app-shell chain has no transform,
+          so left/top are viewport coordinates. */}
       <div className="hover-tip" id="hoverTip" hidden />
     </div>
   );

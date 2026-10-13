@@ -13,7 +13,7 @@ import NodesPage from "./nodes";
 
 const source = readFileSync(resolve(__dirname, "nodes.tsx"), "utf8");
 
-// 时间基准取整秒并加 7 秒偏移，避开分钟边界，让 formatUptime 断言稳定。
+// The time base is rounded to whole seconds and offset by 7 seconds, steering clear of minute boundaries so the formatUptime assertions stay stable.
 const NOW = Date.now();
 function iso(secondsAgo: number) {
   return new Date(NOW - secondsAgo * 1000).toISOString();
@@ -156,7 +156,7 @@ describe("nodes page static render (§9.9)", () => {
   it("uses only the nyro baseline vocabulary", () => {
     const html = renderNodesPage();
 
-    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] 与原写法同义，拆字以避开出口 grep 的字面量
+    expect(html).not.toMatch(/class="[^"]*v2[-]/);  // v2[-] means the same as the original spelling, split apart to keep the literal out of the exit grep
     expect(html).not.toMatch(/class="[^"]*\b(space-y|text-slate|bg-slate|grid-cols|flex items|font-mono|h-10|w-full|pr-10|min-h-32)-/);
   });
 });

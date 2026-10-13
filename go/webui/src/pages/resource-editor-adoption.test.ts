@@ -10,9 +10,9 @@ function countTags(source: string, component: string) {
   return source.match(new RegExp(`<${component}(?:\\s|>)`, "g"))?.length ?? 0;
 }
 
-/* 浮层两态（真源 new-webui）：编辑/新增表单一律右侧抽屉（ResourceEditorDrawer，
-   drawer-wide），详情走 Inspector 抽屉；居中 modal 只留给探测/一次性令牌
-   （ResourceEditorDialog）与确认（ConfirmDialog）。 */
+/* Two popup states (the new-webui baseline): edit/create forms are always right-side drawers (ResourceEditorDrawer,
+   drawer-wide), details go through the Inspector drawer; centered modals are reserved for probe/one-time tokens
+   (ResourceEditorDialog) and confirmations (ConfirmDialog). */
 describe("resource editor adoption", () => {
   it("opens provider create/edit as drawers, keeping the SSE test modal centered and details in a drawer", () => {
     const source = pageSource("providers.tsx");
@@ -38,7 +38,7 @@ describe("resource editor adoption", () => {
     // create/edit consumer + add/edit key
     expect(countTags(source, "ResourceEditorDrawer")).toBe(4);
     expect(countTags(source, "ResourceEditorDialog")).toBe(0);
-    expect(source).not.toContain(["v2", "-consumer-editor"].join(""));  // 拆写避开出口 grep 的字面量
+    expect(source).not.toContain(["v2", "-consumer-editor"].join(""));  // split apart to keep the literal out of the exit grep
     // confirmations go through the ConfirmDialog wrapper; no raw ui/dialog here
     expect(source).toContain("ConfirmDialog");
     expect(source).not.toContain('from "@/components/ui/dialog"');

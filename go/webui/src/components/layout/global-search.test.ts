@@ -33,9 +33,9 @@ function renderSearch() {
   );
 }
 
-/* 全局检索（真源 #globalSearch）：不是弹层——顶栏搜索框原位展开面板。
-   基线结构：label.global-search-field 真输入框 + .global-search-panel 内
-   .search-group/.search-hit/.search-hit-meta/.search-empty。 */
+/* Global search (baseline #globalSearch): not a popup — the top bar search box expands a panel in place.
+   Baseline structure: label.global-search-field a real input + inside .global-search-panel
+   .search-group/.search-hit/.search-hit-meta/.search-empty. */
 describe("global search (in-place panel)", () => {
   it("renders a real input field inside the topbar search box", () => {
     const html = renderSearch();
@@ -45,7 +45,7 @@ describe("global search (in-place panel)", () => {
     expect(html).toContain('class="global-search-field"');
     expect(html).toContain('type="search"');
     expect(html).toContain('placeholder="Search pages or resources"');
-    // 基线是输入框，不是唤起弹层的按钮
+    // The baseline is an input field, not a button that summons a popup
     expect(html).not.toContain("command-panel");
   });
 
@@ -60,7 +60,7 @@ describe("global search (in-place panel)", () => {
     expect(html).toContain('class="search-hit-icon"');
     expect(html).toContain('class="search-hit-copy"');
     expect(html).toContain('class="search-hit-meta"');
-    // 页面/动作两组有命中，不算空态
+    // The pages and actions groups both have hits, so this does not count as the empty state
     expect(html).not.toContain("global-search is-empty");
   });
 

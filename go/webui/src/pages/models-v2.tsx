@@ -230,7 +230,7 @@ function ModelEditor({
   const weightTotal = draft.targets.filter((target) => target.enabled).reduce((sum, target) => sum + target.weight, 0);
   const selectedProviders = providers.filter((provider) => draft.targets.some((target) => target.upstream_id === provider.id));
 
-  // 上游多选即目标增删（纯函数在 model-view-model，勾选追加空目标卡/取消移除）。
+  // Multi-selecting upstreams is exactly target add/remove (the pure function lives in model-view-model; checking appends an empty target card, unchecking removes it).
   const toggleProviders = (next: Upstream[]) => {
     onChange({ ...draft, targets: toggleTargetsProviders(draft.targets, next) });
   };

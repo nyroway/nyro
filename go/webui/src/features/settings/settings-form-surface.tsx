@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
-/* 设置页右侧表单卡：基线 config-card 模式（card + card-header + form，
-   表单语言参照 providers.html 的新增提供商表单）。 */
+/* Right-side form card for settings pages: baseline config-card pattern (card + card-header + form,
+   form language modeled on providers.html's add-provider form). */
 export function SettingsFormSurface({ title, description, badge, children }: { title: ReactNode; description?: ReactNode; badge?: ReactNode; children: ReactNode }) {
   return (
     <section className="card config-card">

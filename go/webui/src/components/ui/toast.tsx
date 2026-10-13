@@ -11,8 +11,10 @@ const TONE_ICONS = {
   error: CircleAlert,
 } as const;
 
-/* 单例 toast 宿主：订阅 lib/toast 的模块状态，用基线 .toast/.show
-   两态切换驱动进出场过渡（进入等一帧再加 .show，退出先撤 .show 再延时摘除）。 */
+/* Singleton toast host: subscribes to the module state in lib/toast and drives
+   the enter/exit transition with the baseline two-state .toast/.show toggle
+   (enter waits one frame before adding .show; exit removes .show first, then
+   detaches after a delay). */
 export function ToastHost() {
   const toast = useSyncExternalStore(subscribeToToast, readToast, readToast);
   const [rendered, setRendered] = useState<ToastMessage | null>(null);

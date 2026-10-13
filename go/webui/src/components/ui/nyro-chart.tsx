@@ -1,17 +1,22 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-/* SSR（renderToStaticMarkup 测试）下 useLayoutEffect 只会刷服务端告警，
-   浏览器里才需要“绘制前”语义——模块级条件别名，非每渲染条件调用。 */
+/* Under SSR (renderToStaticMarkup tests) useLayoutEffect only spams a
+   server-side warning; the "before paint" semantics are only needed in the
+   browser — a module-level conditional alias, not a per-render conditional
+   call. */
 const useIsomorphicLayoutEffect = typeof document === "undefined" ? useEffect : useLayoutEffect;
 
-/* NyroChart：waf-gateway.html 754–880 行基线图表算法的 TS 化（§7.4）。
-   形态对齐 A+B 规范——渐变 stop 走 var(--ink-strong)（深浅主题均可见），
-   SVG 按容器实测尺寸 1:1 出图（ResizeObserver 重渲染，无拉伸变形）。
-   dashboard 与 stats 共用：data + 值/错误双线 + tooltip 十字线吸附。
-   弹层定位是 React 适配层增强（chartTooltipLayout）：基线把 tooltip 锚在
-   悬停点上方居中，但 .card overflow:hidden 会裁掉贴边点的弹层——这里做
-   边缘感知，水平钳制滑动、垂直放不下时翻到点下方。 */
+/* NyroChart: TS-ification of the baseline chart algorithm from waf-gateway.html
+   lines 754–880 (§7.4). Shape aligns with the A+B spec — gradient stops use
+   var(--ink-strong) (visible in both light and dark themes); the SVG is drawn
+   1:1 at the container's measured size (ResizeObserver re-render, no
+   stretching). Shared by dashboard and stats: data + value/error dual lines +
+   tooltip crosshair snapping. Popup placement is a React adaptation-layer
+   enhancement (chartTooltipLayout): the baseline anchors the tooltip centered
+   above the hover point, but .card overflow:hidden clips the popup at
+   edge-hugging points — this is edge-aware, sliding with a horizontal clamp
+   and flipping below the point when there is no room above. */
 
 export type NyroChartDatum = {
   label: string;
@@ -31,7 +36,7 @@ type ChartTick = { label: string; value: number };
 
 const compactTick = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
-/** 单调三次插值（Fritsch–Carlson 切线限幅，折点不过冲）。 */
+/** Monotone cubic interpolation (Fritsch–Carlson tangent limiting, no overshoot at bends). */
 export function monotonePath(pts: Array<{ x: number; y: number }>): string {
   if (pts.length < 2) return "";
   const n = pts.length;
@@ -63,7 +68,7 @@ export function monotonePath(pts: Array<{ x: number; y: number }>): string {
   return d;
 }
 
-/** 从数据峰值生成整齐的 Y 轴刻度，顶部刻度即绘图上界。 */
+/** Generates neat Y-axis ticks from the data peak; the top tick is the plot's upper bound. */
 export function buildTicks(maxValue: number): ChartTick[] {
   if (maxValue <= 0) return [{ label: "0", value: 0 }];
   const raw = maxValue / 4;
@@ -78,30 +83,34 @@ export function buildTicks(maxValue: number): ChartTick[] {
   return ticks;
 }
 
-/* ── 弹层边缘感知定位（React 适配层，§7.4）──────────────────────
-   基线把 tooltip 锚在悬停点上方居中（真源 .chart-tooltip 的
-   translate(-50%, -110%)），但 .card overflow:hidden 会把贴边点的弹层
-   裁掉一截（点贴最左/最右、或贴近绘图区顶部时）。这里按实测容器与弹层
-   尺寸计算绝对定位：水平方向把锚点钳制进安全区间（贴边时向内滑动，
-   十字线仍精确标记数据点）；垂直方向上方放不下时翻转到点下方 14px。
-   出参 left/top 是相对 .chart-wrap padding box 的像素偏移。 */
+/* ── Edge-aware popup placement (React adaptation layer, §7.4)──────────────────────
+   The baseline anchors the tooltip centered above the hover point (the
+   baseline .chart-tooltip's translate(-50%, -110%)), but .card overflow:hidden
+   would clip part of the popup at edge-hugging points (points at the far
+   left/right, or near the top of the plot area). This computes absolute
+   placement from the measured container and popup sizes: horizontally the
+   anchor is clamped into the safe range (sliding inward at the edges, while
+   the crosshair still marks the data point exactly); vertically, when there is
+   no room above, it flips to 14px below the point. The outputs left/top are
+   pixel offsets relative to the .chart-wrap padding box. */
 export function chartTooltipLayout(
   point: { x: number; y: number },
   wrap: { width: number; height: number; padL: number; padT: number },
   tip: { w: number; h: number },
   margin = 8,
 ): { left: number; top: number; transform: string } {
-  // 数据点（SVG 坐标）换算到 wrap 的 padding box 内
+  // Convert the data point (SVG coordinates) into the wrap's padding box
   const px = wrap.padL + point.x;
   const py = wrap.padT + point.y;
-  // 水平：居中锚定，越界向内钳制；钳制区间为空（弹层宽过容器）时整体居中
+  // Horizontal: centered anchoring, clamped inward when out of bounds; when the clamp range is empty (popup wider than the container), center it entirely
   const minLeft = margin + tip.w / 2;
   const maxLeft = wrap.width - margin - tip.w / 2;
   const left = minLeft <= maxLeft
     ? Math.min(Math.max(px, minLeft), maxLeft)
     : wrap.width / 2;
-  // 垂直：默认上浮（基线 -110%，留 10% 高度的间隙）；先钳住底边，
-  // 上沿放不下时翻到点下方并保证不出底边。
+  // Vertical: floats above by default (baseline -110%, leaving a 10%-height
+  // gap); the bottom edge is clamped first, and when the top edge does not fit
+  // it flips below the point, guaranteed to stay inside the bottom edge.
   const aboveTop = Math.min(py, wrap.height - margin + tip.h * 0.1);
   if (aboveTop - tip.h * 1.1 >= margin) {
     return { left, top: aboveTop, transform: "translate(-50%, -110%)" };
@@ -116,10 +125,11 @@ export function NyroChart({ data, ariaLabel, valueLabel, errorLabel, formatValue
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
-  // wrap 的 padding box 尺寸 + SVG 在其中的偏移：弹层定位的坐标系（真源
-  // .chart-wrap { padding: 16px 20px 12px 12px }，实测而非硬编码）。
+  // The wrap's padding box size + the SVG's offset within it: the coordinate
+  // system for popup placement (baseline .chart-wrap { padding: 16px 20px 12px
+  // 12px }, measured rather than hardcoded).
   const [wrapBox, setWrapBox] = useState<{ width: number; height: number; padL: number; padT: number } | null>(null);
-  // 弹层实际尺寸随文案/语言变化（CSS min-width 只是下限），悬停点变化后实测。
+  // The popup's actual size varies with copy/language (CSS min-width is only a floor); re-measured after the hover point changes.
   const [tipSize, setTipSize] = useState<{ w: number; h: number } | null>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const format = formatValue ?? ((value: number) => value.toLocaleString("en-US"));
@@ -147,8 +157,10 @@ export function NyroChart({ data, ariaLabel, valueLabel, errorLabel, formatValue
     return () => observer.disconnect();
   }, []);
 
-  // 弹层内容随悬停点变化（标签/数值），布局效应里同步实测尺寸——
-  // 绘制前修正定位，不会闪出未修正的位置。空悬停不量（内容为空）。
+  // The popup content changes with the hover point (label/value); the size is
+  // measured synchronously in a layout effect — the placement is corrected
+  // before paint, so no uncorrected position flashes. Nothing is measured for
+  // an empty hover (the content is empty).
   useIsomorphicLayoutEffect(() => {
     const el = tooltipRef.current;
     if (!el || hoverIndex == null) return;
@@ -200,8 +212,10 @@ export function NyroChart({ data, ariaLabel, valueLabel, errorLabel, formatValue
   }, [size, data, errorLabel]);
 
   const hovered = hoverIndex != null ? chart?.points[hoverIndex] : undefined;
-  // 像素级锚定（取代基线 demo 的 % 定位——% 按 SVG 宽度算却解析在 wrap 的
-  // padding box 上，本就有几像素偏差）；贴边时由 chartTooltipLayout 钳制/翻转。
+  // Pixel-exact anchoring (replacing the baseline demo's % positioning — the %
+  // is computed against the SVG width yet resolves on the wrap's padding box,
+  // which is already off by a few pixels); chartTooltipLayout clamps/flips at
+  // the edges.
   const tooltipLayout = hovered && chart
     ? chartTooltipLayout(
         { x: hovered.x, y: hovered.y },

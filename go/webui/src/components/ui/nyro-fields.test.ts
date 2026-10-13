@@ -24,11 +24,11 @@ describe("select family renders the new-webui baseline markup", () => {
     }));
 
     expect(html).toContain('class="select-control"');
-    // 基线触发器：button.field-control + span.selected-value + span.control-icon 折角
+    // Baseline trigger: button.field-control + span.selected-value + span.control-icon chevron
     expect(html).toContain('class="field-control"');
     expect(html).toContain('<span class="selected-value">openai-chat</span>');
     expect(html).toContain('<span class="control-icon">');
-    // 关闭态不渲染菜单；触发器里没有输入框（基线 searchable 的检索框在菜单内）
+    // No menu rendered while closed; no input inside the trigger (the baseline searchable search box lives inside the menu)
     expect(html).not.toContain("select-menu");
     expect(html).not.toMatch(/<input/);
   });
@@ -64,16 +64,18 @@ describe("select family renders the new-webui baseline markup", () => {
     expect(html).toContain('<span class="tag">');
     expect(html).toContain('class="tag-remove"');
     expect(html).toContain('<span class="control-icon">');
-    // 关闭态不渲染菜单
+    // No menu rendered while closed
     expect(html).not.toContain("custom-multi-options");
   });
 });
 
 describe("select menus render in place, never through a body portal", () => {
   it("keeps the menu inside .select-control so baseline CSS stacking applies", () => {
-    // 回归：门户 + fixed 菜单在抽屉内被抽屉内容遮挡（elementFromPoint 探测
-    // 五点全失，单选/多选“不生效”的根因）。基线结构是菜单作为
-    // .select-control/.custom-multi 的子元素，打开只是一个 .open 类。
+    // Regression: a portal + fixed menu inside a drawer gets covered by the
+    // drawer content (elementFromPoint probing failed at all five points, the
+    // root cause of single/multi select "not working"). The baseline structure
+    // is the menu as a child of .select-control/.custom-multi; opening is just
+    // an .open class.
     expect(source).not.toContain("createPortal");
     expect(source).not.toContain("useFloatingMenu");
     expect(source).not.toContain('position: "fixed"');
@@ -90,8 +92,8 @@ describe("select menus render in place, never through a body portal", () => {
   });
 
   it("keeps the searchable search box inside the menu like the baseline", () => {
-    // 基线 waf-gateway 默认模型选择：检索框是菜单顶部的
-    // .searchable-select-search > input.searchable-select-input
+    // The baseline waf-gateway default-model picker: the search box is the
+    // menu-top .searchable-select-search > input.searchable-select-input
     expect(source).toContain('"searchable-select-search"');
     expect(source).toContain('"searchable-select-input"');
     expect(source).toContain('"searchable-select-empty"');
@@ -107,16 +109,19 @@ describe("select open/close behavior follows the baseline JS semantics", () => {
   });
 
   it("keeps unselected options on the white menu background", () => {
-    // 基线选项是 div（背景透明，菜单白底即选项底色）；React 侧用 button
-    // 承载，button 的 UA 默认 buttonface 浅灰底会让所有未选中项发灰，
-    // 需显式透明——只有 .selected/:hover/键盘 .active 才是灰底。
+    // Baseline options are divs (transparent background — the menu's white is
+    // the option's ground); the React side uses a button, whose UA default
+    // buttonface light-gray background would gray out every unselected option,
+    // so an explicit transparent background is required — only
+    // .selected/:hover/keyboard .active get the gray ground.
     const css = readFileSync(resolve(__dirname, "../../styles/nyro-app.css"), "utf8");
     expect(css).toMatch(/\.select-option,\s*\.custom-multi-option\s*\{[^}]*width: 100%;[^}]*background: transparent;/s);
   });
 
   it("only highlights an option after real keyboard navigation", () => {
-    // 打开菜单时 activeIndex 只是预置在选中项上（供回车直选），不渲染
-    // .active 灰底；方向键导航后才出现键盘高亮。
+    // On open, activeIndex is merely preseeded on the selected option (so Enter
+    // picks it directly) and does not render the .active gray background; the
+    // keyboard highlight appears only after arrow-key navigation.
     expect(source).toContain('index === activeIndex && navigated && "active"');
     expect(source).toContain("setNavigated(false)");
     expect(source).toContain("setNavigated(true)");
@@ -125,12 +130,12 @@ describe("select open/close behavior follows the baseline JS semantics", () => {
   it("closes on outside pointer-down and toggles on trigger click", () => {
     expect(source).toContain('document.addEventListener("mousedown", onPointerDown)');
     expect(source).toContain('onClick={() => (open ? closeMenu() : openMenu())}');
-    // 多选触发器也是开关（基线 toggleCustomMulti）
+    // The multi-select trigger is also a toggle (baseline toggleCustomMulti)
     expect(source).toContain("onClick={() => setOpen((current) => !current)}");
   });
 
   it("keeps the multi menu open while toggling options (baseline toggleCustomMultiOption)", () => {
-    // 单选点击选项即选中并关闭；多选点击只切换选中，菜单保持打开。
+    // Single-select: clicking an option selects it and closes; multi-select: clicking only toggles the selection, the menu stays open.
     expect(source).toContain("onClick={() => selectOption(option)}");
     expect(source).toMatch(/onMouseDown=\{\(event\) => event\.preventDefault\(\)\}\s*\n\s*onClick=\{\(\) => toggle\(option\)\}/);
   });
@@ -148,15 +153,18 @@ describe("NyroHelpHint renders the baseline .help button with a hover tip", () =
   it("renders a focusable circle button carrying the tip payload", () => {
     const html = renderToStaticMarkup(createElement(NyroHelpHint, { text: "Auto-fetch the model list" }));
 
-    // 基线 .help：16px 圆形问号（真源 nyro-ui.css），可聚焦（button），
-    // 提示走 span.help-tip（悬停时切 fixed 固定层，见 helpTipLayout）。
+    // Baseline .help: a 16px round question mark (baseline nyro-ui.css),
+    // focusable (button); the tip goes through span.help-tip (switches to a
+    // fixed layer on hover, see helpTipLayout).
     expect(html).toContain('<button type="button" class="help" aria-label="help">?');
     expect(html).toContain('<span class="help-tip" role="tooltip">Auto-fetch the model list</span>');
   });
 
   it("neutralizes the button UA padding that would burst the 16px circle", () => {
-    // 全局 *{box-sizing:border-box} 下按钮 UA 默认 padding(1px 6px) 会把
-    // 内容盒挤到 2px 宽、问号溢出圆外——适配层必须归零 padding 并压平行高。
+    // Under the global *{box-sizing:border-box}, the button UA default
+    // padding(1px 6px) would squeeze the content box down to 2px wide with the
+    // question mark spilling outside the circle — the adaptation layer must
+    // zero the padding and flatten the line-height.
     const css = readFileSync(resolve(__dirname, "../../styles/nyro-app.css"), "utf8");
     expect(css).toMatch(/\.help\s*\{[^}]*padding:\s*0/s);
     expect(css).toMatch(/\.help\s*\{[^}]*line-height:\s*1/s);
@@ -172,7 +180,7 @@ describe("helpTipLayout (fixed-layer tip placement)", () => {
   });
 
   it("clamps the tip inside the viewport when the icon hugs an edge", () => {
-    // 图标贴左缘（抽屉左缘的 ? 钮）：居中会让左半出视口 → 钳到 8px 安全界
+    // Icon hugging the left edge (the ? button at the drawer's left edge): centering would push the left half out of the viewport → clamp to the 8px safe bound
     expect(helpTipLayout({ left: 20, top: 400, right: 36, bottom: 416 }, { w: 240, h: 40 }, viewport).left).toBe(8);
     expect(helpTipLayout({ left: 1420, top: 400, right: 1436, bottom: 416 }, { w: 240, h: 40 }, viewport).left).toBe(1440 - 240 - 8);
   });
@@ -188,9 +196,11 @@ describe("helpTipLayout (fixed-layer tip placement)", () => {
 
 describe("NyroHelpHint escapes clipping ancestors while shown", () => {
   it("switches the tip to a fixed layer and compensates for any containing block", () => {
-    // 悬停/聚焦时切 fixed（脱离 .drawer-body/.card 的 overflow 裁剪）；
-    // .drawer 打开态的 transform 会改写 fixed 包含块——“归零读基线再补偿”
-    // 两遍法保证任何包含块下都落在视口目标。
+    // On hover/focus the tip switches to fixed (escaping the overflow clipping
+    // of .drawer-body/.card); the .drawer open state's transform rewrites the
+    // fixed containing block — the "zero out, read the baseline, then
+    // compensate" two-pass approach guarantees the viewport target under any
+    // containing block.
     expect(source).toContain("onMouseEnter={placeTip}");
     expect(source).toContain("onFocus={placeTip}");
     expect(source).toContain('tip.style.position = "fixed"');

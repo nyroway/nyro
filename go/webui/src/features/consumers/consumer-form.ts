@@ -5,8 +5,8 @@ import type {
 } from "@/lib/types";
 import { localizedMessage, type MessageKey } from "@/lib/messages";
 
-/* api-keys 页（§9.4）的纯表单逻辑：有效期预设、配额/限制/白名单的
-   form<->payload 转换与 IP 校验。从页面抽出以便直接单测。 */
+/* Pure form logic for the api-keys page (§9.4): validity presets, form<->payload
+   conversion for quotas/limits/allowlist, and IP validation. Extracted from the page so it can be unit tested directly. */
 
 export type ExpirePreset = "never" | "1d" | "7d" | "30d" | "90d" | "180d" | "1y";
 
@@ -20,7 +20,7 @@ export const expirePresetOptions: { value: ExpirePreset; label: MessageKey }[] =
   { value: "1y", label: "consumers.expiry.1y" },
 ];
 
-/** 一次性展示的创建响应令牌（§9.4 注意：仅创建响应可见，关闭即不可再取）。 */
+/** Creation-response token shown exactly once (§9.4 note: visible only in the creation response; once closed it can never be fetched again). */
 export type RevealedKey = { name: string; token: string };
 
 export function formatExpiresText(value: string | null | undefined, isZh: boolean) {
@@ -211,7 +211,7 @@ export function formatQuotaRule(q: ConsumerQuota) {
   return q.window ? `${q.quota_limit}/${q.window}` : `${q.quota_limit}`;
 }
 
-/** 配额窗口选项（"" = 不区分窗口），供 NyroSearchSelect 使用。 */
+/** Quota window options ("" = no window distinction), for use by NyroSearchSelect. */
 export const QUOTA_WINDOW_VALUES = ["", "1m", "5m", "15m", "1h", "6h", "12h", "1d"] as const;
 
 export function quotaWindowOptions(isZh: boolean): { id: string; label: string }[] {

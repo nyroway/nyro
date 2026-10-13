@@ -11,13 +11,13 @@ type BaseFieldProps = {
   label?: string;
   className?: string;
   fullWidth?: boolean;
-  /** 校验错误：控件红框（.is-error）+ field-hint error。 */
+  /** Validation error: red control border (.is-error) + field-hint error. */
   error?: string;
-  /** 常规辅助说明（field-hint）。 */
+  /** Regular helper text (field-hint). */
   hint?: string;
-  /** field-label 旁 "?" 帮助按钮的提示文案。 */
+  /** Tip text for the "?" help button next to the field-label. */
   help?: string;
-  /** 必填星标（.required，纯视觉，不设原生 required 以免触发浏览器校验）。 */
+  /** Required asterisk (.required, purely visual; the native required attribute is not set to avoid triggering browser validation). */
   required?: boolean;
 };
 
@@ -29,13 +29,16 @@ export type NyroTextFieldProps = BaseFieldProps &
 export type NyroTextareaFieldProps = BaseFieldProps &
   React.TextareaHTMLAttributes<HTMLTextAreaElement>;
 
-/* field-label 内的 "?" 帮助按钮：基线 .help 圆形问号 + 悬停提示
-   （nyro-app.css 的 .help-tip，配色同基线 hover-tip）。
-   提示层悬停时切 fixed 定位并按视口钳制——基线 hover-tip 就是 body 级
-   固定层（.drawer-body/.card 的 overflow 会裁掉贴边的绝对定位弹层，
-   fixed 脱离裁剪祖先）；.drawer 打开态带 transform 会改写 fixed 的
-   包含块，用“归零读基线再补偿”两遍法保证任何包含块下都落在视口目标。
-   落点几何是纯函数 helpTipLayout（lib/help-tip-layout，可单测）。 */
+/* "?" help button inside the field-label: the baseline .help round question
+   mark + hover tip (nyro-app.css .help-tip, colors same as the baseline
+   hover-tip). On hover the tip layer switches to fixed positioning and clamps
+   to the viewport — the baseline hover-tip is itself a body-level fixed layer
+   (the overflow of .drawer-body/.card would clip an edge-hugging absolutely
+   positioned popup; fixed escapes the clipping ancestor); the .drawer open
+   state carries a transform that rewrites the containing block of fixed, so
+   the "zero out, read the baseline, then compensate" two-pass approach lands
+   on the viewport target under any containing block. The placement geometry
+   is the pure function helpTipLayout (lib/help-tip-layout, unit-testable). */
 export function NyroHelpHint({ text }: { text: string }) {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const tipRef = useRef<HTMLSpanElement | null>(null);
@@ -50,13 +53,13 @@ export function NyroHelpHint({ text }: { text: string }) {
     tip.style.left = "0px";
     tip.style.top = "0px";
     const base = tip.getBoundingClientRect();
-    if (!base.width || !base.height) return; // 未显示（如非 focus-visible 聚焦）无需定位
+    if (!base.width || !base.height) return; // Not shown (e.g. focus without focus-visible); no placement needed
     const { left, top } = helpTipLayout(
       button.getBoundingClientRect(),
       { w: base.width, h: base.height },
       { w: window.innerWidth, h: window.innerHeight },
     );
-    // base 是“归零定位”在视口里的实际落点：目标减基线即得任意包含块下的补偿
+    // base is the actual placement of the "zeroed-out position" in the viewport: target minus baseline yields the compensation under any containing block
     tip.style.left = `${left - base.left}px`;
     tip.style.top = `${top - base.top}px`;
   };
@@ -82,10 +85,12 @@ function FieldHint({ error, hint }: { error?: string; hint?: string }) {
   return null;
 }
 
-/* ── 下拉家族的基线生命周期 ─────────────────────────────────────────
-   基线 toggleSelect/toggleCustomMulti 的“开我关它”：同一时刻全页只允许
-   一个下拉打开。打开的组件把自身关闭函数登记进模块级注册表，新的打开
-   动作先关闭其它实例；关闭/卸载时注销。 */
+/* ── Baseline lifecycle of the select family ─────────────────────────────────────────
+   The baseline toggleSelect/toggleCustomMulti "open me, close the others":
+   only one select may be open on the whole page at any moment. The opening
+   component registers its own close function in a module-level registry; a new
+   open action first closes the other instances; it deregisters on
+   close/unmount. */
 const openSelectClosers = new Set<() => void>();
 
 function claimSelectMenu(close: () => void) {
@@ -97,14 +102,18 @@ function releaseSelectMenu(close: () => void) {
   openSelectClosers.delete(close);
 }
 
-/* 下拉开关公共行为（基线语义）：
-   - 菜单原位渲染为 .select-control/.custom-multi 的子元素（无 body 门户、
-     无 fixed/z-index），打开态只是一个 .open 类，由真源 CSS 的
-     .select-control.open .select-menu / .custom-multi.open .custom-multi-options
-     接管显示——菜单因此天然处于抽屉/弹窗的层叠上下文内，不会被遮挡；
-   - 文档级 mousedown 落在根节点之外即关闭（基线 document click 监听），
-     根节点同时覆盖触发器与原位菜单；
-   - 打开后把菜单滚入最近滚动祖先的可视区（抽屉底部表单需要）。 */
+/* Common behavior of the select toggle (baseline semantics):
+   - The menu renders in place as a child of .select-control/.custom-multi (no
+     body portal, no fixed/z-index); the open state is just an .open class, and
+     the baseline CSS's .select-control.open .select-menu /
+     .custom-multi.open .custom-multi-options takes over display — the menu thus
+     naturally lives inside the stacking context of the drawer/modal and cannot
+     be covered by it;
+   - A document-level mousedown outside the root node closes the menu (the
+     baseline document click listener); the root node covers both the trigger
+     and the in-place menu;
+   - On open, the menu is scrolled into the nearest scrollable ancestor's
+     visible area (needed by forms at the bottom of a drawer). */
 function useBaselineSelectOpen(
   rootRef: RefObject<HTMLElement | null>,
   open: boolean,
@@ -130,8 +139,9 @@ function useBaselineSelectOpen(
   }, [open, menuRef]);
 }
 
-/* 置顶标签形态（D7-B）：标签常驻框外上方；只有显式给出 label 时才在
-   框内保留 placeholder 作为补充提示，避免与置顶标签文字重复。 */
+/* Top-anchored label form (D7-B): the label lives above the box permanently;
+   only when a label is explicitly given is the placeholder kept inside the box
+   as a supplementary hint, avoiding duplication with the label text. */
 export function NyroTextField({
   label,
   className,
@@ -231,23 +241,25 @@ export type NyroSearchSelectProps<T> = BaseFieldProps & {
   noOptionsText?: string;
   renderOption?: (option: T) => ReactNode;
   searchable?: boolean;
-  /** searchable 菜单顶部检索框的占位文案（基线 “检索模型”）。 */
+  /** Placeholder text for the search box at the top of the searchable menu (baseline "Search models"). */
   searchPlaceholder?: string;
-  /** 触发器前置图标（工具条筛选器的漏斗图标，基线 .toolbar-filter 结构）。 */
+  /** Leading icon for the trigger (the funnel icon of the toolbar filter, baseline .toolbar-filter structure). */
   leadingIcon?: ReactNode;
-  /** 附加到 .select-control 的类（如工具条里的 toolbar-filter）。 */
+  /** Class attached to .select-control (e.g. toolbar-filter inside the toolbar). */
   controlClassName?: string;
-  /** 无可见标签时的可访问名称（工具条筛选器）。 */
+  /** Accessible name when there is no visible label (toolbar filter). */
   ariaLabel?: string;
-  /** 搜索无匹配时把输入文本直接作为新选项提交（如自定义上游模型 ID）。 */
+  /** When the search has no match, submits the input text directly as a new option (e.g. a custom upstream model ID). */
   createOptionFromInput?: (input: string) => T;
 };
 
-/* 单选下拉：严格按基线结构——触发器是 button.field-control（可选前置图标 +
-   span.selected-value + span.control-icon 折角），菜单 select-menu 原位挂在
-   .select-control 下，由 .open 类驱动真源 CSS。searchable 变体的检索框在
-   菜单顶部（searchable-select-search，基线 waf-gateway 默认模型选择），
-   触发器本身是纯按钮而非输入框。 */
+/* Single-select: strictly follows the baseline structure — the trigger is a
+   button.field-control (optional leading icon + span.selected-value +
+   span.control-icon chevron); the select-menu hangs in place under
+   .select-control, driven by the .open class in the baseline CSS. In the
+   searchable variant the search box sits at the top of the menu
+   (searchable-select-search, the baseline waf-gateway default-model picker);
+   the trigger itself is a plain button, not an input. */
 export function NyroSearchSelect<T>({
   options,
   value,
@@ -278,9 +290,11 @@ export function NyroSearchSelect<T>({
   const menuId = `${inputId}-menu`;
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
-  // 键盘高亮仅在用户真正用方向键导航后出现：打开菜单时 activeIndex 只是
-  // 预置在当前选中项上（供回车直选），不渲染 .active 灰底——未选中项
-  // 保持白底，只有选中项（.selected）才是灰底。
+  // The keyboard highlight appears only after the user actually navigates with
+  // the arrow keys: on open, activeIndex is merely preseeded on the currently
+  // selected option (so Enter picks it directly) and does not render the
+  // .active gray background — unselected options stay white; only the selected
+  // option (.selected) is gray.
   const [navigated, setNavigated] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -296,7 +310,7 @@ export function NyroSearchSelect<T>({
     return options.filter((option) => getOptionLabel(option).toLowerCase().includes(q));
   }, [options, query, getOptionLabel, searchable]);
 
-  // 列表随检索收缩时收敛键盘高亮下标。
+  // Converge the keyboard highlight index as the list shrinks with the search.
   useEffect(() => {
     if (activeIndex >= filtered.length) {
       setActiveIndex(Math.max(0, filtered.length - 1));
@@ -308,7 +322,7 @@ export function NyroSearchSelect<T>({
     if (focusTrigger) triggerRef.current?.focus({ preventScroll: true });
   }
 
-  // 基线在打开时清空检索词回到完整列表，键盘光标落在当前选中项上。
+  // The baseline clears the search term on open, returning to the full list, with the keyboard cursor landing on the currently selected option.
   function openMenu() {
     setQuery("");
     setNavigated(false);
@@ -365,7 +379,7 @@ export function NyroSearchSelect<T>({
     }
   }
 
-  // 键盘高亮项滚入可视区（长列表在限高菜单内需要）。
+  // Scroll the keyboard-highlighted option into view (needed by long lists inside a height-capped menu).
   useEffect(() => {
     if (!open) return;
     document.getElementById(`${menuId}-opt-${activeIndex}`)?.scrollIntoView({ block: "nearest" });
@@ -475,14 +489,16 @@ export type NyroMultiCheckProps<T> = BaseFieldProps & {
   getOptionLabel: (option: T) => string;
   renderOption?: (option: T) => ReactNode;
   placeholder?: string;
-  /** 无可见标签时的可访问名称。 */
+  /** Accessible name when there is no visible label. */
   ariaLabel?: string;
 };
 
-/* 多选：基线 custom-multi 结构——触发器是 button.field-control.tags-control
-   .multi-display（.tag 胶囊 + .tag-remove × + 折角），菜单 custom-multi-options
-   原位挂在 .custom-multi 下；custom-multi-option 带 .multi-check 复选方块，
-   点击只切换选中并保持菜单打开（基线 toggleCustomMultiOption）。 */
+/* Multi-select: the baseline custom-multi structure — the trigger is
+   button.field-control.tags-control .multi-display (.tag chips + .tag-remove ×
+   + chevron); the custom-multi-options menu hangs in place under .custom-multi;
+   custom-multi-option carries a .multi-check checkbox, and clicking only
+   toggles the selection and keeps the menu open (baseline
+   toggleCustomMultiOption). */
 export function NyroMultiCheck<T>({
   options,
   selected,
@@ -558,7 +574,7 @@ export function NyroMultiCheck<T>({
             selected.map((option) => (
               <span className="tag" key={getOptionValue(option)}>
                 {renderOption ? renderOption(option) : getOptionLabel(option)}
-                {/* 基线用 span.tag-remove（button 内不能嵌 button） */}
+                {/* The baseline uses span.tag-remove (a button cannot nest a button) */}
                 <span
                   className="tag-remove"
                   role="button"
