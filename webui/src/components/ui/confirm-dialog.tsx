@@ -1,20 +1,12 @@
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
+import type { ReactNode } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 
 type ConfirmDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: string;
-  content?: React.ReactNode;
+  content?: ReactNode;
   hideCancel?: boolean;
   cancelText?: string;
   confirmText?: string;
@@ -35,28 +27,37 @@ function ConfirmDialog({
   confirmClassName,
 }: ConfirmDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          {description && <DialogDescription>{description}</DialogDescription>}
-        </DialogHeader>
-        {content && <div className="py-2">{content}</div>}
-        <DialogFooter>
-          {!hideCancel && (
-            <Button variant="secondary" onClick={() => onOpenChange(false)}>
-              {cancelText}
-            </Button>
-          )}
-          <Button
-            onClick={onConfirm}
-            className={cn("bg-red-600 text-white hover:bg-red-500", confirmClassName)}
-          >
-            {confirmText}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="modal-mask over-drawer" />
+        <DialogPrimitive.Content className="modal">
+          <header className="modal-header">
+            <div className="modal-header-copy">
+              <DialogPrimitive.Title className="modal-title">{title}</DialogPrimitive.Title>
+              {description ? (
+                <DialogPrimitive.Description className="modal-subtitle">{description}</DialogPrimitive.Description>
+              ) : null}
+            </div>
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => onOpenChange(false)}>×</button>
+          </header>
+          {content ? <div className="modal-body">{content}</div> : null}
+          <footer className="modal-footer">
+            {!hideCancel && (
+              <button type="button" className="button" onClick={() => onOpenChange(false)}>
+                {cancelText}
+              </button>
+            )}
+            <button
+              type="button"
+              className={`button ${confirmClassName ?? "button-danger"}`}
+              onClick={onConfirm}
+            >
+              {confirmText}
+            </button>
+          </footer>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

@@ -1,0 +1,100 @@
+/* Radix primitives ↔ nyro-ui.css bridge layer.
+   Radix only handles behavior (focus trapping/ESC/portal/aria); all looks go through nyro classes.
+   Radix drives show/hide with the data-state attribute, translated here into the baseline's .open semantics.
+   Constraint: behavior→style translation only — no new visuals are defined. */
+
+/* nyro-app.css's :root color-scheme:light would be inherited by the dark theme; flip it per theme. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Radix Select popups mount under body and must sit above the drawer (z-31) and modal (z-40). */
+[data-radix-popper-content-wrapper] {
+  z-index: 41 !important;
+}
+
+/* Drawer mask: the baseline's .drawer-mask defaults to display:none; data-state takes over. */
+.drawer-mask[data-state="open"] {
+  display: block;
+  animation: mask-fade-in 0.2s ease;
+}
+
+.drawer-mask[data-state="closed"] {
+  display: block;
+  animation: mask-fade-out 0.2s ease;
+}
+
+/* Drawer body: entry settles at translateX(0), exit slides out. */
+.drawer[data-state="open"] {
+  transform: translateX(0);
+  animation: drawer-slide-in 0.2s ease;
+}
+
+.drawer[data-state="closed"] {
+  animation: drawer-slide-out 0.2s ease;
+}
+
+@keyframes drawer-slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes drawer-slide-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+
+@keyframes mask-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes mask-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Modal mask show/hide: aligned with the baseline's .modal-mask.open behavior. */
+.modal-mask[data-state="open"] {
+  display: flex;
+}
+
+.modal-mask[data-state="closed"] {
+  display: flex;
+  animation: mask-fade-out 0.2s ease;
+}
+
+/* Radix renders Overlay and Content as sibling nodes, while in the baseline HTML the modal is
+   a child of modal-mask — the baseline's flex centering and stacking context both come from that parent-child structure,
+   so a sibling-form modal falls into the document flow and gets covered by the mask (found during live browser acceptance).
+   The equivalent is added here: centered positioning + stacking level + entry/exit animations; the keyframes must carry
+   translate(-50%, -50%), otherwise centering is lost mid-animation. */
+.modal-mask[data-state] ~ .modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 30;
+}
+
+.modal-mask.over-drawer[data-state] ~ .modal {
+  z-index: 40;
+}
+
+.modal-mask[data-state="open"] ~ .modal {
+  animation: modal-in-centered 0.2s ease;
+}
+
+.modal-mask[data-state="closed"] ~ .modal {
+  animation: modal-out-centered 0.2s ease;
+}
+
+@keyframes modal-in-centered {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+@keyframes modal-out-centered {
+  from { opacity: 1; transform: translate(-50%, -50%); }
+  to { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
+}

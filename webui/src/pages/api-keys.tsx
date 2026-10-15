@@ -1,54 +1,41 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Copy, KeyRound, Pencil, Plus, Trash2, ToggleRight, ToggleLeft, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type { ApiKey, CreateApiKey, Model as ModelType, UpdateApiKey } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { MultiSelect } from "@/components/ui/multi-select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { CopyValue } from "@/components/ui/copy-value";
+import { DetailList } from "@/components/ui/detail-list";
+import { showToast } from "@/lib/toast";
+import { copyableTipProps } from "@/lib/copyable";
+import { PageHeader, PageLayout } from "@/components/layout/page";
+import { Drawer, Modal } from "@/components/ui/overlays";
+import { NyroSelect } from "@/components/ui/nyro-select";
+import { localizedMessage, type MessageKey } from "@/lib/messages";
+
 
 const PAGE_SIZE = 7;
 
 type ExpirePreset = "never" | "1d" | "7d" | "30d" | "90d" | "180d" | "1y";
 
-const expirePresetOptions: { value: ExpirePreset; zh: string; en: string }[] = [
-  { value: "never", zh: "永不过期", en: "Never" },
-  { value: "1d", zh: "1 天", en: "1 day" },
-  { value: "7d", zh: "7 天", en: "7 days" },
-  { value: "30d", zh: "30 天", en: "30 days" },
-  { value: "90d", zh: "90 天", en: "90 days" },
-  { value: "180d", zh: "180 天", en: "180 days" },
-  { value: "1y", zh: "1 年", en: "1 year" },
+const expirePresetOptions: { value: ExpirePreset; label: MessageKey }[] = [
+  { value: "never", label: "apiKeys.never" },
+  { value: "1d", label: "apiKeys.expire1Day" },
+  { value: "7d", label: "apiKeys.expire7Days" },
+  { value: "30d", label: "apiKeys.expire30Days" },
+  { value: "90d", label: "apiKeys.expire90Days" },
+  { value: "180d", label: "apiKeys.expire180Days" },
+  { value: "1y", label: "apiKeys.expire1Year" },
 ];
-
-function FieldLabel({ children }: { children: string }) {
-  return <label className="ml-1 text-xs leading-none font-normal text-slate-900">{children}</label>;
-}
 
 function shortApiKeyTag(key: string) {
   const trimmed = key.trim();
   if (!trimmed) return "sk-";
-  return `${trimmed.slice(0, 8)}…`;
+  if (trimmed.length <= 14) return trimmed;
+  return `${trimmed.slice(0, 7)}···${trimmed.slice(-4)}`;
 }
 
 function quotaText(value: number | null | undefined) {
@@ -56,7 +43,7 @@ function quotaText(value: number | null | undefined) {
 }
 
 function formatExpiresText(value: string | null | undefined, isZh: boolean) {
-  if (!value) return isZh ? "永不过期" : "Never";
+  if (!value) return localizedMessage(isZh, "apiKeys.never");
   return value.replace("T", " ").slice(0, 19);
 }
 
@@ -72,7 +59,25 @@ function isApiKeyExpired(expiresAt: string | null | undefined) {
 }
 
 function formatValidityLabel(expired: boolean, isZh: boolean) {
-  return expired ? (isZh ? "过期" : "Expired") : (isZh ? "有效" : "Valid");
+  return expired ? (localizedMessage(isZh, "apiKeys.expired")) : (localizedMessage(isZh, "apiKeys.valid"));
+}
+
+function boundModelNames(item: ApiKey, routes: ModelType[]) {
+  return (item.model_ids ?? []).map((id) => routes.find((route) => route.id === id)?.name ?? id);
+}
+
+function ModelNameTags({ names, empty, limit = 2 }: { names: string[]; empty: string; limit?: number }) {
+  if (names.length === 0) return <span className="cell-note">{empty}</span>;
+  const visible = limit > 0 ? names.slice(0, limit) : names;
+  const extra = names.length - visible.length;
+  return (
+    <div className="cell-tags">
+      {visible.map((name, index) => (
+        <span key={`${name}-${index}`} className="tag" {...copyableTipProps(name)}>{name}</span>
+      ))}
+      {extra > 0 ? <span className="cell-tags-more">+{extra}</span> : null}
+    </div>
+  );
 }
 
 function resolveExpiresAt(preset: ExpirePreset) {
@@ -127,6 +132,60 @@ const emptyCreate: CreateForm = {
   model_ids: [],
 };
 
+type RouteOption = { value: string; label: string };
+
+function ModelBindingField({
+  label,
+  options,
+  values,
+  placeholder,
+  emptyText,
+  onChange,
+}: {
+  label: string;
+  options: RouteOption[];
+  values: string[];
+  placeholder: string;
+  emptyText: string;
+  onChange: (next: string[]) => void;
+}) {
+  return (
+    <div className="field">
+      <span className="field-label">{label}</span>
+      {options.length === 0 ? (
+        <p className="field-hint">{emptyText}</p>
+      ) : (
+        <>
+          <div className="form-stack">
+            {options.map((option) => {
+              const checked = values.includes(option.value);
+              return (
+                <label key={option.value} className={checked ? "checkbox checked" : "checkbox"}>
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={checked}
+                    onChange={() => {
+                      onChange(
+                        checked
+                          ? values.filter((id) => id !== option.value)
+                          : [...values, option.value],
+                      );
+                    }}
+                  />
+                  <span className="checkbox-mark" aria-hidden="true"><Check /></span>
+                  {option.label}
+                </label>
+              );
+            })}
+          </div>
+          {values.length === 0 && <span className="field-hint">{placeholder}</span>}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function ApiKeysPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
@@ -142,6 +201,7 @@ export default function ApiKeysPage() {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [showCreatedDialog, setShowCreatedDialog] = useState(false);
   const [copiedCreatedKey, setCopiedCreatedKey] = useState(false);
+  const [selectedKey, setSelectedKey] = useState<ApiKey | null>(null);
   const [apiKeyToDelete, setApiKeyToDelete] = useState<ApiKey | null>(null);
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
 
@@ -149,9 +209,9 @@ export default function ApiKeysPage() {
     return localizeBackendErrorMessage(error, isZh);
   }
 
-  function showErrorDialog(titleZh: string, titleEn: string, error: unknown) {
+  function showErrorDialog(titleKey: MessageKey, error: unknown) {
     setErrorDialog({
-      title: isZh ? titleZh : titleEn,
+      title: localizedMessage(isZh, titleKey),
       description: formatErrorMessage(error),
     });
   }
@@ -175,7 +235,7 @@ export default function ApiKeysPage() {
       setShowCreatedDialog(true);
     },
     onError: (error: unknown) => {
-      showErrorDialog("创建 API Key 失败", "Failed to create API key", error);
+      showErrorDialog("apiKeys.failedToCreateAPIKey", error);
     },
   });
   const updateMut = useMutation({
@@ -186,14 +246,14 @@ export default function ApiKeysPage() {
       setEditForm(null);
     },
     onError: (error: unknown) => {
-      showErrorDialog("保存 API Key 失败", "Failed to save API key", error);
+      showErrorDialog("apiKeys.failedToSaveAPIKey", error);
     },
   });
   const deleteMut = useMutation({
     mutationFn: (id: string) => backend("delete_api_key", { id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
     onError: (error: unknown) => {
-      showErrorDialog("删除 API Key 失败", "Failed to delete API key", error);
+      showErrorDialog("apiKeys.failedToDeleteAPIKey", error);
     },
   });
 
@@ -202,7 +262,7 @@ export default function ApiKeysPage() {
       backend("update_api_key", { id, input: { is_enabled } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
     onError: (error: unknown) => {
-      showErrorDialog("操作失败", "Operation failed", error);
+      showErrorDialog("common.operationFailed", error);
     },
   });
 
@@ -241,150 +301,300 @@ export default function ApiKeysPage() {
   async function copyKey(item: ApiKey) {
     await navigator.clipboard.writeText(item.key);
     setCopiedId(item.id);
+    showToast(localizedMessage(isZh, "common.copied"));
     setTimeout(() => setCopiedId(null), 1500);
   }
 
+  function closeEdit() {
+    setEditingId(null);
+    setEditForm(null);
+    setCopiedEditKey(false);
+  }
+
+  function closeCreated() {
+    setShowCreatedDialog(false);
+    setCopiedCreatedKey(false);
+  }
+
+  const unlimitedPlaceholder = localizedMessage(isZh, "apiKeys.emptyUnlimited");
+
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "API Key" : "API Keys"}</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {isZh ? "管理鉴权 Key、配额与模型绑定" : "Manage authentication keys, quotas, and model bindings"}
-          </p>
+    <PageLayout
+      header={(
+        <PageHeader
+          title={localizedMessage(isZh, "apiKeys.apiKeys")}
+          description={localizedMessage(isZh, "apiKeys.manageAuthenticationKeysQuotasAndModelBindings")}
+          actions={(
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => {
+                setEditingId(null);
+                setEditForm(null);
+                setCopiedEditKey(false);
+                setShowForm((v) => !v);
+              }}
+            >
+              <Plus />
+              {localizedMessage(isZh, "apiKeys.addKey")}
+            </button>
+          )}
+        />
+      )}
+    >
+      {/* List card. Create and edit use the right-side drawer; the one-time key uses a centered modal. */}
+      <div className="card table-card">
+        <div className="card-header">
+          <h2 className="card-title">{localizedMessage(isZh, "apiKeys.keyList")}</h2>
         </div>
-        <Button
-          onClick={() => {
-            setEditingId(null);
-            setEditForm(null);
-            setCopiedEditKey(false);
-            setShowForm((v) => !v);
-          }}
-          className="flex items-center gap-2"
-        >
-          <Plus className="h-4 w-4" />
-          {isZh ? "新增 Key" : "Add Key"}
-        </Button>
-      </div>
-
-      {showForm && (
-        <div className="glass rounded-2xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "创建 API Key" : "Create API Key"}</h2>
-          <div className="space-y-5">
-            <div className="space-y-3">
-              <p className="text-sm font-semibold text-slate-700">{isZh ? "1. 基本信息" : "1. Basic Information"}</p>
-              <p className="text-xs text-slate-500">
-                {isZh ? "Key 值会在创建后自动生成。" : "Key value is auto-generated after creation."}
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
-                  <Input
-                    value={createForm.name}
-                    onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
-                    placeholder={isZh ? "例如 Frontend App" : "e.g. Frontend App"}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel>{isZh ? "有效期" : "Validity"}</FieldLabel>
-                  <Select
-                    value={createForm.expiresPreset}
-                    onValueChange={(value: ExpirePreset) =>
-                      setCreateForm((prev) => ({ ...prev, expiresPreset: value }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {expirePresetOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {isZh ? option.zh : option.en}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
-
-            <div className="h-px bg-slate-200/70" />
-
-            <div className="space-y-3">
-              <p className="text-sm font-semibold text-slate-700">{isZh ? "2. 访问权限" : "2. Access Permission"}</p>
-              <div className="space-y-2">
-                <FieldLabel>
-                  {isZh
-                    ? "绑定模型（不勾选=不可访问受控模型）"
-                    : "Bind Models (none = deny on protected models)"}
-                </FieldLabel>
-                <MultiSelect
-                  options={routeOptions}
-                  values={createForm.model_ids}
-                  placeholder={
-                    isZh ? "选择可访问的受控模型" : "Select protected models this key can access"
-                  }
-                  searchPlaceholder={isZh ? "搜索模型..." : "Search models..."}
-                  emptyText={isZh ? "无匹配模型" : "No matching models"}
-                  onChange={(next) => setCreateForm((prev) => ({ ...prev, model_ids: next }))}
-                />
-              </div>
-            </div>
-
-            <div className="h-px bg-slate-200/70" />
-
-            <div className="space-y-3">
-              <p className="text-sm font-semibold text-slate-700">{isZh ? "3. 访问限额" : "3. Access Quota"}</p>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <FieldLabel>TPM</FieldLabel>
-                  <Input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={createForm.tpm}
-                    onChange={(e) => setCreateForm((prev) => ({ ...prev, tpm: digitsOnly(e.target.value) }))}
-                    placeholder={isZh ? "留空=不限" : "Empty = unlimited"}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel>TPD</FieldLabel>
-                  <Input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={createForm.tpd}
-                    onChange={(e) => setCreateForm((prev) => ({ ...prev, tpd: digitsOnly(e.target.value) }))}
-                    placeholder={isZh ? "留空=不限" : "Empty = unlimited"}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel>RPM</FieldLabel>
-                  <Input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={createForm.rpm}
-                    onChange={(e) => setCreateForm((prev) => ({ ...prev, rpm: digitsOnly(e.target.value) }))}
-                    placeholder={isZh ? "留空=不限" : "Empty = unlimited"}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel>RPD</FieldLabel>
-                  <Input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={createForm.rpd}
-                    onChange={(e) => setCreateForm((prev) => ({ ...prev, rpd: digitsOnly(e.target.value) }))}
-                    placeholder={isZh ? "留空=不限" : "Empty = unlimited"}
-                  />
-                </div>
-              </div>
+        <div className="table-toolbar">
+          <span className="table-summary">
+            {localizedMessage(isZh, "apiKeys.keys", { a: apiKeys.length })}
+          </span>
+        </div>
+        {isLoading ? (
+          <div className="card-body">
+            <div className="empty"><strong>{localizedMessage(isZh, "common.loading")}</strong></div>
+          </div>
+        ) : apiKeys.length === 0 ? (
+          <div className="card-body">
+            <div className="empty">
+              <KeyRound size={40} />
+              <strong>{localizedMessage(isZh, "apiKeys.noAPIKeysYet")}</strong>
             </div>
           </div>
-          <div className="flex gap-3">
-            <Button
+        ) : (
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{localizedMessage(isZh, "common.name")}</th>
+                  <th>{localizedMessage(isZh, "common.models")}</th>
+                  <th>Key</th>
+                  <th>{localizedMessage(isZh, "common.status")}</th>
+                  <th>{localizedMessage(isZh, "apiKeys.quota")}</th>
+                  <th className="cell-switch">{localizedMessage(isZh, "common.enabled")}</th>
+                  <th className="cell-actions">{localizedMessage(isZh, "common.actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedApiKeys.map((item) => {
+                  const keyExpired = isApiKeyExpired(item.expires_at);
+                  const modelNames = boundModelNames(item, routes);
+                  return (
+                    <tr
+                      key={item.id}
+                      className="clickable"
+                      onClick={() => {
+                        setShowForm(false);
+                        setEditingId(null);
+                        setEditForm(null);
+                        setSelectedKey(item);
+                      }}
+                    >
+                      <td>
+                        <div className="gateway-name">
+                          <span className="gateway-token"><KeyRound /></span>
+                          <strong className="name-ellipsis" {...copyableTipProps(item.name)}>{item.name}</strong>
+                        </div>
+                      </td>
+                      <td>
+                        <ModelNameTags names={modelNames} empty={localizedMessage(isZh, "apiKeys.allModels")} />
+                      </td>
+                      <td>
+                        <span className="key-mask">{shortApiKeyTag(item.key)}</span>
+                      </td>
+                      <td>
+                        <span className={keyExpired ? "health danger" : "health"}>
+                          <span className="mini-dot" />
+                          {formatValidityLabel(keyExpired, isZh)}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="cell-tags">
+                          <span className="tag tag-neutral">RPM {quotaText(item.rpm)}</span>
+                          <span className="tag tag-neutral">RPD {quotaText(item.rpd)}</span>
+                          <span className="tag tag-neutral">TPM {quotaText(item.tpm)}</span>
+                          <span className="tag tag-neutral">TPD {quotaText(item.tpd)}</span>
+                        </div>
+                      </td>
+                      <td className="cell-switch">
+                        <button
+                          type="button"
+                          role="switch"
+                          className={item.is_enabled ? "switch-control sm on" : "switch-control sm"}
+                          aria-checked={item.is_enabled}
+                          data-tip={item.is_enabled ? (localizedMessage(isZh, "common.disable")) : (localizedMessage(isZh, "common.enable"))}
+                          aria-label={item.is_enabled ? (localizedMessage(isZh, "common.disable")) : (localizedMessage(isZh, "common.enable"))}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleEnabledMut.mutate({ id: item.id, is_enabled: !item.is_enabled });
+                          }}
+                        />
+                      </td>
+                      <td className="cell-actions">
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="icon-action"
+                            data-tip={copiedId === item.id ? (localizedMessage(isZh, "apiKeys.copied")) : (localizedMessage(isZh, "apiKeys.copyKey"))}
+                            aria-label={copiedId === item.id ? (localizedMessage(isZh, "apiKeys.copied")) : (localizedMessage(isZh, "apiKeys.copyKey"))}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void copyKey(item);
+                            }}
+                          >
+                            {copiedId === item.id ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-action"
+                            data-tip={localizedMessage(isZh, "common.edit")}
+                            aria-label={localizedMessage(isZh, "common.edit")}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedKey(null);
+                              startEdit(item);
+                            }}
+                          >
+                            <Pencil aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-action danger"
+                            data-tip={localizedMessage(isZh, "common.delete")}
+                            aria-label={localizedMessage(isZh, "common.delete")}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setApiKeyToDelete(item);
+                            }}
+                          >
+                            <Trash2 aria-hidden="true" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {apiKeys.length > PAGE_SIZE && (
+          <footer className="table-footer">
+            <span className="table-summary">
+              {localizedMessage(isZh, "common.pageOf", { a: page + 1, b: totalPages })}
+            </span>
+            <div className="pager">
+              <button
+                type="button"
+                className="button button-sm"
+                onClick={() => setPage(Math.max(0, page - 1))}
+                disabled={page === 0}
+                data-tip={localizedMessage(isZh, "common.previousPage")}
+                aria-label={localizedMessage(isZh, "common.previousPage")}
+              >
+                <ChevronLeft aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="button button-sm"
+                onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+                disabled={page >= totalPages - 1}
+                data-tip={localizedMessage(isZh, "common.nextPage")}
+                aria-label={localizedMessage(isZh, "common.nextPage")}
+              >
+                <ChevronRight aria-hidden="true" />
+              </button>
+            </div>
+          </footer>
+        )}
+      </div>
+
+      <Drawer
+        open={Boolean(selectedKey)}
+        title={selectedKey?.name ?? localizedMessage(isZh, "apiKeys.keyDetails")}
+        description={selectedKey?.id}
+        onClose={() => setSelectedKey(null)}
+        footerStart={selectedKey ? (
+          <button
+            type="button"
+            className="button button-secondary button-danger-text"
+            onClick={() => {
+              const item = selectedKey;
+              setSelectedKey(null);
+              setApiKeyToDelete(item);
+            }}
+          >
+            {localizedMessage(isZh, "common.delete")}
+          </button>
+        ) : undefined}
+        footer={selectedKey ? (
+          <>
+            <button type="button" className="button button-secondary" onClick={() => setSelectedKey(null)}>
+              {localizedMessage(isZh, "common.close")}
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => {
+                const item = selectedKey;
+                setSelectedKey(null);
+                startEdit(item);
+              }}
+            >
+              {localizedMessage(isZh, "common.edit")}
+            </button>
+          </>
+        ) : undefined}
+      >
+        {selectedKey ? (
+          <DetailList
+            items={[
+              { label: localizedMessage(isZh, "common.name"), value: <CopyValue value={selectedKey.name} isZh={isZh} /> },
+              { label: localizedMessage(isZh, "apiKeys.keyValue"), value: <CopyValue value={selectedKey.key} display={shortApiKeyTag(selectedKey.key)} isZh={isZh} /> },
+              { label: localizedMessage(isZh, "common.status"), value: formatValidityLabel(isApiKeyExpired(selectedKey.expires_at), isZh) },
+              { label: localizedMessage(isZh, "apiKeys.expiresAt"), value: formatExpiresText(selectedKey.expires_at, isZh) },
+              { label: localizedMessage(isZh, "common.models"), value: (
+                <ModelNameTags
+                  names={boundModelNames(selectedKey, routes)}
+                  empty={localizedMessage(isZh, "apiKeys.allModels")}
+                  limit={0}
+                />
+              ) },
+              { label: "RPM", value: quotaText(selectedKey.rpm) },
+              { label: "RPD", value: quotaText(selectedKey.rpd) },
+              { label: "TPM", value: quotaText(selectedKey.tpm) },
+              { label: "TPD", value: quotaText(selectedKey.tpd) },
+              { label: localizedMessage(isZh, "common.enabled"), value: selectedKey.is_enabled ? localizedMessage(isZh, "common.enabled2") : localizedMessage(isZh, "common.disabled") },
+              { label: localizedMessage(isZh, "common.createdAt"), value: selectedKey.created_at },
+              { label: localizedMessage(isZh, "common.updatedAt"), value: selectedKey.updated_at },
+            ]}
+          />
+        ) : null}
+      </Drawer>
+
+      <Drawer
+        open={showForm}
+        wide
+        title={localizedMessage(isZh, "apiKeys.createAPIKey")}
+        description={localizedMessage(isZh, "apiKeys.keyValueIsAutoGeneratedAfterCreation")}
+        onClose={() => setShowForm(false)}
+        footer={(
+          <>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                setShowForm(false);
+                setCreateForm(emptyCreate);
+              }}
+            >
+              {localizedMessage(isZh, "common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
               onClick={() =>
                 createMut.mutate({
                   name: createForm.name.trim(),
@@ -398,374 +608,298 @@ export default function ApiKeysPage() {
               }
               disabled={createMut.isPending || !createForm.name.trim()}
             >
-              {createMut.isPending ? (isZh ? "创建中..." : "Creating...") : (isZh ? "创建" : "Create")}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setShowForm(false);
-                setCreateForm(emptyCreate);
-              }}
-            >
-              {isZh ? "取消" : "Cancel"}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {isLoading ? (
-        <div className="py-12 text-center text-sm text-slate-500">{isZh ? "加载中..." : "Loading..."}</div>
-      ) : apiKeys.length === 0 ? (
-        <div className="glass rounded-2xl p-12 text-center">
-          <KeyRound className="mx-auto h-10 w-10 text-slate-400" />
-          <p className="mt-3 text-sm text-slate-500">{isZh ? "还没有 API Key" : "No API keys yet"}</p>
-        </div>
-      ) : (
-        <div className="grid gap-3">
-          {pagedApiKeys.map((item) => {
-            const isEditing = editingId === item.id && editForm;
-            const keyExpired = isApiKeyExpired(item.expires_at);
-            if (isEditing && editForm) {
-              return (
-                <div key={item.id} className="glass rounded-2xl p-5 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-900">{isZh ? "编辑 API Key" : "Edit API Key"}</h3>
-                    <button
-                      onClick={() => {
-                        setEditingId(null);
-                        setEditForm(null);
-                        setCopiedEditKey(false);
-                      }}
-                      className="cursor-pointer p-1 text-slate-400 hover:text-slate-600"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="space-y-5">
-                    <div className="space-y-3">
-                      <p className="text-sm font-semibold text-slate-700">{isZh ? "1. 基本信息" : "1. Basic Information"}</p>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
-                          <Input
-                            value={editForm.name}
-                            onChange={(e) => setEditForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <FieldLabel>{isZh ? "有效期" : "Validity"}</FieldLabel>
-                          <Input value={editForm.expires_text} disabled />
-                        </div>
-                        <div className="space-y-2">
-                          <FieldLabel>{isZh ? "Key 值" : "Key Value"}</FieldLabel>
-                          <div className="relative">
-                            <Input value={editForm.key} disabled className="pr-10" />
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                await navigator.clipboard.writeText(editForm.key);
-                                setCopiedEditKey(true);
-                                setTimeout(() => setCopiedEditKey(false), 1200);
-                              }}
-                              className="absolute top-1/2 right-3 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                              title={isZh ? "复制 Key" : "Copy Key"}
-                            >
-                              <Copy className="h-4 w-4" />
-                            </button>
-                          </div>
-                          {copiedEditKey && (
-                            <p className="text-xs text-green-600">{isZh ? "已复制" : "Copied"}</p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="h-px bg-slate-200/70" />
-
-                    <div className="space-y-3">
-                      <p className="text-sm font-semibold text-slate-700">{isZh ? "2. 访问权限" : "2. Access Permission"}</p>
-                      <div className="space-y-2">
-                        <FieldLabel>
-                          {isZh
-                            ? "绑定路由（不勾选=不可访问受控路由）"
-                            : "Bind Routes (none = deny on protected routes)"}
-                        </FieldLabel>
-                        <MultiSelect
-                          options={routeOptions}
-                          values={editForm.model_ids}
-                          placeholder={
-                            isZh ? "选择可访问的受控模型" : "Select protected models this key can access"
-                          }
-                          searchPlaceholder={isZh ? "搜索路由..." : "Search routes..."}
-                          emptyText={isZh ? "无匹配路由" : "No matching routes"}
-                          onChange={(next) =>
-                            setEditForm((prev) => (prev ? { ...prev, model_ids: next } : prev))
-                          }
-                        />
-                      </div>
-                    </div>
-
-                    <div className="h-px bg-slate-200/70" />
-
-                    <div className="space-y-3">
-                      <p className="text-sm font-semibold text-slate-700">{isZh ? "3. 访问限额" : "3. Access Quota"}</p>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <FieldLabel>TPM</FieldLabel>
-                          <Input
-                            type="text"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            value={editForm.tpm}
-                            onChange={(e) =>
-                              setEditForm((prev) => (prev ? { ...prev, tpm: digitsOnly(e.target.value) } : prev))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <FieldLabel>TPD</FieldLabel>
-                          <Input
-                            type="text"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            value={editForm.tpd}
-                            onChange={(e) =>
-                              setEditForm((prev) => (prev ? { ...prev, tpd: digitsOnly(e.target.value) } : prev))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <FieldLabel>RPM</FieldLabel>
-                          <Input
-                            type="text"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            value={editForm.rpm}
-                            onChange={(e) =>
-                              setEditForm((prev) => (prev ? { ...prev, rpm: digitsOnly(e.target.value) } : prev))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <FieldLabel>RPD</FieldLabel>
-                          <Input
-                            type="text"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            value={editForm.rpd}
-                            onChange={(e) =>
-                              setEditForm((prev) => (prev ? { ...prev, rpd: digitsOnly(e.target.value) } : prev))
-                            }
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex gap-3">
-                    <Button
-                      onClick={() =>
-                        updateMut.mutate({
-                          id: editForm.id,
-                          input: {
-                            name: editForm.name.trim(),
-                            rpm: editForm.rpm ? Number.parseInt(editForm.rpm, 10) : 0,
-                            rpd: editForm.rpd ? Number.parseInt(editForm.rpd, 10) : 0,
-                            tpm: editForm.tpm ? Number.parseInt(editForm.tpm, 10) : 0,
-                            tpd: editForm.tpd ? Number.parseInt(editForm.tpd, 10) : 0,
-                            model_ids: editForm.model_ids,
-                          },
-                        })
-                      }
-                      disabled={updateMut.isPending}
-                    >
-                      {updateMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        setEditingId(null);
-                        setEditForm(null);
-                        setCopiedEditKey(false);
-                      }}
-                    >
-                      {isZh ? "取消" : "Cancel"}
-                    </Button>
-                  </div>
-                </div>
-              );
-            }
-
-            return (
-              <div key={item.id} className="glass flex items-center justify-between rounded-2xl p-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100">
-                    <span className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-xl border border-slate-300/70 bg-transparent">
-                      <KeyRound className="h-3.5 w-3.5 text-slate-500" />
-                    </span>
-                  </div>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex h-5 items-center font-semibold text-slate-900">{item.name}</span>
-                      <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600">
-                        {shortApiKeyTag(item.key)}
-                      </code>
-                      {!item.is_enabled && (
-                        <Badge variant="danger" className="connect-label-badge">
-                          {isZh ? "已禁用" : "Disabled"}
-                        </Badge>
-                      )}
-                      <Badge variant={keyExpired ? "danger" : "success"} className="connect-label-badge">
-                        {formatValidityLabel(keyExpired, isZh)}
-                      </Badge>
-                      {item.model_ids.length > 0 && (
-                        <Badge variant="warning" className="connect-label-badge bg-cyan-50 text-cyan-700">
-                          {isZh ? `共 ${item.model_ids.length} 个模型` : `${item.model_ids.length} Models`}
-                        </Badge>
-                      )}
-                      <Badge variant="warning" className="connect-label-badge bg-indigo-50 text-indigo-700">
-                        RPM {quotaText(item.rpm)}
-                      </Badge>
-                      <Badge variant="warning" className="connect-label-badge bg-rose-50 text-rose-700">
-                        RPD {quotaText(item.rpd)}
-                      </Badge>
-                      <Badge variant="warning" className="connect-label-badge bg-teal-50 text-teal-700">
-                        TPM {quotaText(item.tpm)}
-                      </Badge>
-                      <Badge variant="warning" className="connect-label-badge bg-amber-50 text-amber-700">
-                        TPD {quotaText(item.tpd)}
-                      </Badge>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-0.5">
-                  <button
-                    onClick={() => toggleEnabledMut.mutate({ id: item.id, is_enabled: !item.is_enabled })}
-                    title={item.is_enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
-                    className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
-                  >
-                    {item.is_enabled ? (
-                      <ToggleRight className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <ToggleLeft className="h-4 w-4 text-slate-400" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => copyKey(item)}
-                    title={copiedId === item.id ? (isZh ? "复制成功" : "Copied") : (isZh ? "复制 Key" : "Copy Key")}
-                    className={`cursor-pointer rounded-lg p-2 transition-colors ${
-                      copiedId === item.id
-                        ? "text-green-500 hover:bg-green-50 hover:text-green-500"
-                        : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                    }`}
-                  >
-                    {copiedId === item.id ? (
-                      <Check className="h-4 w-4" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => startEdit(item)}
-                    className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => setApiKeyToDelete(item)}
-                    className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-
-          {apiKeys.length > PAGE_SIZE && (
-            <div className="flex items-center justify-between px-1 pt-1">
-              <span className="text-xs text-slate-500">
-                {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
-              </span>
-              <div className="flex gap-1">
-                <Button
-                  onClick={() => setPage(Math.max(0, page - 1))}
-                  disabled={page === 0}
-                  variant="outline"
-                  size="icon"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
-                  disabled={page >= totalPages - 1}
-                  variant="outline"
-                  size="icon"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
+              {createMut.isPending ? (localizedMessage(isZh, "common.creating")) : (localizedMessage(isZh, "common.create"))}
+            </button>
+          </>
+        )}
+      >
+        <div className="form-stack">
+          <div>
+            <p className="form-section-title">{localizedMessage(isZh, "apiKeys.text1BasicInformation")}</p>
+            <p className="form-section-desc">
+              {localizedMessage(isZh, "apiKeys.keyValueIsAutoGeneratedAfterCreation")}
+            </p>
+            <div className="form-grid">
+              <label className="field">
+                <span className="field-label">{localizedMessage(isZh, "common.name")}</span>
+                <input
+                  className="field-control"
+                  value={createForm.name}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder={localizedMessage(isZh, "apiKeys.eGFrontendApp")}
+                />
+              </label>
+              <div className="field">
+                <span className="field-label">{localizedMessage(isZh, "apiKeys.validity")}</span>
+                <NyroSelect
+                  ariaLabel={localizedMessage(isZh, "apiKeys.validity")}
+                  value={createForm.expiresPreset}
+                  options={expirePresetOptions.map((option) => ({
+                    value: option.value,
+                    label: localizedMessage(isZh, option.label),
+                  }))}
+                  onChange={(value) => setCreateForm((prev) => ({ ...prev, expiresPreset: value as ExpirePreset }))}
+                />
               </div>
             </div>
-          )}
-        </div>
-      )}
-
-      <Dialog
-        open={showCreatedDialog}
-        onOpenChange={(open) => {
-          setShowCreatedDialog(open);
-          if (!open) setCopiedCreatedKey(false);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{isZh ? "API Key 创建成功" : "API Key Created"}</DialogTitle>
-            <DialogDescription>
-              {isZh
-                ? "请立即复制并保存该 Key，后续仅显示脱敏值。"
-                : "Copy and save this key now. It will be masked in later views."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="rounded-xl bg-slate-900 px-4 py-3 text-sm text-green-400">
-            {createdKey ?? "-"}
           </div>
-          <DialogFooter>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setShowCreatedDialog(false);
-                setCopiedCreatedKey(false);
-              }}
+
+          <div className="form-section">
+            <p className="form-section-title">{localizedMessage(isZh, "apiKeys.text2AccessPermission")}</p>
+            <ModelBindingField
+              label={localizedMessage(isZh, "apiKeys.bindModelsNoneDenyOnProtectedModels")}
+              options={routeOptions}
+              values={createForm.model_ids}
+              placeholder={localizedMessage(isZh, "apiKeys.selectProtectedModelsThisKeyCanAccess")}
+              emptyText={localizedMessage(isZh, "apiKeys.noMatchingModels")}
+              onChange={(next) => setCreateForm((prev) => ({ ...prev, model_ids: next }))}
+            />
+          </div>
+
+          <div className="form-section">
+            <p className="form-section-title">{localizedMessage(isZh, "apiKeys.text3AccessQuota")}</p>
+            <div className="form-grid">
+              <label className="field">
+                <span className="field-label">TPM</span>
+                <input
+                  className="field-control"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={createForm.tpm}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, tpm: digitsOnly(e.target.value) }))}
+                  placeholder={unlimitedPlaceholder}
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">TPD</span>
+                <input
+                  className="field-control"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={createForm.tpd}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, tpd: digitsOnly(e.target.value) }))}
+                  placeholder={unlimitedPlaceholder}
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">RPM</span>
+                <input
+                  className="field-control"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={createForm.rpm}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, rpm: digitsOnly(e.target.value) }))}
+                  placeholder={unlimitedPlaceholder}
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">RPD</span>
+                <input
+                  className="field-control"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={createForm.rpd}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, rpd: digitsOnly(e.target.value) }))}
+                  placeholder={unlimitedPlaceholder}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      </Drawer>
+
+      <Drawer
+        open={Boolean(editingId && editForm)}
+        wide
+        title={localizedMessage(isZh, "apiKeys.editAPIKey")}
+        description={editForm?.name}
+        onClose={closeEdit}
+        footer={editForm ? (
+          <>
+            <button type="button" className="button button-secondary" onClick={closeEdit}>
+              {localizedMessage(isZh, "common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() =>
+                updateMut.mutate({
+                  id: editForm.id,
+                  input: {
+                    name: editForm.name.trim(),
+                    rpm: editForm.rpm ? Number.parseInt(editForm.rpm, 10) : 0,
+                    rpd: editForm.rpd ? Number.parseInt(editForm.rpd, 10) : 0,
+                    tpm: editForm.tpm ? Number.parseInt(editForm.tpm, 10) : 0,
+                    tpd: editForm.tpd ? Number.parseInt(editForm.tpd, 10) : 0,
+                    model_ids: editForm.model_ids,
+                  },
+                })
+              }
+              disabled={updateMut.isPending}
             >
-              {isZh ? "关闭" : "Close"}
-            </Button>
-            <Button
+              {updateMut.isPending ? (localizedMessage(isZh, "common.saving")) : (localizedMessage(isZh, "common.save"))}
+            </button>
+          </>
+        ) : undefined}
+      >
+        {editForm && (
+          <div className="form-stack">
+            <div>
+              <p className="form-section-title">{localizedMessage(isZh, "apiKeys.text1BasicInformation")}</p>
+              <div className="form-grid">
+                <label className="field">
+                  <span className="field-label">{localizedMessage(isZh, "common.name")}</span>
+                  <input
+                    className="field-control"
+                    value={editForm.name}
+                    onChange={(e) => setEditForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">{localizedMessage(isZh, "apiKeys.validity")}</span>
+                  <input className="field-control" value={editForm.expires_text} disabled />
+                </label>
+                <label className="field">
+                  <span className="field-label">{localizedMessage(isZh, "apiKeys.keyValue")}</span>
+                  <span className="field-control secret-control is-disabled">
+                    <input value={editForm.key} disabled />
+                    <button
+                      type="button"
+                      className="secret-toggle"
+                      data-tip={localizedMessage(isZh, "apiKeys.copyKey")}
+                      aria-label={localizedMessage(isZh, "apiKeys.copyKey")}
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(editForm.key);
+                        setCopiedEditKey(true);
+                        showToast(localizedMessage(isZh, "common.copied"));
+                        setTimeout(() => setCopiedEditKey(false), 1200);
+                      }}
+                    >
+                      <Copy />
+                    </button>
+                  </span>
+                  {copiedEditKey && (
+                    <span className="field-hint success">{localizedMessage(isZh, "common.copied")}</span>
+                  )}
+                </label>
+              </div>
+            </div>
+
+            <div className="form-section">
+              <p className="form-section-title">{localizedMessage(isZh, "apiKeys.text2AccessPermission")}</p>
+              <ModelBindingField
+                label={localizedMessage(isZh, "apiKeys.bindRoutesNoneDenyOnProtectedRoutes")}
+                options={routeOptions}
+                values={editForm.model_ids}
+                placeholder={localizedMessage(isZh, "apiKeys.selectProtectedModelsThisKeyCanAccess")}
+                emptyText={localizedMessage(isZh, "apiKeys.noMatchingRoutes")}
+                onChange={(next) => setEditForm((prev) => (prev ? { ...prev, model_ids: next } : prev))}
+              />
+            </div>
+
+            <div className="form-section">
+              <p className="form-section-title">{localizedMessage(isZh, "apiKeys.text3AccessQuota")}</p>
+              <div className="form-grid">
+                <label className="field">
+                  <span className="field-label">TPM</span>
+                  <input
+                    className="field-control"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={editForm.tpm}
+                    onChange={(e) => setEditForm((prev) => (prev ? { ...prev, tpm: digitsOnly(e.target.value) } : prev))}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">TPD</span>
+                  <input
+                    className="field-control"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={editForm.tpd}
+                    onChange={(e) => setEditForm((prev) => (prev ? { ...prev, tpd: digitsOnly(e.target.value) } : prev))}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">RPM</span>
+                  <input
+                    className="field-control"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={editForm.rpm}
+                    onChange={(e) => setEditForm((prev) => (prev ? { ...prev, rpm: digitsOnly(e.target.value) } : prev))}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">RPD</span>
+                  <input
+                    className="field-control"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={editForm.rpd}
+                    onChange={(e) => setEditForm((prev) => (prev ? { ...prev, rpd: digitsOnly(e.target.value) } : prev))}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+      </Drawer>
+
+      {/* Show the plaintext key only once after creation */}
+      <Modal
+        open={showCreatedDialog}
+        title={localizedMessage(isZh, "apiKeys.apiKeyCreated")}
+        description={localizedMessage(isZh, "apiKeys.copyAndSaveThisKeyNowItWillBeMaskedInLaterViews")}
+        onClose={closeCreated}
+        footer={(
+          <>
+            <button type="button" className="button button-secondary" onClick={closeCreated}>
+              {localizedMessage(isZh, "common.close")}
+            </button>
+            <button
+              type="button"
+              className="button button-primary"
               onClick={async () => {
                 if (!createdKey) return;
                 await navigator.clipboard.writeText(createdKey);
                 setCopiedCreatedKey(true);
+                showToast(localizedMessage(isZh, "common.copied"));
               }}
             >
-              {copiedCreatedKey ? (isZh ? "已复制" : "Copied") : (isZh ? "复制" : "Copy")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              {copiedCreatedKey ? (localizedMessage(isZh, "common.copied")) : (localizedMessage(isZh, "common.copy"))}
+            </button>
+          </>
+        )}
+      >
+        <div className="reveal-key">
+          <span className="field-control secret-control">
+            <input readOnly value={createdKey ?? "-"} aria-label="API Key" />
+          </span>
+        </div>
+      </Modal>
 
       <ConfirmDialog
         open={Boolean(apiKeyToDelete)}
         onOpenChange={(open) => {
           if (!open) setApiKeyToDelete(null);
         }}
-        title={isZh ? "确认删除 API Key" : "Confirm API key deletion"}
+        title={localizedMessage(isZh, "apiKeys.confirmAPIKeyDeletion")}
         description={
           apiKeyToDelete
-            ? (isZh
-              ? `此操作不可撤销。确认删除「${apiKeyToDelete.name}」吗？`
-              : `This action cannot be undone. Delete "${apiKeyToDelete.name}"?`)
+            ? (localizedMessage(isZh, "common.thisActionCannotBeUndoneDelete", { a: apiKeyToDelete.name }))
             : undefined
         }
-        cancelText={isZh ? "取消" : "Cancel"}
-        confirmText={isZh ? "删除" : "Delete"}
+        cancelText={localizedMessage(isZh, "common.cancel")}
+        confirmText={localizedMessage(isZh, "common.delete")}
         onConfirm={() => {
           if (!apiKeyToDelete) return;
           deleteMut.mutate(apiKeyToDelete.id);
@@ -780,9 +914,9 @@ export default function ApiKeysPage() {
         title={errorDialog?.title ?? ""}
         description={errorDialog?.description}
         hideCancel
-        confirmText={isZh ? "我知道了" : "OK"}
+        confirmText={localizedMessage(isZh, "common.ok")}
         onConfirm={() => setErrorDialog(null)}
       />
-    </div>
+    </PageLayout>
   );
 }

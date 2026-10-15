@@ -1,229 +1,348 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Line, LineChart } from "recharts";
-import { backend } from "@/lib/backend";
-import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, GatewayStatus, Provider, Model as ModelType } from "@/lib/types";
-import { Activity, Zap, Clock, AlertTriangle, Server, Route as RouteIcon } from "lucide-react";
-import { useLocale } from "@/lib/i18n";
+import { useNavigate } from "react-router-dom";
+import { Check, CircleHelp, TriangleAlert } from "lucide-react";
+import clsx from "clsx";
 
-function fmt(n: number) {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
-  return String(n);
+import { backend } from "@/lib/backend";
+import type {
+  ApiKey,
+  GatewayStatus,
+  LogPage,
+  Model as ModelType,
+  ModelStats,
+  Provider,
+  ProviderStats,
+  RequestLog,
+  StatsHourly,
+  StatsOverview,
+} from "@/lib/types";
+import { useLocale } from "@/lib/i18n";
+import { NyroChart } from "@/components/ui/nyro-chart";
+import { PageHeader, PageLayout } from "@/components/layout/page";
+import { localizedMessage } from "@/lib/messages";
+
+
+function formatCompact(value: number) {
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
-function fmtLatency(ms: number) {
-  if (ms >= 1000) {
-    return `${(ms / 1000).toFixed(ms >= 10_000 ? 1 : 2)}s`;
-  }
-  return `${ms.toFixed(0)}ms`;
+function formatLatency(value: number | null | undefined) {
+  if (value == null) return "—";
+  return value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 1 : 2)}s` : `${Math.round(value)}ms`;
+}
+
+function statusCode(log: RequestLog) {
+  return log.client_status_code ?? log.upstream_status_code ?? 0;
 }
 
 export default function DashboardPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
+  const navigate = useNavigate();
 
   const { data: overview } = useQuery<StatsOverview>({
     queryKey: ["stats-overview"],
     queryFn: () => backend("get_stats_overview"),
     refetchInterval: 10_000,
   });
-
   const { data: hourly = [] } = useQuery<StatsHourly[]>({
     queryKey: ["stats-hourly"],
     queryFn: () => backend("get_stats_hourly", { hours: 24 }),
     refetchInterval: 30_000,
   });
-
   const { data: modelStats = [] } = useQuery<ModelStats[]>({
     queryKey: ["stats-models"],
     queryFn: () => backend("get_stats_by_model"),
     refetchInterval: 30_000,
   });
-
   const { data: providerStats = [] } = useQuery<ProviderStats[]>({
     queryKey: ["stats-providers"],
     queryFn: () => backend("get_stats_by_provider"),
     refetchInterval: 30_000,
   });
-
   const { data: status } = useQuery<GatewayStatus>({
     queryKey: ["gateway-status"],
     queryFn: () => backend("get_gateway_status"),
   });
-
   const { data: providers = [] } = useQuery<Provider[]>({
     queryKey: ["providers"],
     queryFn: () => backend("get_providers"),
   });
-
   const { data: routes = [] } = useQuery<ModelType[]>({
     queryKey: ["routes"],
     queryFn: () => backend("list_models"),
   });
+  const { data: apiKeys = [] } = useQuery<ApiKey[]>({
+    queryKey: ["api-keys"],
+    queryFn: () => backend("list_api_keys"),
+  });
+  const { data: logsPage } = useQuery<LogPage>({
+    queryKey: ["logs", "dashboard"],
+    queryFn: () => backend("query_logs", { query: { limit: 12, offset: 0 } }),
+    refetchInterval: 10_000,
+  });
 
-  const errorRate = overview && overview.total_requests > 0
-    ? ((overview.error_count / overview.total_requests) * 100).toFixed(1)
-    : "0";
+  const logs = logsPage?.items ?? [];
+  const errors = logs.filter((log) => statusCode(log) >= 400);
+  const totalRequests = overview?.total_requests ?? 0;
+  const errorRate = totalRequests > 0 ? ((overview?.error_count ?? 0) / totalRequests) * 100 : 0;
+  const successRate = totalRequests > 0 ? 100 - errorRate : 100;
+  const running = status?.status === "running";
+  const runtimeState = !running ? "unknown" : errorRate >= 1 ? "degraded" : "healthy";
+  const enabledProviders = providers.filter((provider) => provider.is_enabled).length;
+  const activeModels = routes.filter((route) => route.is_enabled).length;
+  const inputTokens = overview?.total_input_tokens ?? 0;
+  const outputTokens = overview?.total_output_tokens ?? 0;
 
-  const latencyUseSeconds = hourly.some((h) => h.avg_duration_ms >= 1000);
+  const stateTitle = runtimeState === "healthy"
+    ? (localizedMessage(isZh, "dashboard.gatewayIsHealthy"))
+    : runtimeState === "degraded"
+      ? (localizedMessage(isZh, "dashboard.gatewayIsDegraded"))
+      : (localizedMessage(isZh, "dashboard.gatewayStatusUnknown"));
+  const stateSummary = running
+    ? (localizedMessage(isZh, "dashboard.proxyRunningOnPort", { a: status?.proxy_port ?? "–" }))
+    : (localizedMessage(isZh, "dashboard.proxyIsNotRunning"));
+  const stateIcon = runtimeState === "healthy"
+    ? <Check />
+    : runtimeState === "degraded"
+      ? <TriangleAlert />
+      : <CircleHelp />;
 
-  const cards = [
-    { label: isZh ? "总请求数" : "Total Requests", value: fmt(overview?.total_requests ?? 0), icon: Activity, color: "text-blue-600" },
-    { label: isZh ? "总 Token" : "Total Tokens", value: fmt((overview?.total_input_tokens ?? 0) + (overview?.total_output_tokens ?? 0)), icon: Zap, color: "text-amber-600" },
-    { label: isZh ? "平均延迟" : "Avg Latency", value: fmtLatency(overview?.avg_duration_ms ?? 0), icon: Clock, color: "text-green-600" },
-    { label: isZh ? "错误率" : "Error Rate", value: `${errorRate}%`, icon: AlertTriangle, color: "text-red-500" },
-    { label: isZh ? "提供商" : "Providers", value: String(providers.length), icon: Server, color: "text-purple-600" },
-    { label: isZh ? "模型" : "Models", value: String(routes.length), icon: RouteIcon, color: "text-indigo-600" },
+  const chartData = hourly.map((point) => ({
+    label: point.hour.slice(11, 16),
+    value: point.request_count,
+    error: point.error_count,
+  }));
+  const routeByName = new Map(routes.map((route) => [route.name, route]));
+  const recentSamples = logs.slice(0, 6);
+
+  const metrics = [
+    {
+      label: localizedMessage(isZh, "dashboard.requests24h"),
+      value: new Intl.NumberFormat(locale).format(totalRequests),
+      detail: localizedMessage(isZh, "dashboard.totalRequests"),
+    },
+    {
+      label: localizedMessage(isZh, "dashboard.tokenUsage"),
+      value: formatCompact(inputTokens + outputTokens),
+      detail: localizedMessage(isZh, "common.inOut", { a: formatCompact(inputTokens), b: formatCompact(outputTokens) }),
+    },
+    {
+      label: localizedMessage(isZh, "common.avgLatency"),
+      value: formatLatency(overview?.avg_duration_ms),
+      detail: localizedMessage(isZh, "common.allRequests"),
+    },
+    {
+      label: localizedMessage(isZh, "common.errorRate"),
+      value: `${errorRate.toFixed(2)}%`,
+      detail: localizedMessage(isZh, "dashboard.target100"),
+    },
+    {
+      label: localizedMessage(isZh, "dashboard.activeModels"),
+      value: String(activeModels),
+      detail: localizedMessage(isZh, "dashboard.fromEnabledProviders", { a: enabledProviders }),
+    },
   ];
 
-  const chartHourly = hourly.map((h) => ({
-    hour: h.hour.slice(11, 16),
-    requests: h.request_count,
-    errors: h.error_count,
-    latency: latencyUseSeconds
-      ? Number((h.avg_duration_ms / 1000).toFixed(2))
-      : Math.round(h.avg_duration_ms),
-  }));
-
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">{isZh ? "概览" : "Dashboard"}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {isZh
-            ? `代理状态 ${status?.status === "running" ? "运行中" : "–"}，端口 ${status?.proxy_port ?? "–"}`
-            : `Proxy ${status?.status === "running" ? "running" : "–"} on port ${status?.proxy_port ?? "–"}`}
-        </p>
-      </div>
+    <PageLayout
+      header={(
+        <PageHeader
+          title={localizedMessage(isZh, "dashboard.overview")}
+          description={localizedMessage(isZh, "dashboard.checkGatewayHealthFirstThenTrafficUpstreamsAndModels")}
+        />
+      )}
+    >
+      <section
+        className={clsx("health-strip", runtimeState === "degraded" && "warn", runtimeState === "unknown" && "unknown")}
+        aria-label={localizedMessage(isZh, "dashboard.platformHealth")}
+      >
+        <div className="health-icon" aria-hidden="true">{stateIcon}</div>
+        <div className="health-strip-copy">
+          <h3>{stateTitle}</h3>
+          <p>{stateSummary}</p>
+        </div>
+        <div className="health-caps">
+          <div className="health-cap"><span>{localizedMessage(isZh, "common.providers")}</span><strong>{providers.length}</strong></div>
+          <div className="health-cap"><span>{localizedMessage(isZh, "common.models")}</span><strong>{routes.length}</strong></div>
+          <div className="health-cap"><span>{localizedMessage(isZh, "dashboard.success")}</span><strong>{successRate.toFixed(2)}%</strong></div>
+          <div className="health-cap"><span>{localizedMessage(isZh, "common.keys")}</span><strong>{apiKeys.length}</strong></div>
+        </div>
+      </section>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-        {cards.map((c) => (
-          <div key={c.label} className="glass rounded-2xl p-4 transition-all hover:-translate-y-0.5 hover:shadow-lg">
-            <div className="flex items-center gap-2">
-              <c.icon className={`h-4 w-4 ${c.color}`} />
-              <p className="text-xs font-medium text-slate-500">{c.label}</p>
+      <section className="metric-strip" aria-label={localizedMessage(isZh, "dashboard.gatewayStatus")}>
+        <div className="metric-strip-stats">
+          {metrics.map((metric) => (
+            <div className="metric-cell" key={metric.label}>
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+              <small className="metric-hint">{metric.detail}</small>
             </div>
-            <p className="mt-1.5 text-[24px] leading-none font-semibold text-slate-900">{c.value}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        <div className="glass rounded-2xl p-6">
-          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "请求量（24h）" : "Requests (24h)"}</h3>
-          <div className="h-48">
-            {chartHourly.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartHourly}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="hour" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={40} />
-                  <Tooltip />
-                  <Bar dataKey="requests" name={isZh ? "请求" : "Requests"} radius={[4, 4, 0, 0]} fill="#3b82f6" />
-                  <Bar dataKey="errors" name={isZh ? "错误" : "Errors"} radius={[4, 4, 0, 0]} fill="#ef4444" />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-slate-400">
-                {isZh ? "暂无流量数据" : "No traffic data yet"}
-              </div>
-            )}
-          </div>
+          ))}
         </div>
+      </section>
 
-        <div className="glass rounded-2xl p-6">
-          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "延迟（24h）" : "Latency (24h)"}</h3>
-          <div className="h-48">
-            {chartHourly.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartHourly}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="hour" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis
-                    tick={{ fill: "#64748b", fontSize: 11 }}
-                    axisLine={false}
-                    tickLine={false}
-                    width={40}
-                    unit={latencyUseSeconds ? "s" : "ms"}
-                  />
-                  <Tooltip
-                    formatter={(value) =>
-                      typeof value === "number"
-                        ? `${value}${latencyUseSeconds ? "s" : "ms"}`
-                        : value
-                    }
-                  />
-                  <Line type="monotone" dataKey="latency" name={isZh ? "平均延迟" : "Avg Latency"} stroke="#10b981" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-slate-400">
-                {isZh ? "暂无延迟数据" : "No latency data yet"}
+      <section className="section-grid split-grid">
+        <article className="card chart-full">
+          <div className="card-header">
+            <div>
+              <div className="card-title-row">
+                <h2 className="card-title">{localizedMessage(isZh, "common.requestTrend")}</h2>
+                <span className="live-pill"><span className="status-dot" /><span>{localizedMessage(isZh, "dashboard.live")}</span></span>
               </div>
-            )}
+              <div className="card-subtitle">{localizedMessage(isZh, "dashboard.hourlyRequestsAndErrorsOverTheLast24Hours")}</div>
+            </div>
           </div>
-        </div>
-      </div>
+          {chartData.length < 2 ? (
+            <div className="chart-wrap"><div className="empty">{localizedMessage(isZh, "dashboard.noTrafficDataYet")}</div></div>
+          ) : (
+            <NyroChart
+              data={chartData}
+              ariaLabel={localizedMessage(isZh, "dashboard.requestsOver24Hours")}
+              valueLabel={localizedMessage(isZh, "common.requests")}
+              errorLabel={localizedMessage(isZh, "common.errors")}
+            />
+          )}
+          <div className="chart-legend">
+            <span className="chart-legend-item"><span className="legend-dot" /><span>{localizedMessage(isZh, "common.requests2")}</span></span>
+            <span className="chart-legend-item"><span className="legend-dot error" /><span>{localizedMessage(isZh, "common.errors2")}</span></span>
+          </div>
+        </article>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        <div className="glass rounded-2xl p-6">
-          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "热门模型" : "Top Models"}</h3>
-          <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
-            <table className="w-full text-sm">
-              <thead className="bg-white/70 text-slate-500">
+        <article className="card">
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">{localizedMessage(isZh, "dashboard.upstreamHealth")}</h2>
+              <div className="card-subtitle">{localizedMessage(isZh, "dashboard.availabilityFromEnablementAndRecentTraffic")}</div>
+            </div>
+          </div>
+          <div className="upstream-list">
+            {providers.slice(0, 5).map((provider) => {
+              const stats = providerStats.find((item) => item.provider === provider.name);
+              const providerErrorRate = stats && stats.request_count > 0 ? stats.error_count / stats.request_count : 0;
+              const state = !provider.is_enabled ? "inactive" : providerErrorRate >= 0.1 ? "degraded" : "available";
+              const label = state === "degraded"
+                ? (localizedMessage(isZh, "dashboard.degraded"))
+                : state === "inactive"
+                  ? (localizedMessage(isZh, "common.disabled"))
+                  : (localizedMessage(isZh, "dashboard.available"));
+              return (
+                <button
+                  type="button"
+                  className="upstream-item"
+                  key={provider.id}
+                  onClick={() => navigate("/providers")}
+                >
+                  <span>
+                    <span className="upstream-name">{provider.name}</span>
+                    <span className="upstream-meta">{provider.protocol || provider.vendor || "—"}</span>
+                  </span>
+                  <span className={clsx("health", state === "degraded" && "warn", state === "inactive" && "is-idle")}>
+                    <span className="mini-dot" />
+                    <span>{label}</span>
+                  </span>
+                </button>
+              );
+            })}
+            {providers.length === 0 && <div className="empty">{localizedMessage(isZh, "dashboard.noProvidersYet")}</div>}
+          </div>
+        </article>
+      </section>
+
+      <section className="section-grid split-grid">
+        <article className="card">
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">{localizedMessage(isZh, "dashboard.modelPerformance")}</h2>
+              <div className="card-subtitle">{localizedMessage(isZh, "dashboard.topModelsByRequestVolume")}</div>
+            </div>
+          </div>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium">{isZh ? "模型" : "Model"}</th>
-                  <th className="px-3 py-2 text-right font-medium">{isZh ? "请求数" : "Requests"}</th>
-                  <th className="px-3 py-2 text-right font-medium">{isZh ? "Token" : "Tokens"}</th>
-                  <th className="px-3 py-2 text-right font-medium">{isZh ? "延迟" : "Latency"}</th>
+                  <th>{localizedMessage(isZh, "common.model")}</th>
+                  <th>{localizedMessage(isZh, "dashboard.provider")}</th>
+                  <th>{localizedMessage(isZh, "common.requests2")}</th>
+                  <th>Token</th>
+                  <th>{localizedMessage(isZh, "dashboard.latency")}</th>
+                  <th>{localizedMessage(isZh, "common.status")}</th>
                 </tr>
               </thead>
               <tbody>
+                {modelStats.slice(0, 6).map((stats) => {
+                  const route = routeByName.get(stats.model);
+                  return (
+                    <tr key={stats.model}>
+                      <td>
+                        <div className="cell-stack">
+                          <strong>{stats.model}</strong>
+                          <small>{route?.balance || "—"}</small>
+                        </div>
+                      </td>
+                      <td>{route?.target_provider || "—"}</td>
+                      <td>{formatCompact(stats.request_count)}</td>
+                      <td>{formatCompact(stats.total_input_tokens + stats.total_output_tokens)}</td>
+                      <td>{formatLatency(stats.avg_duration_ms)}</td>
+                      <td>
+                        <span className={clsx("health", route?.is_enabled === false && "is-idle")}>
+                          <span className="mini-dot" />
+                          <span>{route?.is_enabled === false ? (localizedMessage(isZh, "dashboard.disabled")) : (localizedMessage(isZh, "dashboard.running"))}</span>
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {modelStats.length === 0 && (
-                  <tr><td className="px-3 py-6 text-center text-slate-400" colSpan={4}>{isZh ? "暂无模型数据" : "No model data"}</td></tr>
+                  <tr><td colSpan={6}><div className="empty">{localizedMessage(isZh, "dashboard.noModelData")}</div></td></tr>
                 )}
-                {modelStats.slice(0, 6).map((m) => (
-                  <tr key={m.model} className="border-t border-white/70 text-slate-700">
-                    <td className="px-3 py-2 font-medium">{m.model}</td>
-                    <td className="px-3 py-2 text-right">{fmt(m.request_count)}</td>
-                    <td className="px-3 py-2 text-right">{fmt(m.total_input_tokens + m.total_output_tokens)}</td>
-                    <td className="px-3 py-2 text-right">{fmtLatency(m.avg_duration_ms)}</td>
-                  </tr>
-                ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </article>
 
-        <div className="glass rounded-2xl p-6">
-          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "提供商概览" : "Provider Overview"}</h3>
-          <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
-            <table className="w-full text-sm">
-              <thead className="bg-white/70 text-slate-500">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">{isZh ? "提供商" : "Provider"}</th>
-                  <th className="px-3 py-2 text-right font-medium">{isZh ? "请求数" : "Requests"}</th>
-                  <th className="px-3 py-2 text-right font-medium">{isZh ? "错误数" : "Errors"}</th>
-                  <th className="px-3 py-2 text-right font-medium">{isZh ? "延迟" : "Latency"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {providerStats.length === 0 && (
-                  <tr><td className="px-3 py-6 text-center text-slate-400" colSpan={4}>{isZh ? "暂无提供商数据" : "No provider data"}</td></tr>
-                )}
-                {providerStats.slice(0, 6).map((p) => (
-                  <tr key={p.provider} className="border-t border-white/70 text-slate-700">
-                    <td className="px-3 py-2 font-medium">{p.provider}</td>
-                    <td className="px-3 py-2 text-right">{fmt(p.request_count)}</td>
-                    <td className="px-3 py-2 text-right text-red-500">{p.error_count}</td>
-                    <td className="px-3 py-2 text-right">{fmtLatency(p.avg_duration_ms)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <article className="card notice-card">
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">{localizedMessage(isZh, "dashboard.runtimeActivity")}</h2>
+              <div className="card-subtitle">{localizedMessage(isZh, "dashboard.recentErrorsAndSampledRequests")}</div>
+            </div>
+            <div className="sample-chips">
+              <span className="sample-chip">{localizedMessage(isZh, "dashboard.recentErrors", { a: errors.length })}</span>
+              <span className="sample-chip">{localizedMessage(isZh, "dashboard.sampled", { a: logs.length })}</span>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
+          <div className="sample-list">
+            <div className="sample-item sample-head">
+              <span>{localizedMessage(isZh, "common.time")}</span>
+              <span>{localizedMessage(isZh, "dashboard.result")}</span>
+              <span>{localizedMessage(isZh, "dashboard.modelProvider")}</span>
+              <span>{localizedMessage(isZh, "common.latency")}</span>
+            </div>
+            {recentSamples.map((log) => {
+              const code = statusCode(log);
+              const time = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(log.created_at));
+              return (
+                <button
+                  type="button"
+                  className={clsx("sample-item", code >= 400 ? "err" : "ok")}
+                  key={log.id}
+                  onClick={() => navigate("/logs")}
+                >
+                  <span className="sample-time">{time}</span>
+                  <span className="sample-result">{code ? String(code) : "—"}</span>
+                  <span className="sample-copy">
+                    {log.model_name || log.client_model || "—"}
+                    <span>{log.provider_name || "—"}</span>
+                  </span>
+                  <span className="sample-latency">{formatLatency(log.latency_total_ms)}</span>
+                </button>
+              );
+            })}
+            {recentSamples.length === 0 && <div className="empty">{localizedMessage(isZh, "dashboard.noRequestsYet")}</div>}
+          </div>
+        </article>
+      </section>
+    </PageLayout>
   );
 }

@@ -35,7 +35,7 @@ export function formatTps(tps: number | null | undefined): string {
   return `${Math.round(tps)} tok/s`;
 }
 
-/** 计算 TPS 所需的最小字段集(结构兼容 `RequestLog`)。 */
+/** Minimum fields needed to compute TPS (structurally compatible with `RequestLog`). */
 export interface TpsInput {
   output_tokens?: number | null;
   is_stream?: boolean | null;
@@ -46,8 +46,9 @@ export interface TpsInput {
 }
 
 /**
- * 净生成耗时(ms):流式 = 上游耗时 − 首字节延迟;非流式 = 上游往返耗时;
- * 缺失时回退到端到端总耗时。无法确定时返回 null。
+ * Net generation time in ms. Streaming = upstream time − time to first byte;
+ * non-streaming = upstream round trip. Falls back to end-to-end latency when
+ * those values are missing. Returns null when it cannot be determined.
  */
 export function generationMsOf(log: TpsInput | null | undefined): number | null {
   if (!log) return null;
@@ -56,9 +57,10 @@ export function generationMsOf(log: TpsInput | null | undefined): number | null 
   const ttfb = log.stream_first_chunk_ms ?? null;
   if (isStream && upstream != null && ttfb != null) {
     const gen = upstream - ttfb;
-    // 净生成耗时必须真实反映增量解码阶段。当首字节延迟占上游耗时比例过高
-    // (上游未真正增量流式,而是在服务端算完后一口气 flush),gen 会趋近于 0,
-    // 导致 TPS 被放大成荒诞的数值。此时回退到上游往返耗时作为生成耗时。
+    // Net generation time must reflect incremental decoding. When time to first
+    // byte dominates upstream time (the upstream finished server-side and flushed
+    // once, rather than streaming incrementally), gen approaches 0 and TPS is
+    // inflated. Fall back to the upstream round trip in that case.
     const TTFB_RATIO_THRESHOLD = 0.8;
     const GEN_MIN_MS = 50;
     const looksNonIncremental = gen <= 0
@@ -70,7 +72,7 @@ export function generationMsOf(log: TpsInput | null | undefined): number | null 
   return upstream ?? log.latency_total_ms ?? null;
 }
 
-/** 净生成速度(tok/s);output ≤ 0 或净生成耗时无效时返回 null。 */
+/** Net generation speed in tok/s. Returns null when output ≤ 0 or generation time is invalid. */
 export function computeTps(log: TpsInput | null | undefined): number | null {
   const gen = generationMsOf(log);
   const out = log?.output_tokens ?? 0;

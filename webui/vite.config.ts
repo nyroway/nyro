@@ -1,6 +1,5 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import { readFileSync } from "fs";
 
@@ -10,7 +9,7 @@ const pkg = JSON.parse(
 const appVersion = pkg.version ?? "0.0.0";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   define: {
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
   },
@@ -26,15 +25,14 @@ export default defineConfig({
         manualChunks: {
           "vendor-react": ["react", "react-dom", "react-router-dom"],
           "vendor-query": ["@tanstack/react-query"],
-          "vendor-charts": ["recharts"],
         },
       },
     },
   },
   server: {
     proxy: {
-      "/nyro": {
-        target: "http://127.0.0.1:11080",
+      "/api": {
+        target: "http://127.0.0.1:19531",
         changeOrigin: true,
       },
     },

@@ -1,178 +1,173 @@
 import { useEffect, useState } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
-import { Github, Languages, LogOut, Moon, Sun } from "lucide-react";
-import { Sidebar } from "./sidebar";
-import { cn } from "@/lib/utils";
-import { IS_TAURI } from "@/lib/backend";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import {
+  BarChart3,
+  BookOpen,
+  ExternalLink,
+  Github,
+  Home,
+  KeyRound,
+  LogOut,
+  Moon,
+  Plug,
+  Route,
+  ScrollText,
+  Server,
+  Settings,
+  Sun,
+} from "lucide-react";
+
+import nyroLogoUrl from "@/assets/logos/NYRO-logo.png";
 import { clearAdminToken, getAdminToken } from "@/lib/auth";
 import { useLocale } from "@/lib/i18n";
 import { openExternalUrl } from "@/lib/open-external";
+import type { MessageKey } from "@/lib/messages";
 
-const NON_DRAGGABLE_SELECTOR = [
-  "[data-no-drag]",
-  "[role]",
-  "[tabindex]",
-  "[contenteditable='']",
-  "[contenteditable='true']",
-  "[data-slot]",
-  "[cmdk-root]",
-  "[cmdk-input]",
-  "[cmdk-item]",
-  "button",
-  "a",
-  "input",
-  "select",
-  "textarea",
-  "label",
-  "option",
-  "summary",
-  "svg",
-  "path",
-].join(",");
+type NavEntry = { path: string; label: MessageKey; icon: typeof Server };
+
+const NAV_SECTIONS: Array<{ label?: MessageKey; entries: NavEntry[] } | "divider"> = [
+  { entries: [{ path: "/", label: "shell.navOverview", icon: Home }] },
+  {
+    label: "shell.navUpstream",
+    entries: [
+      { path: "/providers", label: "shell.navProviders", icon: Server },
+      { path: "/models", label: "shell.navModels", icon: Route },
+      { path: "/api-keys", label: "shell.navApiKeys", icon: KeyRound },
+      { path: "/connect", label: "shell.navConnect", icon: Plug },
+    ],
+  },
+  {
+    label: "shell.navRuntime",
+    entries: [
+      { path: "/logs", label: "shell.navLogs", icon: ScrollText },
+      { path: "/stats", label: "shell.navStats", icon: BarChart3 },
+    ],
+  },
+  "divider",
+  { entries: [{ path: "/settings", label: "shell.navSettings", icon: Settings }] },
+];
+
+function navEntries() {
+  return NAV_SECTIONS.flatMap((section) => (section === "divider" ? [] : section.entries));
+}
+
+type Theme = "light" | "dark";
+
+function readInitialTheme(): Theme {
+  try {
+    const stored = localStorage.getItem("nyro-theme");
+    if (stored === "light" || stored === "dark") return stored;
+  } catch {
+    // Fall back to the system preference when storage cannot be read, such as in private mode
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function currentPath(pathname: string) {
+  if (pathname === "/") return "/";
+  const match = navEntries().find((entry) => entry.path !== "/" && (pathname === entry.path || pathname.startsWith(`${entry.path}/`)));
+  return match?.path ?? "/";
+}
 
 export function AppLayout() {
-  const [collapsed, setCollapsed] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [hasToken, setHasToken] = useState(false);
-  const { locale, setLocale } = useLocale();
+  const { locale, setLocale, t } = useLocale();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [theme, setTheme] = useState<Theme>(readInitialTheme);
+  const version = import.meta.env.VITE_APP_VERSION;
+  const hasToken = getAdminToken() !== null;
 
   useEffect(() => {
-    const saved = localStorage.getItem("nyro-theme");
-    const initial =
-      saved === "dark" || saved === "light"
-        ? saved
-        : window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light";
-    setTheme(initial);
-    document.documentElement.setAttribute("data-theme", initial);
-    if (!IS_TAURI) {
-      setHasToken(getAdminToken() !== null);
-    }
-  }, []);
-
-  async function toggleTheme() {
-    const next = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    localStorage.setItem("nyro-theme", next);
-    document.documentElement.setAttribute("data-theme", next);
-  }
-
-  function toggleLocale() {
-    const next = locale === "zh-CN" ? "en-US" : "zh-CN";
-    setLocale(next);
-  }
-
-  function handleLogout() {
-    clearAdminToken();
-    navigate("/login", { replace: true });
-  }
-
-  async function openProjectGithub() {
-    await openExternalUrl("https://github.com/nyroway/nyro");
-  }
-
-  async function handleSurfaceMouseDown(e: React.MouseEvent<HTMLElement>) {
-    if (!IS_TAURI || e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest(NON_DRAGGABLE_SELECTOR)) {
-      return;
-    }
+    document.documentElement.dataset.theme = theme;
+    document.body.dataset.theme = theme;
     try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().startDragging();
+      localStorage.setItem("nyro-theme", theme);
     } catch {
-      // ignore drag errors on non-desktop context
+      // Ignore storage failures; the theme still applies for the current session
     }
-  }
+  }, [theme]);
+
+  const page = navEntries().find((entry) => entry.path === currentPath(location.pathname));
 
   return (
-    <div className={cn("app-shell h-screen bg-background", IS_TAURI ? "is-tauri" : "is-web")}>
-      {IS_TAURI && (
-        <div className="native-topbar">
-          <div className="native-topbar-inner">
-            <div data-tauri-drag-region className="native-topbar-drag" />
-            <div className="native-topbar-actions" data-no-drag>
-              <button
-                onClick={openProjectGithub}
-                className="native-action-btn"
-                title={locale === "zh-CN" ? "打开 Nyro GitHub" : "Open Nyro on GitHub"}
-              >
-                <Github className="h-4 w-4" />
-              </button>
-              <button
-                onClick={toggleTheme}
-                className="native-action-btn"
-                title={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
-              >
-                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              </button>
-              <button
-                onClick={toggleLocale}
-                className="native-action-btn"
-                title={locale === "zh-CN" ? "Switch to English" : "切换到中文"}
-              >
-                <Languages className="h-4 w-4" />
-              </button>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <NavLink className="brand" to="/" aria-label="Nyro Console">
+          <img className="brand-logo" src={nyroLogoUrl} alt="Nyro" width={28} height={28} />
+          <span className="brand-copy">
+            <span className="brand-lockup">
+              <span className="brand-title">NYRO</span>
+              <span className="brand-console">CONSOLE</span>
+            </span>
+            <span className="brand-meta">{version}</span>
+          </span>
+        </NavLink>
+        <nav className="nav" aria-label="Primary">
+          {NAV_SECTIONS.map((section, index) => section === "divider" ? (
+            <div className="nav-divider" key={`divider-${index}`} />
+          ) : (
+            <div className="nav-group" key={section.label ?? `group-${index}`}>
+              {section.label ? (
+                <p className="nav-label">{t(section.label)}</p>
+              ) : null}
+              {section.entries.map((entry) => (
+                <NavLink key={entry.path} to={entry.path} end={entry.path === "/"} className="nav-item">
+                  <entry.icon className="nav-icon" aria-hidden="true" />
+                  <span>{t(entry.label)}</span>
+                </NavLink>
+              ))}
             </div>
-          </div>
+          ))}
+        </nav>
+        <div className="nav-external">
+          <button type="button" className="nav-item external" onClick={() => void openExternalUrl("https://github.com/nyroway/nyro")}>
+            <Github className="nav-icon" aria-hidden="true" />
+            <span>GitHub</span>
+            <ExternalLink className="nav-external-icon" aria-hidden="true" />
+          </button>
+          <button type="button" className="nav-item external" onClick={() => void openExternalUrl("https://github.com/nyroway/nyro#readme")}>
+            <BookOpen className="nav-icon" aria-hidden="true" />
+            <span>{t("shell.docs")}</span>
+            <ExternalLink className="nav-external-icon" aria-hidden="true" />
+          </button>
         </div>
-      )}
-
-      {!IS_TAURI && (
-        <div className="web-topbar">
-          <div className="native-topbar-inner">
-            <div className="native-topbar-actions" data-no-drag>
-              <button
-                onClick={openProjectGithub}
-                className="native-action-btn"
-                title={locale === "zh-CN" ? "打开 Nyro GitHub" : "Open Nyro on GitHub"}
-              >
-                <Github className="h-4 w-4" />
-              </button>
-              <button
-                onClick={toggleTheme}
-                className="native-action-btn"
-                title={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
-              >
-                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              </button>
-              <button
-                onClick={toggleLocale}
-                className="native-action-btn"
-                title={locale === "zh-CN" ? "Switch to English" : "切换到中文"}
-              >
-                <Languages className="h-4 w-4" />
-              </button>
-              {hasToken && (
-                <button
-                  onClick={handleLogout}
-                  className="native-action-btn"
-                  title={locale === "zh-CN" ? "退出登录" : "Sign out"}
-                >
-                  <LogOut className="h-4 w-4" />
-                </button>
-              )}
+      </aside>
+      <div className="main">
+        <header className="topbar">
+          <div className="breadcrumb">
+            <span>{t("shell.console")}</span>
+            <span className="breadcrumb-separator" aria-hidden="true">/</span>
+            <strong>{page ? t(page.label) : t("shell.navOverview")}</strong>
+          </div>
+          <div className="topbar-actions">
+            <div className="lang-switch" role="group" aria-label={t("shell.language")}>
+              <button type="button" className={`lang-button${locale === "en-US" ? " active" : ""}`} onClick={() => setLocale("en-US")}>EN</button>
+              <button type="button" className={`lang-button${locale === "zh-CN" ? " active" : ""}`} onClick={() => setLocale("zh-CN")}>中</button>
             </div>
+            <button
+              type="button"
+              className="icon-button theme-button"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            >
+              {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+              <span>{t("shell.theme")}</span>
+            </button>
+            {hasToken ? (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  clearAdminToken();
+                  navigate("/login", { replace: true });
+                }}
+              >
+                <LogOut aria-hidden="true" />
+                <span>{t("shell.signOut")}</span>
+              </button>
+            ) : null}
           </div>
-        </div>
-      )}
-
-      <div
-        className={cn(
-          "layout-frame mx-auto flex h-[calc(100vh-var(--chrome-h))] w-full max-w-[1520px] items-stretch gap-3 overflow-hidden px-3 py-2 md:gap-4 md:px-4 md:py-3"
-        )}
-      >
-        <div onMouseDownCapture={handleSurfaceMouseDown} className="h-full">
-          <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-        </div>
-        <main
-          onMouseDownCapture={handleSurfaceMouseDown}
-          className={cn(
-            "content-surface h-full min-w-0 flex-1 overflow-y-auto rounded-[1.5rem] border border-white/65 bg-white/56 p-4 shadow-[0_8px_28px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl transition-all duration-300 ease-out md:p-5"
-          )}
-        >
+        </header>
+        <main id="main-content">
           <Outlet />
         </main>
       </div>

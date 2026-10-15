@@ -1,58 +1,21 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, useRef } from "react";
-import { backend, IS_TAURI } from "@/lib/backend";
+import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
-import type {
-  ExportData,
-  GatewayStatus,
-  ImportResult,
-} from "@/lib/types";
+import type { ExportData, GatewayStatus, ImportResult } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
-import {
-  Download,
-  HelpCircle,
-  Upload,
-  Save,
-  Loader2,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { showToast } from "@/lib/toast";
+import { PageHeader, PageLayout } from "@/components/layout/page";
+import { localizedMessage, type MessageKey } from "@/lib/messages";
+
 
 function HelpHint({ text }: { text: string }) {
   return (
-    <TooltipProvider delayDuration={120}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex h-4 w-4 items-center justify-center text-slate-400 hover:text-slate-600"
-            aria-label="help"
-          >
-            <HelpCircle className="h-3.5 w-3.5" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="max-w-xs">
-          {text}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
-function ToggleStatusLabel({ enabled, isZh }: { enabled: boolean; isZh: boolean }) {
-  return (
-    <Badge variant={enabled ? "success" : "secondary"} className="connect-label-badge">
-      {enabled ? (isZh ? "已启用" : "Enabled") : (isZh ? "未启用" : "Disabled")}
-    </Badge>
+    <span className="help" aria-label={text}>
+      ?
+      <span className="help-tip" role="tooltip">{text}</span>
+    </span>
   );
 }
 
@@ -123,9 +86,9 @@ export default function SettingsPage() {
     return localizeBackendErrorMessage(error, isZh);
   }
 
-  function showErrorDialog(titleZh: string, titleEn: string, error: unknown) {
+  function showErrorDialog(titleKey: MessageKey, error: unknown) {
     setErrorDialog({
-      title: isZh ? titleZh : titleEn,
+      title: localizedMessage(isZh, titleKey),
       description: formatErrorMessage(error),
     });
   }
@@ -133,17 +96,23 @@ export default function SettingsPage() {
   const saveSetting = useMutation({
     mutationFn: (value: string) =>
       backend("set_setting", { key: "log_retention_days", value }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["setting", "log_retention_days"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["setting", "log_retention_days"] });
+      showToast(localizedMessage(isZh, "common.saved"));
+    },
     onError: (error: unknown) => {
-      showErrorDialog("保存设置失败", "Failed to save settings", error);
+      showErrorDialog("settings.failedToSaveSettings", error);
     },
   });
   const saveLogRecordPayloads = useMutation({
     mutationFn: (value: boolean) =>
       backend("set_setting", { key: "enable_payload", value: value ? "true" : "false" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["setting", "enable_payload"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["setting", "enable_payload"] });
+      showToast(localizedMessage(isZh, "common.saved"));
+    },
     onError: (error: unknown) => {
-      showErrorDialog("保存设置失败", "Failed to save settings", error);
+      showErrorDialog("settings.failedToSaveSettings", error);
     },
   });
   const saveProxyToggle = useMutation({
@@ -158,9 +127,10 @@ export default function SettingsPage() {
       qc.invalidateQueries({ queryKey: ["setting", "proxy_enabled"] });
       qc.invalidateQueries({ queryKey: ["setting", "proxy_url"] });
       qc.invalidateQueries({ queryKey: ["setting", "proxy_bypass"] });
+      showToast(localizedMessage(isZh, "common.saved"));
     },
     onError: (error: unknown) => {
-      showErrorDialog("保存代理设置失败", "Failed to save proxy settings", error);
+      showErrorDialog("settings.failedToSaveProxySettings", error);
     },
   });
 
@@ -174,9 +144,10 @@ export default function SettingsPage() {
       a.download = `nyro-config-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
+      showToast(localizedMessage(isZh, "settings.configExported"));
     },
     onError: (error: unknown) => {
-      showErrorDialog("导出配置失败", "Failed to export config", error);
+      showErrorDialog("settings.failedToExportConfig", error);
     },
   });
 
@@ -186,9 +157,10 @@ export default function SettingsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["providers"] });
       qc.invalidateQueries({ queryKey: ["routes"] });
+      showToast(localizedMessage(isZh, "settings.configImported"));
     },
     onError: (error: unknown) => {
-      showErrorDialog("导入配置失败", "Failed to import config", error);
+      showErrorDialog("settings.failedToImportConfig", error);
     },
   });
 
@@ -202,8 +174,8 @@ export default function SettingsPage() {
         importMut.mutate(data);
       } catch {
         setErrorDialog({
-          title: isZh ? "导入配置失败" : "Failed to import config",
-          description: isZh ? "无效的 JSON 文件" : "Invalid JSON file",
+          title: localizedMessage(isZh, "settings.failedToImportConfig"),
+          description: localizedMessage(isZh, "settings.invalidJSONFile"),
         });
       }
     };
@@ -216,17 +188,13 @@ export default function SettingsPage() {
     const bypass = proxyBypass.trim();
     if (proxyEnabled && !url) {
       setErrorDialog({
-        title: isZh ? "无法保存代理配置" : "Cannot Save Proxy Settings",
-        description: isZh ? "请先填写代理 URL，再保存代理配置。" : "Please set proxy URL before saving proxy settings.",
+        title: localizedMessage(isZh, "settings.cannotSaveProxySettings"),
+        description: localizedMessage(isZh, "settings.pleaseSetProxyURLBeforeSavingProxySettings"),
       });
       return;
     }
     saveProxyToggle.mutate(
-      {
-        enabled: proxyEnabled,
-        url,
-        bypass,
-      },
+      { enabled: proxyEnabled, url, bypass },
       {
         onSuccess: () => {
           setProxyUrl(url);
@@ -240,229 +208,142 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">{isZh ? "设置" : "Settings"}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {isZh ? "网关配置" : "Gateway configuration"}
-        </p>
-      </div>
-
-      {/* Gateway Status */}
-      <div className="glass rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-slate-900">{isZh ? "网关状态" : "Gateway Status"}</h2>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">{isZh ? "状态" : "Status"}</p>
-            <p className="mt-1 font-semibold text-green-600">{status?.status ?? "–"}</p>
-          </div>
-          <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">{isZh ? "代理端口" : "Proxy Port"}</p>
-            <p className="mt-1 font-semibold text-slate-900">{status?.proxy_port ?? "–"}</p>
-          </div>
-          <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">{isZh ? "模式" : "Mode"}</p>
-            <p className="mt-1 font-semibold text-slate-900">{IS_TAURI ? (isZh ? "桌面版" : "Desktop") : "Server"}</p>
-          </div>
-          <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">{isZh ? "版本" : "Version"}</p>
-            <p className="mt-1 font-semibold text-slate-900">{appVersion}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-        {/* Proxy Configuration */}
-        <div className="glass rounded-2xl p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "代理配置" : "Proxy Configuration"}</h2>
-          <div className="rounded-xl bg-slate-50 p-4 space-y-3">
-            <div className="space-y-1.5">
-              <label className="ml-1 text-xs text-slate-700">{isZh ? "代理" : "Proxy"}</label>
-              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                <div className="flex items-center gap-2">
-                  <ToggleStatusLabel enabled={proxyEnabled} isZh={isZh} />
-                </div>
-                <Switch
-                  checked={proxyEnabled}
-                  disabled={saveProxyToggle.isPending}
-                  onCheckedChange={setProxyEnabled}
-                />
+    <PageLayout
+      header={(
+        <PageHeader
+          title={localizedMessage(isZh, "settings.settings")}
+          description={localizedMessage(isZh, "settings.gatewayConfiguration")}
+        />
+      )}
+    >
+      <div className="card">
+        <div className="card-header"><h2 className="card-title">{localizedMessage(isZh, "settings.gatewayStatus")}</h2></div>
+        <div className="card-body">
+          <div className="metric-strip">
+            <div className="metric-strip-stats cols-4">
+              <div className="metric-cell">
+                <span className="metric-hint">{localizedMessage(isZh, "common.status")}</span>
+                <strong>{status?.status ?? "–"}</strong>
+              </div>
+              <div className="metric-cell">
+                <span className="metric-hint">{localizedMessage(isZh, "settings.proxyPort")}</span>
+                <strong>{status?.proxy_port ?? "–"}</strong>
+              </div>
+              <div className="metric-cell">
+                <span className="metric-hint">{localizedMessage(isZh, "settings.mode")}</span>
+                <strong>Server</strong>
+              </div>
+              <div className="metric-cell">
+                <span className="metric-hint">{localizedMessage(isZh, "settings.version")}</span>
+                <strong>{appVersion}</strong>
               </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="ml-1 text-xs text-slate-700">{isZh ? "代理 URL" : "Proxy URL"}</label>
-              <Input
-                placeholder="http://127.0.0.1:7890"
-                value={proxyUrl}
-                onChange={(e) => setProxyUrl(e.target.value)}
+          </div>
+        </div>
+      </div>
+
+      <div className="split-2">
+        <div className="card">
+          <div className="card-header"><h2 className="card-title">{localizedMessage(isZh, "settings.proxyConfiguration")}</h2></div>
+          <div className="card-body form-stack">
+            <div className="switch-inline">
+              <span>{proxyEnabled ? (localizedMessage(isZh, "common.enabled2")) : (localizedMessage(isZh, "common.disabled"))}</span>
+              <button
+                type="button"
+                className={proxyEnabled ? "switch-control on" : "switch-control"}
+                aria-pressed={proxyEnabled}
+                disabled={saveProxyToggle.isPending}
+                onClick={() => setProxyEnabled(!proxyEnabled)}
               />
             </div>
-            <div className="space-y-1.5">
-              <label className="ml-1 text-xs text-slate-700">{isZh ? "绕过地址（可选）" : "Bypass hosts (optional)"}</label>
-              <Input
-                placeholder={isZh ? "localhost,127.0.0.1,.internal" : "localhost,127.0.0.1,.internal"}
-                value={proxyBypass}
-                onChange={(e) => setProxyBypass(e.target.value)}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={handleSaveProxy}
-                disabled={saveProxyToggle.isPending || !proxyDirty}
-                size="sm"
-                className="flex items-center gap-1.5"
-              >
-                {saveProxyToggle.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Save className="h-3.5 w-3.5" />
-                )}
-                {isZh ? "保存" : "Save"}
-              </Button>
-              {proxyDirty && (
-                <p className="text-xs text-amber-600">
-                  {isZh ? "配置已修改，保存后生效" : "Unsaved changes, save to apply"}
-                </p>
-              )}
+            <label className="field">
+              <span className="field-label">{localizedMessage(isZh, "settings.proxyURL")}</span>
+              <input className="field-control" placeholder="http://127.0.0.1:7890" value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} />
+            </label>
+            <label className="field">
+              <span className="field-label">{localizedMessage(isZh, "settings.bypassHostsOptional")}</span>
+              <input className="field-control" placeholder="localhost,127.0.0.1,.internal" value={proxyBypass} onChange={(e) => setProxyBypass(e.target.value)} />
+            </label>
+            <div className="module-actions">
+              <button type="button" className="button button-primary button-sm" onClick={handleSaveProxy} disabled={saveProxyToggle.isPending || !proxyDirty}>
+                {localizedMessage(isZh, "common.save")}
+              </button>
+              {proxyDirty ? <p className="module-note">{localizedMessage(isZh, "settings.unsavedChangesSaveToApply")}</p> : null}
             </div>
           </div>
         </div>
 
-        {/* Log Configuration */}
-        <div className="glass rounded-2xl p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "日志配置" : "Log Configuration"}</h2>
-          <div className="rounded-xl bg-slate-50 p-4 space-y-3">
-            <div className="space-y-1.5">
-              <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
-                {isZh ? "保留时长（天）" : "Retention Period (days)"}
-                <HelpHint
-                  text={
-                    isZh
-                      ? "自动删除超过设置时长的日志"
-                      : "Auto-delete logs older than the configured period"
-                  }
-                />
-              </label>
-              <Input
-                type="number"
-                min={1}
-                max={365}
-                value={retentionInput}
-                onChange={(e) => setRetentionInput(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="ml-1 flex items-center gap-1 text-xs text-slate-700">
-                {isZh ? "记录载荷" : "Record Payloads"}
-                <HelpHint
-                  text={
-                    isZh
-                      ? "总开关，关闭后所有模型均不记录载荷。开启后可在单个模型中按需关闭"
-                      : "Master switch — when off, no payloads are recorded. When on, individual models can opt out"
-                  }
-                />
-              </label>
-              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                <div className="flex items-center gap-2">
-                  <ToggleStatusLabel enabled={logRecordPayloadsEnabled} isZh={isZh} />
-                </div>
-                <Switch
-                  checked={logRecordPayloadsEnabled}
+        <div className="card">
+          <div className="card-header"><h2 className="card-title">{localizedMessage(isZh, "settings.logConfiguration")}</h2></div>
+          <div className="card-body form-stack">
+            <label className="field">
+              <span className="field-label">
+                {localizedMessage(isZh, "settings.retentionPeriodDays")}
+                <HelpHint text={localizedMessage(isZh, "settings.autoDeleteLogsOlderThanTheConfiguredPeriod")} />
+              </span>
+              <input className="field-control" type="number" min={1} max={365} value={retentionInput} onChange={(e) => setRetentionInput(e.target.value)} />
+            </label>
+            <div className="field">
+              <span className="field-label">
+                {localizedMessage(isZh, "common.recordPayloads")}
+                <HelpHint text={localizedMessage(isZh, "settings.masterSwitchWhenOffNoPayloadsAreRecordedWhenOnIndividual")} />
+              </span>
+              <div className="switch-inline">
+                <span>{logRecordPayloadsEnabled ? (localizedMessage(isZh, "common.enabled2")) : (localizedMessage(isZh, "common.disabled"))}</span>
+                <button
+                  type="button"
+                  className={logRecordPayloadsEnabled ? "switch-control on" : "switch-control"}
+                  aria-pressed={logRecordPayloadsEnabled}
                   disabled={saveLogRecordPayloads.isPending}
-                  onCheckedChange={(checked) => saveLogRecordPayloads.mutate(checked)}
+                  onClick={() => saveLogRecordPayloads.mutate(!logRecordPayloadsEnabled)}
                 />
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={() => saveSetting.mutate(retentionInput)}
-                disabled={saveSetting.isPending || !retentionDirty}
-                size="sm"
-                className="flex items-center gap-1.5"
-              >
-                {saveSetting.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Save className="h-3.5 w-3.5" />
-                )}
-                {isZh ? "保存" : "Save"}
-              </Button>
+            <div className="module-actions">
+              <button type="button" className="button button-primary button-sm" onClick={() => saveSetting.mutate(retentionInput)} disabled={saveSetting.isPending || !retentionDirty}>
+                {localizedMessage(isZh, "common.save")}
+              </button>
               {retentionDirty ? (
-                <p className="text-xs text-amber-600">
-                  {isZh ? "配置已修改，保存后生效" : "Unsaved changes, save to apply"}
-                </p>
+                <p className="module-note">{localizedMessage(isZh, "settings.unsavedChangesSaveToApply")}</p>
               ) : saveSetting.isSuccess ? (
-                <p className="text-xs text-green-600">{isZh ? "保存成功" : "Saved successfully"}</p>
+                <p className="module-note">{localizedMessage(isZh, "settings.savedSuccessfully")}</p>
               ) : null}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Config Backup */}
-      <div className="glass rounded-2xl p-6 space-y-5">
-        <h2 className="text-lg font-semibold text-slate-900">{isZh ? "配置备份" : "Config Backup"}</h2>
-        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 px-4 py-3">
-          <p className="text-xs text-slate-500">
-            {isZh ? "导出或导入提供商、模型和设置" : "Export or import providers, models & settings"}
-          </p>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              onClick={() => exportMut.mutate()}
-              disabled={exportMut.isPending}
-              size="sm"
-              className="flex items-center gap-1.5"
-            >
-              {exportMut.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
-              )}
-              {isZh ? "导出" : "Export"}
-            </Button>
-            <Button
-              onClick={() => fileRef.current?.click()}
-              disabled={importMut.isPending}
-              variant="secondary"
-              size="sm"
-              className="flex items-center gap-1.5"
-            >
-              {importMut.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Upload className="h-3.5 w-3.5" />
-              )}
-              {isZh ? "导入" : "Import"}
-            </Button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".json"
-              className="hidden"
-              onChange={handleImportFile}
-            />
+      <div className="card">
+        <div className="card-header"><h2 className="card-title">{localizedMessage(isZh, "settings.configBackup")}</h2></div>
+        <div className="card-body form-stack">
+          <p className="module-note">{localizedMessage(isZh, "settings.exportOrImportProvidersModelsAndSettings")}</p>
+          <div className="module-actions">
+            <button type="button" className="button button-primary button-sm" onClick={() => exportMut.mutate()} disabled={exportMut.isPending}>
+              {localizedMessage(isZh, "settings.export")}
+            </button>
+            <button type="button" className="button button-secondary button-sm" onClick={() => fileRef.current?.click()} disabled={importMut.isPending}>
+              {localizedMessage(isZh, "settings.import")}
+            </button>
+            <input ref={fileRef} type="file" accept=".json" hidden onChange={handleImportFile} />
           </div>
-          {importMut.isSuccess && importMut.data && (
-            <p className="w-full text-xs text-green-600">
-              {isZh
-                ? `已导入：${(importMut.data as ImportResult).providers_imported} 个提供商，${(importMut.data as ImportResult).models_imported} 个模型，${(importMut.data as ImportResult).settings_imported} 项设置`
-                : `Imported: ${(importMut.data as ImportResult).providers_imported} providers, ${(importMut.data as ImportResult).models_imported} models, ${(importMut.data as ImportResult).settings_imported} settings`}
+          {importMut.isSuccess && importMut.data ? (
+            <p className="module-note">
+              {localizedMessage(isZh, "settings.importedProvidersModelsSettings", { a: (importMut.data as ImportResult).providers_imported, b: (importMut.data as ImportResult).models_imported, c: (importMut.data as ImportResult).settings_imported })}
             </p>
-          )}
+          ) : null}
         </div>
       </div>
 
       <ConfirmDialog
         open={Boolean(errorDialog)}
-        onOpenChange={(open) => {
-          if (!open) setErrorDialog(null);
-        }}
+        onOpenChange={(open) => { if (!open) setErrorDialog(null); }}
         title={errorDialog?.title ?? ""}
         description={errorDialog?.description}
         hideCancel
-        confirmText={isZh ? "我知道了" : "OK"}
+        confirmText={localizedMessage(isZh, "common.ok")}
+        confirmClassName="button-primary"
         onConfirm={() => setErrorDialog(null)}
       />
-    </div>
+    </PageLayout>
   );
 }

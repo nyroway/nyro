@@ -1,19 +1,17 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Code2, Copy, TerminalSquare } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 
 import { backend, IS_TAURI } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
 import type { ApiKey, GatewayStatus, ModelCapabilities, Model as ModelType } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
-import { Button } from "@/components/ui/button";
-import { Combobox } from "@/components/ui/combobox";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
+import { localizedMessage, type MessageKey } from "@/lib/messages";
 import { ProviderIcon } from "@/components/ui/provider-icon";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-
-const CodeHighlighter = lazy(() => import("@/components/ui/code-highlighter"));
+import { showToast } from "@/lib/toast";
+import { PageHeader, PageLayout } from "@/components/layout/page";
+import { NyroSelect } from "@/components/ui/nyro-select";
 
 type CodeLanguage = "python" | "typescript" | "curl";
 type CliToolId = "claude-code" | "codex-cli" | "gemini-cli" | "opencode";
@@ -26,7 +24,7 @@ type CliTool = {
   name: string;
   iconKey: string;
   protocol: GatewayProtocol;
-  desc: { zh: string; en: string };
+  desc: MessageKey;
 };
 
 type CodeProtocolOption = {
@@ -42,28 +40,28 @@ const CLI_TOOLS: CliTool[] = [
     name: "Claude Code",
     iconKey: "claude",
     protocol: "anthropic-messages",
-    desc: { zh: "Anthropic 官方命令行编程助手", en: "Anthropic official coding CLI assistant" },
+    desc: "connect.claudeCli",
   },
   {
     id: "codex-cli",
     name: "Codex CLI",
     iconKey: "openai",
     protocol: "openai-compatible",
-    desc: { zh: "OpenAI 命令行编程工具", en: "OpenAI coding CLI tool" },
+    desc: "connect.codexCli",
   },
   {
     id: "gemini-cli",
     name: "Gemini CLI",
     iconKey: "gemini",
     protocol: "google-gemini",
-    desc: { zh: "Google Gemini 命令行工具", en: "Google Gemini command line tool" },
+    desc: "connect.geminiCli",
   },
   {
     id: "opencode",
     name: "OpenCode",
     iconKey: "opencode-logo-light",
     protocol: "openai-compatible",
-    desc: { zh: "开源 AI 编程命令行工具", en: "Open-source AI coding CLI tool" },
+    desc: "connect.opencodeCli",
   },
 ];
 
@@ -103,7 +101,7 @@ function jsonText(input: unknown) {
 }
 
 function encodeGeminiModelForPath(model: string) {
-  // Keep ":" readable for model variants like gemma3:1b.
+  // Keep ":" so model names like gemma3:1b stay readable.
   return encodeURIComponent(model).replace(/%3A/gi, ":");
 }
 
@@ -459,7 +457,7 @@ export default function ConnectPage() {
       }
       setCliRouteAnchorByTool(next);
     } catch {
-      // Ignore corrupted local cache.
+      // Ignore a corrupted local cache.
     }
   }, []);
 
@@ -629,7 +627,7 @@ export default function ConnectPage() {
   function formatCliError(error: unknown) {
     const localized = localizeBackendErrorMessage(error, isZh);
     if (localized && localized !== "undefined" && localized !== "null") return localized;
-    return isZh ? "操作失败，请重试" : "Operation failed, please retry";
+    return localizedMessage(isZh, "connect.operationFailedPleaseRetry");
   }
 
   function setCliTransientFeedback(params: {
@@ -672,7 +670,7 @@ export default function ConnectPage() {
       setCliTransientFeedback({
         action: "sync",
         kind: "success",
-        text: isZh ? "同步成功" : "Sync successful",
+        text: localizedMessage(isZh, "connect.syncSuccessful"),
         withCheck: true,
       });
       qc.invalidateQueries({ queryKey: ["connect-cli-ready-status"] });
@@ -685,7 +683,7 @@ export default function ConnectPage() {
         text: message,
       });
       setErrorDialog({
-        title: isZh ? "同步配置失败" : "Failed to sync config",
+        title: localizedMessage(isZh, "connect.failedToSyncConfig"),
         description: message,
       });
     },
@@ -706,8 +704,8 @@ export default function ConnectPage() {
         action: "restore",
         kind: "success",
         text: paths.length
-          ? (isZh ? "恢复成功" : "Restore successful")
-          : (isZh ? "无可恢复配置" : "No backup found"),
+          ? (localizedMessage(isZh, "connect.restoreSuccessful"))
+          : (localizedMessage(isZh, "connect.noBackupFound")),
         withCheck: true,
       });
     },
@@ -719,7 +717,7 @@ export default function ConnectPage() {
         text: message,
       });
       setErrorDialog({
-        title: isZh ? "恢复配置失败" : "Failed to restore config",
+        title: localizedMessage(isZh, "connect.failedToRestoreConfig"),
         description: message,
       });
     },
@@ -728,428 +726,373 @@ export default function ConnectPage() {
   async function copyText(text: string, target: "code" | "cli") {
     await navigator.clipboard.writeText(text);
     setCopiedTarget(target);
+    showToast(localizedMessage(isZh, "common.copied"));
     setTimeout(() => setCopiedTarget(null), 1200);
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">{isZh ? "接入" : "Connect"}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {isZh
-            ? "通过代码或命令行工具将应用连接到 Nyro Gateway"
-            : "Connect your app to Nyro Gateway via code or CLI tools"}
-        </p>
-      </div>
+    <PageLayout
+      header={(
+        <PageHeader
+          title={localizedMessage(isZh, "connect.connect")}
+          description={
+            localizedMessage(isZh, "connect.connectYourAppToNyroGatewayViaCodeOrCLITools")
+          }
+        />
+      )}
+    >
+      <div className="card">
+        <div className="tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "cli"}
+            className={tab === "cli" ? "tab active" : "tab"}
+            onClick={() => setTab("cli")}
+          >
+            {localizedMessage(isZh, "connect.cli")}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "code"}
+            className={tab === "code" ? "tab active" : "tab"}
+            onClick={() => setTab("code")}
+          >
+            {localizedMessage(isZh, "connect.code")}
+          </button>
+        </div>
 
-      <div className="connect-panel glass rounded-2xl p-5">
-        <Tabs value={tab} onValueChange={(next) => setTab(next as "code" | "cli")} className="space-y-3">
-          <TabsList className="connect-switch-tabs-list grid h-12 w-full grid-cols-2 rounded-xl p-1 md:w-1/2">
-            <TabsTrigger
-              className="connect-switch-tab-trigger h-10 gap-1.5 text-sm font-medium"
-              value="cli"
-            >
-              <TerminalSquare className="h-4 w-4" />
-              {isZh ? "工具接入" : "CLI"}
-            </TabsTrigger>
-            <TabsTrigger
-              className="connect-switch-tab-trigger h-10 gap-1.5 text-sm font-medium"
-              value="code"
-            >
-              <Code2 className="h-4 w-4" />
-              {isZh ? "代码接入" : "Code"}
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="cli" className="!mt-1 space-y-4">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {CLI_TOOLS.map((tool) => {
-                const active = tool.id === selectedCliToolId;
-                const isReady = IS_TAURI ? Boolean(cliReadyStatus[tool.id]) : true;
-                return (
-                  <button
-                    key={tool.id}
-                    type="button"
-                    onClick={() => setSelectedCliToolId(tool.id)}
-                    data-state={active ? "on" : "off"}
-                    className="provider-preset-card connect-cli-tool-card h-auto w-full rounded-2xl text-left"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3">
-                        <div className="mt-0.5 inline-flex h-9 w-9 items-center justify-center">
-                          <ProviderIcon
-                            iconKey={tool.iconKey}
-                            name={tool.name}
-                            protocol={tool.protocol}
-                            size={30}
-                            className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
-                          />
-                          <ProviderIcon
-                            iconKey={tool.iconKey}
-                            name={tool.name}
-                            protocol={tool.protocol}
-                            size={30}
-                            monochrome
-                            className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
-                          />
-                        </div>
-                        <div>
-                          <p className="text-base leading-tight font-semibold text-slate-900">{tool.name}</p>
-                          <p className="mt-1 text-sm text-slate-500">{isZh ? tool.desc.zh : tool.desc.en}</p>
-                        </div>
-                      </div>
-                      <Badge variant={isReady ? "success" : "secondary"} className="connect-label-badge">
-                        {IS_TAURI
-                          ? isReady
-                            ? (isZh ? "已就绪" : "Ready")
-                            : (isZh ? "未就绪" : "Not Ready")
-                          : (isZh ? "手动配置" : "Manual setup")}
-                      </Badge>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {selectedCliReady ? (
-              <div className="connect-cli-shell rounded-xl border p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <TerminalSquare className="h-4 w-4 text-slate-600" />
-                  <p className="text-sm font-semibold text-slate-900">{selectedCliTool.name}</p>
-                  <Badge variant="outline" className="connect-label-badge">{protocolLabel(selectedCliTool.protocol, isZh)}</Badge>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 items-start">
-                  <div className="space-y-2">
-                    <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                      {isZh ? "选择模型" : "Select Model"}
-                    </p>
-                  <Combobox
-                    className="bg-white"
-                      value={selectedCliRouteId}
-                      onValueChange={(routeId) => {
-                        setSelectedCliRouteId(routeId);
-                        setCliRouteAnchorByTool((prev) => ({ ...prev, [selectedCliTool.id]: routeId }));
-                      }}
-                    options={cliRoutes.map((route) => ({
-                      value: route.id,
-                      label: route.name,
-                    }))}
-                    placeholder={
-                      cliRoutes.length > 0
-                        ? (isZh ? "选择模型" : "Select model")
-                        : (isZh ? "请先创建模型" : "Create a model first")
-                    }
-                    searchPlaceholder={isZh ? "搜索模型..." : "Search models..."}
-                    emptyText={isZh ? "暂无可选模型" : "No models available"}
-                  />
-                    {selectedCliCapabilities && (
-                      <div className="flex flex-wrap gap-2 text-xs text-slate-600 pt-1">
-                        {selectedCliCapabilities.reasoning && <Badge variant="success" className="connect-label-badge">{isZh ? "推理" : "Reasoning"}</Badge>}
-                        {selectedCliCapabilities.tool_call && <Badge variant="success" className="connect-label-badge">{isZh ? "工具调用" : "Tools"}</Badge>}
-                        <Badge variant="success" className="connect-label-badge">
-                          {`ctx:${Math.round(selectedCliCapabilities.context_window / 1024)}K`}
-                        </Badge>
-                        {selectedCliCapabilities.embedding_length != null && selectedCliCapabilities.embedding_length > 0 && (
-                          <Badge variant="success" className="connect-label-badge">
-                            {`emb:${selectedCliCapabilities.embedding_length}`}
-                          </Badge>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {selectedCliRoute?.enable_auth && (
-                    <div className="space-y-2">
-                      <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                        {isZh ? "选择 API Key" : "Select API Key"}
-                      </p>
-                    <Combobox
-                      className="bg-white"
-                        value={selectedCliKeyId}
-                        onValueChange={setSelectedCliKeyId}
-                      options={cliAvailableKeys.map((key) => ({
-                        value: key.id,
-                        label: `${key.name} · ${maskApiKey(key.key)}`,
-                      }))}
-                      placeholder={isZh ? "选择 API Key" : "Select API key"}
-                      searchPlaceholder={isZh ? "搜索 API Key..." : "Search API keys..."}
-                      emptyText={isZh ? "暂无可选 API Key" : "No API keys available"}
-                    />
-                    </div>
-                  )}
-                </div>
-                <div className="w-1/2 space-y-2">
-                  <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                    {IS_TAURI ? (isZh ? "更新配置" : "Update Config") : (isZh ? "配置预览" : "Config Preview")}
-                  </p>
-                  {IS_TAURI ? (
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="space-y-1">
-                        <Button
-                          className="w-full"
-                          disabled={!canSyncCli || syncCliMut.isPending}
-                          onClick={() => {
-                            setCliActionMessage(null);
-                            setCliSuccessAction(null);
-                            syncCliMut.mutate();
-                          }}
-                        >
-                          {syncCliMut.isPending
-                            ? (isZh ? "同步中..." : "Syncing...")
-                            : cliSuccessAction === "sync"
-                              ? <Check className="h-4 w-4" />
-                              : (isZh ? "同步配置" : "Sync Config")}
-                        </Button>
-                        <p
-                          className={`min-h-5 text-xs ${
-                            cliActionMessage?.action === "sync"
-                              ? (cliActionMessage.kind === "success" ? "text-green-600" : "text-red-600")
-                              : "text-transparent"
-                          }`}
-                        >
-                          {cliActionMessage?.action === "sync" ? cliActionMessage.text : "\u00A0"}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <Button
-                          className="w-full"
-                          disabled={restoreCliMut.isPending}
-                          onClick={() => {
-                            setCliActionMessage(null);
-                            setCliSuccessAction(null);
-                            restoreCliMut.mutate();
-                          }}
-                        >
-                          {restoreCliMut.isPending
-                            ? (isZh ? "恢复中..." : "Restoring...")
-                            : cliSuccessAction === "restore"
-                              ? <Check className="h-4 w-4" />
-                              : (isZh ? "恢复配置" : "Restore Config")}
-                        </Button>
-                        <p
-                          className={`min-h-5 text-xs ${
-                            cliActionMessage?.action === "restore"
-                              ? (cliActionMessage.kind === "success" ? "text-green-600" : "text-red-600")
-                              : "text-transparent"
-                          }`}
-                        >
-                          {cliActionMessage?.action === "restore" ? cliActionMessage.text : "\u00A0"}
-                        </p>
-                      </div>
-                      <div>
-                        <Button className="w-full" onClick={() => setIsCliPreviewVisible((prev) => !prev)}>
-                          {isCliPreviewVisible
-                            ? (isZh ? "隐藏配置" : "Hide Config")
-                            : (isZh ? "查看配置" : "View Config")}
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <Button className="w-full" onClick={() => setIsCliPreviewVisible((prev) => !prev)}>
-                      {isCliPreviewVisible
-                        ? (isZh ? "隐藏配置" : "Hide Config")
-                        : (isZh ? "查看配置" : "View Config")}
-                    </Button>
-                  )}
-                </div>
-                {isCliPreviewVisible && (
-                  <div className="-mt-3 space-y-2">
-                    <p className="ml-1 text-xs text-slate-500">
-                      {isZh ? "仅展示将被更新的配置片段" : "Only showing configuration fragments to be updated"}
-                    </p>
-                    <div className="connect-cli-preview relative overflow-hidden rounded-lg border">
-                      <button
-                        onClick={() => copyText(cliPreview, "cli")}
-                        className="connect-code-copy-btn absolute top-3 right-3 rounded-xl p-3 cursor-pointer transition-colors"
-                        title={isZh ? "复制配置预览" : "Copy preview"}
-                      >
-                        {copiedTarget === "cli" ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
-                      </button>
-                      <Suspense fallback={<pre className="overflow-x-auto text-xs text-slate-500">{cliPreview}</pre>}>
-                        <CodeHighlighter
-                          code={cliPreview}
-                          language={cliPreviewLang}
-                          dark={isDarkTheme}
-                          padding="14px 16px"
-                        />
-                      </Suspense>
-                    </div>
-                  </div>
-                )}
-                {cliRoutes.length === 0 && (
-                  <p className="text-xs text-amber-600">
-                    {isZh
-                      ? "当前没有可选对话模型，请先创建对话模型。"
-                      : "No chat models available. Create a chat model first."}
-                  </p>
-                )}
-                {selectedCliRoute?.enable_auth && !selectedCliApiKey && (
-                  <p className="text-xs text-amber-600">
-                    {isZh
-                      ? "当前模型开启了访问控制，请先选择 API Key 再同步。"
-                      : "This model requires access control. Select an API key before syncing."}
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-amber-600">
-                {isZh
-                  ? "当前 CLI 未就绪，配置面板已隐藏。"
-                  : "Selected CLI is not ready, configuration panel is hidden."}
-              </p>
-            )}
-          </TabsContent>
-
-          <TabsContent value="code" className="!mt-1 space-y-4">
-            <div className="space-y-2">
-              <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                {isZh ? "选择接入协议" : "Select Ingress Protocol"}
-              </p>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                {CODE_PROTOCOLS.map((protocol) => {
-                  const active = protocol.id === selectedCodeProtocol;
+        <div className="card-body form-stack">
+          {tab === "cli" ? (
+            <>
+              <div className="form-grid">
+                {CLI_TOOLS.map((tool) => {
+                  const active = tool.id === selectedCliToolId;
+                  const isReady = IS_TAURI ? Boolean(cliReadyStatus[tool.id]) : true;
                   return (
                     <button
-                      key={protocol.id}
+                      key={tool.id}
                       type="button"
-                      onClick={() => setSelectedCodeProtocol(protocol.id)}
-                      data-state={active ? "on" : "off"}
-                      className="provider-preset-card h-auto rounded-xl px-3 py-2.5 text-left"
+                      onClick={() => setSelectedCliToolId(tool.id)}
+                      className={active ? "radio-card selected" : "radio-card"}
+                      aria-pressed={active}
                     >
-                      <div className="flex items-start gap-2.5">
-                        <div className="inline-flex h-9 w-9 items-center justify-center">
-                          <ProviderIcon
-                            iconKey={protocol.iconKey}
-                            name={protocol.name}
-                            protocol={protocol.id}
-                            size={30}
-                            className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
-                          />
-                          <ProviderIcon
-                            iconKey={protocol.iconKey}
-                            name={protocol.name}
-                            protocol={protocol.id}
-                            size={30}
-                            monochrome
-                            className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-base leading-tight font-semibold text-slate-900">{protocol.name}</p>
-                          <p className="mt-1 text-xs text-slate-500">{protocol.apiPath}</p>
-                        </div>
-                      </div>
+                      <ProviderIcon
+                        iconKey={tool.iconKey}
+                        name={tool.name}
+                        protocol={tool.protocol}
+                        size={22}
+                      />
+                      <span className="radio-text">
+                        <strong>{tool.name}</strong>
+                        <span>{localizedMessage(isZh, tool.desc)}</span>
+                      </span>
+                      <span className="badge">
+                        {IS_TAURI
+                          ? isReady
+                            ? (localizedMessage(isZh, "connect.ready"))
+                            : (localizedMessage(isZh, "connect.notReady"))
+                          : (localizedMessage(isZh, "connect.manualSetup"))}
+                      </span>
                     </button>
                   );
                 })}
               </div>
-            </div>
 
-            <div className="connect-cli-shell rounded-xl border p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Code2 className="h-4 w-4 text-slate-600" />
-                <p className="text-sm font-semibold text-slate-900">{protocolLabel(selectedCodeProtocol, isZh)}</p>
-                <Badge variant="outline" className="connect-label-badge">
-                  {protocolApiPathForRoute(selectedCodeProtocol, codeRouteType)}
-                </Badge>
+              {selectedCliReady ? (
+                <>
+                  <div className="card-title-row">
+                    <strong>{selectedCliTool.name}</strong>
+                    <span className="badge">{protocolLabel(selectedCliTool.protocol, isZh)}</span>
+                  </div>
+
+                  <div className="form-grid">
+                    <div className="field">
+                      <span className="field-label">{localizedMessage(isZh, "connect.selectModel")}</span>
+                      <NyroSelect
+                        ariaLabel={localizedMessage(isZh, "connect.selectModel")}
+                        value={selectedCliRouteId}
+                        options={[
+                          {
+                            value: "",
+                            label: cliRoutes.length > 0
+                              ? (localizedMessage(isZh, "connect.selectModel2"))
+                              : (localizedMessage(isZh, "connect.createAModelFirst")),
+                          },
+                          ...cliRoutes.map((route) => ({ value: route.id, label: route.name })),
+                        ]}
+                        onChange={(routeId) => {
+                          setSelectedCliRouteId(routeId);
+                          setCliRouteAnchorByTool((prev) => ({ ...prev, [selectedCliTool.id]: routeId }));
+                        }}
+                      />
+                      {selectedCliCapabilities ? (
+                        <div className="sample-chips">
+                          {selectedCliCapabilities.reasoning ? <span className="tag">{localizedMessage(isZh, "common.reasoning")}</span> : null}
+                          {selectedCliCapabilities.tool_call ? <span className="tag">{localizedMessage(isZh, "common.tools")}</span> : null}
+                          <span className="tag">{`ctx:${Math.round(selectedCliCapabilities.context_window / 1024)}K`}</span>
+                          {selectedCliCapabilities.embedding_length != null && selectedCliCapabilities.embedding_length > 0 ? (
+                            <span className="tag">{`emb:${selectedCliCapabilities.embedding_length}`}</span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {selectedCliRoute?.enable_auth ? (
+                      <div className="field">
+                        <span className="field-label">{localizedMessage(isZh, "connect.selectAPIKey")}</span>
+                        <NyroSelect
+                          ariaLabel={localizedMessage(isZh, "connect.selectAPIKey")}
+                          value={selectedCliKeyId}
+                          options={[
+                            { value: "", label: localizedMessage(isZh, "connect.selectAPIKey2") },
+                            ...cliAvailableKeys.map((key) => ({
+                              value: key.id,
+                              label: `${key.name} · ${maskApiKey(key.key)}`,
+                            })),
+                          ]}
+                          onChange={setSelectedCliKeyId}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="field">
+                    <span className="field-label">
+                      {IS_TAURI ? (localizedMessage(isZh, "connect.updateConfig")) : (localizedMessage(isZh, "connect.configPreview"))}
+                    </span>
+                    {/* IS_TAURI is always false: the browser branch only offers preview and copy. */}
+                    <div className="config-actions">
+                      {IS_TAURI ? (
+                        <>
+                          <button
+                            type="button"
+                            className="button button-primary button-sm"
+                            disabled={!canSyncCli || syncCliMut.isPending}
+                            onClick={() => {
+                              setCliActionMessage(null);
+                              setCliSuccessAction(null);
+                              syncCliMut.mutate();
+                            }}
+                          >
+                            {syncCliMut.isPending
+                              ? (localizedMessage(isZh, "connect.syncing"))
+                              : cliSuccessAction === "sync"
+                                ? <Check aria-hidden="true" />
+                                : (localizedMessage(isZh, "connect.syncConfig"))}
+                          </button>
+                          <button
+                            type="button"
+                            className="button button-secondary button-sm"
+                            disabled={restoreCliMut.isPending}
+                            onClick={() => {
+                              setCliActionMessage(null);
+                              setCliSuccessAction(null);
+                              restoreCliMut.mutate();
+                            }}
+                          >
+                            {restoreCliMut.isPending
+                              ? (localizedMessage(isZh, "connect.restoring"))
+                              : cliSuccessAction === "restore"
+                                ? <Check aria-hidden="true" />
+                                : (localizedMessage(isZh, "connect.restoreConfig"))}
+                          </button>
+                          <button type="button" className="button button-sm" onClick={() => setIsCliPreviewVisible((prev) => !prev)}>
+                            {isCliPreviewVisible
+                              ? (localizedMessage(isZh, "connect.hideConfig"))
+                              : (localizedMessage(isZh, "connect.viewConfig"))}
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" className="button button-sm" onClick={() => setIsCliPreviewVisible((prev) => !prev)}>
+                          {isCliPreviewVisible
+                            ? (localizedMessage(isZh, "connect.hideConfig"))
+                            : (localizedMessage(isZh, "connect.viewConfig"))}
+                        </button>
+                      )}
+                    </div>
+                    {cliActionMessage?.action === "sync" ? (
+                      <p className={cliActionMessage.kind === "success" ? "field-hint success" : "field-hint error"}>
+                        {cliActionMessage.text}
+                      </p>
+                    ) : null}
+                    {cliActionMessage?.action === "restore" ? (
+                      <p className={cliActionMessage.kind === "success" ? "field-hint success" : "field-hint error"}>
+                        {cliActionMessage.text}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {isCliPreviewVisible ? (
+                    <div className="code-output">
+                      <div className="code-output-bar">
+                        <span className="code-output-lang">{localizedMessage(isZh, "connect.configPreview")}</span>
+                        <span className="code-output-meta">
+                          {localizedMessage(isZh, "connect.onlyShowingConfigurationFragmentsToBeUpdated")}
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-sm"
+                          onClick={() => copyText(cliPreview, "cli")}
+                          aria-label={localizedMessage(isZh, "connect.copyPreview")}
+                        >
+                          {copiedTarget === "cli" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                          {copiedTarget === "cli" ? (localizedMessage(isZh, "common.copied")) : (localizedMessage(isZh, "common.copy"))}
+                        </button>
+                      </div>
+                      <pre
+                        className="code-output-body"
+                        data-language={cliPreviewLang}
+                        data-code-theme={isDarkTheme ? "dark" : "light"}
+                      >
+                        {cliPreview}
+                      </pre>
+                    </div>
+                  ) : null}
+
+                  {cliRoutes.length === 0 ? (
+                    <div className="alert alert-warning">
+                      {localizedMessage(isZh, "connect.noChatModelsAvailableCreateAChatModelFirst")}
+                    </div>
+                  ) : null}
+                  {selectedCliRoute?.enable_auth && !selectedCliApiKey ? (
+                    <div className="alert alert-warning">
+                      {localizedMessage(isZh, "connect.thisModelRequiresAccessControlSelectAnAPIKeyBeforeSyncin")}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="alert alert-warning">
+                  {localizedMessage(isZh, "connect.selectedCLIIsNotReadyConfigurationPanelIsHidden")}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="field">
+                <span className="field-label">{localizedMessage(isZh, "connect.selectIngressProtocol")}</span>
+                <div className="provider-pick">
+                  {CODE_PROTOCOLS.map((protocol) => {
+                    const active = protocol.id === selectedCodeProtocol;
+                    return (
+                      <button
+                        key={protocol.id}
+                        type="button"
+                        onClick={() => setSelectedCodeProtocol(protocol.id)}
+                        className={active ? "provider-pick-item selected" : "provider-pick-item"}
+                        aria-pressed={active}
+                        data-tip={protocol.apiPath}
+                      >
+                        <ProviderIcon
+                          iconKey={protocol.iconKey}
+                          name={protocol.name}
+                          protocol={protocol.id}
+                          size={20}
+                        />
+                        <span>{protocol.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <span className="field-hint">{protocolApiPathForRoute(selectedCodeProtocol, codeRouteType)}</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 items-start">
-                <div className="space-y-2">
-                  <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                    {isZh ? "选择模型" : "Select Model"}
-                  </p>
-                  <Combobox
-                    className="bg-white"
+              <div className="card-title-row">
+                <strong>{protocolLabel(selectedCodeProtocol, isZh)}</strong>
+                <span className="badge">{protocolApiPathForRoute(selectedCodeProtocol, codeRouteType)}</span>
+              </div>
+
+              <div className="form-grid">
+                <div className="field">
+                  <span className="field-label">{localizedMessage(isZh, "connect.selectModel")}</span>
+                  <NyroSelect
+                    ariaLabel={localizedMessage(isZh, "connect.selectModel")}
                     value={selectedCodeRouteId}
-                    onValueChange={setSelectedCodeRouteId}
-                    options={codeRoutes.map((route) => ({
-                      value: route.id,
-                      label: route.name,
-                    }))}
-                    placeholder={
-                      codeRoutes.length > 0
-                        ? (isZh ? "选择模型" : "Select model")
-                        : (isZh ? "请先创建模型" : "Create a model first")
-                    }
-                    searchPlaceholder={isZh ? "搜索模型..." : "Search models..."}
-                    emptyText={isZh ? "暂无可选模型" : "No models available"}
+                    options={[
+                      {
+                        value: "",
+                        label: codeRoutes.length > 0
+                          ? (localizedMessage(isZh, "connect.selectModel2"))
+                          : (localizedMessage(isZh, "connect.createAModelFirst")),
+                      },
+                      ...codeRoutes.map((route) => ({ value: route.id, label: route.name })),
+                    ]}
+                    onChange={setSelectedCodeRouteId}
                   />
                 </div>
 
-                {selectedRoute?.enable_auth && (
-                  <div className="space-y-2">
-                    <p className="ml-1 text-xs leading-none font-normal text-slate-900">
-                      {isZh ? "选择 API Key" : "Select API Key"}
-                    </p>
-                    <Combobox
-                      className="bg-white"
+                {selectedRoute?.enable_auth ? (
+                  <div className="field">
+                    <span className="field-label">{localizedMessage(isZh, "connect.selectAPIKey")}</span>
+                    <NyroSelect
+                      ariaLabel={localizedMessage(isZh, "connect.selectAPIKey")}
                       value={selectedCodeKeyId}
-                      onValueChange={setSelectedCodeKeyId}
-                      options={codeAvailableKeys.map((key) => ({
-                        value: key.id,
-                        label: `${key.name} · ${maskApiKey(key.key)}`,
-                      }))}
-                      placeholder={isZh ? "选择 API Key" : "Select API key"}
-                      searchPlaceholder={isZh ? "搜索 API Key..." : "Search API keys..."}
-                      emptyText={isZh ? "暂无可选 API Key" : "No API keys available"}
+                      options={[
+                        { value: "", label: localizedMessage(isZh, "connect.selectAPIKey2") },
+                        ...codeAvailableKeys.map((key) => ({
+                          value: key.id,
+                          label: `${key.name} · ${maskApiKey(key.key)}`,
+                        })),
+                      ]}
+                      onChange={setSelectedCodeKeyId}
                     />
                   </div>
-                )}
+                ) : null}
               </div>
 
               {selectedRoute ? (
-                <div className="space-y-2">
-                  <div className="connect-code-tabs flex gap-1">
-                    {CODE_LANGS.map((lang) => (
-                      <button
-                        key={lang}
-                        onClick={() => setCodeLang(lang)}
-                        className={`connect-code-tab-btn px-3 py-2 text-xs font-medium transition-colors cursor-pointer ${
-                          codeLang === lang ? "is-active" : ""
-                        }`}
-                      >
-                        {languageLabel(lang)}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="connect-code-example-box relative rounded-xl p-4">
+                <div className="code-output connect-code">
+                  <div className="code-output-bar">
+                    <div className="discover-switch" role="tablist" aria-label={localizedMessage(isZh, "connect.codeLanguage")}>
+                      {CODE_LANGS.map((lang) => (
+                        <button
+                          key={lang}
+                          type="button"
+                          role="tab"
+                          aria-selected={codeLang === lang}
+                          className={codeLang === lang ? "selected" : undefined}
+                          onClick={() => setCodeLang(lang)}
+                        >
+                          {languageLabel(lang)}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="code-output-meta">{protocolLabel(selectedCodeProtocol, isZh)}</span>
                     <button
+                      type="button"
+                      className="button button-sm"
                       onClick={() => copyText(generatedCode, "code")}
-                      className="connect-code-copy-btn absolute top-3 right-3 rounded-xl p-3 cursor-pointer transition-colors"
-                      title={isZh ? "复制代码" : "Copy code"}
+                      aria-label={localizedMessage(isZh, "connect.copyCode")}
                     >
-                      {copiedTarget === "code" ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                      {copiedTarget === "code" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                      {copiedTarget === "code" ? (localizedMessage(isZh, "common.copied")) : (localizedMessage(isZh, "common.copy"))}
                     </button>
-                    <Suspense fallback={<pre className="overflow-x-auto text-xs text-slate-500">{generatedCode}</pre>}>
-                      <CodeHighlighter
-                        code={generatedCode}
-                        language={syntaxLanguage(codeLang)}
-                        dark={isDarkTheme}
-                        padding={0}
-                      />
-                    </Suspense>
                   </div>
+                  <pre
+                    className="code-output-body"
+                    data-language={syntaxLanguage(codeLang)}
+                    data-code-theme={isDarkTheme ? "dark" : "light"}
+                  >
+                    {generatedCode}
+                  </pre>
                 </div>
               ) : (
-                <p className="text-xs text-amber-600">
-                  {isZh ? "请先选择模型以生成代码示例。" : "Select a model first to generate code samples."}
-                </p>
+                <div className="alert alert-warning">
+                  {localizedMessage(isZh, "connect.selectAModelFirstToGenerateCodeSamples")}
+                </div>
               )}
 
-              {selectedRoute && !selectedRoute.enable_auth && (
-                <p className="text-xs text-slate-500">
-                  {isZh
-                    ? `当前模型未开启访问控制，示例中已使用占位 API Key：${OPTIONAL_KEY_PLACEHOLDER}`
-                    : `Access control is disabled on this model. The sample uses placeholder key: ${OPTIONAL_KEY_PLACEHOLDER}`}
+              {selectedRoute && !selectedRoute.enable_auth ? (
+                <p className="field-hint">
+                  {localizedMessage(isZh, "connect.accessControlIsDisabledOnThisModelTheSampleUsesPlacehold", { a: OPTIONAL_KEY_PLACEHOLDER })}
                 </p>
-              )}
-            </div>
-          </TabsContent>
-
-        </Tabs>
+              ) : null}
+            </>
+          )}
+        </div>
       </div>
+
       <ConfirmDialog
         open={Boolean(errorDialog)}
         onOpenChange={(open) => {
@@ -1158,9 +1101,9 @@ export default function ConnectPage() {
         title={errorDialog?.title ?? ""}
         description={errorDialog?.description}
         hideCancel
-        confirmText={isZh ? "我知道了" : "OK"}
+        confirmText={localizedMessage(isZh, "common.ok")}
         onConfirm={() => setErrorDialog(null)}
       />
-    </div>
+    </PageLayout>
   );
 }
