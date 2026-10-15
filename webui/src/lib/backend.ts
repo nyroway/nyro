@@ -1,7 +1,11 @@
 import { getAdminToken, clearAdminToken } from "./auth";
 
-/** The desktop app is out of scope. The console talks to the embedded server over HTTP only. */
-export const IS_TAURI = false;
+const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+async function invokeIPC<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(cmd, args);
+}
 
 async function invokeHTTP<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const mapping = resolveHTTP(cmd, args);
@@ -204,4 +208,5 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
   }
 }
 
-export const backend = invokeHTTP;
+export const backend = IS_TAURI ? invokeIPC : invokeHTTP;
+export { IS_TAURI };

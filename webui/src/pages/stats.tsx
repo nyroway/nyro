@@ -1,42 +1,38 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import clsx from "clsx";
-
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from "recharts";
 import { backend } from "@/lib/backend";
-import type { ApiKeyStats, ModelStats, ProviderStats, StatsHourly, StatsOverview } from "@/lib/types";
-import { formatLogTime } from "@/lib/format";
+import type { StatsOverview, StatsHourly, ModelStats, ProviderStats, ApiKeyStats } from "@/lib/types";
+import { Zap, Clock, Activity } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
-import { NyroChart } from "@/components/ui/nyro-chart";
-import { PageHeader, PageLayout } from "@/components/layout/page";
-import { copyableTipProps } from "@/lib/copyable";
-import { localizedMessage, type MessageKey } from "@/lib/messages";
+import { formatLogTime } from "@/lib/format";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
+const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
 
-function compact(value: number) {
-  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+function fmt(n: number) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
 }
 
-function latency(value: number | null | undefined) {
-  if (value == null) return "—";
-  return value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 1 : 2)}s` : `${Math.round(value)}ms`;
-}
-
-const RANGES: { hours: number; label: string; aria: MessageKey }[] = [
-  { hours: 6, label: "6H", aria: "stats.last6Hours" },
-  { hours: 24, label: "24H", aria: "stats.last24Hours" },
-  { hours: 72, label: "3D", aria: "stats.last3Days" },
-  { hours: 168, label: "7D", aria: "stats.last7Days" },
-];
-
-function ranked(items: { id: string; label: string; value: number }[], limit: number) {
-  const top = [...items].sort((a, b) => b.value - a.value).slice(0, limit);
-  const total = top.reduce((sum, item) => sum + item.value, 0);
-  return top.map((item) => ({ ...item, share: total > 0 ? (item.value / total) * 100 : 0 }));
+function fmtLatency(ms: number) {
+  if (ms >= 1000) {
+    return `${(ms / 1000).toFixed(ms >= 10_000 ? 1 : 2)}s`;
+  }
+  return `${ms.toFixed(0)}ms`;
 }
 
 export default function StatsPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
+
   const [hours, setHours] = useState(24);
 
   const { data: overview } = useQuery<StatsOverview>({
@@ -44,243 +40,229 @@ export default function StatsPage() {
     queryFn: () => backend("get_stats_overview", { hours }),
     refetchInterval: 10_000,
   });
+
   const { data: hourly = [] } = useQuery<StatsHourly[]>({
     queryKey: ["stats-hourly", hours],
     queryFn: () => backend("get_stats_hourly", { hours }),
     refetchInterval: 30_000,
   });
+
   const { data: modelStats = [] } = useQuery<ModelStats[]>({
     queryKey: ["stats-models", hours],
     queryFn: () => backend("get_stats_by_model", { hours }),
     refetchInterval: 30_000,
   });
+
   const { data: providerStats = [] } = useQuery<ProviderStats[]>({
     queryKey: ["stats-providers", hours],
     queryFn: () => backend("get_stats_by_provider", { hours }),
     refetchInterval: 30_000,
   });
+
   const { data: apiKeyStats = [] } = useQuery<ApiKeyStats[]>({
     queryKey: ["stats-apikeys", hours],
     queryFn: () => backend("get_stats_by_api_key", { hours }),
     refetchInterval: 30_000,
   });
 
-  const requests = overview?.total_requests ?? 0;
-  const errors = overview?.error_count ?? 0;
-  const totalTokens = (overview?.total_input_tokens ?? 0) + (overview?.total_output_tokens ?? 0);
-  const errorRate = requests > 0 ? (errors / requests) * 100 : 0;
-  const chartData = hourly.map((point) => ({
-    label: point.hour.slice(11, 16),
-    value: point.request_count,
-    error: point.error_count,
+  const tokenChart = hourly.map((h) => ({
+    hour: h.hour.slice(11, 16),
+    input: h.total_input_tokens,
+    output: h.total_output_tokens,
   }));
-  const modelRanks = ranked(modelStats.map((item) => ({
-    id: item.model,
-    label: item.model,
-    value: item.request_count,
-  })), 6);
-  const tokenRanks = ranked(modelStats.map((item) => ({
-    id: item.model,
-    label: item.model,
-    value: item.total_input_tokens + item.total_output_tokens,
-  })), 6);
+
+  const modelPie = modelStats.slice(0, 6).map((m) => ({
+    name: m.model,
+    value: m.request_count,
+  }));
+  const modelTotal = modelPie.reduce((acc, m) => acc + m.value, 0);
 
   return (
-    <PageLayout
-      header={(
-        <PageHeader
-          title={localizedMessage(isZh, "stats.statistics")}
-          description={localizedMessage(isZh, "stats.requestsTokensLatencyAndErrorsInTheSelectedWindow")}
-          actions={(
-            <div className="chart-actions">
-              {RANGES.map((range) => (
-                <button
-                  key={range.hours}
-                  type="button"
-                  className={clsx("period-button", hours === range.hours && "active")}
-                  aria-pressed={hours === range.hours}
-                  aria-label={localizedMessage(isZh, range.aria)}
-                  onClick={() => setHours(range.hours)}
-                >
-                  {range.label}
-                </button>
-              ))}
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "统计" : "Statistics"}</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {isZh ? "Token 使用、延迟与错误分析" : "Token usage, latency, and error analytics"}
+          </p>
+        </div>
+        <Select value={String(hours)} onValueChange={(value) => setHours(Number(value))}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder={isZh ? "选择时间范围" : "Select range"} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="6">{isZh ? "最近 6 小时" : "Last 6h"}</SelectItem>
+            <SelectItem value="24">{isZh ? "最近 24 小时" : "Last 24h"}</SelectItem>
+            <SelectItem value="72">{isZh ? "最近 3 天" : "Last 3d"}</SelectItem>
+            <SelectItem value="168">{isZh ? "最近 7 天" : "Last 7d"}</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          { label: isZh ? "总请求数" : "Total Requests", value: fmt(overview?.total_requests ?? 0), icon: Activity, color: "text-blue-600" },
+          { label: isZh ? "输入 Token" : "Input Tokens", value: fmt(overview?.total_input_tokens ?? 0), icon: Zap, color: "text-amber-600" },
+          { label: isZh ? "输出 Token" : "Output Tokens", value: fmt(overview?.total_output_tokens ?? 0), icon: Zap, color: "text-green-600" },
+          { label: isZh ? "平均延迟" : "Avg Latency", value: `${(overview?.avg_duration_ms ?? 0).toFixed(0)}ms`, icon: Clock, color: "text-purple-600" },
+        ].map((c) => (
+          <div key={c.label} className="glass rounded-2xl p-4">
+            <div className="flex items-center gap-2">
+              <c.icon className={`h-4 w-4 ${c.color}`} />
+              <p className="text-xs font-medium text-slate-500">{c.label}</p>
             </div>
-          )}
-        />
-      )}
-    >
-      <section className="metric-strip">
-        <div className="metric-strip-stats">
-          <div className="metric-cell">
-            <span>{localizedMessage(isZh, "common.requests2")}</span>
-            <strong>{compact(requests)}</strong>
-            <small className="metric-hint">{localizedMessage(isZh, "stats.hWindow", { a: hours })}</small>
+            <p className="mt-1.5 text-[24px] leading-none font-semibold text-slate-900">
+              {c.label === (isZh ? "平均延迟" : "Avg Latency") ? fmtLatency(overview?.avg_duration_ms ?? 0) : c.value}
+            </p>
           </div>
-          <div className="metric-cell">
-            <span>{localizedMessage(isZh, "stats.tokens")}</span>
-            <strong>{compact(totalTokens)}</strong>
-            <small className="metric-hint">
-              {localizedMessage(isZh, "common.inOut", { a: compact(overview?.total_input_tokens ?? 0), b: compact(overview?.total_output_tokens ?? 0) })}
-            </small>
-          </div>
-          <div className="metric-cell">
-            <span>{localizedMessage(isZh, "common.avgLatency")}</span>
-            <strong>{latency(overview?.avg_duration_ms)}</strong>
-            <small className="metric-hint">{localizedMessage(isZh, "common.allRequests")}</small>
-          </div>
-          <div className="metric-cell">
-            <span>{localizedMessage(isZh, "common.errors2")}</span>
-            <strong>{compact(errors)}</strong>
-            <small className="metric-hint">{localizedMessage(isZh, "stats.errorRate", { a: errorRate.toFixed(2) })}</small>
-          </div>
-          <div className="metric-cell">
-            <span>{localizedMessage(isZh, "common.keys")}</span>
-            <strong>{apiKeyStats.length}</strong>
-            <small className="metric-hint">{localizedMessage(isZh, "stats.usedInThisWindow")}</small>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        <div className="glass rounded-2xl p-6">
+          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "Token 时序" : "Token Usage Over Time"}</h3>
+          <div className="h-48">
+            {tokenChart.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={tokenChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="hour" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={50} tickFormatter={fmt} />
+                  <Tooltip />
+                  <Bar dataKey="input" name={isZh ? "输入" : "Input"} stackId="a" fill="#3b82f6" />
+                  <Bar dataKey="output" name={isZh ? "输出" : "Output"} stackId="a" fill="#10b981" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">{isZh ? "暂无数据" : "No data"}</div>
+            )}
           </div>
         </div>
-      </section>
 
-      <article className="card">
-        <div className="card-header">
-          <div>
-            <h2 className="card-title">{localizedMessage(isZh, "common.requestTrend")}</h2>
-            <div className="card-subtitle">{localizedMessage(isZh, "stats.requestsAndErrorsInTheSelectedWindow")}</div>
+        <div className="glass rounded-2xl p-6">
+          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "模型请求分布" : "Requests by Model"}</h3>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[240px_1fr] lg:items-center">
+            <div className="h-44">
+            {modelPie.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={modelPie}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={44}
+                      outerRadius={68}
+                      paddingAngle={3}
+                      dataKey="value"
+                      label={false}
+                      labelLine={false}
+                    >
+                      {modelPie.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">{isZh ? "暂无数据" : "No data"}</div>
+            )}
+            </div>
+            {modelPie.length > 0 && (
+              <div className="space-y-2">
+                {modelPie.map((item, i) => {
+                  const pct = modelTotal > 0 ? Math.round((item.value / modelTotal) * 100) : 0;
+                  return (
+                    <div key={item.name} className="flex items-center justify-between gap-3 text-sm">
+                      <div className="min-w-0 flex items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: COLORS[i % COLORS.length] }}
+                        />
+                        <span className="truncate text-slate-600">{item.name}</span>
+                      </div>
+                      <span className="shrink-0 font-medium text-slate-900">{pct}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
-        {chartData.length < 2 ? (
-          <div className="chart-wrap"><div className="empty">{localizedMessage(isZh, "stats.noTrendData")}</div></div>
-        ) : (
-          <NyroChart
-            data={chartData}
-            ariaLabel={localizedMessage(isZh, "common.requestTrend")}
-            valueLabel={localizedMessage(isZh, "common.requests")}
-            errorLabel={localizedMessage(isZh, "common.errors")}
-          />
-        )}
-        <div className="chart-legend">
-          <span className="chart-legend-item"><span className="legend-dot" /><span>{localizedMessage(isZh, "common.requests2")}</span></span>
-          <span className="chart-legend-item"><span className="legend-dot error" /><span>{localizedMessage(isZh, "common.errors2")}</span></span>
-        </div>
-      </article>
+      </div>
 
-      <section className="section-grid split-grid">
-        <article className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">{localizedMessage(isZh, "stats.modelDistribution")}</h2>
-              <div className="card-subtitle">{localizedMessage(isZh, "stats.rankedByRequestCount")}</div>
-            </div>
-          </div>
-          {modelRanks.length === 0 ? (
-            <div className="empty">{localizedMessage(isZh, "stats.noModelRequests")}</div>
-          ) : (
-            <div className="priority-list">
-              {modelRanks.map((item, index) => (
-                <div className="priority-item" key={item.id}>
-                  <span className="priority-order">{index + 1}</span>
-                  <span className="priority-label" {...copyableTipProps(item.label)}>{item.label}</span>
-                  <span className="priority-share">{compact(item.value)} · {item.share.toFixed(0)}%</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </article>
-        <article className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">{localizedMessage(isZh, "stats.tokenUsage")}</h2>
-              <div className="card-subtitle">{localizedMessage(isZh, "stats.rankedByTotalTokens")}</div>
-            </div>
-          </div>
-          {tokenRanks.length === 0 ? (
-            <div className="empty">{localizedMessage(isZh, "stats.noTokenData")}</div>
-          ) : (
-            <div className="priority-list">
-              {tokenRanks.map((item, index) => (
-                <div className="priority-item" key={item.id}>
-                  <span className="priority-order">{index + 1}</span>
-                  <span className="priority-label" {...copyableTipProps(item.label)}>{item.label}</span>
-                  <span className="priority-share">{compact(item.value)} · {item.share.toFixed(0)}%</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </article>
-      </section>
-
-      <section className="section-grid split-grid">
-        <article className={clsx("card table-card stats-table", providerStats.length === 0 && "is-empty")}>
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">{localizedMessage(isZh, "stats.providerRanking")}</h2>
-              <div className="card-subtitle">{localizedMessage(isZh, "stats.volumeErrorsAndLatency")}</div>
-            </div>
-          </div>
-          <div className="table-scroll">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{localizedMessage(isZh, "common.provider")}</th>
-                  <th>{localizedMessage(isZh, "common.requests2")}</th>
-                  <th>{localizedMessage(isZh, "common.errors2")}</th>
-                  <th>{localizedMessage(isZh, "common.errorRate")}</th>
-                  <th>{localizedMessage(isZh, "common.avgLatency")}</th>
+      <div className="glass rounded-2xl p-6">
+        <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "提供商分布" : "Provider Breakdown"}</h3>
+        <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
+          <table className="w-full text-sm">
+            <thead className="bg-white/70 text-slate-500">
+              <tr>
+                <th className="px-4 py-2.5 text-left font-medium">{isZh ? "提供商" : "Provider"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "请求数" : "Requests"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "错误数" : "Errors"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "错误率" : "Error Rate"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "平均延迟" : "Avg Latency"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {providerStats.length === 0 && (
+                <tr><td className="px-4 py-6 text-center text-slate-400" colSpan={5}>{isZh ? "暂无数据" : "No data"}</td></tr>
+              )}
+              {providerStats.slice(0, 8).map((p) => (
+                <tr key={p.provider} className="border-t border-white/70 text-slate-700">
+                  <td className="px-4 py-2.5 font-medium">{p.provider}</td>
+                  <td className="px-4 py-2.5 text-right">{fmt(p.request_count)}</td>
+                  <td className="px-4 py-2.5 text-right text-red-500">{p.error_count}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    {p.request_count > 0 ? ((p.error_count / p.request_count) * 100).toFixed(1) : "0"}%
+                  </td>
+                  <td className="px-4 py-2.5 text-right">{fmtLatency(p.avg_duration_ms)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {providerStats.slice(0, 8).map((item) => (
-                  <tr key={item.provider}>
-                    <td><strong className="name-ellipsis" {...copyableTipProps(item.provider)}>{item.provider}</strong></td>
-                    <td>{compact(item.request_count)}</td>
-                    <td>{item.error_count}</td>
-                    <td>{item.request_count > 0 ? ((item.error_count / item.request_count) * 100).toFixed(2) : "0.00"}%</td>
-                    <td>{latency(item.avg_duration_ms)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="table-empty">{localizedMessage(isZh, "stats.noProviderData")}</div>
-        </article>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-        <article className={clsx("card table-card stats-table", apiKeyStats.length === 0 && "is-empty")}>
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">{localizedMessage(isZh, "stats.keyRanking")}</h2>
-              <div className="card-subtitle">{localizedMessage(isZh, "stats.resourceUseByKey")}</div>
-            </div>
-          </div>
-          <div className="table-scroll">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{localizedMessage(isZh, "stats.key")}</th>
-                  <th>{localizedMessage(isZh, "common.requests2")}</th>
-                  <th>{localizedMessage(isZh, "stats.inputTokens")}</th>
-                  <th>{localizedMessage(isZh, "stats.outputTokens")}</th>
-                  <th>{localizedMessage(isZh, "stats.cacheReads")}</th>
-                  <th>{localizedMessage(isZh, "stats.lastUsed")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {apiKeyStats.slice(0, 8).map((item) => (
-                  <tr key={item.api_key_id}>
-                    <td><code className="code-pill name-ellipsis" {...copyableTipProps(item.api_key_name || item.api_key_id)}>{item.api_key_name || item.api_key_id}</code></td>
-                    <td>{compact(item.request_count)}</td>
-                    <td>{compact(item.total_input_tokens)}</td>
-                    <td>{compact(item.total_output_tokens)}</td>
-                    <td>{compact(item.cache_read_tokens)}</td>
-                    <td>{formatLogTime(item.last_used_at)}</td>
+      <div className="glass rounded-2xl p-6">
+        <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "秘钥调用统计" : "API Key Usage"}</h3>
+        <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
+          <table className="w-full text-sm">
+            <thead className="bg-white/70 text-slate-500">
+              <tr>
+                <th className="px-4 py-2.5 text-left font-medium">{isZh ? "密钥" : "API Key"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "请求数" : "Requests"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "输入 Token" : "Input Tokens"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "输出 Token" : "Output Tokens"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "缓存命中" : "Cache Hits"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "最后调用" : "Last Used"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {apiKeyStats.length === 0 && (
+                <tr><td className="px-4 py-6 text-center text-slate-400" colSpan={6}>{isZh ? "暂无数据" : "No data"}</td></tr>
+              )}
+              {apiKeyStats.slice(0, 8).map((k) => {
+                const cacheTotal = k.total_input_tokens + k.cache_read_tokens;
+                const cacheRate = cacheTotal > 0 ? Math.round((k.cache_read_tokens / cacheTotal) * 100) : 0;
+                return (
+                  <tr key={k.api_key_id} className="border-t border-white/70 text-slate-700">
+                    <td className="px-4 py-2.5 font-medium">{k.api_key_name || k.api_key_id}</td>
+                    <td className="px-4 py-2.5 text-right">{fmt(k.request_count)}</td>
+                    <td className="px-4 py-2.5 text-right">{fmt(k.total_input_tokens)}</td>
+                    <td className="px-4 py-2.5 text-right">{fmt(k.total_output_tokens)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span>{fmt(k.cache_read_tokens)}</span>
+                      {cacheRate > 0 && <span className="ml-1 text-[11px] text-slate-400">{cacheRate}%</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-xs text-slate-500 whitespace-nowrap">{formatLogTime(k.last_used_at)}</td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="table-empty">{localizedMessage(isZh, "stats.noKeyData")}</div>
-        </article>
-      </section>
-    </PageLayout>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -140,9 +140,12 @@ export function ProviderIcon({
 
   return (
     <span
-      className={cn("provider-logo", monochrome && "provider-logo-mono", className)}
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-white/85 text-[10px] font-semibold text-slate-500",
+        className,
+      )}
       style={{ width: size, height: size }}
-      aria-hidden="true"
+      title={name || protocol || "provider"}
     >
       {iconMarkup ? (
         <span

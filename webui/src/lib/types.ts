@@ -6,8 +6,6 @@ export interface Provider {
   base_url: string;
   api_key?: string;
   use_proxy: boolean;
-  last_test_success?: boolean | null;
-  last_test_at?: string | null;
   auth_mode?: "apikey" | "oauth";
   oauth_status?: ProviderOAuthStatus;
   oauth_expires_at?: string | null;
@@ -64,7 +62,7 @@ export interface ApiKey {
 
 export interface RequestLog {
   id: string;
-  /** Unix timestamp in milliseconds */
+  /** Unix 毫秒时间戳 */
   created_at: number;
   api_key_id?: string;
   api_key_name?: string;

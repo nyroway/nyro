@@ -29,6 +29,29 @@ button.status-tag,
   cursor: pointer;
 }
 
+/* Type hierarchy: sidebar uses caption weight; the active item stays Regular,
+   distinguished by color/background rather than Medium. Page subtitles are
+   secondary gray, not the same ink as the title. */
+.sidebar .nav-item {
+  font-weight: var(--weight-caption);
+}
+
+.sidebar .nav-item.active {
+  font-weight: var(--weight-body);
+}
+
+.sidebar .nav-item.external {
+  font-weight: var(--weight-caption);
+}
+
+.sidebar .nav-label {
+  font-weight: var(--weight-caption);
+}
+
+.page-header p {
+  color: var(--ink-muted);
+}
+
 /* ── Phase 1 seams: baseline classes missing for wrappers (§10.1 / §7.1) ── */
 
 /* Baseline .card has no generic card body (domain cards each define their own padding); completed here. */
@@ -101,7 +124,7 @@ button.status-tag,
 .alert-title {
   display: block;
   color: var(--ink-strong);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 /* FormSection: the first section takes no top margin; description row. */
@@ -141,7 +164,7 @@ button.status-tag,
 .drawer-subtitle {
   display: block;
   margin-top: 2px;
-  color: var(--ink-strong);
+  color: var(--ink-muted);
   font-size: 12px;
   font-weight: var(--weight-caption);
 }
@@ -548,7 +571,7 @@ button.status-tag,
   display: block;
   color: var(--ink-strong);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .target-editor-sub {
@@ -616,10 +639,43 @@ button.status-tag,
   min-width: 0;
 }
 
+/* Baseline .card overflow:hidden clips the in-place model/key menus at the
+   card edge. Let the panel paint them, and raise the open select above the
+   code preview / config block that follows in the DOM. */
+.content-body > .connect-panel {
+  overflow: visible;
+}
+
+.connect-panel .select-control.open {
+  z-index: 8;
+}
+
 .connect-form {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* CLI tool picker: the baseline .radio-card is a 48px centered button row.
+   These four tiles need left-aligned copy and a taller hit area. */
+.connect-cli-tools .radio-card {
+  min-height: 76px;
+  padding: 14px 16px;
+  text-align: left;
+}
+
+.connect-cli-tools .radio-card .radio-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.connect-cli-tools .radio-card .radio-text span {
+  color: var(--ink-muted);
+}
+
+.connect-cli-tools .radio-card .tag {
+  flex: 0 0 auto;
+  margin-top: 2px;
 }
 
 /* Provider icon alignment inside protocol tabs (the baseline .tab is a plain text button). */
@@ -826,7 +882,7 @@ button.status-tag,
 .key-row-copy strong {
   color: var(--ink-strong);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
   white-space: nowrap;
 }
 
@@ -1397,4 +1453,50 @@ body {
   place-items: center;
   color: var(--ink-soft);
   font-size: 13px;
+}
+
+/* Chart series: request uses --blue-600, errors stay --danger but quieter. */
+.chart-line {
+  stroke: var(--blue-600);
+}
+
+.chart-point {
+  stroke: var(--blue-600);
+}
+
+.chart-point-ring {
+  stroke: var(--blue-600);
+}
+
+.legend-dot {
+  background: var(--blue-600);
+}
+
+.chart-line.error {
+  stroke: var(--danger);
+  stroke-width: 1.25;
+  stroke-opacity: 0.7;
+  stroke-dasharray: none;
+}
+
+/* Chrome pass: lift the OLED-black dark surfaces, thin sidebar glyphs,
+   and restyle numeric/status badges as muted pills. Rollback = delete this block. */
+[data-theme="dark"] {
+  --canvas: #161616;
+  --surface: #1e1e1e;
+  --surface-solid: #262626;
+  --surface-soft: #2e2e2e;
+  --overlay: #1e1e1e;
+  --side: #161616;
+  --side-deep: #121212;
+}
+
+.sidebar .nav-icon,
+.sidebar .nav-external-icon {
+  stroke-width: 1.5;
+}
+
+.badge {
+  color: var(--ink-strong);
+  background: var(--surface-soft);
 }

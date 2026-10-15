@@ -13,7 +13,7 @@ export function NyroIcon({
   size = 24,
   className,
   monochrome = false,
-  title,
+  title = "Nyro",
 }: NyroIconProps) {
   const style: CSSProperties = monochrome
     ? {
@@ -43,7 +43,7 @@ export function NyroIcon({
       className={cn("nyro-icon", monochrome && "nyro-icon-mono", className)}
       style={style}
       aria-hidden="true"
-      data-tip={title}
+      title={title}
     />
   );
 }

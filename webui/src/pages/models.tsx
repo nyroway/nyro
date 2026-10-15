@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon, Trash2, ToggleRight, ToggleLeft, X } from "lucide-react";
 
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
@@ -16,15 +16,19 @@ import type {
 } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { CopyValue } from "@/components/ui/copy-value";
-import { DetailList } from "@/components/ui/detail-list";
-import { PageHeader, PageLayout } from "@/components/layout/page";
-import { Drawer } from "@/components/ui/overlays";
-import { NyroSelect } from "@/components/ui/nyro-select";
-import { copyableTipProps } from "@/lib/copyable";
-import { localizedMessage, type MessageKey } from "@/lib/messages";
-
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const PAGE_SIZE = 7;
 
@@ -52,26 +56,13 @@ const emptyCreate: ModelForm = {
   enable_payload: false,
 };
 
+function FieldLabel({ children }: { children: string }) {
+  return <label className="ml-1 text-xs leading-none font-normal text-slate-900">{children}</label>;
+}
+
 function balanceLabel(value: ModelBalance, isZh: boolean) {
-  if (value === "priority") return localizedMessage(isZh, "models.priority");
-  return localizedMessage(isZh, "models.weighted");
-}
-
-function routeTargets(route: ModelType) {
-  if (route.targets?.length) return route.targets;
-  if (route.target_provider) {
-    return [{ provider_id: route.target_provider, model: route.target_model, weight: 100, priority: 1 }];
-  }
-  return [];
-}
-
-function primaryTarget(route: ModelType) {
-  const targets = routeTargets(route);
-  if (!targets.length) return null;
-  if (route.balance === "priority") {
-    return [...targets].sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1))[0];
-  }
-  return [...targets].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0))[0];
+  if (value === "priority") return isZh ? "主备分级" : "Priority";
+  return isZh ? "加权轮询" : "Weighted";
 }
 
 function hasProviderModelsEndpoint(provider?: Provider) {
@@ -83,9 +74,21 @@ function withCurrentModel(options: string[], current?: string) {
   return [current, ...options];
 }
 
+
+function ToggleStatusLabel({ enabled, isZh }: { enabled: boolean; isZh: boolean }) {
+  return (
+    <Badge variant={enabled ? "success" : "secondary"} className="connect-label-badge">
+      {enabled ? (isZh ? "已启用" : "Enabled") : (isZh ? "未启用" : "Disabled")}
+    </Badge>
+  );
+}
+
 type ModelToggleControlProps = {
   title: string;
+  isZh: boolean;
   checked: boolean;
+  disabled?: boolean;
+  disabledMessage?: string;
   checkedMessage?: string;
   uncheckedMessage?: string;
   switchId?: string;
@@ -94,7 +97,10 @@ type ModelToggleControlProps = {
 
 function ModelToggleControl({
   title,
+  isZh,
   checked,
+  disabled = false,
+  disabledMessage,
   checkedMessage,
   uncheckedMessage,
   switchId,
@@ -103,17 +109,22 @@ function ModelToggleControl({
   const message = checked ? checkedMessage : uncheckedMessage;
 
   return (
-    <div className="field">
-      <span className="field-label">{title}</span>
-      <div className="switch-inline">
-        {message ? <span className="field-hint">{message}</span> : null}
-        <button
-          type="button"
+    <div className="space-y-2">
+      <FieldLabel>{title}</FieldLabel>
+      <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+        {disabled ? (
+          <p className="text-xs text-amber-600">{disabledMessage}</p>
+        ) : (
+          <div className="flex items-center gap-2">
+            <ToggleStatusLabel enabled={checked} isZh={isZh} />
+            {message && <span className="text-xs text-slate-600">{message}</span>}
+          </div>
+        )}
+        <Switch
           id={switchId}
-          className={checked ? "switch-control on" : "switch-control"}
-          aria-pressed={checked}
-          aria-label={title}
-          onClick={() => onCheckedChange(!checked)}
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={onCheckedChange}
         />
       </div>
     </div>
@@ -122,14 +133,14 @@ function ModelToggleControl({
 
 function ModelCapabilitySummary({ caps, isZh }: { caps: ModelCapabilities; isZh: boolean }) {
   return (
-    <div className="field full">
-      <div className="cell-tags">
-        {caps.tool_call && <span className="tag tag-success">{localizedMessage(isZh, "common.tools")}</span>}
-        {caps.reasoning && <span className="tag tag-success">{localizedMessage(isZh, "common.reasoning")}</span>}
-        {caps.input_modalities.includes("image") && <span className="tag tag-success">{localizedMessage(isZh, "models.vision")}</span>}
-        <span className="tag tag-success">{`ctx:${Math.round(caps.context_window / 1024)}K`}</span>
+    <div className="mt-2 flex items-center gap-1.5 border-t border-slate-200 pt-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {caps.tool_call && <Badge variant="success" className="connect-label-badge">{isZh ? "工具调用" : "Tools"}</Badge>}
+        {caps.reasoning && <Badge variant="success" className="connect-label-badge">{isZh ? "推理" : "Reasoning"}</Badge>}
+        {caps.input_modalities.includes("image") && <Badge variant="success" className="connect-label-badge">{isZh ? "视觉" : "Vision"}</Badge>}
+        <Badge variant="success" className="connect-label-badge">{`ctx:${Math.round(caps.context_window / 1024)}K`}</Badge>
         {caps.embedding_length != null && caps.embedding_length > 0 && (
-          <span className="tag tag-success">{`emb:${caps.embedding_length}`}</span>
+          <Badge variant="success" className="connect-label-badge">{`emb:${caps.embedding_length}`}</Badge>
         )}
       </div>
     </div>
@@ -201,234 +212,105 @@ function TargetRow({
     staleTime: 60_000,
   });
 
-  const modelListId = `target-models-${mode}-${index}`;
+  const rowClassName = balance === "weighted"
+    ? "grid w-full grid-cols-[minmax(0,2.8fr)_minmax(0,5.2fr)_minmax(0,1.25fr)_32px] items-center gap-2.5"
+    : "grid w-full grid-cols-[minmax(0,2.8fr)_minmax(0,5.2fr)_minmax(0,1.25fr)_32px] items-center gap-2.5";
 
   return (
-    <div className="target-editor">
-      <header>
-        <div className="target-editor-copy">
-          <span className="target-editor-title">
-            {provider ? (
-              <span className="gateway-name">
-                <ProviderIcon
-                  name={provider.name}
-                  protocol={provider.protocol}
-                  baseUrl={provider.base_url}
-                  size={16}
-                />
-                {provider.name}
-              </span>
-            ) : (localizedMessage(isZh, "models.selectProvider"))}
-          </span>
-          <span className="target-editor-sub">
-            {target.model || (localizedMessage(isZh, "models.noTargetModel"))}
-          </span>
-        </div>
-        <div className="target-editor-actions">
-          <button
-            type="button"
-            className="icon-action danger"
-            onClick={() => onRemove(index)}
-            disabled={disableRemove}
-            data-tip={localizedMessage(isZh, "models.removeTarget")}
-            aria-label={localizedMessage(isZh, "models.removeTarget")}
-          >
-            <Trash2 aria-hidden="true" />
-          </button>
-        </div>
-      </header>
-      <div className="target-editor-body">
-        <div className="field">
-          <span className="field-label">{localizedMessage(isZh, "common.provider")}</span>
-          <NyroSelect
-            ariaLabel={localizedMessage(isZh, "common.provider")}
-            value={target.provider_id}
-            options={[
-              { value: "", label: localizedMessage(isZh, "models.selectProvider") },
-              ...providerOptions,
-            ]}
-            onChange={(value) => {
-              onUpdate(index, { provider_id: value, model: "" });
-              setCapsQueryModel("");
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+      <div className={rowClassName}>
+        <Select
+          value={target.provider_id || undefined}
+          onValueChange={(value) => {
+            onUpdate(index, { provider_id: value, model: "" });
+            setCapsQueryModel("");
+          }}
+        >
+          <SelectTrigger className="bg-white">
+            <SelectValue placeholder={isZh ? "选择提供商" : "Select provider"} />
+          </SelectTrigger>
+          <SelectContent>
+            {providerOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                <span className="flex items-center gap-2">
+                  <ProviderIcon
+                    name={option.provider.name}
+                    protocol={option.provider.protocol}
+                    baseUrl={option.provider.base_url}
+                    size={16}
+                  />
+                  <span>{option.label}</span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {providerHasModelDiscovery ? (
+          <Combobox
+            allowCustom
+            value={target.model}
+            className="bg-white"
+            options={withCurrentModel(targetModels, target.model).map((model) => ({
+              value: model,
+              label: model,
+            }))}
+            placeholder={isZh ? "选择或输入目标模型 ID" : "Select or type target model ID"}
+            searchPlaceholder={isZh ? "搜索或输入模型..." : "Search or type model..."}
+            emptyText={isZh ? "暂无可用模型，可直接输入" : "No models available, type to use custom"}
+            formatCustomOption={(query) =>
+              isZh ? `使用 "${query}"` : `Use "${query}"`
+            }
+            onValueChange={(value) => {
+              onUpdate(index, { model: value });
+              setCapsQueryModel(value.trim());
             }}
           />
-        </div>
-
-        <label className="field">
-          <span className="field-label">{localizedMessage(isZh, "models.targetModel")}</span>
-          {providerHasModelDiscovery ? (
-            <>
-              <input
-                className="field-control"
-                list={modelListId}
-                value={target.model}
-                placeholder={localizedMessage(isZh, "models.selectOrTypeTargetModelID")}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  onUpdate(index, { model: value });
-                  // Selecting from the suggestion list looks up capabilities immediately; typed input still uses the 1s debounce below
-                  if (value.trim() && targetModels.includes(value)) {
-                    setCapsQueryModel(value.trim());
-                  }
-                }}
-              />
-              <datalist id={modelListId}>
-                {withCurrentModel(targetModels, target.model).map((model) => (
-                  <option key={model} value={model} />
-                ))}
-              </datalist>
-            </>
-          ) : (
-            <input
-              className="field-control"
-              value={target.model}
-              onChange={(e) => onUpdate(index, { model: e.target.value })}
-              placeholder={localizedMessage(isZh, "models.targetModelID")}
-            />
-          )}
-        </label>
+        ) : (
+          <Input
+            className="bg-white"
+            value={target.model}
+            onChange={(e) => onUpdate(index, { model: e.target.value })}
+            placeholder={isZh ? "目标模型 ID" : "Target model ID"}
+          />
+        )}
 
         {balance === "weighted" ? (
-          <label className="field">
-            <span className="field-label">{localizedMessage(isZh, "models.weight")}</span>
-            <input
-              className="field-control"
-              type="number"
-              min={0}
-              value={target.weight}
-              onChange={(e) => onUpdate(index, { weight: Math.max(0, Number(e.target.value || 0)) })}
-              placeholder={localizedMessage(isZh, "models.weight")}
-            />
-          </label>
+          <Input
+            className="bg-white"
+            type="number"
+            min={0}
+            value={target.weight}
+            onChange={(e) => onUpdate(index, { weight: Math.max(0, Number(e.target.value || 0)) })}
+            placeholder={isZh ? "权重" : "Weight"}
+          />
         ) : (
-          <div className="field">
-            <span className="field-label">{localizedMessage(isZh, "models.priority2")}</span>
-            <NyroSelect
-              ariaLabel={localizedMessage(isZh, "models.priority2")}
-              value={String(target.priority)}
-              options={[
-                { value: "1", label: localizedMessage(isZh, "models.primary") },
-                { value: "2", label: localizedMessage(isZh, "models.fallback") },
-              ]}
-              onChange={(value) => onUpdate(index, { priority: Number(value) })}
-            />
-          </div>
+          <Select
+            value={String(target.priority)}
+            onValueChange={(value) => onUpdate(index, { priority: Number(value) })}
+          >
+            <SelectTrigger className="bg-white">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">{isZh ? "主" : "Primary"}</SelectItem>
+              <SelectItem value="2">{isZh ? "备" : "Fallback"}</SelectItem>
+            </SelectContent>
+          </Select>
         )}
 
-        {modelCaps && (
-          <ModelCapabilitySummary caps={modelCaps} isZh={isZh} />
-        )}
+        <button
+          type="button"
+          onClick={() => onRemove(index)}
+          disabled={disableRemove}
+          className="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
       </div>
-    </div>
-  );
-}
-
-type ModelFormFieldsProps = {
-  mode: "create" | "edit";
-  form: ModelForm;
-  isZh: boolean;
-  providerOptions: Array<{ value: string; label: string; provider: Provider }>;
-  providerMap: Map<string, Provider>;
-  onName: (name: string) => void;
-  onBalance: (balance: ModelBalance) => void;
-  onUpdateTarget: (index: number, patch: Partial<ModelBackendForm>) => void;
-  onRemoveTarget: (index: number) => void;
-  onAddTarget: () => void;
-  onAuth: (checked: boolean) => void;
-  onPayload: (checked: boolean) => void;
-  authSwitchId?: string;
-  payloadSwitchId?: string;
-};
-
-function ModelFormFields({
-  mode,
-  form,
-  isZh,
-  providerOptions,
-  providerMap,
-  onName,
-  onBalance,
-  onUpdateTarget,
-  onRemoveTarget,
-  onAddTarget,
-  onAuth,
-  onPayload,
-  authSwitchId,
-  payloadSwitchId,
-}: ModelFormFieldsProps) {
-  return (
-    <div className="form-stack">
-      <div className="form-grid">
-        <label className="field">
-          <span className="field-label">{localizedMessage(isZh, "models.modelNameVirtualModelID")}</span>
-          <input
-            className="field-control"
-            value={form.name}
-            onChange={(e) => onName(e.target.value)}
-            placeholder={mode === "create" ? (localizedMessage(isZh, "models.enterModelName")) : undefined}
-          />
-        </label>
-        <div className="field">
-          <span className="field-label">{localizedMessage(isZh, "models.loadStrategy")}</span>
-          <NyroSelect
-            ariaLabel={localizedMessage(isZh, "models.loadStrategy")}
-            value={form.balance}
-            options={[
-              { value: "weighted", label: localizedMessage(isZh, "models.weighted") },
-              { value: "priority", label: localizedMessage(isZh, "models.priority") },
-            ]}
-            onChange={(value) => onBalance(value as ModelBalance)}
-          />
-        </div>
-        <div className="field full">
-          <span className="field-label">{localizedMessage(isZh, "models.targets")}</span>
-          <span className="field-hint">
-            {localizedMessage(isZh, "models.nodes", { a: form.targets.length })}
-          </span>
-          <div className="target-list">
-            {form.targets.map((target, index) => (
-              <TargetRow
-                key={mode === "edit" ? `${target.id ?? "new"}-${index}` : index}
-                mode={mode}
-                index={index}
-                target={target}
-                balance={form.balance}
-                isZh={isZh}
-                providerOptions={providerOptions}
-                providerMap={providerMap}
-                onUpdate={onUpdateTarget}
-                onRemove={onRemoveTarget}
-                disableRemove={form.targets.length <= 1}
-              />
-            ))}
-          </div>
-          <button type="button" className="button button-sm quota-add" onClick={onAddTarget}>
-            <Plus />
-            {localizedMessage(isZh, "models.addModel")}
-          </button>
-        </div>
-      </div>
-      <section className="form-section">
-        <h3 className="form-section-title">{localizedMessage(isZh, "models.accessControl")}</h3>
-        <div className="form-grid">
-          <ModelToggleControl
-            title={localizedMessage(isZh, "models.auth")}
-            checked={form.enable_auth}
-            checkedMessage={localizedMessage(isZh, "models.onlyAPIKeysBoundToThisModelCanAccess")}
-            uncheckedMessage={localizedMessage(isZh, "models.anyRequestCanAccessWithoutAnAPIKey")}
-            switchId={authSwitchId}
-            onCheckedChange={onAuth}
-          />
-          <ModelToggleControl
-            title={localizedMessage(isZh, "common.recordPayloads")}
-            checked={form.enable_payload}
-            checkedMessage={localizedMessage(isZh, "models.logFullRequestAndResponseContent")}
-            uncheckedMessage={localizedMessage(isZh, "models.onlyBasicMetricsAreLogged")}
-            switchId={payloadSwitchId}
-            onCheckedChange={onPayload}
-          />
-        </div>
-      </section>
+      {modelCaps && (
+        <ModelCapabilitySummary caps={modelCaps} isZh={isZh} />
+      )}
     </div>
   );
 }
@@ -444,7 +326,6 @@ export default function ModelsPage() {
   const [createForm, setCreateForm] = useState<ModelForm>(emptyCreate);
   const [editForm, setEditForm] = useState<(ModelForm & { id: string }) | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState<ModelType | null>(null);
   const [modelToDelete, setModelToDelete] = useState<ModelType | null>(null);
   const [errorDialog, setErrorDialog] = useState<{ title: string; description?: string } | null>(null);
 
@@ -452,9 +333,9 @@ export default function ModelsPage() {
     return localizeBackendErrorMessage(error, isZh);
   }
 
-  function showErrorDialog(titleKey: MessageKey, error: unknown) {
+  function showErrorDialog(titleZh: string, titleEn: string, error: unknown) {
     setErrorDialog({
-      title: localizedMessage(isZh, titleKey),
+      title: isZh ? titleZh : titleEn,
       description: formatErrorMessage(error),
     });
   }
@@ -467,6 +348,14 @@ export default function ModelsPage() {
     queryKey: ["providers"],
     queryFn: () => backend("get_providers"),
   });
+  const { data: globalEnablePayload } = useQuery<string | null>({
+    queryKey: ["setting", "enable_payload"],
+    queryFn: () => backend("get_setting", { key: "enable_payload" }),
+  });
+  const globalPayloadEnabled = !["false", "0", "off", "no"].includes(
+    (globalEnablePayload ?? "true").trim().toLowerCase(),
+  );
+
   const createMut = useMutation({
     mutationFn: (input: CreateModel) => backend("create_model", { input }),
     onSuccess: () => {
@@ -475,7 +364,7 @@ export default function ModelsPage() {
       setCreateForm(emptyCreate);
     },
     onError: (error: unknown) => {
-      showErrorDialog("models.failedToCreateModel", error);
+      showErrorDialog("创建模型失败", "Failed to create model", error);
     },
   });
   const updateMut = useMutation({
@@ -488,14 +377,14 @@ export default function ModelsPage() {
     },
     onError: (err: Error) => {
       setEditError(String(err));
-      showErrorDialog("models.failedToSaveModel", err);
+      showErrorDialog("保存模型失败", "Failed to save model", err);
     },
   });
   const deleteMut = useMutation({
     mutationFn: (id: string) => backend("delete_model", { id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
     onError: (error: unknown) => {
-      showErrorDialog("models.failedToDeleteModel", error);
+      showErrorDialog("删除模型失败", "Failed to delete model", error);
     },
   });
 
@@ -506,7 +395,7 @@ export default function ModelsPage() {
       backend("update_model", { id, input: { is_enabled } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
     onError: (error: unknown) => {
-      showErrorDialog("common.operationFailed", error);
+      showErrorDialog("操作失败", "Operation failed", error);
     },
   });
 
@@ -590,372 +479,388 @@ export default function ModelsPage() {
     });
   }
 
-  function closeEdit() {
-    setEditingId(null);
-    setEditForm(null);
-    setEditError(null);
-  }
-
-  const createInvalid = !createForm.name.trim()
-    || createForm.targets.some((target) => !target.provider_id || !target.model.trim());
-
   return (
-    <PageLayout
-      header={(
-        <PageHeader
-          title={localizedMessage(isZh, "common.models")}
-          description={localizedMessage(isZh, "models.exactMatchByModelNameAllIngressProtocolsEnabled")}
-          actions={(
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={() => {
-                setEditingId(null);
-                setEditForm(null);
-                setShowForm((v) => !v);
-              }}
-            >
-              <Plus />
-              {localizedMessage(isZh, "models.addModel2")}
-            </button>
-          )}
-        />
-      )}
-    >
-      {/* List card: paginated table. Create and edit use the right-side drawer; confirmation uses a centered modal. */}
-      <div className="card table-card">
-        <div className="card-header">
-          <h2 className="card-title">{localizedMessage(isZh, "models.modelList")}</h2>
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "模型" : "Models"}</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {isZh ? "按模型名称精确匹配，自动开放所有接入协议" : "Exact match by model name, all ingress protocols enabled"}
+          </p>
         </div>
-        <div className="table-toolbar">
-          <span className="table-summary">
-            {localizedMessage(isZh, "models.models", { a: routes.length })}
-          </span>
-        </div>
-        {isLoading ? (
-          <div className="card-body">
-            <div className="empty"><strong>{localizedMessage(isZh, "common.loading")}</strong></div>
-          </div>
-        ) : routes.length === 0 ? (
-          <div className="card-body">
-            <div className="empty">
-              <RouteIcon size={40} />
-              <strong>{localizedMessage(isZh, "models.noModelsConfigured")}</strong>
-            </div>
-          </div>
-        ) : (
-          <div className="table-scroll">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{localizedMessage(isZh, "common.model")}</th>
-                  <th>{localizedMessage(isZh, "models.primaryProvider")}</th>
-                  <th>{localizedMessage(isZh, "models.strategy")}</th>
-                  <th>{localizedMessage(isZh, "models.auth")}</th>
-                  <th>{localizedMessage(isZh, "common.status")}</th>
-                  <th className="cell-switch">{localizedMessage(isZh, "common.enabled")}</th>
-                  <th className="cell-actions">{localizedMessage(isZh, "common.actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagedRoutes.map((route) => {
-                  const targets = routeTargets(route);
-                  const primary = primaryTarget(route);
-                  const primaryProvider = primary ? providerMap.get(primary.provider_id) : undefined;
-                  return (
-                  <tr
-                    key={route.id}
-                    className="clickable"
-                    onClick={() => {
-                      setShowForm(false);
-                      setEditingId(null);
-                      setEditForm(null);
-                      setSelectedModel(route);
-                    }}
-                  >
-                    <td>
-                      <div className="gateway-name">
-                        <span className="gateway-token"><GitBranch /></span>
-                        <strong className="name-ellipsis" {...copyableTipProps(route.name)}>{route.name}</strong>
-                      </div>
-                    </td>
-                    <td>
-                      {primary ? (
-                        <div className="cell-stack">
-                          <strong className="name-ellipsis" {...copyableTipProps(primaryProvider?.name ?? primary.provider_id)}>
-                            {primaryProvider?.name ?? primary.provider_id}
-                          </strong>
-                          <span className="name-ellipsis" {...copyableTipProps(primary.model)}>{primary.model}</span>
-                          {targets.length > 1 ? (
-                            <span className="cell-note">{localizedMessage(isZh, "models.targets2", { a: targets.length })}</span>
-                          ) : null}
-                        </div>
-                      ) : "—"}
-                    </td>
-                    <td>{balanceLabel(route.balance ?? "weighted", isZh)}</td>
-                    <td>
-                      <span className={route.enable_auth ? "health" : "health is-idle"}>
-                        <span className="mini-dot" />
-                        {route.enable_auth ? (localizedMessage(isZh, "models.auth")) : (localizedMessage(isZh, "models.open"))}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={route.enable_payload === false ? "health is-idle" : "health"}>
-                        <span className="mini-dot" />
-                        {route.enable_payload === false
-                          ? (localizedMessage(isZh, "models.noPayloads"))
-                          : (localizedMessage(isZh, "models.recording"))}
-                      </span>
-                    </td>
-                    <td className="cell-switch">
-                      <button
-                        type="button"
-                        role="switch"
-                        className={route.is_enabled ? "switch-control sm on" : "switch-control sm"}
-                        aria-checked={route.is_enabled}
-                        data-tip={route.is_enabled ? (localizedMessage(isZh, "common.disable")) : (localizedMessage(isZh, "common.enable"))}
-                        aria-label={route.is_enabled ? (localizedMessage(isZh, "common.disable")) : (localizedMessage(isZh, "common.enable"))}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (route.is_enabled) {
-                            setModelToDisable(route);
-                          } else {
-                            toggleEnabledMut.mutate({ id: route.id, is_enabled: true });
-                          }
-                        }}
-                      />
-                    </td>
-                    <td className="cell-actions">
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          className="icon-action"
-                          data-tip={localizedMessage(isZh, "common.edit")}
-                          aria-label={localizedMessage(isZh, "common.edit")}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedModel(null);
-                            startEdit(route);
-                          }}
-                        >
-                          <Pencil aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-action danger"
-                          data-tip={localizedMessage(isZh, "common.delete")}
-                          aria-label={localizedMessage(isZh, "common.delete")}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setModelToDelete(route);
-                          }}
-                        >
-                          <Trash2 aria-hidden="true" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {routes.length > PAGE_SIZE && (
-          <footer className="table-footer">
-            <span className="table-summary">
-              {localizedMessage(isZh, "common.pageOf", { a: page + 1, b: totalPages })}
-            </span>
-            <div className="pager">
-              <button
-                type="button"
-                className="button button-sm"
-                onClick={() => setPage(Math.max(0, page - 1))}
-                disabled={page === 0}
-                data-tip={localizedMessage(isZh, "common.previousPage")}
-                aria-label={localizedMessage(isZh, "common.previousPage")}
-              >
-                <ChevronLeft aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className="button button-sm"
-                onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
-                disabled={page >= totalPages - 1}
-                data-tip={localizedMessage(isZh, "common.nextPage")}
-                aria-label={localizedMessage(isZh, "common.nextPage")}
-              >
-                <ChevronRight aria-hidden="true" />
-              </button>
-            </div>
-          </footer>
-        )}
+        <Button
+          onClick={() => {
+            setEditingId(null);
+            setEditForm(null);
+            setShowForm((v) => !v);
+          }}
+          className="flex items-center gap-2"
+        >
+          <Plus className="h-4 w-4" />
+          {isZh ? "新增模型" : "Add Model"}
+        </Button>
       </div>
 
-      <Drawer
-        open={Boolean(selectedModel)}
-        title={selectedModel?.name ?? localizedMessage(isZh, "models.modelDetails")}
-        description={selectedModel?.id}
-        onClose={() => setSelectedModel(null)}
-        footerStart={selectedModel ? (
-          <button
-            type="button"
-            className="button button-secondary button-danger-text"
-            onClick={() => {
-              const route = selectedModel;
-              setSelectedModel(null);
-              setModelToDelete(route);
-            }}
-          >
-            {localizedMessage(isZh, "common.delete")}
-          </button>
-        ) : undefined}
-        footer={selectedModel ? (
-          <>
-            <button type="button" className="button button-secondary" onClick={() => setSelectedModel(null)}>
-              {localizedMessage(isZh, "common.close")}
-            </button>
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={() => {
-                const route = selectedModel;
-                setSelectedModel(null);
-                startEdit(route);
-              }}
+      {showForm && (
+        <div className="glass rounded-2xl p-6 space-y-4">
+          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "新建模型" : "New Model"}</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <FieldLabel>{isZh ? "模型名称（虚拟模型 ID）" : "Model Name (Virtual Model ID)"}</FieldLabel>
+              <Input
+                value={createForm.name}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder={isZh ? "输入模型名称" : "Enter model name"}
+              />
+            </div>
+            <div className="space-y-2">
+              <FieldLabel>{isZh ? "负载策略" : "Load Strategy"}</FieldLabel>
+              <Select
+                value={createForm.balance}
+                onValueChange={(value: ModelBalance) =>
+                  setCreateForm((prev) => ({ ...prev, balance: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="weighted">{isZh ? "加权轮询" : "Weighted"}</SelectItem>
+                  <SelectItem value="priority">{isZh ? "主备分级" : "Priority"}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="col-span-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <FieldLabel>{isZh ? "目标列表" : "Targets"}</FieldLabel>
+                <span className="text-xs text-slate-500">
+                  {isZh ? `共 ${createForm.targets.length} 个节点` : `${createForm.targets.length} nodes`}
+                </span>
+              </div>
+              <div className="route-targets-panel space-y-2.5 rounded-2xl border border-slate-200/90 bg-white/80 p-3">
+                {createForm.targets.map((target, index) => (
+                  <TargetRow
+                    key={index}
+                    mode="create"
+                    index={index}
+                    target={target}
+                    balance={createForm.balance}
+                    isZh={isZh}
+                    providerOptions={providerOptions}
+                    providerMap={providerMap}
+                    onUpdate={updateCreateTarget}
+                    onRemove={removeCreateTarget}
+                    disableRemove={createForm.targets.length <= 1}
+                  />
+                ))}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={addCreateTarget}
+                  className="h-10 w-full justify-center rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  {isZh ? "添加模型" : "Add model"}
+                </Button>
+              </div>
+            </div>
+            <ModelToggleControl
+              title={isZh ? "访问控制" : "Access Control"}
+              isZh={isZh}
+              checked={createForm.enable_auth}
+              checkedMessage={isZh ? "仅绑定该模型的 API Key 可访问" : "Only API keys bound to this model can access"}
+              uncheckedMessage={isZh ? "任何请求均可访问，无需 API Key" : "Any request can access without an API key"}
+              switchId="create-route-enable-auth"
+              onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, enable_auth: checked }))}
+            />
+            {globalPayloadEnabled && (
+              <ModelToggleControl
+                title={isZh ? "记录载荷" : "Record Payloads"}
+                isZh={isZh}
+                checked={createForm.enable_payload}
+                checkedMessage={isZh ? "记录完整的请求与响应内容" : "Log full request and response content"}
+                uncheckedMessage={isZh ? "仅记录 Token 用量等基础指标" : "Only basic metrics are logged"}
+                switchId="create-route-enable-payload"
+                onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, enable_payload: checked }))}
+              />
+            )}
+          </div>
+          <div className="flex gap-3">
+            <Button
+              onClick={() =>
+                createMut.mutate(buildCreatePayload(createForm))
+              }
+              disabled={
+                createMut.isPending ||
+                !createForm.name.trim() ||
+                createForm.targets.some((target) => !target.provider_id || !target.model.trim())
+              }
             >
-              {localizedMessage(isZh, "common.edit")}
-            </button>
-          </>
-        ) : undefined}
-      >
-        {selectedModel ? (
-          <DetailList
-            items={[
-              { label: localizedMessage(isZh, "common.name"), value: <CopyValue value={selectedModel.name} isZh={isZh} /> },
-              { label: localizedMessage(isZh, "models.strategy"), value: balanceLabel(selectedModel.balance ?? "weighted", isZh) },
-              { label: localizedMessage(isZh, "models.targets"), value: (
-                <div className="cell-tags">
-                  {(selectedModel.targets?.length
-                    ? selectedModel.targets
-                    : [{ provider_id: selectedModel.target_provider, model: selectedModel.target_model }]
-                  ).map((target, index) => {
-                    const label = `${providerMap.get(target.provider_id)?.name ?? target.provider_id} / ${target.model}`;
-                    return <span key={`${target.provider_id}-${target.model}-${index}`} className="tag" {...copyableTipProps(label)}>{label}</span>;
-                  })}
-                </div>
-              ) },
-              { label: localizedMessage(isZh, "models.auth"), value: selectedModel.enable_auth ? localizedMessage(isZh, "models.auth") : localizedMessage(isZh, "models.open") },
-              { label: localizedMessage(isZh, "common.recordPayloads"), value: selectedModel.enable_payload === false ? localizedMessage(isZh, "models.noPayloads") : localizedMessage(isZh, "models.recording") },
-              { label: localizedMessage(isZh, "common.enabled"), value: selectedModel.is_enabled ? localizedMessage(isZh, "common.enabled2") : localizedMessage(isZh, "common.disabled") },
-              { label: localizedMessage(isZh, "common.createdAt"), value: selectedModel.created_at },
-            ]}
-          />
-        ) : null}
-      </Drawer>
-
-      <Drawer
-        open={showForm}
-        wide
-        title={localizedMessage(isZh, "models.newModel")}
-        description={localizedMessage(isZh, "models.exactMatchByModelNameAllIngressProtocolsEnabled")}
-        onClose={() => setShowForm(false)}
-        footer={(
-          <>
-            <button
-              type="button"
-              className="button button-secondary"
+              {createMut.isPending ? (isZh ? "创建中..." : "Creating...") : (isZh ? "创建" : "Create")}
+            </Button>
+            <Button
+              variant="secondary"
               onClick={() => {
                 setShowForm(false);
                 setCreateForm(emptyCreate);
               }}
             >
-              {localizedMessage(isZh, "common.cancel")}
-            </button>
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={() => createMut.mutate(buildCreatePayload(createForm))}
-              disabled={createMut.isPending || createInvalid}
-            >
-              {createMut.isPending ? (localizedMessage(isZh, "common.creating")) : (localizedMessage(isZh, "common.create"))}
-            </button>
-          </>
-        )}
-      >
-        <ModelFormFields
-          mode="create"
-          form={createForm}
-          isZh={isZh}
-          providerOptions={providerOptions}
-          providerMap={providerMap}
-          onName={(name) => setCreateForm((prev) => ({ ...prev, name }))}
-          onBalance={(balance) => setCreateForm((prev) => ({ ...prev, balance }))}
-          onUpdateTarget={updateCreateTarget}
-          onRemoveTarget={removeCreateTarget}
-          onAddTarget={addCreateTarget}
-          onAuth={(checked) => setCreateForm((prev) => ({ ...prev, enable_auth: checked }))}
-          onPayload={(checked) => setCreateForm((prev) => ({ ...prev, enable_payload: checked }))}
-          authSwitchId="create-route-enable-auth"
-          payloadSwitchId="create-route-enable-payload"
-        />
-      </Drawer>
-
-      <Drawer
-        open={Boolean(editingId && editForm)}
-        wide
-        title={localizedMessage(isZh, "models.editModel")}
-        description={editForm?.name}
-        onClose={closeEdit}
-        footer={editForm ? (
-          <>
-            <button type="button" className="button button-secondary" onClick={closeEdit}>
-              {localizedMessage(isZh, "common.cancel")}
-            </button>
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={() => updateMut.mutate({
-                id: editForm.id,
-                input: buildUpdatePayload(editForm),
-              })}
-              disabled={updateMut.isPending}
-            >
-              {updateMut.isPending ? (localizedMessage(isZh, "common.saving")) : (localizedMessage(isZh, "common.save"))}
-            </button>
-          </>
-        ) : undefined}
-      >
-        {editForm && (
-          <div className="form-stack">
-            <ModelFormFields
-              mode="edit"
-              form={editForm}
-              isZh={isZh}
-              providerOptions={providerOptions}
-              providerMap={providerMap}
-              onName={(name) => setEditForm((prev) => (prev ? { ...prev, name } : prev))}
-              onBalance={(balance) => setEditForm((prev) => (prev ? { ...prev, balance } : prev))}
-              onUpdateTarget={updateEditTarget}
-              onRemoveTarget={removeEditTarget}
-              onAddTarget={addEditTarget}
-              onAuth={(checked) => setEditForm((prev) => (prev ? { ...prev, enable_auth: checked } : prev))}
-              onPayload={(checked) => setEditForm((prev) => (prev ? { ...prev, enable_payload: checked } : prev))}
-            />
-            {editError && <p className="field-hint error">{editError}</p>}
+              {isZh ? "取消" : "Cancel"}
+            </Button>
           </div>
-        )}
-      </Drawer>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="py-12 text-center text-sm text-slate-500">{isZh ? "加载中..." : "Loading..."}</div>
+      ) : routes.length === 0 ? (
+        <div className="glass rounded-2xl p-12 text-center">
+          <RouteIcon className="mx-auto h-10 w-10 text-slate-400" />
+          <p className="mt-3 text-sm text-slate-500">{isZh ? "还没有配置模型" : "No models configured"}</p>
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          {pagedRoutes.map((route) => {
+            const isEditing = editingId === route.id && editForm;
+
+            if (isEditing && editForm) {
+              return (
+                <div key={route.id} className="glass rounded-2xl p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-slate-900">{isZh ? "编辑模型" : "Edit Model"}</h3>
+                    <button
+                      onClick={() => {
+                        setEditingId(null);
+                        setEditForm(null);
+                        setEditError(null);
+                      }}
+                      className="cursor-pointer p-1 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "模型名称（虚拟模型 ID）" : "Model Name (Virtual Model ID)"}</FieldLabel>
+                      <Input
+                        value={editForm.name}
+                        onChange={(e) => setEditForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "负载策略" : "Load Strategy"}</FieldLabel>
+                      <Select
+                        value={editForm.balance}
+                        onValueChange={(value: ModelBalance) =>
+                          setEditForm((prev) => (prev ? { ...prev, balance: value } : prev))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="weighted">{isZh ? "加权轮询" : "Weighted"}</SelectItem>
+                          <SelectItem value="priority">{isZh ? "主备分级" : "Priority"}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="col-span-2 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <FieldLabel>{isZh ? "目标列表" : "Targets"}</FieldLabel>
+                        <span className="text-xs text-slate-500">
+                          {isZh ? `共 ${editForm.targets.length} 个节点` : `${editForm.targets.length} nodes`}
+                        </span>
+                      </div>
+                      <div className="route-targets-panel space-y-2.5 rounded-2xl border border-slate-200/90 bg-white/80 p-3">
+                        {editForm.targets.map((target, index) => (
+                          <TargetRow
+                            key={`${target.id ?? "new"}-${index}`}
+                            mode="edit"
+                            index={index}
+                            target={target}
+                            balance={editForm.balance}
+                            isZh={isZh}
+                            providerOptions={providerOptions}
+                            providerMap={providerMap}
+                            onUpdate={updateEditTarget}
+                            onRemove={removeEditTarget}
+                            disableRemove={editForm.targets.length <= 1}
+                          />
+                        ))}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={addEditTarget}
+                          className="h-10 w-full justify-center rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          {isZh ? "添加模型" : "Add model"}
+                        </Button>
+                      </div>
+                    </div>
+                    <ModelToggleControl
+                      title={isZh ? "访问控制" : "Access Control"}
+                      isZh={isZh}
+                      checked={editForm.enable_auth}
+                      checkedMessage={isZh ? "仅绑定该模型的 API Key 可访问" : "Only API keys bound to this model can access"}
+                      uncheckedMessage={isZh ? "任何请求均可访问，无需 API Key" : "Any request can access without an API key"}
+                      onCheckedChange={(checked) =>
+                        setEditForm((prev) => (prev ? { ...prev, enable_auth: checked } : prev))
+                      }
+                    />
+                    {globalPayloadEnabled && (
+                      <ModelToggleControl
+                        title={isZh ? "记录载荷" : "Record Payloads"}
+                        isZh={isZh}
+                        checked={editForm.enable_payload}
+                        checkedMessage={isZh ? "记录完整的请求与响应内容" : "Log full request and response content"}
+                        uncheckedMessage={isZh ? "仅记录 Token 用量等基础指标" : "Only basic metrics are logged"}
+                        onCheckedChange={(checked) =>
+                          setEditForm((prev) => (prev ? { ...prev, enable_payload: checked } : prev))
+                        }
+                      />
+                    )}
+                  </div>
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={() =>
+                        updateMut.mutate({
+                          id: editForm.id,
+                          input: buildUpdatePayload(editForm),
+                        })
+                      }
+                      disabled={updateMut.isPending}
+                    >
+                      {updateMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setEditingId(null);
+                        setEditForm(null);
+                        setEditError(null);
+                      }}
+                    >
+                      {isZh ? "取消" : "Cancel"}
+                    </Button>
+                  </div>
+                  {editError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{editError}</p>}
+                </div>
+              );
+            }
+
+            return (
+              <div key={route.id} className="glass flex items-center justify-between rounded-2xl p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100">
+                    <span className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-xl border border-slate-300/70 bg-transparent">
+                      <GitBranch className="h-3.5 w-3.5 text-slate-500" />
+                    </span>
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600">{route.name}</code>
+                    {route.targets && route.targets.length > 1 && (
+                      <Badge variant="success" className="connect-label-badge">
+                        {isZh ? `共 ${route.targets.length} 个目标` : `${route.targets.length} Targets`}
+                      </Badge>
+                    )}
+                    <Badge
+                      variant="secondary"
+                      className="connect-label-badge bg-sky-50 text-sky-700"
+                    >
+                      {balanceLabel(route.balance ?? "weighted", isZh)}
+                    </Badge>
+                    {route.enable_auth && (
+                      <Badge variant="success" className="connect-label-badge">
+                        {isZh ? "鉴权" : "Auth"}
+                      </Badge>
+                    )}
+                    {route.enable_payload === false && (
+                      <Badge variant="danger" className="connect-label-badge">
+                        {isZh ? "不记录载荷" : "No Payloads"}
+                      </Badge>
+                    )}
+                    {!route.is_enabled && (
+                      <Badge variant="danger" className="connect-label-badge">
+                        {isZh ? "已禁用" : "Disabled"}
+                      </Badge>
+                    )}
+                  </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    onClick={() => {
+                      if (route.is_enabled) {
+                        setModelToDisable(route);
+                      } else {
+                        toggleEnabledMut.mutate({ id: route.id, is_enabled: true });
+                      }
+                    }}
+                    title={route.is_enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
+                    className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    {route.is_enabled ? (
+                      <ToggleRight className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <ToggleLeft className="h-4 w-4 text-slate-400" />
+                    )}
+                  </button>
+                  <button
+                    onClick={() => startEdit(route)}
+                    className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => setModelToDelete(route)}
+                    className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {routes.length > PAGE_SIZE && (
+            <div className="flex items-center justify-between px-1 pt-1">
+              <span className="text-xs text-slate-500">
+                {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
+              </span>
+              <div className="flex gap-1">
+                <Button
+                  onClick={() => setPage(Math.max(0, page - 1))}
+                  disabled={page === 0}
+                  variant="outline"
+                  size="icon"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+                  disabled={page >= totalPages - 1}
+                  variant="outline"
+                  size="icon"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <ConfirmDialog
         open={Boolean(modelToDisable)}
         onOpenChange={(open) => {
           if (!open) setModelToDisable(null);
         }}
-        title={localizedMessage(isZh, "models.confirmModelDisable")}
-        description={localizedMessage(isZh, "models.afterDisablingTheModelWillBeUnavailableConfirmDisable")}
-        cancelText={localizedMessage(isZh, "common.cancel")}
-        confirmText={localizedMessage(isZh, "common.disable")}
+        title={isZh ? "确认禁用模型" : "Confirm model disable"}
+        description={isZh ? "禁用后，该模型将不可用，确认禁用？" : "After disabling, the model will be unavailable. Confirm disable?"}
+        cancelText={isZh ? "取消" : "Cancel"}
+        confirmText={isZh ? "禁用" : "Disable"}
         onConfirm={() => {
           if (!modelToDisable) return;
           toggleEnabledMut.mutate({ id: modelToDisable.id, is_enabled: false });
@@ -967,14 +872,16 @@ export default function ModelsPage() {
         onOpenChange={(open) => {
           if (!open) setModelToDelete(null);
         }}
-        title={localizedMessage(isZh, "models.confirmModelDeletion")}
+        title={isZh ? "确认删除模型" : "Confirm model deletion"}
         description={
           modelToDelete
-            ? (localizedMessage(isZh, "common.thisActionCannotBeUndoneDelete", { a: modelToDelete.name }))
+            ? (isZh
+              ? `此操作不可撤销。确认删除「${modelToDelete.name}」吗？`
+              : `This action cannot be undone. Delete "${modelToDelete.name}"?`)
             : undefined
         }
-        cancelText={localizedMessage(isZh, "common.cancel")}
-        confirmText={localizedMessage(isZh, "common.delete")}
+        cancelText={isZh ? "取消" : "Cancel"}
+        confirmText={isZh ? "删除" : "Delete"}
         onConfirm={() => {
           if (!modelToDelete) return;
           deleteMut.mutate(modelToDelete.id);
@@ -989,10 +896,10 @@ export default function ModelsPage() {
         title={errorDialog?.title ?? ""}
         description={errorDialog?.description}
         hideCancel
-        confirmText={localizedMessage(isZh, "common.ok")}
+        confirmText={isZh ? "我知道了" : "OK"}
         onConfirm={() => setErrorDialog(null)}
       />
-    </PageLayout>
+    </div>
   );
 }
 

@@ -9,10 +9,10 @@ const useIsomorphicLayoutEffect = typeof document === "undefined" ? useEffect : 
 
 /* NyroChart: TS-ification of the baseline chart algorithm from waf-gateway.html
    lines 754–880 (§7.4). Shape aligns with the A+B spec — gradient stops use
-   var(--ink-strong) (visible in both light and dark themes); the SVG is drawn
-   1:1 at the container's measured size (ResizeObserver re-render, no
-   stretching). Shared by dashboard and stats: data + value/error dual lines +
-   tooltip crosshair snapping. Popup placement is a React adaptation-layer
+   var(--blue-600) (request series, visible in both light and dark themes); the
+   SVG is drawn 1:1 at the container's measured size (ResizeObserver re-render,
+   no stretching). Shared by dashboard and stats: data + value/error dual lines
+   + tooltip crosshair snapping. Popup placement is a React adaptation-layer
    enhancement (chartTooltipLayout): the baseline anchors the tooltip centered
    above the hover point, but .card overflow:hidden clips the popup at
    edge-hugging points — this is edge-aware, sliding with a horizontal clamp
@@ -269,9 +269,9 @@ export function NyroChart({ data, ariaLabel, valueLabel, errorLabel, formatValue
           <>
             <defs>
               <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0" style={{ stopColor: "var(--ink-strong)", stopOpacity: 0.12 }} />
-                <stop offset=".55" style={{ stopColor: "var(--ink-strong)", stopOpacity: 0.05 }} />
-                <stop offset="1" style={{ stopColor: "var(--ink-strong)", stopOpacity: 0 }} />
+                <stop offset="0" style={{ stopColor: "var(--blue-600)", stopOpacity: 0.08 }} />
+                <stop offset=".55" style={{ stopColor: "var(--blue-600)", stopOpacity: 0.04 }} />
+                <stop offset="1" style={{ stopColor: "var(--blue-600)", stopOpacity: 0 }} />
               </linearGradient>
             </defs>
             {chart.ticks.map((tick) => {
