@@ -7,6 +7,11 @@ webui/dist/
 webui/.vite/
 webui/package-lock.json
 
+webui-new/node_modules/
+webui-new/dist/
+webui-new/.vite/
+webui-new/package-lock.json
+
 # Tauri
 src-tauri/target/
 src-tauri/gen/

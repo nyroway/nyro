@@ -1,0 +1,1502 @@
+/* Minimal adaptation glue on the React side over nyro-ui.css (Phase 0/1).
+   Rules: layout wiring and class completion only; colors/weights always go through nyro tokens;
+   Phase 2/3 absorbs or deletes this progressively with the per-page vertical slices. */
+
+/* ── Shell (Phase 0) ─────────────────────────────────────────────── */
+
+/* The baseline is a scrolling document flow; the console is a fixed-shell app — the main area becomes an independently scrolling column. */
+.app-shell .main {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell .main > main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The topbar is a flex child inside the fixed shell column; the default flex-shrink:1 squashes it when content is too tall
+   (live measurement: the baseline's 56px was squashed to 39.75px, misaligning with the sidebar brand) — locked to no shrink. */
+.app-shell .main > .topbar {
+  flex: 0 0 auto;
+}
+
+/* The readiness tag is clickable. */
+button.status-tag,
+.app-shell .topbar-actions .tag {
+  cursor: pointer;
+}
+
+/* Type hierarchy: sidebar uses caption weight; the active item stays Regular,
+   distinguished by color/background rather than Medium. Page subtitles are
+   secondary gray, not the same ink as the title. */
+.sidebar .nav-item {
+  font-weight: var(--weight-caption);
+}
+
+.sidebar .nav-item.active {
+  font-weight: var(--weight-body);
+}
+
+.sidebar .nav-item.external {
+  font-weight: var(--weight-caption);
+}
+
+.sidebar .nav-label {
+  font-weight: var(--weight-caption);
+}
+
+.page-header p {
+  color: var(--ink-muted);
+}
+
+/* ── Phase 1 seams: baseline classes missing for wrappers (§10.1 / §7.1) ── */
+
+/* Baseline .card has no generic card body (domain cards each define their own padding); completed here. */
+.card-body {
+  padding: 20px 24px;
+}
+
+.card-header-copy {
+  min-width: 0;
+}
+
+/* Page body (PageLayout's .content-body): a unified 16px grid gap,
+   which also offsets the margins baseline components carry so spacing doesn't double up. */
+.content-body {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+
+.content-body > .metric-strip {
+  margin: 0;
+}
+
+.content-body > .table-toolbar {
+  padding: 0;
+}
+
+.content-body > .table-toolbar .table-summary {
+  margin-left: auto;
+}
+
+.content-body > .table-card,
+.card-body > .table-card {
+  margin-top: 0;
+}
+
+/* Baseline .content > .table-card { overflow: visible } (nyro-ui.css): page-level
+   list cards don't clip the inline "More" menu (.row-menu may overflow the card edge opening down or up).
+   The app's PageLayout adds a .content-body layer, so this is equivalently rewritten as a direct-child selector —
+   the DataTables of the five list pages (providers/models/nodes/api-keys/logs) are all
+   its direct children. */
+.content-body > .table-card {
+  overflow: visible;
+}
+
+/* Baseline .table-card tbody tr is always pointer; most console tables are not row-clickable,
+   so restore the default cursor — DataTable adds .clickable explicitly to clickable rows. */
+.table-card tbody tr {
+  cursor: default;
+}
+
+.table-card tbody tr.clickable {
+  cursor: pointer;
+}
+
+/* Narrower empty state inside cards (EmptyState's min-height 180px is the full-page empty-state size). */
+.table-card .empty {
+  min-height: 120px;
+  padding: 20px;
+}
+
+/* MetricLedger tone colors and column-count variants (v2 ledger semantics). */
+.metric-cell.tone-success strong { color: var(--success); }
+.metric-cell.tone-danger strong { color: var(--danger); }
+.metric-cell.tone-warning strong { color: var(--warning); }
+
+.metric-strip-stats.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+/* Notice's title row (baseline alert has no title structure). */
+.alert-title {
+  display: block;
+  color: var(--ink-strong);
+  font-weight: 400;
+}
+
+/* FormSection: the first section takes no top margin; description row. */
+.form-section:first-child {
+  margin-top: 0;
+}
+
+/* Connection block in the provider drawer has no section rule of its own. */
+.form-section.form-section-plain {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* Action columns shrink to their icons instead of absorbing leftover table width. */
+.table th.cell-actions,
+.table td.cell-actions {
+  width: 1%;
+}
+
+.form-section-desc {
+  margin: -6px 0 12px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: var(--weight-caption);
+}
+
+/* Drawer title (baseline drawer-header-copy uses strong/span; Radix Title renders an h2). */
+.drawer-title {
+  display: block;
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.drawer-subtitle {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: var(--weight-caption);
+}
+
+/* Modals in the console host long forms: capped height + independently scrolling card body (the baseline has no max-height). */
+.modal {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 48px);
+}
+
+.modal-header,
+.modal-footer {
+  flex: 0 0 auto;
+}
+
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* NyroSearchSelect combobox: embedded borderless input (aligned with the baseline secret-control pattern). */
+.field-control > input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink-strong);
+  font: inherit;
+}
+
+/* Keyboard-highlighted item and empty-state display in the combobox menu. */
+.select-option.active {
+  color: var(--ink-strong);
+  background: var(--surface-soft);
+}
+
+/* Baseline options are block-level divs (naturally fill the menu width, transparent background); the React side uses button to carry
+   keyboard/focus semantics, and button by default shrinks to content width and gets the UA's light-gray buttonface —
+   unselected items would gray out entirely. Explicit full width + transparent: unselected = the menu's white background; only .selected /
+   :hover / keyboard .active get the gray background (surface-soft). */
+.select-option,
+.custom-multi-option {
+  width: 100%;
+  background: transparent;
+}
+
+.select-menu.is-empty .searchable-select-empty,
+.custom-multi-options.is-empty .searchable-select-empty {
+  display: block;
+}
+
+/* Single-select trigger's current value: fills the trigger row, ellipsizes when too long; with nothing selected it falls back to the
+   input placeholder color (the baseline select always has a value, no placeholder state — completed here on the React side). */
+.select-control .selected-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.select-control .selected-value.is-placeholder {
+  color: var(--placeholder);
+}
+
+/* Baseline menus have no height cap; long option lists (key-to-model bindings etc.) scroll in place inside a capped menu,
+   so the menu can't blow up the drawer's scroll area (normal-length lists are unaffected). */
+.select-menu,
+.custom-multi-options {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+/* ── Phase 2 per-page vertical slice: settings (§9.1) ────────────── */
+
+/* Settings page skeleton: grouped nav on the left + form cards on the right. Nav items reuse baseline nav-item/nav-label
+   (the same language as the sidebar), with the outer frame made into a card. */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 24px;
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.settings-nav .nav-label {
+  margin: 8px 0 4px;
+}
+
+.settings-nav .nav-label:first-child {
+  margin-top: 2px;
+}
+
+.settings-nav .nav-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Save note on the left of config-actions (the baseline action row only has right-aligned buttons). */
+.config-note {
+  margin-right: auto;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: var(--weight-caption);
+}
+
+/* Three-column narrow form (short numeric fields such as retention days). */
+.form-grid.cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Spacing between the grid and the alert inside a form card. */
+.form > .alert {
+  margin-top: 16px;
+}
+
+/* Short-tag input like status codes: narrowed tags-control (aligned with the baseline add-provider-form variant). */
+.form .tags-control {
+  min-height: 40px;
+  padding: 4px 12px;
+}
+
+/* Action button embedded in field-control ("Use built-in" shortcut, same slot as secret-toggle). */
+.field-control > .button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* CSS-only hover tip for the "?" help button (colors match the baseline hover-tip, wrapping supported).
+   Baseline .help is a <span> (16px circle, 12px question mark); here it becomes a focusable <button>:
+   under the global *{box-sizing:border-box}, the button's UA default padding(1px 6px) would squeeze the
+   content box to 2px wide and push the question mark outside the circle — padding must be zeroed and line-height flattened. */
+.help {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 0;
+  line-height: 1;
+}
+
+/* Hover tip for the "?" help button (colors match the baseline hover-tip, wrapping supported).
+   This is the "unpositioned" fallback form; on hover/focus NyroHelpHint switches to fixed positioning and clamps
+   against the viewport (helpTipLayout) — absolute positioning would have edge-hugging popups clipped by
+   .drawer-body/.card overflow; the fixed layer matches the baseline hover-tip mechanism. */
+.help-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 45;
+  display: none;
+  width: max-content;
+  max-width: 240px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: #fff;
+  background: #111827;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  transform: translateX(-50%);
+}
+
+.help:hover .help-tip,
+.help:focus-visible .help-tip {
+  display: block;
+}
+
+[data-theme="dark"] .help-tip {
+  color: #111827;
+  background: #f4f6fb;
+}
+
+/* Toast: the baseline's z-20 would be covered by popups; the console's save feedback must float above modal/drawer;
+   the error state swaps the icon to the danger color. */
+.toast {
+  z-index: 60;
+  max-width: min(420px, calc(100vw - 48px));
+}
+
+.toast.error .toast-icon {
+  background: var(--danger);
+}
+
+@media (max-width: 1100px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-nav {
+    position: static;
+  }
+}
+
+@media (max-width: 720px) {
+  .settings-layout .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Phase 2 per-page vertical slice: services (§9.10) ───────────── */
+
+/* Toolbar right-edge actions: the margin-left:auto semantics of the baseline's .toolbar-add,
+   used for non-add actions like refresh/clear. */
+.table-toolbar .toolbar-end {
+  margin-left: auto;
+}
+
+/* Font for provider-logo when it carries a text mark (service abbreviations CP/DP/ST/OT). */
+.provider-logo {
+  font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Table cell vocabulary: two stacked rows (primary value first, de-emphasized annotation rows after). */
+.cell-stack {
+  min-width: 0;
+}
+
+.cell-stack > * {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-stack > * + * {
+  margin-top: 2px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.cell-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cell-copy code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-copy .icon-button {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+}
+
+.cell-copy .icon-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.cell-copy .icon-button:hover {
+  border: 0;
+  background: var(--surface-soft);
+}
+
+/* ── Phase 2 per-page vertical slice: logs (§9.6) ────────────────── */
+
+/* Adaptive toolbar filters: the four filters on the logs page hold user-defined data (consumer/model/
+   upstream names) with open-ended lengths — the baseline .toolbar-filter is fixed at 148px and .select-menu in turn is
+   always exactly the trigger's width (left:0;right:0), so long names wrap to two lines in the menu and the trigger truncates to
+   an ellipsis. The variant class does three things (all React-side adaptations; the baseline has no such case):
+   ① The trigger's width:max-content adapts between 148px and 240px, showing the selected value as fully as possible;
+      past the cap, the existing .selected-value ellipsis is the fallback;
+   ② Decouple menu from trigger: min-width:100% guarantees at least the trigger's width, width:max-content
+      adapts to the longest option, capped at 360px;
+   ③ Ellipsize options past the cap: min-width:0 lets the flex child shrink, nowrap+ellipsis keeps it one line.
+   The status filter's options are fixed short labels; attaching the same variant only lands it at the 148px floor — no behavior change. */
+.toolbar-filter.toolbar-filter-adaptive {
+  width: max-content;
+  min-width: 148px;
+  max-width: 240px;
+}
+
+.toolbar-filter-adaptive .select-menu {
+  left: 0;
+  right: auto;
+  min-width: 100%;
+  width: max-content;
+  max-width: 360px;
+}
+
+.toolbar-filter-adaptive .select-option > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Protocol lane (ingress → egress): arrow and default placeholder de-emphasized. */
+.protocol-lane {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.protocol-lane > span {
+  color: var(--ink-soft);
+}
+
+/* Log table's 9 columns: give enough min-width; the overflow scrolls horizontally inside the card (the baselined form
+   of the old log-table compatibility rule; the scroll container hangs on .table-card.log-table .table-scroll).
+   The selector must be narrowed with .log-table — if it applied to every .table-card, overflow-x:auto would compute
+   overflow-y:visible into auto, and the inline "More" menu (.row-menu) dropping down
+   would push out a vertical scrollbar; the baseline list card's .table-scroll is overflow:visible
+   (nyro-ui.css), so the menu freely overflows the card. */
+.table-card.log-table .table-scroll {
+  overflow-x: auto;
+}
+
+.log-table .table {
+  min-width: 1080px;
+}
+
+/* Icon only inside pagination buttons (the baseline page-button is designed as a text button). */
+.page-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Drawer detail meta row: labels and code mixed, download action flush right (same as code-output-bar). */
+.drawer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.drawer-meta code {
+  overflow-wrap: anywhere;
+}
+
+.drawer-meta .button {
+  margin-left: auto;
+}
+
+/* ── Phase 2 per-page vertical slice: models (§9.3) ──────────────── */
+
+/* Code values like model IDs use a monospace font (attached via .field or .select-control):
+   the trigger's current value, menu options, and the in-menu search box all use monospace (the searchable's search box
+   sits inside the menu, no longer in the trigger input). */
+.input-mono input,
+.input-mono .selected-value,
+.input-mono .select-option {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Multi-select trigger empty-state placeholder (the baseline only defines the .selected-value structure, no color). */
+.multi-display .selected-value {
+  color: var(--placeholder);
+}
+
+/* Backend target list: pick multiple upstreams, then fill in one card per upstream. */
+.target-list {
+  display: grid;
+  gap: 12px;
+}
+
+.target-editor {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+}
+
+.target-editor > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.target-editor-copy {
+  min-width: 0;
+}
+
+.target-editor-title {
+  display: block;
+  color: var(--ink-strong);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.target-editor-sub {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: var(--weight-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-editor-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.target-editor-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px 16px;
+  padding: 12px;
+}
+
+/* Cooldown/latency strategies have no weight to fill in: descriptions explain the automatic ordering. */
+.target-editor-body .descriptions {
+  align-self: center;
+  margin: 0;
+}
+
+/* Visually hidden header for the table's actions column (generic a11y utility, readable by screen readers). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 720px) {
+  .target-editor-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* ── Phase 2 per-page vertical slice: connect (§9.5) ─────────────── */
+
+/* Connect page workspace: config card on the left + code block on the right (no baseline counterpart; composed from tokens). */
+.connect-workspace {
+  display: grid;
+  grid-template-columns: minmax(360px, 5fr) minmax(0, 7fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.connect-workspace > .card {
+  min-width: 0;
+}
+
+/* Baseline .card overflow:hidden clips the in-place model/key menus at the
+   card edge. Let the panel paint them, and raise the open select above the
+   code preview / config block that follows in the DOM. */
+.content-body > .connect-panel {
+  overflow: visible;
+}
+
+.connect-panel .select-control.open {
+  z-index: 8;
+}
+
+.connect-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* CLI tool picker: the baseline .radio-card is a 48px centered button row.
+   These four tiles need left-aligned copy and a taller hit area. */
+.connect-cli-tools .radio-card {
+  min-height: 76px;
+  padding: 14px 16px;
+  text-align: left;
+}
+
+.connect-cli-tools .radio-card .radio-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.connect-cli-tools .radio-card .radio-text span {
+  color: var(--ink-muted);
+}
+
+.connect-cli-tools .radio-card .tag {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+/* Provider icon alignment inside protocol tabs (the baseline .tab is a plain text button). */
+.tabs .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* Code card: segmented language switching inside the bar, code area fills the remaining height (the baseline body caps
+   at 220px; the connect page examples run long, so lift the cap and give a min-height). */
+.connect-code {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+}
+
+.connect-code .code-output-bar {
+  gap: 12px;
+}
+
+.connect-code .code-output-body {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 460px;
+}
+
+.connect-code .code-output-body.is-empty {
+  display: grid;
+  place-content: center;
+  color: var(--placeholder);
+}
+
+/* §9.5 ①: plain pre + token coloring (replaces react-syntax-highlighter). */
+.code-output-body .tok-comment {
+  color: var(--ink-soft);
+}
+
+.code-output-body .tok-string {
+  color: var(--success);
+}
+
+.code-output-body .tok-number {
+  color: var(--warning);
+}
+
+.code-output-body .tok-keyword {
+  color: var(--blue-600);
+}
+
+/* Value + copy inside a descriptions row (endpoint address). */
+.copy-value {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+}
+
+.copy-value code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copy-value button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.copy-value button:hover {
+  color: var(--ink-strong);
+  background: var(--surface-soft);
+}
+
+.copy-value svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Provider icon (provider-icon.tsx reskin): the baseline provider-logo form —
+   soft-background rounded tile + inset glyph, size controlled inline by the component. */
+.provider-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: var(--ink-soft);
+  background: var(--surface-soft);
+  border-radius: calc(var(--radius-sm) * 0.75);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.provider-icon .provider-icon-markup {
+  width: 78%;
+  height: 78%;
+}
+
+.provider-icon .provider-icon-markup.full {
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 1100px) {
+  .connect-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .connect-code .code-output-body {
+    min-height: 320px;
+  }
+}
+
+/* ── Phase 2 per-page vertical slice: api-keys (§9.4) ────────────── */
+
+/* Quota rule row editing (§9.4 ②): speaks the baseline table language. A narrow table inside a form skips the full-page
+   list table's 12px/24px cell rhythm, header background, and whole-row hover, using compact padding instead;
+   controls narrow to match (the baseline field-control's 40px is the full-row form rhythm). */
+.quota-table th {
+  padding: 0 8px 6px;
+  background: transparent;
+}
+
+.quota-table td {
+  padding: 6px 8px;
+}
+
+.quota-table tbody tr:hover td {
+  background: transparent;
+}
+
+.quota-table .field-control,
+.quota-table .select-control {
+  min-height: 34px;
+}
+
+.quota-table td.cell-actions {
+  width: 44px;
+}
+
+.quota-table-empty {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.quota-add {
+  justify-self: start;
+  margin-top: 8px;
+}
+
+/* IP allowlist row editing: one row = input + row action; row spacing aligned with the form-grid rhythm. */
+.ip-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.ip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ip-row .field-control {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Key list and rotation UI (§9.4 ③): row cards + row-actions. One small card per key
+   (name + masked preview + copy), validity tag and expiry on the right, actions tucked into
+   row-actions (toggle/edit/rotate/delete). */
+.key-list {
+  display: grid;
+  gap: 8px;
+}
+
+.key-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+}
+
+.key-row-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.key-row-copy strong {
+  color: var(--ink-strong);
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.key-row-copy code {
+  max-width: 240px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--ink-strong);
+  background: var(--surface-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--ink-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Icon actions inside row cards are tighter than in table rows (32px). */
+.key-row .icon-action {
+  width: 26px;
+  height: 26px;
+}
+
+.key-row .icon-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.key-row-empty {
+  justify-content: space-between;
+}
+
+.key-row-empty p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+/* List cell vocabulary: model/protocol pill runs (truncate + "+N") and de-emphasized annotations. */
+.cell-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.cell-tags .tag {
+  height: 20px;
+  padding: 0 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.cell-tags-more {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.cell-note {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+/* One-time token reveal (§9.4 note): warning strip + monospace secret input. */
+.reveal-key {
+  display: grid;
+  gap: 12px;
+}
+
+.reveal-key .secret-control input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Phase 2 per-page vertical slice: providers (§9.2) ───────────── */
+
+/* Widened toolbar protocol filter: the baseline .toolbar-filter is fixed at 148px, sized for short labels like "All statuses";
+   and .select-menu is always exactly the trigger's width (left:0;right:0),
+   while the longest protocol display name, "OpenAI Chat Completions", measured needs ~163px — at 148px
+   the menu option wraps to two lines, and after selection the trigger truncates to an ellipsis. The protocol filter is a
+   React-side addition (the baseline has no such filter), so the adaptation layer gives it its own fixed 210px width (derived
+   from measurement: longest label + icon and padding): both symptoms — menu and trigger — are fixed at once, and the
+   baseline semantics of menu = trigger width stay untouched; the status filter keeps the baseline's 148px. The two-class
+   selector raises specificity, independent of load order versus nyro-ui.css. */
+.toolbar-filter.toolbar-filter-protocol {
+  width: 210px;
+}
+
+/* Brand mark (§9.2 ①): the icon-fallback wordmark inside provider-name in list rows —
+   9px monospace 600 (the prototype wordmark's 650 tightened to 600). */
+.provider-name .provider-icon {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+/* Inline code values (protocol / Base URL / model ID): soft-background monospace mini pill. */
+.code-pill {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--ink-strong);
+  background: var(--surface-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Untested health state: gray (the baseline .health only has the default success color + warn/danger variants). */
+.health.is-idle {
+  color: var(--ink-soft);
+}
+
+/* List footnote: available count + two static notes (pagination sits on the right of .table-footer). */
+.provider-table-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.table-footer-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+/* Probe panel (§9.2 ⑤): spacing between the steps / import results / log sections in the test modal. */
+.probe-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.probe-panel:first-child {
+  margin-top: 0;
+}
+
+.probe-step.failed .probe-step-icon {
+  color: var(--danger);
+}
+
+.probe-spin {
+  animation: spin .7s linear infinite;
+}
+
+/* Full log (§9.2 ⑤): per-line level coloring inside the code-output card; fixed-width time column. */
+.provider-test-log p {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  margin: 0;
+}
+
+.provider-test-log time {
+  color: var(--ink-soft);
+}
+
+.provider-test-log [data-log-level="success"] span {
+  color: var(--success);
+}
+
+.provider-test-log [data-log-level="error"] span {
+  color: var(--danger);
+}
+
+.provider-test-empty {
+  color: var(--ink-soft);
+}
+
+.code-output-body.provider-test-log {
+  min-height: 176px;
+}
+
+/* Import results / preview table (§9.2 ⑥): a narrow table inside a form skips the full-page list table's rhythm (same as quota-table). */
+.provider-route-table th,
+.provider-import-table th {
+  padding: 0 8px 6px;
+  background: transparent;
+}
+
+.provider-route-table td,
+.provider-import-table td {
+  padding: 6px 8px;
+}
+
+.provider-route-table tbody tr:hover td,
+.provider-import-table tbody tr:hover td {
+  background: transparent;
+}
+
+/* Import preview summary (§9.2 ⑥): compact metric rows (metric-strip's 32px figures are the full-page rhythm;
+   16px inside the modal, same form as the baseline health-cap). */
+.provider-import-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.provider-import-metrics span {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.provider-import-metrics strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-strong);
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Inline validation error for the edit form. */
+.provider-form-error {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--danger);
+  border-radius: 0 6px 6px 0;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: 12px;
+}
+
+/* Model tag input (§9.2 ④): monospace code and an iconized remove button on top of the
+   baseline tags-control/tag (the baseline .tag button is designed as a text ×). */
+.model-tag-list {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.model-tag-input .tag code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.tag-remove {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--ink-soft);
+  background: transparent;
+  cursor: pointer;
+}
+
+.tag-remove:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.tag-remove:focus-visible {
+  outline: 2px solid var(--ink-strong);
+  outline-offset: 1px;
+}
+
+.tag-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Preset items locked in edit mode (§9.2 ②). */
+.provider-pick-item:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+/* Long textareas like JSON credentials follow the input-mono monospace convention (§9.2 ③). */
+.input-mono textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Phase 2 per-page vertical slice: dashboard (§9.8) ───────────── */
+
+/* Runtime banner's three states (§9.8 ①): healthy uses the baseline default (success soft-background round badge);
+   degraded / unknown map to warning and neutral gray respectively. */
+.health-strip.warn .health-icon {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.health-strip.unknown .health-icon {
+  color: var(--ink-soft);
+  background: var(--surface-soft);
+}
+
+/* Baseline blocks are spaced by document-flow margins; content-body is a 16px grid, so offset the doubled spacing
+   (same seam as the metric-strip above). */
+.content-body > .health-strip {
+  margin: 0;
+}
+
+.content-body > .section-grid.split-grid {
+  margin-top: 0;
+}
+
+/* List rows carried by button (keyboard reachable): strip the button chrome, inherit row typography and colors.
+   The baseline's last-row border-removing .upstream-item/:last-child (0,2,0) still applies. */
+button.upstream-item,
+button.sample-item {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.upstream-item:hover,
+button.sample-item:hover {
+  background: var(--surface-soft);
+}
+
+button.upstream-item:focus-visible,
+button.sample-item:focus-visible {
+  outline: 2px solid var(--ink-strong);
+  outline-offset: -2px;
+}
+
+/* Baseline row content is div; button's content model calls for span instead, made block-level to compensate. */
+.upstream-item .upstream-name,
+.upstream-item .upstream-meta {
+  display: block;
+}
+
+/* Performance table rows click through to the models page (§9.8 ⑥): the baseline .table has no row interaction
+   semantics, so scope is limited to split-grid — tables on already-sliced pages are unaffected. */
+.split-grid .table tbody tr.clickable {
+  cursor: pointer;
+}
+
+.split-grid .table tbody tr.clickable:hover td {
+  background: var(--surface-soft);
+}
+
+.split-grid .table tbody tr.clickable:focus-visible {
+  outline: 2px solid var(--ink-strong);
+  outline-offset: -2px;
+}
+
+/* ── Phase 2 per-page vertical slice: stats (§9.7) ───────────────── */
+
+/* Ranking bars (the baseline priority-list natively lives in form fields; padding added around it for in-card use). */
+.card > .priority-list {
+  padding: 12px 20px 20px;
+}
+
+/* Ranking row's primary label: model names can be long, truncate with an ellipsis so the share isn't squeezed out. */
+.priority-item .priority-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Baseline .table-card carries its own document-flow margin (adjacent collapsing included); inside grids, gap does the separating. */
+.section-grid .table-card {
+  margin-top: 0;
+}
+
+/* Ranking table's 6 columns: give enough min-width; the overflow scrolls horizontally inside the card (old ranking-grid rule). */
+.stats-table .table {
+  min-width: 600px;
+}
+
+/* ── Phase 2 per-page vertical slice: nodes (§9.9) ───────────────── */
+
+/* Empty-state callout: the baseline .info-callout carries its own margin-bottom; content-body is a 16px grid,
+   so offset the doubled spacing (same treatment as the §9.8 health-strip). */
+.content-body > .info-callout {
+  margin-bottom: 0;
+}
+
+/* Uptime cell: hover shows the full timestamp (Radix Tooltip); the help cursor hints it is hoverable. */
+.table .help-value {
+  cursor: help;
+}
+
+/* ── Phase 3 cleanup: basics and absorbed rules (§10.1 / D4 / D6) ── */
+
+/* Light is the default; dark is flipped by radix-bridge.css's :root[data-theme="dark"]
+   (its specificity is higher, independent of load order). */
+:root {
+  color-scheme: light;
+}
+
+/* Scroll architecture: the shell (.app-shell .main) is already a fixed-height flex column whose inner main scrolls itself;
+   here we only keep html/body full-height and scroll-locked, to catch full-page views outside the shell. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
+/* Screen-reader-only text (formerly a Tailwind utility, self-hosted to drop the dependency;
+   used by models / api-keys / the command palette — class name kept). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* provider-icon inline markup (absorbed from index.css). */
+.provider-icon-markup {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.provider-icon-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Skip link: parked off-viewport, drops back to the top-left on focus (absorbed from the old shell; colors swapped to nyro tokens). */
+.skip-link {
+  position: fixed;
+  left: 16px;
+  top: -60px;
+  z-index: 100;
+  padding: 8px 12px;
+  color: var(--canvas);
+  background: var(--ink-strong);
+  border-radius: 6px;
+}
+
+.skip-link:focus {
+  top: 12px;
+}
+
+/* Form section spanning columns (absorbed from the compatibility layer; used by models / api-keys). */
+.form-grid > .span-2 {
+  grid-column: 1 / -1;
+}
+
+/* Icon hover tips must sit above drawers and modals. */
+.hover-tip {
+  z-index: 70;
+}
+
+.hover-tip[hidden] {
+  display: none !important;
+}
+
+.hover-tip.is-copyable:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(420px, calc(100vw - 16px));
+  padding-right: 6px;
+  white-space: normal;
+  pointer-events: auto;
+}
+
+.hover-tip.is-copyable::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 10px;
+}
+
+.hover-tip-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hover-tip-copy {
+  display: grid;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.hover-tip-copy:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="dark"] .hover-tip-copy:hover {
+  background: rgba(17, 24, 39, 0.08);
+}
+
+.descriptions > div {
+  display: contents;
+}
+
+.cell-tags .tag {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Phase 3 cleanup: error fallback screen (§9.11: empty + alert-error) ── */
+.error-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.error-screen > .empty {
+  width: min(480px, 100%);
+}
+
+/* The error message can be an extremely long single-line stack trace; keep it from bursting the card. */
+.error-screen .alert {
+  overflow-wrap: anywhere;
+}
+
+/* Lazy-load fallback (main.tsx Suspense fallback). */
+.app-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+/* Chart series: request uses --blue-600, errors stay --danger but quieter. */
+.chart-line {
+  stroke: var(--blue-600);
+}
+
+.chart-point {
+  stroke: var(--blue-600);
+}
+
+.chart-point-ring {
+  stroke: var(--blue-600);
+}
+
+.legend-dot {
+  background: var(--blue-600);
+}
+
+.chart-line.error {
+  stroke: var(--danger);
+  stroke-width: 1.25;
+  stroke-opacity: 0.7;
+  stroke-dasharray: none;
+}
+
+/* Chrome pass: lift the OLED-black dark surfaces, thin sidebar glyphs,
+   and restyle numeric/status badges as muted pills. Rollback = delete this block. */
+[data-theme="dark"] {
+  --canvas: #161616;
+  --surface: #1e1e1e;
+  --surface-solid: #262626;
+  --surface-soft: #2e2e2e;
+  --overlay: #1e1e1e;
+  --side: #161616;
+  --side-deep: #121212;
+}
+
+.sidebar .nav-icon,
+.sidebar .nav-external-icon {
+  stroke-width: 1.5;
+}
+
+.badge {
+  color: var(--ink-strong);
+  background: var(--surface-soft);
+}
