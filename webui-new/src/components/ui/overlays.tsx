@@ -1,5 +1,10 @@
 import type { ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { isSelectMenuEventTarget } from "@/components/ui/nyro-select";
+
+function keepSelectMenuOpen(event: { preventDefault: () => void; target: EventTarget | null }) {
+  if (isSelectMenuEventTarget(event.target)) event.preventDefault();
+}
 
 type FrameProps = {
   title: ReactNode;
@@ -23,7 +28,12 @@ export function Modal({
     <DialogPrimitive.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="modal-mask over-drawer" />
-        <DialogPrimitive.Content className={`modal modal-form ${className}`.trim()}>
+        <DialogPrimitive.Content
+          className={`modal modal-form ${className}`.trim()}
+          onPointerDownOutside={keepSelectMenuOpen}
+          onFocusOutside={keepSelectMenuOpen}
+          onInteractOutside={keepSelectMenuOpen}
+        >
           <header className="modal-header">
             <div className="modal-header-copy">
               <DialogPrimitive.Title className="modal-title">{title}</DialogPrimitive.Title>
@@ -53,7 +63,12 @@ export function Drawer({
     <DialogPrimitive.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="drawer-mask" />
-        <DialogPrimitive.Content className={wide ? "drawer drawer-wide" : "drawer"}>
+        <DialogPrimitive.Content
+          className={wide ? "drawer drawer-wide" : "drawer"}
+          onPointerDownOutside={keepSelectMenuOpen}
+          onFocusOutside={keepSelectMenuOpen}
+          onInteractOutside={keepSelectMenuOpen}
+        >
           <header className="drawer-header">
             <div className="drawer-header-copy">
               <DialogPrimitive.Title className="drawer-title">{title}</DialogPrimitive.Title>

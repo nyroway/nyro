@@ -201,8 +201,6 @@ function TargetRow({
     staleTime: 60_000,
   });
 
-  const modelListId = `target-models-${mode}-${index}`;
-
   return (
     <div className="target-editor">
       <header>
@@ -254,30 +252,27 @@ function TargetRow({
           />
         </div>
 
-        <label className="field">
+        <div className="field">
           <span className="field-label">{localizedMessage(isZh, "models.targetModel")}</span>
           {providerHasModelDiscovery ? (
-            <>
-              <input
-                className="field-control"
-                list={modelListId}
-                value={target.model}
-                placeholder={localizedMessage(isZh, "models.selectOrTypeTargetModelID")}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  onUpdate(index, { model: value });
-                  // Selecting from the suggestion list looks up capabilities immediately; typed input still uses the 1s debounce below
-                  if (value.trim() && targetModels.includes(value)) {
-                    setCapsQueryModel(value.trim());
-                  }
-                }}
-              />
-              <datalist id={modelListId}>
-                {withCurrentModel(targetModels, target.model).map((model) => (
-                  <option key={model} value={model} />
-                ))}
-              </datalist>
-            </>
+            <NyroSelect
+              ariaLabel={localizedMessage(isZh, "models.targetModel")}
+              controlClassName="input-mono"
+              value={target.model}
+              placeholder={localizedMessage(isZh, "models.selectOrTypeTargetModelID")}
+              searchPlaceholder={localizedMessage(isZh, "models.selectOrTypeTargetModelID")}
+              emptyText={localizedMessage(isZh, "models.noTargetModel")}
+              searchable
+              allowCreate
+              options={withCurrentModel(targetModels, target.model).map((model) => ({
+                value: model,
+                label: model,
+              }))}
+              onChange={(value) => {
+                onUpdate(index, { model: value });
+                if (value.trim()) setCapsQueryModel(value.trim());
+              }}
+            />
           ) : (
             <input
               className="field-control"
@@ -286,7 +281,7 @@ function TargetRow({
               placeholder={localizedMessage(isZh, "models.targetModelID")}
             />
           )}
-        </label>
+        </div>
 
         {balance === "weighted" ? (
           <label className="field">

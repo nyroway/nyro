@@ -242,6 +242,39 @@ button.status-tag,
   overflow-y: auto;
 }
 
+/* Portaled select menu: sits above drawers (z-31) / modals and is not clipped by overflow. */
+.select-menu.is-fixed {
+  position: fixed;
+  right: auto;
+  left: auto;
+  z-index: 42;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.select-menu.is-fixed .select-menu-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.select-menu.is-fixed.is-adaptive {
+  width: max-content;
+  max-width: 360px;
+}
+
+.select-menu.is-fixed.is-adaptive .select-option > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-menu.is-fixed .searchable-select-empty {
+  display: block;
+}
+
 /* ── Phase 2 per-page vertical slice: settings (§9.1) ────────────── */
 
 /* Settings page skeleton: grouped nav on the left + form cards on the right. Nav items reuse baseline nav-item/nav-label
@@ -547,7 +580,7 @@ button.status-tag,
 }
 
 .target-editor {
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-solid);
@@ -560,6 +593,7 @@ button.status-tag,
   gap: 12px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: var(--surface-soft);
 }
 
