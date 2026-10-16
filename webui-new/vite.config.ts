@@ -7,15 +7,27 @@ const pkg = JSON.parse(
   readFileSync(path.resolve(__dirname, "package.json"), "utf-8"),
 ) as { version?: string };
 const appVersion = pkg.version ?? "0.0.0";
+const srcDir = path.resolve(__dirname, "src");
+
+function atSrcAlias() {
+  return {
+    name: "nyro-at-src-alias",
+    enforce: "pre" as const,
+    resolveId(id: string) {
+      if (id.startsWith("@/")) return path.resolve(srcDir, id.slice(2));
+      return null;
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [atSrcAlias(), react()],
   define: {
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": srcDir,
     },
   },
   build: {
