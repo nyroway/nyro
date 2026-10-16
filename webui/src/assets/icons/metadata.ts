@@ -338,6 +338,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["openrouter", "router", "aggregator"],
     defaultColor: "#6566F1",
   },
+  requesty: {
+    name: "requesty",
+    displayName: "Requesty",
+    category: "ai-provider",
+    keywords: ["requesty", "router", "aggregator"],
+    defaultColor: "#1A73F5",
+  },
   longcat: {
     name: "longcat",
     displayName: "LongCat",

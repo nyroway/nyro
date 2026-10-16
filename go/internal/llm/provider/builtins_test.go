@@ -16,6 +16,7 @@ func TestBuiltinDefinitionsPreserveProviderMetadata(t *testing.T) {
 		{Gemini(), ProtocolGeminiGenerateContent, "gemini-2.0-flash", []string{ProtocolGeminiGenerateContent, ProtocolOpenAIChatCompletions}, "https://generativelanguage.googleapis.com/v1beta/openai/models"},
 		{DeepSeek(), ProtocolOpenAIChatCompletions, "deepseek-chat", []string{ProtocolOpenAIChatCompletions, ProtocolAnthropicMessages}, "https://api.deepseek.com/v1/models"},
 		{OpenRouter(), ProtocolOpenAIChatCompletions, "", []string{ProtocolOpenAIChatCompletions, ProtocolOpenAIResponses, ProtocolAnthropicMessages}, "https://openrouter.ai/api/v1/models"},
+		{Requesty(), ProtocolOpenAIChatCompletions, "", []string{ProtocolOpenAIChatCompletions, ProtocolOpenAIResponses, ProtocolAnthropicMessages}, "https://router.requesty.ai/v1/models/managed"},
 	}
 	for _, test := range tests {
 		test := test

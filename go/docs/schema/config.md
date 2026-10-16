@@ -191,9 +191,9 @@ releases it.
 - `upstreams[]`
   - `name` (required, unique): upstream instance name, referenced by routes.
   - `provider` (required): a provider preset id (e.g. `openai`, `deepseek`,
-    `anthropic`, `gemini`, `openrouter`) or `custom`. Persisted so the UI can
-    re-anchor the selected preset and so discovery URL fallback can look up the
-    preset.
+    `anthropic`, `gemini`, `openrouter`, `requesty`) or `custom`. Persisted so
+    the UI can re-anchor the selected preset and so discovery URL fallback can
+    look up the preset.
   - `protocol` (optional): defaults to the provider preset's default protocol.
   - `base_url` (optional): defaults to the preset's protocol base URL; required
     for `custom`.

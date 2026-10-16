@@ -130,6 +130,7 @@ protocol-fixed suffix (`/chat/completions`, `/responses`, `/messages`,
 | Zhipu (openai-chat) | `https://open.bigmodel.cn/api/coding/paas/v4` | `…/api/coding/paas/v4/chat/completions` |
 | Zhipu (anthropic-messages) | `https://open.bigmodel.cn/api/anthropic/v1` | `…/api/anthropic/v1/messages` |
 | OpenRouter | `https://openrouter.ai/api/v1` | `…/api/v1/chat/completions` |
+| Requesty | `https://router.requesty.ai/v1` | `…/v1/chat/completions` |
 
 A bare `https://api.deepseek.com` (no path) is rejected at startup
 with a clear hint — this prevents silently building the wrong URL.

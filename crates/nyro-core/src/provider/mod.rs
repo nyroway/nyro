@@ -35,6 +35,7 @@ pub mod nvidia;
 pub mod ollama;
 pub mod openai;
 pub mod openrouter;
+pub mod requesty;
 pub mod vertexai;
 pub mod xai;
 pub mod zai;

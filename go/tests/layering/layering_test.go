@@ -751,7 +751,7 @@ func TestBuiltInLLMEnumerationLivesOnlyInBootstrapCatalogs(t *testing.T) {
 	allowed := "internal/bootstrap/catalogs.go"
 	constructors := map[string]bool{
 		"Generic": true, "OpenAI": true, "Anthropic": true,
-		"Gemini": true, "DeepSeek": true, "OpenRouter": true,
+		"Gemini": true, "DeepSeek": true, "OpenRouter": true, "Requesty": true,
 	}
 	for _, sourceRoot := range []string{"internal", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, sourceRoot), func(path string, entry os.DirEntry, walkErr error) error {

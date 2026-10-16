@@ -76,6 +76,20 @@ func OpenRouter() Registration {
 	}, "bearer")
 }
 
+func Requesty() Registration {
+	return registration(Definition{
+		ID: "requesty", Name: "Requesty", Priority: 6,
+		DefaultProtocol: ProtocolOpenAIChatCompletions,
+		Protocols: []Protocol{
+			{ID: ProtocolOpenAIChatCompletions, BaseURL: "https://router.requesty.ai/v1"},
+			{ID: ProtocolOpenAIResponses, BaseURL: "https://router.requesty.ai/v1"},
+			{ID: ProtocolAnthropicMessages, BaseURL: "https://router.requesty.ai/v1"},
+		},
+		ModelsURL:   "https://router.requesty.ai/v1/models/managed",
+		Credentials: apiKeySchema("REQUESTY_API_KEY"),
+	}, "bearer")
+}
+
 func Generic() Registration {
 	registration := registration(Definition{ID: "generic", Name: "Generic"}, "")
 	registration.Fallback = true

@@ -235,6 +235,7 @@ impl VendorRegistry {
             "zai",
             "nvidia",
             "openrouter",
+            "requesty",
             "ollama",
         ];
         let position = |id: &str| -> usize {
